@@ -22,15 +22,21 @@ The expected fingerprint is `6F71F525282841EEDAF851B42F59B5F99B1BE0B4`, stored i
 
 The key was fetched from deb.nodesource.com on 2026-10-11.
 
-There is no independent confirmation of this fingerprint. NodeSource's own repository (nodesource/distributions, at commit 9b431d8 of 2026-07-09) publishes no fingerprint of this key. A web search found the same fingerprint only in third-party install logs, such as forum posts from users running NodeSource setup scripts. Those logs are not a source independent of deb.nodesource.com, so the expected fingerprint does not rest on them.
+NodeSource's own repository (nodesource/distributions, at commit 9b431d8 of 2026-07-09) publishes no fingerprint of this key.
 
-The fingerprint therefore records the key as fetched and reviewed when it was added. It detects a later change of the key. It does not detect a key that was already substituted at the time of fetching.
+One source independent of deb.nodesource.com holds the same key. The file `files/repo/nodesource/NODESOURCE-GPG-SIGNING-KEY-EL` in voxpupuli/puppet-nodejs, at commit `7649b6b8a` of 2024-01-03, contains a key with this primary fingerprint. The version of that file from 2015 (commit `9cf0f3035`) holds a different key, so this key was recorded there after 2015 and before 2026. That record is dated and comes from another project. It shows that the key has stayed the same from 2024 to 2026. It does not prove that NodeSource published the key, because that project's author also took the key from NodeSource.
+
+Forum posts also show the same fingerprint, but they are not an independent source. One unverified report says the hosted key once no longer matched the signature on an 18.x `InRelease` file. This report has not been reproduced here.
+
+The expected fingerprint therefore records the key as fetched and reviewed when it was added, and corroborated by a dated copy in another project. It detects a later change of the key. It does not detect a key that was already substituted before its first recorded copy.
 
 ## Known limit: SHA-1 signature
 
-The key's subkey binding signature, created in 2016, uses SHA-1. This was verified with `gpg --list-packets` on the fetched key. Third-party reports say that Debian 13 refuses NodeSource repositories whose binding signatures use SHA-1. One such report is in https://github.com/nodesource/distributions/issues/1920. These reports were not verified here.
+The key's subkey binding signature, created in 2016, uses SHA-1. This was verified with `gpg --list-packets` on the fetched key. Third-party reports say that Debian 13 refuses NodeSource repositories whose binding signatures use SHA-1. One such report is in https://github.com/nodesource/distributions/issues/1920.
 
-This repository has not reproduced that refusal. The fingerprint check does not address it, since it compares the primary key's fingerprint and says nothing about which hash the signatures use. The live base build decides whether apt accepts this key.
+The risk was tested on 2026-10-11. The Containerfile was built with rootless Podman from `debian:trixie-slim`. apt fetched and verified the `node_24.x` repository (`InRelease`) with the pinned key, reported no key or signature warning, and installed `nodejs` 24.21.0 from it. The image ran `node --version` as v24.21.0, and the check files were removed from it. So the refusal reported elsewhere did not occur with this key on Debian 13.
+
+That build tested the key as fetched on that day. It does not cover a later key. A key rotation needs the same build again before the pin is updated.
 
 ## Key rotation
 
@@ -44,7 +50,8 @@ To update the expected fingerprint, the maintainer takes these steps:
 4. Replace the fixture `image/test/nodesource/nodesource-repo.gpg.key` with the new key.
 5. Update the source, date, and key details in the section above.
 6. Run the offline test. It reads the expected fingerprint from the fingerprint file, so the test needs no edit.
-7. Commit.
+7. Build the base image with rootless Podman, `podman build -f image/context/base/Containerfile image/context/base`, and check that apt accepts the repository.
+8. Commit.
 
 Changing the fingerprint file changes the asset hash and therefore the image tags.
 
