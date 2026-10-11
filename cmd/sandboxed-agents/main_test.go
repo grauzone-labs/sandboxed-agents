@@ -45,23 +45,26 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// TestUnknownCommandIsUsageError proves that an unknown command exits unsuccessfully with a usage diagnostic through the built CLI binary.
+// TestUnknownCommandIsUsageError proves that an unknown command exits unsuccessfully with a usage diagnostic through the built CLI binary without Podman or SSH calls.
 func TestUnknownCommandIsUsageError(t *testing.T) {
+	fakes := testutil.Install(t, fakeExecutable)
 	command := exec.Command(executable, "unknown")
+	command.Env = fakes.Env(os.Environ())
 	output, err := command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "usage:") {
 		t.Fatalf("unknown command: error=%v output=%q; want usage error", err, output)
 	}
+	assertNoExternalCalls(t, fakes)
 }
 
-// TestOfflineSuiteDoesNotStartLiveTests proves that a nested offline suite skips the live test and makes no Podman or SSH calls through the fake process harness.
+// TestOfflineSuiteDoesNotStartLiveTests proves that the whole nested offline suite, excluding this guard, skips the live test and makes no Podman or SSH calls through the fake process harness.
 func TestOfflineSuiteDoesNotStartLiveTests(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	testExecutable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	child := exec.Command(testExecutable, "-test.v", "-test.run=^Test(CommandGrammar|UnknownCommandIsUsageError|LivePodmanVersion)$")
+	child := exec.Command(testExecutable, "-test.v", "-test.run=.", "-test.skip=^TestOfflineSuiteDoesNotStartLiveTests$")
 	child.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{
 		"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable,
 	})
