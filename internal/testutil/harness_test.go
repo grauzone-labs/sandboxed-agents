@@ -12,6 +12,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
+// TestHarnessChildEnvironmentCannotFindProgramsOnOriginalPATH proves that the fake harness replaces the child PATH and prevents a subprocess from finding Podman on the original PATH.
 func TestHarnessChildEnvironmentCannotFindProgramsOnOriginalPATH(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("marker script uses a POSIX shebang")
@@ -48,6 +49,7 @@ func TestHarnessChildEnvironmentCannotFindProgramsOnOriginalPATH(t *testing.T) {
 	}
 }
 
+// TestHarnessPATHChild checks in the isolated fake harness subprocess that Podman lookup fails, and skips unless selected as the child process helper.
 func TestHarnessPATHChild(t *testing.T) {
 	if os.Getenv("TEST_HARNESS_PATH_CHILD") != "1" {
 		t.Skip("child process helper")
