@@ -21,3 +21,11 @@ This is a single-context repo. Before exploring domain behavior or naming domain
 Always use Conventional Commits: `type(scope): description`, with scope optional. When a commit includes multiple changes, describe each change as a bullet in the commit body, separated from the subject by a blank line.
 
 Omit `Co-authored-by:` trailers and other co-author attribution from commit messages.
+
+## Tests
+
+Every Go test function (`func Test...`) has a doc comment directly above it, starting with the function name, that states the behaviour the test proves and the seam it exercises. Docstring coverage is complete when every test function in the repository has one.
+
+## Pull request reviews
+
+After pushing fixes for CodeRabbit findings on a pull request, comment on that pull request tagging `@coderabbitai`: name each finding fixed, give the fix commit's short SHA, and ask it to re-review the latest commit. Post the comment only once the fix is pushed and the pull request head matches it.
