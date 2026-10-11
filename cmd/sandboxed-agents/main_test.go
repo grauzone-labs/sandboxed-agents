@@ -57,16 +57,21 @@ func TestUnknownCommandIsUsageError(t *testing.T) {
 	assertNoExternalCalls(t, fakes)
 }
 
-// TestOfflineSuiteDoesNotStartLiveTests proves that the whole nested offline suite, excluding this guard, skips the live test and makes no Podman or SSH calls through the fake process harness.
+// TestOfflineSuiteDoesNotStartLiveTests proves that the whole nested offline suite skips the live test and makes no Podman or SSH calls through the fake process harness.
+// The guard checks calls recorded in its own fake logs inherited by the subprocess, so a test installing its own fakes with testutil.Install must assert them itself with assertNoExternalCalls.
 func TestOfflineSuiteDoesNotStartLiveTests(t *testing.T) {
+	if os.Getenv("TEST_OFFLINE_GUARD_NESTED") == "1" {
+		t.Skip("nested offline run of the guard; the outer guard run covers it")
+	}
 	fakes := testutil.Install(t, fakeExecutable)
 	testExecutable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	child := exec.Command(testExecutable, "-test.v", "-test.run=.", "-test.skip=^TestOfflineSuiteDoesNotStartLiveTests$")
+	child := exec.Command(testExecutable, "-test.v", "-test.run=.")
 	child.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{
 		"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable,
+		"TEST_OFFLINE_GUARD_NESTED": "1",
 	})
 	output, err := child.CombinedOutput()
 	if err != nil {
@@ -75,12 +80,7 @@ func TestOfflineSuiteDoesNotStartLiveTests(t *testing.T) {
 	if strings.Contains(string(output), "live test body selected") || !strings.Contains(string(output), "--- SKIP: TestLivePodmanVersion") {
 		t.Fatalf("live test ran without opt-in: %s", output)
 	}
-	if calls := testutil.Invocations(t, fakes.PodmanLog); len(calls) != 0 {
-		t.Fatalf("offline Podman calls: %v", calls)
-	}
-	if calls := testutil.Invocations(t, fakes.SSHLog); len(calls) != 0 {
-		t.Fatalf("offline SSH calls: %v", calls)
-	}
+	assertNoExternalCalls(t, fakes)
 }
 
 // TestLiveOptInSelectsOnlyExplicitOne proves that only an opt-in value of "1" runs the live test and invokes Podman version through the fake process harness.
@@ -221,9 +221,11 @@ func exitStatus(t *testing.T, err error) int {
 
 func assertNoExternalCalls(t *testing.T, fakes testutil.Fakes) {
 	t.Helper()
-	for _, path := range []string{fakes.PodmanLog, fakes.SSHLog} {
-		if calls := testutil.Invocations(t, path); len(calls) != 0 {
-			t.Fatalf("unexpected external calls: %v", calls)
+	for _, program := range []struct{ name, path string }{
+		{"Podman", fakes.PodmanLog}, {"SSH", fakes.SSHLog},
+	} {
+		if calls := testutil.Invocations(t, program.path); len(calls) != 0 {
+			t.Fatalf("offline %s calls: %v", program.name, calls)
 		}
 	}
 }
