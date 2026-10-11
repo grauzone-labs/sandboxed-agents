@@ -7,12 +7,16 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 var executable string
 var fakeExecutable string
+
+// nestedGuardEnv carries the PID of the process that started the nested run.
+const nestedGuardEnv = "TEST_OFFLINE_GUARD_NESTED"
 
 // TestMain prepares the built CLI and fake process binaries for the suite, reuses them in nested runs, and removes its temporary build directory after testing.
 func TestMain(m *testing.M) {
@@ -60,7 +64,7 @@ func TestUnknownCommandIsUsageError(t *testing.T) {
 // TestOfflineSuiteDoesNotStartLiveTests proves that the whole nested offline suite skips the live test and makes no Podman or SSH calls through the fake process harness.
 // The guard checks calls recorded in its own fake logs inherited by the subprocess, so a test installing its own fakes with testutil.Install must assert them itself with assertNoExternalCalls.
 func TestOfflineSuiteDoesNotStartLiveTests(t *testing.T) {
-	if os.Getenv("TEST_OFFLINE_GUARD_NESTED") == "1" {
+	if os.Getenv(nestedGuardEnv) == strconv.Itoa(os.Getppid()) {
 		t.Skip("nested offline run of the guard; the outer guard run covers it")
 	}
 	fakes := testutil.Install(t, fakeExecutable)
@@ -71,7 +75,7 @@ func TestOfflineSuiteDoesNotStartLiveTests(t *testing.T) {
 	child := exec.Command(testExecutable, "-test.v", "-test.run=.")
 	child.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{
 		"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable,
-		"TEST_OFFLINE_GUARD_NESTED": "1",
+		nestedGuardEnv: strconv.Itoa(os.Getpid()),
 	})
 	output, err := child.CombinedOutput()
 	if err != nil {
@@ -221,11 +225,9 @@ func exitStatus(t *testing.T, err error) int {
 
 func assertNoExternalCalls(t *testing.T, fakes testutil.Fakes) {
 	t.Helper()
-	for _, program := range []struct{ name, path string }{
-		{"Podman", fakes.PodmanLog}, {"SSH", fakes.SSHLog},
-	} {
-		if calls := testutil.Invocations(t, program.path); len(calls) != 0 {
-			t.Fatalf("offline %s calls: %v", program.name, calls)
+	for _, path := range []string{fakes.PodmanLog, fakes.SSHLog} {
+		if calls := testutil.Invocations(t, path); len(calls) != 0 {
+			t.Fatalf("unexpected external calls: %v", calls)
 		}
 	}
 }
