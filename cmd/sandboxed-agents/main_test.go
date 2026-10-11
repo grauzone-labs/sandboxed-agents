@@ -25,12 +25,16 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	executable = filepath.Join(dir, "sandboxed-agents")
+	suffix := ""
+	if runtime.GOOS == "windows" {
+		suffix = ".exe"
+	}
+	executable = filepath.Join(dir, "sandboxed-agents"+suffix)
 	build := exec.Command("go", "build", "-o", executable, ".")
 	if output, err := build.CombinedOutput(); err != nil {
 		panic(string(output) + err.Error())
 	}
-	fakeExecutable = filepath.Join(dir, "fake")
+	fakeExecutable = filepath.Join(dir, "fake"+suffix)
 	fakeBuild := exec.Command("go", "build", "-o", fakeExecutable, "../../internal/testutil/testdata/fake.go")
 	if output, err := fakeBuild.CombinedOutput(); err != nil {
 		panic(string(output) + err.Error())
