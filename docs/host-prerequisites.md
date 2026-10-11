@@ -4,7 +4,7 @@ This document states the Podman versions that the sandboxed-agents executable ne
 
 The versions were confirmed from versioned upstream Podman documentation and source code, not on a live host. Only the live suite checks live behavior. Nothing here shows that a given Podman installation behaves as its documentation says.
 
-The behavior described here follows the Epic, the Features, and the ADRs. The executable does not implement all of it yet.
+The behavior described here follows Epic #1, its Features, and the ADRs. The executable does not implement all of it yet.
 
 ## Supported minimum versions
 
@@ -25,19 +25,19 @@ Every other Linux interface that the executable uses is available at 4.4.0 or be
 
 ## Windows 11 x64
 
-The supported floor is Podman client 5.0.0 or newer and Podman machine 5.0.0 or newer, with a running rootless WSL2 machine. Epic #1 sets this floor as the supported minimum. The confirmation below shows that the floor is sufficient for the interfaces the executable uses. It does not show that 5.0.0 is the lowest version that works. ADR 0006 cites `root.go` at v5.0.0 for its connection rules.
+The supported floor is Podman client 5.0.0 or newer and Podman machine 5.0.0 or newer, with a running rootless WSL2 machine. Epic #1 sets this floor as the supported minimum. The confirmation below shows that the floor is sufficient for the interfaces the executable uses. It does not show that 5.0.0 is the lowest version that works. [ADR 0006](adr/0006-podman-target-and-execution-identity.md) cites `root.go` at v5.0.0 for its connection rules.
 
 The following Podman interfaces were confirmed for Windows from versioned sources:
 
 - The WSL machine provider that Podman manages is available from 4.0.0.
-- The machine list and inspect fields that the executable reads are available from 4.7.0. These are the default machine, the WSL provider, whether the machine is rootful, and its state.
+- The machine list and inspect fields that the executable reads are available from 4.7.0. These are the default machine, the WSL provider, whether the machine is rootful, its state, and its name, which must not start with `-` or contain a line break or a NUL character ([ADR 0006](adr/0006-podman-target-and-execution-identity.md)).
 - The global `--connection` option is available with a Podman-managed WSL machine from 4.0.0.
-- The container options that the executable sends through the remote client are available from 4.0.0: user, security options, volumes, labels, port publishing, and resource limits. Resource limits also depend on the machine's cgroup controllers being delegated. The `keep-id` option with `uid` and `gid` is available from 4.3.0, and `pasta` networking from 4.4.0.
+- The container options that the executable sends through the remote client are available from 4.0.0 with a Podman-managed WSL machine: user, security options, volumes, labels, port publishing, and resource limits. Resource limits also depend on the machine's cgroup controllers being delegated. The `keep-id` option with `uid` and `gid` is available from 4.3.0, and `pasta` networking from 4.4.0.
 - The guarantee that `--connection` takes precedence over `CONTAINER_HOST` is available from 4.8.0. [ADR 0006](adr/0006-podman-target-and-execution-identity.md) has the executable remove `CONTAINER_HOST`, `CONTAINER_CONNECTION`, and `CONTAINER_SSHKEY` from the environment of its Podman calls, and cites the 5.0.0 precedence rules as a second guard. The 4.8.0 floor applies only if that guard is relied on.
 
-The Windows behavior described in this section is the design recorded in ADR 0006. The executable does not implement it yet.
+The Windows behavior described in this section is the design recorded in ADR 0006.
 
-No confirmed interface first requires 5.0.0. This page does not adopt a lower floor than 5.0.0. Whether to lower it is an open decision.
+No confirmed interface first requires 5.0.0. This page does not adopt a lower floor than 5.0.0.
 
 ## Open points
 
@@ -70,6 +70,6 @@ The sources are the upstream Podman repository (containers/podman) at the tags n
 - WSL machine provider: v4.0.0 release notes.
 - Machine list and inspect fields: `cmd/podman/machine/list.go` and `pkg/machine/wsl/machine.go` at v4.7.0, `cmd/podman/machine/inspect.go` at v5.0.0. The v4.6.2 inspect schema lacks the rootful field.
 - Global `--connection`: v2.0.5 release notes, and `cmd/podman/root.go` at v4.0.0 and v5.0.0.
-- Container options through the remote client: the Linux sources above for `keep-id`, and `cmd/podman/common/netflags.go` and `pkg/domain/infra/tunnel/containers.go` at v5.0.0 for pasta networking.
+- Container options through the remote client: the run and exec manuals at v4.0.0 (`--volume` covers named volumes, directory binds, and remote-server paths), the Linux `keep-id` sources above, the Linux pasta sources at v4.4.0 above, and `cmd/podman/common/netflags.go` and `pkg/domain/infra/tunnel/containers.go` at v5.0.0 for pasta through the remote client.
 - Connection precedence: v4.8.0 release notes (the fix for `CONTAINER_HOST` overriding `--connection`), and `cmd/podman/root.go` at v5.0.0.
 - Machine command execution: `pkg/machine/wsl/machine.go` at v4.0.0 and the `podman machine ssh` documentation at v5.0.0.
