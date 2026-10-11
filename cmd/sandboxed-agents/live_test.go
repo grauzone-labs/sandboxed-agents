@@ -8,6 +8,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
+// TestLivePodmanVersion checks that Podman is available and its version command succeeds at the live process boundary, only when explicitly opted in.
 func TestLivePodmanVersion(t *testing.T) {
 	if os.Getenv(testutil.LiveTestsEnv) != "1" {
 		t.Skip("set " + testutil.LiveTestsEnv + "=1 to opt in")

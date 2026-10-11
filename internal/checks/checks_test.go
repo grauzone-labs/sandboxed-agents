@@ -9,6 +9,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/checks"
 )
 
+// TestChecksRunInBindingOrder proves that the public checks.Run runner executes all ten checks in their binding order.
 func TestChecksRunInBindingOrder(t *testing.T) {
 	var visited []string
 	record := func(name string) checks.Check {
@@ -25,6 +26,7 @@ func TestChecksRunInBindingOrder(t *testing.T) {
 	}
 }
 
+// TestChecksReportOnlyFirstFailure proves that the public checks.Run runner preserves a usage failure and skips the later preflight check.
 func TestChecksReportOnlyFirstFailure(t *testing.T) {
 	usage := errors.New("invalid sandbox name")
 	preflightCalled := false
@@ -37,6 +39,7 @@ func TestChecksReportOnlyFirstFailure(t *testing.T) {
 	}
 }
 
+// TestPreconditionsRunAfterStoppedSandboxAndBeforeTerminal proves that the public checks.Run runner orders manager, toolchain, agent, and up preconditions between stopped-sandbox and terminal checks.
 func TestPreconditionsRunAfterStoppedSandboxAndBeforeTerminal(t *testing.T) {
 	var visited []string
 	record := func(name string) checks.Check { return func() error { visited = append(visited, name); return nil } }
@@ -51,6 +54,7 @@ func TestPreconditionsRunAfterStoppedSandboxAndBeforeTerminal(t *testing.T) {
 	}
 }
 
+// TestEveryStepStopsAtItsFirstFailure proves that the public checks.Run runner reports the failing step and original cause and skips later checks at each of its ten steps.
 func TestEveryStepStopsAtItsFirstFailure(t *testing.T) {
 	for step := 1; step <= 10; step++ {
 		t.Run(fmt.Sprint(step), func(t *testing.T) {
@@ -75,6 +79,7 @@ func TestEveryStepStopsAtItsFirstFailure(t *testing.T) {
 	}
 }
 
+// TestManagerFailureSuppressesLaterPreconditions proves that the public checks.Run runner reports a manager failure at step 8 and skips later preconditions, terminal, and session checks.
 func TestManagerFailureSuppressesLaterPreconditions(t *testing.T) {
 	cause := errors.New("manager not answering")
 	laterCalled := false

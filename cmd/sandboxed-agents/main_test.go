@@ -14,6 +14,7 @@ import (
 var executable string
 var fakeExecutable string
 
+// TestMain prepares the built CLI and fake process binaries for the suite, reuses them in nested runs, and removes its temporary build directory after testing.
 func TestMain(m *testing.M) {
 	// Nested test runs reuse parent-built binaries with an isolated PATH.
 	executable = os.Getenv("TEST_SANDBOXED_AGENTS_EXECUTABLE")
@@ -44,6 +45,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// TestUnknownCommandIsUsageError proves that an unknown command exits unsuccessfully with a usage diagnostic through the built CLI binary.
 func TestUnknownCommandIsUsageError(t *testing.T) {
 	command := exec.Command(executable, "unknown")
 	output, err := command.CombinedOutput()
@@ -52,6 +54,7 @@ func TestUnknownCommandIsUsageError(t *testing.T) {
 	}
 }
 
+// TestOfflineSuiteDoesNotStartLiveTests proves that a nested offline suite skips the live test and makes no Podman or SSH calls through the fake process harness.
 func TestOfflineSuiteDoesNotStartLiveTests(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	testExecutable, err := os.Executable()
@@ -77,6 +80,7 @@ func TestOfflineSuiteDoesNotStartLiveTests(t *testing.T) {
 	}
 }
 
+// TestLiveOptInSelectsOnlyExplicitOne proves that only an opt-in value of "1" runs the live test and invokes Podman version through the fake process harness.
 func TestLiveOptInSelectsOnlyExplicitOne(t *testing.T) {
 	for _, value := range []string{"0", "true", "1"} {
 		t.Run(value, func(t *testing.T) {
@@ -107,6 +111,7 @@ func TestLiveOptInSelectsOnlyExplicitOne(t *testing.T) {
 	}
 }
 
+// TestLiveOptInFailsWhenPodmanIsMissingOrUnusable proves that an opted-in live test fails with a Podman diagnostic for a missing or failing program through the fake process harness.
 func TestLiveOptInFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
 	for _, availability := range []string{"missing", "unusable"} {
 		t.Run(availability, func(t *testing.T) {
@@ -146,6 +151,7 @@ func TestLiveOptInFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
 	}
 }
 
+// TestCommandGrammar proves that command forms produce their expected success, not-implemented, or usage status through the built CLI binary without Podman or SSH calls.
 func TestCommandGrammar(t *testing.T) {
 	cases := []struct {
 		args   []string
@@ -219,6 +225,7 @@ func assertNoExternalCalls(t *testing.T, fakes testutil.Fakes) {
 	}
 }
 
+// TestAgentAndToolchainSelectionsUseDeliveredCatalogs proves that unknown selections are rejected and "none" selects no toolchains through the built CLI binary without external calls.
 func TestAgentAndToolchainSelectionsUseDeliveredCatalogs(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	cases := []struct {
@@ -243,6 +250,7 @@ func TestAgentAndToolchainSelectionsUseDeliveredCatalogs(t *testing.T) {
 	assertNoExternalCalls(t, fakes)
 }
 
+// TestAgentCommandsRejectUnknownAgentsBeforeExternalCalls proves that every agent command rejects an unknown agent at step 1 through the built CLI binary before Podman or SSH runs.
 func TestAgentCommandsRejectUnknownAgentsBeforeExternalCalls(t *testing.T) {
 	for _, verb := range []string{"enable", "disable", "update", "login", "status", "run", "session"} {
 		t.Run(verb, func(t *testing.T) {
@@ -259,6 +267,7 @@ func TestAgentCommandsRejectUnknownAgentsBeforeExternalCalls(t *testing.T) {
 	}
 }
 
+// TestLoginWorkflowsAreValidatedBeforeExternalCalls proves that invalid login requests are usage errors and an omitted GitHub workflow reaches the stub through the built CLI binary without external calls.
 func TestLoginWorkflowsAreValidatedBeforeExternalCalls(t *testing.T) {
 	cases := []struct {
 		args       []string
@@ -288,6 +297,7 @@ func TestLoginWorkflowsAreValidatedBeforeExternalCalls(t *testing.T) {
 	}
 }
 
+// TestControllerGroupAndSandboxNames proves that valid names reach the stub and invalid controller group or sandbox names produce usage errors through the built CLI binary without external calls.
 func TestControllerGroupAndSandboxNames(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	cases := []struct {
@@ -317,6 +327,7 @@ func TestControllerGroupAndSandboxNames(t *testing.T) {
 	assertNoExternalCalls(t, fakes)
 }
 
+// TestUnsetControllerGroupUsesDefault proves that an unset controller group lets up reach its not-implemented stub through the built CLI binary without Podman or SSH calls.
 func TestUnsetControllerGroupUsesDefault(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	command := exec.Command(executable, "up", "demo")
@@ -332,6 +343,7 @@ func TestUnsetControllerGroupUsesDefault(t *testing.T) {
 	assertNoExternalCalls(t, fakes)
 }
 
+// TestVersionIgnoresInvalidControllerGroup proves that version succeeds with its expected output despite an invalid or empty controller group through the built CLI binary without external calls.
 func TestVersionIgnoresInvalidControllerGroup(t *testing.T) {
 	for _, group := range []string{"Bad", ""} {
 		t.Run(group, func(t *testing.T) {
@@ -347,6 +359,7 @@ func TestVersionIgnoresInvalidControllerGroup(t *testing.T) {
 	}
 }
 
+// TestResourceOptionGrammar proves that resource options accept supported numeric forms and bounds and reject malformed or out-of-range values through the built CLI binary without external calls.
 func TestResourceOptionGrammar(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	cases := []struct {
@@ -385,6 +398,7 @@ func TestResourceOptionGrammar(t *testing.T) {
 	assertNoExternalCalls(t, fakes)
 }
 
+// TestWorkspacePathsFailBeforeExternalCalls proves that a workspace directory reaches the stub while missing, non-directory, protected, and aliased protected paths fail through the built CLI binary before external calls.
 func TestWorkspacePathsFailBeforeExternalCalls(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	home := t.TempDir()
@@ -426,6 +440,7 @@ func TestWorkspacePathsFailBeforeExternalCalls(t *testing.T) {
 	assertNoExternalCalls(t, fakes)
 }
 
+// TestExternalFakesRecordArgvAndScriptResponses proves that fake Podman and SSH preserve argument boundaries and return scripted output and exit status through the fake process harness.
 func TestExternalFakesRecordArgvAndScriptResponses(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	for _, program := range []string{"podman", "ssh"} {
@@ -453,6 +468,7 @@ func TestExternalFakesRecordArgvAndScriptResponses(t *testing.T) {
 	}
 }
 
+// TestMalformedArgumentsRemainUsageErrors proves that malformed command arguments produce step 1 usage errors through the built CLI binary without Podman or SSH calls.
 func TestMalformedArgumentsRemainUsageErrors(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	cases := [][]string{

@@ -8,6 +8,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
 )
 
+// TestParsedUpKeepsDefaultsAndEmptyToolchainSet proves that the public cli.Parse function retains default resource limits and the explicit empty toolchain selection for up --with none.
 func TestParsedUpKeepsDefaultsAndEmptyToolchainSet(t *testing.T) {
 	request, err := cli.Parse([]string{"up", "demo", "--with", "none"}, "default")
 	want := cli.Resources{Memory: 8589934592, CPUs: 4, PIDsLimit: 2048, ShmSize: 1073741824}
@@ -16,6 +17,7 @@ func TestParsedUpKeepsDefaultsAndEmptyToolchainSet(t *testing.T) {
 	}
 }
 
+// TestParsedRunPreservesEveryProgramArgument proves that the public cli.Parse function retains the sandbox name, controller group, and all agent run arguments, including flags and empty strings.
 func TestParsedRunPreservesEveryProgramArgument(t *testing.T) {
 	agents := catalog.Default.Agents
 	catalog.Default.Agents = []string{"codex"}
@@ -27,6 +29,7 @@ func TestParsedRunPreservesEveryProgramArgument(t *testing.T) {
 	}
 }
 
+// TestAgentLoginRejectsUnknownWorkflowForKnownAgent proves that the public cli.Parse function rejects an unknown login workflow for a delivered agent with the expected diagnostic.
 func TestAgentLoginRejectsUnknownWorkflowForKnownAgent(t *testing.T) {
 	agents := catalog.Default.Agents
 	catalog.Default.Agents = []string{"codex"}
