@@ -59,6 +59,10 @@ Reserved for installable programs and managed services that run beside agents. T
 **Image**:
 The container filesystem a sandbox is created from: the base contents every sandbox needs plus the sandbox's toolchains. Sandboxes with the same toolchain set share one image.
 
+**Base image**:
+The image with the base contents and no toolchains, produced by `build` and selected by `--with none`. Toolchain images are layered on it, so toolchain sets share its layers.
+_Avoid_: Default image, root image
+
 ### Ownership
 
 **Controller group**:
