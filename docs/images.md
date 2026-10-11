@@ -1,6 +1,6 @@
 # Images
 
-This document describes the base image recipe in `image/context/base/` and how it checks the NodeSource signing key before it trusts the NodeSource package repository. The image build context is embedded in the host executable, as described in [ADR 0001](adr/0001-go-for-host-executable-and-in-container-manager.md).
+This document describes the base image recipe in `image/context/base/` and how it checks the NodeSource signing key before it trusts the NodeSource package repository. The image build context is planned to be embedded in the host executable, as described in [ADR 0001](adr/0001-go-for-host-executable-and-in-container-manager.md).
 
 ## Base image
 
