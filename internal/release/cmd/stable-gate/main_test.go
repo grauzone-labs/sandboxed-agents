@@ -117,14 +117,7 @@ func TestStableGateCommandRefusesGitHubEvidenceFailures(t *testing.T) {
 
 // TestStableTagWorkflowRunsGate proves workflow calls and v* tag pushes run only the read-only gate through .github/workflows/stable-release-gate.yml's trigger and job mappings.
 func TestStableTagWorkflowRunsGate(t *testing.T) {
-	data, err := os.ReadFile("../../../../.github/workflows/stable-release-gate.yml")
-	if os.IsNotExist(err) {
-		t.Fatal("stable tags have no gate workflow")
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(data)
+	text := stableGateWorkflow(t)
 	// Inspect only the root event mapping: an unrelated workflow_call string
 	// in a comment or job must not make the reusable-workflow check pass.
 	_, afterOn, found := strings.Cut(text, "'on':\n")
@@ -299,4 +292,35 @@ func TestStableGateCommandRequiresMatchingPreviewVersion(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestStableTagWorkflowVerifiesTagCommit proves the peeled actual tag matches the workflow commit after checkout and before builds or gate execution through .github/workflows/stable-release-gate.yml's step ordering.
+func TestStableTagWorkflowVerifiesTagCommit(t *testing.T) {
+	text := stableGateWorkflow(t)
+	checkout := strings.Index(text, "uses: actions/checkout@v7")
+	lookup := strings.Index(text, `git rev-parse --verify "refs/tags/${STABLE_TAG}^{commit}"`)
+	compare := strings.Index(text, `[[ "$tag_commit" == "$GITHUB_SHA" ]]`)
+	build := strings.Index(text, "bash scripts/release.sh")
+	gate := strings.Index(text, "go run ./internal/release/cmd/stable-gate")
+	if lookup < 0 || compare < 0 {
+		t.Fatal("stable-release-gate.yml does not verify the actual tag commit against GITHUB_SHA")
+	}
+	if checkout < 0 || build < 0 || gate < 0 || !(checkout < lookup && lookup < compare && compare < build && build < gate) {
+		t.Fatal("stable-release-gate.yml must order checkout, actual tag lookup/comparison, build, then gate")
+	}
+	for _, reason := range []string{"stable release gate: stable tag does not resolve to a commit", "stable release gate: stable tag commit differs from workflow commit"} {
+		position := strings.Index(text, reason)
+		if position < lookup || position > build {
+			t.Fatalf("actual tag check lacks pre-build refusal %q", reason)
+		}
+	}
+}
+
+func stableGateWorkflow(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("../../../../.github/workflows/stable-release-gate.yml")
+	if err != nil {
+		t.Fatalf("read stable-release-gate.yml: %v", err)
+	}
+	return string(data)
 }
