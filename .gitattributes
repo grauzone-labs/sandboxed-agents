@@ -1,2 +1,3 @@
 image/context/** text eol=lf
 image/test/** text eol=lf
+image/context/**/*.bin binary
