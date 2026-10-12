@@ -18,10 +18,13 @@ if [[ $(go env GOVERSION) != "$required_go" ]]; then
     exit 1
 fi
 
+host_os=$(go env GOHOSTOS)
+host_arch=$(go env GOHOSTARCH)
+
 overlay_directory=$(mktemp -d)
 trap 'rm -rf -- "$overlay_directory"' EXIT
-GOOS=$(go env GOHOSTOS) GOARCH=$(go env GOHOSTARCH) go run ./image/cmd/overlay "$overlay_directory"
-version_symbol=$(GOOS=$(go env GOHOSTOS) GOARCH=$(go env GOHOSTARCH) go run ./internal/release/cmd/version-symbol)
+GOOS=$host_os GOARCH=$host_arch go run ./image/cmd/overlay "$overlay_directory"
+version_symbol=$(GOOS=$host_os GOARCH=$host_arch go run ./internal/release/cmd/version-symbol)
 
 for target in linux windows; do
     suffix=

@@ -10,8 +10,15 @@ import (
 	"testing"
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
-	"github.com/grauzone-labs/sandboxed-agents/internal/release"
 )
+
+// ReleaseVersion is the injected version used by release tests.
+const ReleaseVersion = "v0.0.30-test"
+
+// ToCRLF converts LF-normalized text to Windows line endings.
+func ToCRLF(data []byte) []byte {
+	return bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n"))
+}
 
 // ExpectedVersion specifies the output format independently of the production formatter, using the shared image asset hash.
 func ExpectedVersion(t *testing.T, version string) string {
@@ -27,7 +34,7 @@ func ExpectedVersion(t *testing.T, version string) string {
 func CopyCRLFContext(t *testing.T, source fs.FS, directory string) {
 	t.Helper()
 	context := os.DirFS(directory)
-	err := release.WriteContextAndVisit(source, directory, func(name string) error {
+	err := image.WriteContextAndVisit(source, directory, func(name string) error {
 		data, err := fs.ReadFile(context, name)
 		if err != nil {
 			return err
@@ -35,7 +42,7 @@ func CopyCRLFContext(t *testing.T, source fs.FS, directory string) {
 		if image.IsBinary(name, data) {
 			return nil
 		}
-		data = bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n"))
+		data = ToCRLF(data)
 		file := filepath.Join(directory, filepath.FromSlash(name))
 		return os.WriteFile(file, data, 0600)
 	})

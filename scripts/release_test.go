@@ -3,21 +3,16 @@ package scripts_test
 import (
 	"bytes"
 	"debug/pe"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
-	"testing/fstest"
 
-	"github.com/grauzone-labs/sandboxed-agents/image"
 	"github.com/grauzone-labs/sandboxed-agents/internal/release"
 	"github.com/grauzone-labs/sandboxed-agents/internal/releasetest"
 )
-
-const releaseVersion = "v0.0.30-test"
 
 // These artifact names mirror scripts/release.sh's sandboxed-agents-$target-amd64$suffix pattern.
 const (
@@ -105,6 +100,7 @@ func releaseRepository(t *testing.T) string {
 	return root
 }
 
+// releaseTestEnvironment prevents toolchain downloads (GOTOOLCHAIN=local), clears caller build flags (GOFLAGS), and disables the module proxy (GOPROXY=off) and checksum database (GOSUMDB=off).
 func releaseTestEnvironment() []string {
 	return append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=", "GOPROXY=off", "GOSUMDB=off")
 }
@@ -113,7 +109,7 @@ func assertReleaseVersion(t *testing.T, directory string) {
 	t.Helper()
 	command := exec.Command(filepath.Join(directory, linuxArtifact), "version")
 	output, err := command.CombinedOutput()
-	want := releasetest.ExpectedVersion(t, releaseVersion)
+	want := releasetest.ExpectedVersion(t, releasetest.ReleaseVersion)
 	if err != nil || string(output) != want {
 		t.Fatalf("release version: error=%v output=%q; want %q", err, output, want)
 	}
@@ -121,9 +117,8 @@ func assertReleaseVersion(t *testing.T, directory string) {
 
 func buildRelease(t *testing.T, root, output string) {
 	t.Helper()
-	command := exec.Command("bash", filepath.Join(root, "scripts/release.sh"), releaseVersion, output)
+	command := exec.Command("bash", filepath.Join(root, "scripts/release.sh"), releasetest.ReleaseVersion, output)
 	command.Dir = root
-	// Disable automatic toolchain downloads and unrelated caller build flags.
 	command.Env = releaseTestEnvironment()
 	if result, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("release build: %v\n%s", err, result)
@@ -133,37 +128,7 @@ func buildRelease(t *testing.T, root, output string) {
 // copyRepositoryWithCRLFAssetsAndMetadata keeps source files at normalized LF, then sets image context text, go.mod, and version-symbol.txt to CRLF while preserving binary assets.
 func copyRepositoryWithCRLFAssetsAndMetadata(t *testing.T, root, destination string) {
 	t.Helper()
-	source := fstest.MapFS{}
-	err := filepath.WalkDir(root, func(name string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		relative, err := filepath.Rel(root, name)
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			if relative == filepath.Join("image", "context") || relative != "." && strings.HasPrefix(entry.Name(), ".") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if relative != "go.mod" && relative != ".gitattributes" && !strings.HasSuffix(relative, ".go") && relative != filepath.Join("scripts", "release.sh") && relative != filepath.Join("scripts", "version-symbol.txt") {
-			return nil
-		}
-		data, err := os.ReadFile(name)
-		if err != nil {
-			return err
-		}
-		source[filepath.ToSlash(relative)] = &fstest.MapFile{Data: data}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := image.WriteContext(source, destination); err != nil {
-		t.Fatal(err)
-	}
+	releasetest.CopyRepositorySources(t, root, destination)
 	releasetest.CopyCRLFContext(t, os.DirFS(filepath.Join(root, "image", "context")), filepath.Join(destination, "image", "context"))
 	for _, relative := range []string{"go.mod", filepath.Join("scripts", "version-symbol.txt")} {
 		name := filepath.Join(destination, relative)
@@ -171,7 +136,7 @@ func copyRepositoryWithCRLFAssetsAndMetadata(t *testing.T, root, destination str
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(name, bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n")), 0600); err != nil {
+		if err := os.WriteFile(name, releasetest.ToCRLF(data), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
