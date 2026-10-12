@@ -43,6 +43,7 @@ func collectEvidence(repository, tag, commit, hash string) (release.StableGateEv
 	}
 	var refusal error
 	var versionRefusal error
+	var lookupRefusal error
 	ciCollected := false
 	for _, preview := range releases {
 		previewVersion := release.PreviewTagVersion(preview.TagName)
@@ -53,7 +54,10 @@ func collectEvidence(repository, tag, commit, hash string) (release.StableGateEv
 			SHA string `json:"sha"`
 		}
 		if err := githubJSON(base+"/commits/"+preview.TagName, &resolved); err != nil {
-			return evidence, fmt.Errorf("prerelease tag %s: %w", preview.TagName, err)
+			if lookupRefusal == nil {
+				lookupRefusal = fmt.Errorf("prerelease tag %s: %w", preview.TagName, err)
+			}
+			continue
 		}
 		if resolved.SHA != commit {
 			continue
@@ -64,6 +68,9 @@ func collectEvidence(repository, tag, commit, hash string) (release.StableGateEv
 		}
 		if !ciCollected {
 			if err := collectCI(base, &evidence); err != nil {
+				if lookupRefusal != nil {
+					return evidence, fmt.Errorf("%v; %w", lookupRefusal, err)
+				}
 				return evidence, err
 			}
 			ciCollected = true
@@ -82,6 +89,9 @@ func collectEvidence(repository, tag, commit, hash string) (release.StableGateEv
 	}
 	// Preserve a named reason when candidates exist but none validates. A
 	// missing preview stays nil so the evaluator gives its prerelease refusal.
+	if lookupRefusal != nil {
+		return evidence, lookupRefusal
+	}
 	if refusal == nil {
 		if versionRefusal != nil {
 			return evidence, versionRefusal
