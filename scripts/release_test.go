@@ -25,27 +25,28 @@ const (
 	windowsArtifact = "sandboxed-agents-windows-amd64.exe"
 )
 
-// TestReleaseBuildsAreReproducible proves repeat builds and a CRLF asset checkout produce identical Linux and Windows executables through the release script.
+// TestReleaseBuildsAreReproducible proves repeat builds and CRLF assets, module metadata, and version-symbol metadata produce identical Linux and Windows executables through the release script.
 func TestReleaseBuildsAreReproducible(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("release script integration requires a Linux build host")
-	}
-	root, err := filepath.Abs("..")
+	root := releaseRepository(t)
+	first, second, crlfCheckout := t.TempDir(), t.TempDir(), t.TempDir()
+	buildRelease(t, root, first)
+	buildRelease(t, root, second)
+	copyRepositoryWithCRLFAssetsAndMetadata(t, root, crlfCheckout)
+	module, err := os.ReadFile(filepath.Join(crlfCheckout, "go.mod"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, second, windowsCheckout := t.TempDir(), t.TempDir(), t.TempDir()
-	buildRelease(t, root, first)
-	buildRelease(t, root, second)
-	copyCRLFCheckout(t, root, windowsCheckout)
-	third := t.TempDir()
-	buildRelease(t, windowsCheckout, third)
+	if !bytes.Contains(module, []byte("\r\n")) {
+		t.Fatal("CRLF checkout go.mod contains no CRLF line endings")
+	}
+	crlfArtifacts := t.TempDir()
+	buildRelease(t, crlfCheckout, crlfArtifacts)
 	for _, name := range []string{linuxArtifact, windowsArtifact} {
 		want, err := os.ReadFile(filepath.Join(first, name))
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, dir := range []string{second, third} {
+		for _, dir := range []string{second, crlfArtifacts} {
 			got, err := os.ReadFile(filepath.Join(dir, name))
 			if err != nil {
 				t.Fatal(err)
@@ -63,16 +64,37 @@ func TestReleaseBuildsAreReproducible(t *testing.T) {
 	if windows.Machine != pe.IMAGE_FILE_MACHINE_AMD64 {
 		t.Fatalf("Windows executable machine = %x; want AMD64", windows.Machine)
 	}
-	command := exec.Command(filepath.Join(third, linuxArtifact), "version")
-	output, err := command.CombinedOutput()
-	want := releasetest.ExpectedVersion(t, releaseVersion)
-	if err != nil || string(output) != want {
-		t.Fatalf("release version: error=%v output=%q; want %q", err, output, want)
-	}
+	assertReleaseVersion(t, crlfArtifacts)
 }
 
 // TestReleaseVersionSymbolAcceptsCRLFMetadata proves the Go metadata reader and actual release script use the same canonical linker target from CRLF metadata through their build interfaces.
 func TestReleaseVersionSymbolAcceptsCRLFMetadata(t *testing.T) {
+	root := releaseRepository(t)
+	metadata, err := os.ReadFile(filepath.Join(root, "scripts", "version-symbol.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSymbol := strings.TrimSuffix(string(metadata), "\n")
+	crlfCheckout := t.TempDir()
+	copyRepositoryWithCRLFAssetsAndMetadata(t, root, crlfCheckout)
+	gotSymbol, err := release.VersionSymbol(os.DirFS(crlfCheckout))
+	if err != nil || gotSymbol != wantSymbol {
+		t.Fatalf("metadata symbol = %q, error=%v; want %q", gotSymbol, err, wantSymbol)
+	}
+	reader := exec.Command("go", "run", "./internal/release/cmd/version-symbol")
+	reader.Dir = crlfCheckout
+	reader.Env = releaseTestEnvironment()
+	symbolOutput, err := reader.CombinedOutput()
+	if err != nil || string(symbolOutput) != gotSymbol+"\n" {
+		t.Fatalf("build command symbol = %q, error=%v; want Go reader symbol %q", symbolOutput, err, gotSymbol+"\n")
+	}
+	outputDirectory := t.TempDir()
+	buildRelease(t, crlfCheckout, outputDirectory)
+	assertReleaseVersion(t, outputDirectory)
+}
+
+func releaseRepository(t *testing.T) string {
+	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("release script integration requires a Linux build host")
 	}
@@ -80,34 +102,20 @@ func TestReleaseVersionSymbolAcceptsCRLFMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata, err := os.ReadFile(filepath.Join(root, "scripts", "version-symbol.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantSymbol := strings.TrimSuffix(string(metadata), "\n")
-	checkout := t.TempDir()
-	copyCRLFCheckout(t, root, checkout)
-	if err := os.WriteFile(filepath.Join(checkout, "scripts", "version-symbol.txt"), []byte(wantSymbol+"\r\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	gotSymbol, err := release.VersionSymbol(os.DirFS(checkout))
-	if err != nil || gotSymbol != wantSymbol {
-		t.Fatalf("metadata symbol = %q, error=%v; want %q", gotSymbol, err, wantSymbol)
-	}
-	reader := exec.Command("go", "run", "./internal/release/cmd/version-symbol")
-	reader.Dir = checkout
-	reader.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=", "GOPROXY=off", "GOSUMDB=off")
-	symbolOutput, err := reader.CombinedOutput()
-	if err != nil || string(symbolOutput) != gotSymbol+"\n" {
-		t.Fatalf("build command symbol = %q, error=%v; want Go reader symbol %q", symbolOutput, err, gotSymbol+"\n")
-	}
-	outputDirectory := t.TempDir()
-	buildRelease(t, checkout, outputDirectory)
-	command := exec.Command(filepath.Join(outputDirectory, linuxArtifact), "version")
+	return root
+}
+
+func releaseTestEnvironment() []string {
+	return append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=", "GOPROXY=off", "GOSUMDB=off")
+}
+
+func assertReleaseVersion(t *testing.T, directory string) {
+	t.Helper()
+	command := exec.Command(filepath.Join(directory, linuxArtifact), "version")
 	output, err := command.CombinedOutput()
 	want := releasetest.ExpectedVersion(t, releaseVersion)
 	if err != nil || string(output) != want {
-		t.Fatalf("CRLF metadata release version: error=%v output=%q; want %q", err, output, want)
+		t.Fatalf("release version: error=%v output=%q; want %q", err, output, want)
 	}
 }
 
@@ -116,13 +124,14 @@ func buildRelease(t *testing.T, root, output string) {
 	command := exec.Command("bash", filepath.Join(root, "scripts/release.sh"), releaseVersion, output)
 	command.Dir = root
 	// Disable automatic toolchain downloads and unrelated caller build flags.
-	command.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=", "GOPROXY=off", "GOSUMDB=off")
+	command.Env = releaseTestEnvironment()
 	if result, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("release build: %v\n%s", err, result)
 	}
 }
 
-func copyCRLFCheckout(t *testing.T, root, destination string) {
+// copyRepositoryWithCRLFAssetsAndMetadata keeps source files at normalized LF, then sets image context text, go.mod, and version-symbol.txt to CRLF while preserving binary assets.
+func copyRepositoryWithCRLFAssetsAndMetadata(t *testing.T, root, destination string) {
 	t.Helper()
 	source := fstest.MapFS{}
 	err := filepath.WalkDir(root, func(name string, entry fs.DirEntry, err error) error {
@@ -156,4 +165,14 @@ func copyCRLFCheckout(t *testing.T, root, destination string) {
 		t.Fatal(err)
 	}
 	releasetest.CopyCRLFContext(t, os.DirFS(filepath.Join(root, "image", "context")), filepath.Join(destination, "image", "context"))
+	for _, relative := range []string{"go.mod", filepath.Join("scripts", "version-symbol.txt")} {
+		name := filepath.Join(destination, relative)
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n")), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
