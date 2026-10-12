@@ -12,7 +12,7 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd -- "$root"
 
 export GOTOOLCHAIN=local CGO_ENABLED=0 GOFLAGS= GOEXPERIMENT= GOAMD64=v1
-required_go=$(awk '$1 == "go" { print "go" $2 }' go.mod)
+required_go=$(awk '$1 == "go" { sub(/\r$/, "", $2); print "go" $2 }' go.mod)
 if [[ $(go env GOVERSION) != "$required_go" ]]; then
     printf 'release requires %s on PATH\n' "$required_go" >&2
     exit 1
