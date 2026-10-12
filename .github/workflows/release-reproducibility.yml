@@ -1,0 +1,79 @@
+name: Release reproducibility
+
+'on':
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    outputs:
+      hash: ${{ steps.version.outputs.hash }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Tag the runner checkout
+        shell: bash
+        run: git tag "v0.0.0-ci-${GITHUB_SHA}" HEAD
+      - name: Run the offline suite
+        run: go test ./... -count=1
+      - name: Build releases and report Linux version
+        id: version
+        shell: bash
+        run: |
+          bash scripts/release.sh "0.0.0-ci-${GITHUB_SHA}" "$RUNNER_TEMP/release-output"
+          version_output=$("$RUNNER_TEMP/release-output/sandboxed-agents-linux-amd64" version)
+          printf '%s\n' "$version_output"
+          asset_hash=$(printf '%s\n' "$version_output" | awk '$1 == "asset-sha256" { print $2 }')
+          [[ $asset_hash =~ ^[0-9a-f]{64}$ ]]
+          printf 'hash=%s\n' "$asset_hash" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: linux
+    runs-on: blacksmith-2vcpu-windows-2025
+    env:
+      SANDBOXED_AGENTS_RELEASE_BASH: 'C:\Program Files\Git\bin\bash.exe'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Check out Go sources with Windows line endings and tag HEAD
+        shell: pwsh
+        run: |
+          git -c core.autocrlf=true checkout --force -- .
+          if ($LASTEXITCODE -ne 0) { throw 'CRLF checkout failed' }
+          $sources = Get-ChildItem -Recurse -Filter '*.go'
+          if ($sources.Count -eq 0) { throw 'No Go sources found' }
+          foreach ($source in $sources) {
+            $contents = [System.IO.File]::ReadAllText($source.FullName)
+            if (-not $contents.Contains("`r`n")) { throw "Go source lacks CRLF: $($source.FullName)" }
+          }
+          git tag "v0.0.0-ci-$env:GITHUB_SHA" HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Local CI tag failed' }
+      - name: Run release tests with Git for Windows Bash
+        shell: pwsh
+        run: |
+          go test ./scripts -count=1 -v
+          if ($LASTEXITCODE -ne 0) { throw 'Windows release tests failed' }
+      - name: Build releases and compare Windows asset hash
+        shell: pwsh
+        run: |
+          $version = "0.0.0-ci-$env:GITHUB_SHA"
+          $outputDirectory = "$env:RUNNER_TEMP/release-output".Replace('\', '/')
+          & $env:SANDBOXED_AGENTS_RELEASE_BASH scripts/release.sh $version $outputDirectory
+          if ($LASTEXITCODE -ne 0) { throw 'Windows release build failed' }
+          $versionOutput = & "$env:RUNNER_TEMP/release-output/sandboxed-agents-windows-amd64.exe" version
+          if ($LASTEXITCODE -ne 0) { throw 'Windows version failed' }
+          $versionOutput
+          if ($versionOutput[0] -ne "sandboxed-agents $version") { throw 'Injected Windows version differs' }
+          $assetHash = ($versionOutput | Where-Object { $_ -match '^asset-sha256 ' }) -replace '^asset-sha256 ', ''
+          if ($assetHash -ne '${{ needs.linux.outputs.hash }}') { throw 'Windows and Linux asset hashes differ' }
