@@ -12,12 +12,13 @@ Inside a Git worktree, `VERSION` requires the literal tag `vVERSION` to point at
 
 `go test ./scripts -count=1 -v` compares builds of the same tagged temporary commit with LF and CRLF assets, all Go sources, and module/linker metadata. On Windows, set `SANDBOXED_AGENTS_RELEASE_BASH` to the Git for Windows executable, such as `C:\Program Files\Git\bin\bash.exe`. The Windows test requires that setting and runs the Windows executable's `version` command. Linux tests run on Linux; the Windows test skips other hosts.
 
-`.github/workflows/release-reproducibility.yml` runs Linux and native Windows jobs on Blacksmith for pushes to `main`, pull requests, and manual runs. Each runner creates a local CI tag at its checkout's commit. The Windows job executes the Windows binary, compares its asset hash with Linux, and compares its executable SHA256 with the Linux-cross-compiled Windows executable SHA256. Those runner tags are not pushed.
+`.github/workflows/release-reproducibility.yml` runs Linux and native Windows jobs on Blacksmith for pushes to `main`, pull requests, and manual runs. Each runner creates a local CI tag at its checkout's commit. The Windows job executes the Windows binary, compares its asset hash with Linux, and compares the SHA256 of both release executables with their Linux-built counterparts. Those runner tags are not pushed.
 
 Release limitations:
 
 - Local verification executes the Linux binary and checks cross-compiled Windows bytes and the PE AMD64 machine field; this Linux host cannot execute the Windows binary.
-- CI runs the Windows binary on Blacksmith with configured Git for Windows Bash, comparing its asset hash and executable SHA256 with Linux outputs. Native Windows verification belongs to CI.
+- CI runs the Windows binary on Blacksmith with configured Git for Windows Bash, comparing its asset hash and both executable SHA256 digests with Linux outputs. Native Windows verification belongs to CI.
+- The clean-worktree check rejects tracked edits, untracked files, and ignored files under `image/context/` or other release inputs; ignored files elsewhere are allowed.
 - A plain `go build` from a CRLF checkout embeds raw CRLF bytes and normalizes the context only at runtime. The release script normalizes text before embedding.
 - [ADR 0001](adr/0001-go-for-host-executable-and-in-container-manager.md) requires building the manager for Linux before the host executable. The manager does not exist yet, so this release script builds and embeds no manager.
 - NUL detection preserves tree bytes only during build normalization. Git's forced-text attributes can change line endings in non-`.bin` files, including NUL-containing files. Every binary asset must use `.bin` for exact bytes through Git; this naming convention has no further enforcement or content validation.

@@ -16,7 +16,8 @@ jobs:
   linux:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
-      hash: ${{ steps.version.outputs.hash }}
+      linux_asset_hash: ${{ steps.version.outputs.linux_asset_hash }}
+      linux_sha256: ${{ steps.version.outputs.linux_sha256 }}
       windows_sha256: ${{ steps.version.outputs.windows_sha256 }}
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +39,11 @@ jobs:
           printf '%s\n' "$version_output"
           asset_hash=$(printf '%s\n' "$version_output" | awk '$1 == "asset-sha256" { print $2 }')
           [[ $asset_hash =~ ^[0-9a-f]{64}$ ]]
-          printf 'hash=%s\n' "$asset_hash" >> "$GITHUB_OUTPUT"
+          printf 'linux_asset_hash=%s\n' "$asset_hash" >> "$GITHUB_OUTPUT"
+          linux_sha256=$(sha256sum "$RUNNER_TEMP/release-output/sandboxed-agents-linux-amd64" | awk '{ print $1 }')
+          [[ $linux_sha256 =~ ^[0-9a-f]{64}$ ]]
+          printf 'Linux executable SHA256: %s\n' "$linux_sha256"
+          printf 'linux_sha256=%s\n' "$linux_sha256" >> "$GITHUB_OUTPUT"
           windows_sha256=$(sha256sum "$RUNNER_TEMP/release-output/sandboxed-agents-windows-amd64.exe" | awk '{ print $1 }')
           [[ $windows_sha256 =~ ^[0-9a-f]{64}$ ]]
           printf 'Windows executable SHA256: %s\n' "$windows_sha256"
@@ -49,7 +54,8 @@ jobs:
     runs-on: blacksmith-2vcpu-windows-2025
     env:
       SANDBOXED_AGENTS_RELEASE_BASH: 'C:\Program Files\Git\bin\bash.exe'
-      EXPECTED_HASH: ${{ needs.linux.outputs.hash }}
+      ASSET_HASH: ${{ needs.linux.outputs.linux_asset_hash }}
+      EXPECTED_LINUX_SHA256: ${{ needs.linux.outputs.linux_sha256 }}
       EXPECTED_WINDOWS_SHA256: ${{ needs.linux.outputs.windows_sha256 }}
     steps:
       - uses: actions/checkout@v4
@@ -79,7 +85,7 @@ jobs:
         run: |
           go test ./scripts -count=1 -v
           if ($LASTEXITCODE -ne 0) { throw 'Windows release tests failed' }
-      - name: Build releases and compare Windows asset hash and executable digest
+      - name: Build releases and compare asset hash and both executable digests
         shell: pwsh
         run: |
           $outputDirectory = "$env:RUNNER_TEMP/release-output".Replace('\', '/')
@@ -90,7 +96,10 @@ jobs:
           $versionOutput
           if ($versionOutput[0] -ne "sandboxed-agents $env:RELEASE_VERSION") { throw 'Injected Windows version differs' }
           $assetHash = ($versionOutput | Where-Object { $_ -match '^asset-sha256 ' }) -replace '^asset-sha256 ', ''
-          if ($assetHash -ne $env:EXPECTED_HASH) { throw 'Windows and Linux asset hashes differ' }
+          if ($assetHash -ne $env:ASSET_HASH) { throw 'Windows and Linux asset hashes differ' }
           $windowsSHA256 = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP/release-output/sandboxed-agents-windows-amd64.exe").Hash.ToLowerInvariant()
           "Windows executable SHA256: $windowsSHA256"
           if ($windowsSHA256 -ne $env:EXPECTED_WINDOWS_SHA256) { throw 'Windows-built and Linux-cross-compiled Windows executables differ' }
+          $linuxSHA256 = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP/release-output/sandboxed-agents-linux-amd64").Hash.ToLowerInvariant()
+          "Linux executable SHA256: $linuxSHA256"
+          if ($linuxSHA256 -ne $env:EXPECTED_LINUX_SHA256) { throw 'Windows-cross-compiled and Linux-built Linux executables differ' }

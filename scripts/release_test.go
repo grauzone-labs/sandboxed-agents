@@ -106,6 +106,55 @@ func TestReleaseRefusesUntrackedFiles(t *testing.T) {
 	assertReleaseRefused(t, checkout, "release requires a clean Git worktree")
 }
 
+// TestReleaseRefusesIgnoredContextFiles proves an ignored file embedded from image/context is refused through the actual release script in a clean tagged temporary worktree.
+func TestReleaseRefusesIgnoredContextFiles(t *testing.T) {
+	checkout := createReleaseRepository(t, releaseRepository(t))
+	tagReleaseRepository(t, checkout)
+	writeIgnoredFile(t, checkout, "image/context/ignored-input.txt", []byte("ignored asset\n"))
+	assertReleaseRefused(t, checkout, "release refuses ignored release inputs")
+}
+
+// TestReleaseAllowsIgnoredFilesOutsideInputs proves the same ignored filename outside release inputs remains buildable through the actual release script in a tagged temporary worktree.
+func TestReleaseAllowsIgnoredFilesOutsideInputs(t *testing.T) {
+	checkout := createReleaseRepository(t, releaseRepository(t))
+	tagReleaseRepository(t, checkout)
+	writeIgnoredFile(t, checkout, "cache/ignored-input.txt", []byte("irrelevant cache\n"))
+	output := t.TempDir()
+	buildRelease(t, checkout, output)
+	assertReleaseVersion(t, output)
+}
+
+// TestReleaseRefusesIgnoredGoSources proves root and nested ignored Go inputs are refused through the actual release script in otherwise clean tagged temporary worktrees.
+func TestReleaseRefusesIgnoredGoSources(t *testing.T) {
+	root := releaseRepository(t)
+	for _, name := range []string{"ignored.go", "image/ignored.go"} {
+		t.Run(name, func(t *testing.T) {
+			checkout := createReleaseRepository(t, root)
+			tagReleaseRepository(t, checkout)
+			writeIgnoredFile(t, checkout, name, []byte("package image\n"))
+			assertReleaseRefused(t, checkout, "release refuses ignored release inputs")
+		})
+	}
+}
+
+func writeIgnoredFile(t *testing.T, checkout, relative string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(checkout, ".git", "info", "exclude"), []byte(filepath.Base(relative)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(checkout, filepath.FromSlash(relative))
+	if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, checkout, "check-ignore", "--quiet", relative)
+	if status := gitOutput(t, checkout, "status", "--porcelain", "--untracked-files=all"); status != "" {
+		t.Fatalf("ignored-file fixture must otherwise be clean: %s", status)
+	}
+}
+
 // TestReleaseRefusesTrackedChanges proves a tracked edit in a tagged temporary worktree is refused through the actual release script before outputs are built.
 func TestReleaseRefusesTrackedChanges(t *testing.T) {
 	checkout := createReleaseRepository(t, releaseRepository(t))
@@ -297,6 +346,11 @@ func buildRelease(t *testing.T, root, output string) {
 	}
 }
 
+// checkoutNeedsLF reports fixture files that stay at LF while release inputs switch to CRLF: checkout attributes and the executable release script.
+func checkoutNeedsLF(name string) bool {
+	return name == ".gitattributes" || name == "scripts/release.sh"
+}
+
 // rewriteReleaseInputsToCRLF rewrites selected release inputs and context text, preserving binaries and keeping checkout attributes and the executable release script at LF.
 func rewriteReleaseInputsToCRLF(t *testing.T, checkout string) {
 	t.Helper()
@@ -316,7 +370,7 @@ func rewriteReleaseInputsToCRLF(t *testing.T, checkout string) {
 			return nil
 		}
 		relative = filepath.ToSlash(relative)
-		if relative == ".gitattributes" || relative == "scripts/release.sh" || !releasetest.IsReleaseSource(relative) && !strings.HasPrefix(relative, "image/context/") {
+		if checkoutNeedsLF(relative) || (!releasetest.IsReleaseSource(relative) && !strings.HasPrefix(relative, "image/context/")) {
 			return nil
 		}
 		if err := releasetest.RewriteFileToCRLF(checkout, relative); err != nil {

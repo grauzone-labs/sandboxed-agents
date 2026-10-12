@@ -11,16 +11,20 @@ output=$(cd -- "$2" && pwd)
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd -- "$root"
 
+root_has_git_entry() {
+    [[ -e "$root/.git" || -L "$root/.git" ]]
+}
+
 inside_worktree=false
 if command -v git >/dev/null 2>&1; then
     if ! inside_worktree=$(git rev-parse --is-inside-work-tree 2>/dev/null); then
-        if [[ -e "$root/.git" || -L "$root/.git" ]]; then
+        if root_has_git_entry; then
             printf 'release cannot inspect its Git worktree\n' >&2
             exit 1
         fi
         inside_worktree=false
     fi
-elif [[ -e "$root/.git" || -L "$root/.git" ]]; then
+elif root_has_git_entry; then
     printf 'release requires git to verify its worktree\n' >&2
     exit 1
 fi
@@ -38,6 +42,13 @@ if [[ $inside_worktree == true ]]; then
     worktree_status=$(git status --porcelain --untracked-files=all)
     if [[ -n $worktree_status ]]; then
         printf 'release requires a clean Git worktree (tracked and untracked files)\n' >&2
+        exit 1
+    fi
+    ignored_inputs=$(git ls-files --others --ignored --exclude-standard -- \
+        ':(glob)image/context/**' 'go.mod' '.gitattributes' ':(glob)**/*.go' \
+        'scripts/release.sh' 'scripts/version-symbol.txt')
+    if [[ -n $ignored_inputs ]]; then
+        printf 'release refuses ignored release inputs:\n%s\n' "$ignored_inputs" >&2
         exit 1
     fi
 fi
