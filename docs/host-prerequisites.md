@@ -11,7 +11,7 @@ The behavior described here follows Epic #1, its Features, and the ADRs. The exe
 | Platform | Minimum | Also required |
 |---|---|---|
 | Linux amd64 | Rootless Podman 4.4.0 | A usable pasta program on the engine side |
-| Windows 11 x64 | Podman client 5.0.0 and Podman machine 5.0.0 | A running, rootless WSL2 machine, and a usable pasta program on the engine side |
+| Windows 11 x64 | Podman client 4.7.0 and Podman machine 4.7.0 | A running, rootless WSL2 machine, and a usable pasta program on the engine side |
 
 The preflight checks the host prerequisites before `build`, `up`, and `update`. The `check` command runs it too.
 
@@ -25,7 +25,7 @@ Every other Linux interface that the executable uses is available at 4.4.0 or be
 
 ## Windows 11 x64
 
-The supported floor is Podman client 5.0.0 or newer and Podman machine 5.0.0 or newer, with a running rootless WSL2 machine. Epic #1 sets this floor as the supported minimum. The confirmation below shows that the floor is sufficient for the interfaces the executable uses. It does not show that 5.0.0 is the lowest version that works.
+The supported floor is Podman client 4.7.0 or newer and Podman machine 4.7.0 or newer, with a running rootless WSL2 machine. Epic #1 sets this floor as the supported minimum. The confirmation below shows that 4.7.0 is the lowest version that supports the interfaces the executable uses.
 
 The following Podman interfaces were confirmed for Windows from versioned sources:
 
@@ -33,11 +33,11 @@ The following Podman interfaces were confirmed for Windows from versioned source
 - The machine list and inspect fields that the executable reads are available from 4.7.0. These are the default machine, the WSL provider, whether the machine is rootful, and its state.
 - The global `--connection` option is available with a Podman-managed WSL machine from 4.0.0.
 - The container options that the executable sends through the remote client are available from 4.0.0 with a Podman-managed WSL machine: user, security options, volumes, labels, port publishing, and resource limits. Resource limits also depend on the machine's cgroup controllers being delegated. The `keep-id` option with `uid` and `gid` is available from 4.3.0, and `pasta` networking from 4.4.0.
-- The guarantee that `--connection` takes precedence over `CONTAINER_HOST` is available from 4.8.0. [ADR 0006](adr/0006-podman-target-and-execution-identity.md) has the executable remove `CONTAINER_HOST`, `CONTAINER_CONNECTION`, and `CONTAINER_SSHKEY` from the environment of its Podman calls, and cites the 5.0.0 precedence rules as a second guard. The 4.8.0 floor applies only if that guard is relied on.
+- The guarantee that `--connection` takes precedence over `CONTAINER_HOST` is available from 4.8.0. [ADR 0006](adr/0006-podman-target-and-execution-identity.md) has the executable remove `CONTAINER_HOST`, `CONTAINER_CONNECTION`, and `CONTAINER_SSHKEY` from the environment of its Podman calls, and cites the 5.0.0 precedence rules as a second guard. The 4.8.0 version would be needed only if the executable stopped removing those variables.
 
 [ADR 0006](adr/0006-podman-target-and-execution-identity.md) also rejects a machine name that starts with `-` or contains a line break or a NUL character. That is a design rule, not a Podman version requirement.
 
-No confirmed interface first requires 5.0.0.
+While those variables are removed, the 4.8.0 guarantee does not raise the floor above 4.7.0.
 
 ## Open points
 
