@@ -89,10 +89,16 @@ The host-side lock with which the executable's lifecycle commands (`up`, `start`
 _Avoid_: Sandbox lock, update lock
 
 **Protected host paths**:
-Host locations that must never be exposed through a workspace bind: the executable and its package launchers, host state, temporary build inputs, and the user's SSH directory. Symlinks, junctions, and other aliases do not make a protected path bindable.
+Host locations that must never be exposed through a workspace bind: the executable, its package launchers, the default per-user Windows executable install directory `%LOCALAPPDATA%\Programs\sandboxed-agents`, host state, temporary build inputs, and the user's SSH directory. Symlinks, junctions, and other aliases do not make a protected path bindable.
 
 **SSH setup**:
 The opt-in host configuration that lets editors and desktop UIs reach a sandbox over SSH, using a key dedicated to that sandbox and a pinned host key. Without it, the executable leaves host SSH files untouched.
 
 **Preflight**:
 The read-only check of host prerequisites that runs before a sandbox or image is built. It reports each missing prerequisite. The executable only reads the host and never changes it: every program it runs is a query. On Linux these are `podman --version`; `podman info`, for rootless mode and the cgroup version; reads of the cgroup controller list, for the delegated CPU, memory, and process controllers; lookups on `PATH` of `newuidmap`, `newgidmap`, `pasta`, `ssh`, and `ssh-keygen`; and reads of the subordinate UID and GID ranges. On Windows, read-only queries of the Podman client and the Podman machine and read-only commands inside a running machine. None of them installs, configures, starts, or repairs anything. The one permitted exception is Podman's own initialization during the informational `podman --version` and `podman info` queries, which may create or adjust Podman's per-user configuration and runtime directories.
+
+### Distribution
+
+**NuGet command package**:
+The versioned NuGet archive, `SandboxedAgents.VERSION.nupkg`, that distributes the Windows executable, its checksum manifest, and PowerShell 7 install and remove scripts with their shared helper. It is not a project library: nothing references it as a dependency.
+_Avoid_: NuGet library, NuGet dependency

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 2 || ! $1 =~ ^[a-zA-Z0-9][a-zA-Z0-9._+-]*$ ]]; then
+version_number='(0|[1-9][0-9]*)'
+version_identifier='(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
+version_pattern="^$version_number\.$version_number\.$version_number(-$version_identifier(\.$version_identifier)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$"
+if [[ $# -ne 2 || ! $1 =~ $version_pattern ]]; then
     printf 'usage: %s VERSION OUTPUT_DIRECTORY\n' "$0" >&2
     exit 2
 fi
@@ -46,7 +49,8 @@ if [[ $inside_worktree == true ]]; then
     fi
     ignored_inputs=$(git ls-files --others --ignored --exclude-standard -- \
         ':(glob)image/context/**' 'go.mod' 'go.work' '.gitattributes' ':(glob)**/*.go' \
-        'scripts/release.sh' 'scripts/version-symbol.txt')
+        'scripts/release.sh' 'scripts/version-symbol.txt' 'packages/nuget/SandboxedAgents.nuspec' \
+        ':(glob)packages/nuget/tools/**')
     if [[ -n $ignored_inputs ]]; then
         printf 'release refuses ignored release inputs:\n%s\n' "$ignored_inputs" >&2
         exit 1
@@ -76,3 +80,5 @@ for target in linux windows; do
         -ldflags "-buildid= -X $version_symbol=$version" \
         -o "$output/sandboxed-agents-$target-amd64$suffix" ./cmd/sandboxed-agents
 done
+
+GOOS=$host_os GOARCH=$host_arch go run ./internal/nuget/cmd/package "$version" "$root" "$output"

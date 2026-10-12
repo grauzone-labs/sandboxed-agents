@@ -23,12 +23,14 @@ const (
 	windowsArtifact = "sandboxed-agents-windows-amd64.exe"
 )
 
-// TestReleaseBuildsAreReproducible proves the same tagged commit yields identical Linux and Windows executables from LF and CRLF assets, Go sources, and metadata through the release script on Linux.
+var releaseArtifacts = []string{linuxArtifact, windowsArtifact, "SHA256SUMS", "SandboxedAgents." + releasetest.ReleaseVersion + ".nupkg"}
+
+// TestReleaseBuildsAreReproducible proves the same tagged commit yields identical executables, checksums, and NuGet packages from LF and CRLF inputs through the release script on Linux.
 func TestReleaseBuildsAreReproducible(t *testing.T) {
 	assertReproducibleRelease(t, releaseRepositoryOrSkip(t))
 }
 
-// TestWindowsReleaseBuildsAreReproducible proves the same tagged commit yields identical executable bytes and a working Windows version command through explicitly configured Git for Windows Bash.
+// TestWindowsReleaseBuildsAreReproducible proves the same tagged commit yields identical executable and NuGet package bytes and a working Windows version command through explicitly configured Git for Windows Bash.
 func TestWindowsReleaseBuildsAreReproducible(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows release integration requires Windows and configured Git for Windows Bash")
@@ -285,7 +287,7 @@ func assertReleaseRefused(t *testing.T, checkout, diagnostic string) {
 	if err == nil || !strings.Contains(string(output), diagnostic) {
 		t.Fatalf("release error=%v output=%q; want refusal containing %q", err, output, diagnostic)
 	}
-	for _, name := range []string{linuxArtifact, windowsArtifact} {
+	for _, name := range releaseArtifacts {
 		if _, err := os.Stat(filepath.Join(outputDirectory, name)); !os.IsNotExist(err) {
 			t.Fatalf("refused release created artifact %s", name)
 		}
@@ -392,10 +394,10 @@ func buildRelease(t *testing.T, root, output string) {
 	}
 }
 
-// assertReleaseArtifactsEqual proves both Linux and Windows release outputs match the baseline byte for byte.
+// assertReleaseArtifactsEqual proves executables, checksums, and the NuGet command package match the baseline byte for byte.
 func assertReleaseArtifactsEqual(t *testing.T, baseline string, directories ...string) {
 	t.Helper()
-	for _, name := range []string{linuxArtifact, windowsArtifact} {
+	for _, name := range releaseArtifacts {
 		want, err := os.ReadFile(filepath.Join(baseline, name))
 		if err != nil {
 			t.Fatal(err)

@@ -9,6 +9,10 @@ import (
 )
 
 func validateWorkspace(path string) error {
+	return validateWorkspaceForHost(path, runtime.GOOS)
+}
+
+func validateWorkspaceForHost(path, hostOS string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("workspace %q: %w", path, err)
@@ -32,15 +36,19 @@ func validateWorkspace(path string) error {
 	if stateRoot == "" {
 		stateRoot = filepath.Join(home, ".local", "state")
 	}
-	if runtime.GOOS == "windows" {
+	if hostOS == "windows" {
 		stateRoot = os.Getenv("LOCALAPPDATA")
 		if stateRoot == "" {
 			return fmt.Errorf("LOCALAPPDATA is required to identify protected host state")
 		}
 	}
-	// Package launchers and temporary build inputs do not exist yet; their paths
-	// must join this set when those later command bodies are implemented.
-	for _, path := range []string{executable, filepath.Join(home, ".ssh"), filepath.Join(stateRoot, "sandboxed-agents")} {
+	protectedPaths := []string{executable, filepath.Join(home, ".ssh"), filepath.Join(stateRoot, "sandboxed-agents")}
+	if hostOS == "windows" {
+		protectedPaths = append(protectedPaths, filepath.Join(stateRoot, "Programs", "sandboxed-agents"))
+	}
+	// Other package launchers and temporary build inputs join this set when those
+	// later command bodies are implemented.
+	for _, path := range protectedPaths {
 		protected, err := resolvedPath(path)
 		if err != nil {
 			return fmt.Errorf("protected host path %q: %w", path, err)
