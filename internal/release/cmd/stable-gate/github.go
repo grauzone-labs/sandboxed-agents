@@ -72,6 +72,9 @@ func collectEvidence(repository, commit, hash string) (release.StableGateEvidenc
 	}
 	// Preserve a named reason when candidates exist but none validates. A
 	// missing preview stays nil so the evaluator gives its prerelease refusal.
+	if refusal == nil {
+		return evidence, release.EvaluateStableGate(evidence)
+	}
 	return evidence, refusal
 }
 
