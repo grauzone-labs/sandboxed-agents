@@ -18,29 +18,40 @@ jobs:
   gate:
     # Preview tags never publish to registries. The publication workflow in #36
     # must depend on this gate, including the asset hash comparison, succeeding.
-    if: "!contains(inputs.tag || github.ref_name, '-')"
+    # A reusable workflow inherits its caller's event; the declared input
+    # distinguishes calls even when the caller was triggered by a push.
+    if: github.event_name == 'push' || contains(toJSON(inputs), '"tag"')
     env:
-      STABLE_TAG: ${{ inputs.tag || github.ref_name }}
+      IS_REUSABLE_CALL: ${{ contains(toJSON(inputs), '"tag"') }}
+      STABLE_TAG: ${{ !contains(toJSON(inputs), '"tag"') && github.ref_name || inputs.tag }}
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Verify stable tag commit
+        id: tag
         shell: bash
         run: |
+          if [[ "$IS_REUSABLE_CALL" == false && "$GITHUB_EVENT_NAME" == push && "$STABLE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-preview\.[0-9]{8}\.[0-9]+$ ]]; then
+            echo 'preview=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           [[ "$STABLE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'stable release gate: invalid stable tag' >&2; exit 1; }
           tag_commit=$(git rev-parse --verify "refs/tags/${STABLE_TAG}^{commit}") || { echo 'stable release gate: stable tag does not resolve to a commit' >&2; exit 1; }
           [[ "$tag_commit" == "$GITHUB_SHA" ]] || { echo 'stable release gate: stable tag commit differs from workflow commit' >&2; exit 1; }
       - uses: actions/setup-go@v7
+        if: steps.tag.outputs.preview != 'true'
         with:
           go-version-file: go.mod
           cache: false
       - name: Build stable binaries
+        if: steps.tag.outputs.preview != 'true'
         shell: bash
         run: |
           bash scripts/release.sh "${STABLE_TAG#v}" "$RUNNER_TEMP/stable-release"
       - name: Require a validated preview on this commit
+        if: steps.tag.outputs.preview != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash

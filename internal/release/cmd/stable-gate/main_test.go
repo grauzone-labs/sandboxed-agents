@@ -142,7 +142,7 @@ func TestStableTagWorkflowRunsGate(t *testing.T) {
 			t.Fatalf("stable-release-gate.yml event mapping lacks %q", required)
 		}
 	}
-	for _, required := range []string{"tags: ['v*']", "!contains(inputs.tag || github.ref_name, '-')", "contents: read", "actions: read", "go run ./internal/release/cmd/stable-gate", "STABLE_TAG: ${{ inputs.tag || github.ref_name }}", "--tag \"$STABLE_TAG\"", "bash scripts/release.sh \"${STABLE_TAG#v}\"", "--commit \"$GITHUB_SHA\"", "--asset-hash \"$asset_hash\""} {
+	for _, required := range []string{"tags: ['v*']", `github.event_name == 'push' || contains(toJSON(inputs), '"tag"')`, "contents: read", "actions: read", "go run ./internal/release/cmd/stable-gate", `STABLE_TAG: ${{ !contains(toJSON(inputs), '"tag"') && github.ref_name || inputs.tag }}`, "--tag \"$STABLE_TAG\"", "bash scripts/release.sh \"${STABLE_TAG#v}\"", "--commit \"$GITHUB_SHA\"", "--asset-hash \"$asset_hash\""} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("stable workflow lacks %q", required)
 		}
@@ -323,4 +323,127 @@ func stableGateWorkflow(t *testing.T) string {
 		t.Fatalf("read stable-release-gate.yml: %v", err)
 	}
 	return string(data)
+}
+
+// TestStableGateCommandContinuesAfterTagLookupFailure proves a failed preview commit lookup cannot hide a later valid preview and remains named when none validates through the real command with fake GitHub evidence.
+func TestStableGateCommandContinuesAfterTagLookupFailure(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("GitHub adapter uses the Linux preview")
+	}
+	for _, scenario := range []string{"later validated candidate", "lookup error only", "later invalid candidate"} {
+		t.Run(scenario, func(t *testing.T) {
+			directory := githubFixture(t)
+			var previews []map[string]any
+			readJSON(t, directory, "releases.json", &previews)
+			unresolved := map[string]any{"tag_name": "v1.0.0-preview.20261012.2", "prerelease": true, "draft": false, "assets": []any{}}
+			if scenario == "lookup error only" {
+				previews = nil
+			}
+			if scenario == "later invalid candidate" {
+				previews[0]["assets"] = []any{}
+			}
+			// No commit response is registered for .2, so the real fake gh exits non-zero.
+			writeJSON(t, directory, "releases.json", append([]map[string]any{unresolved}, previews...))
+			output, err := runGitHubGate(t, directory)
+			if scenario == "later validated candidate" {
+				if err != nil || !strings.Contains(string(output), "gates passed") {
+					t.Fatalf("error=%v output=%s; want later validated candidate pass", err, output)
+				}
+			} else if err == nil || !strings.Contains(string(output), "prerelease tag v1.0.0-preview.20261012.2") || !strings.Contains(string(output), "lookup failed") {
+				t.Fatalf("error=%v output=%s; want named preview tag lookup refusal", err, output)
+			}
+		})
+	}
+}
+
+// TestStableTagWorkflowValidatesCalls proves invalid reusable inputs fail and only well-formed direct preview pushes skip gate steps through .github/workflows/stable-release-gate.yml's event policy and actual verification script.
+func TestStableTagWorkflowValidatesCalls(t *testing.T) {
+	text := stableGateWorkflow(t)
+	if !strings.Contains(text, `if: github.event_name == 'push' || contains(toJSON(inputs), '"tag"')`) {
+		t.Fatal("gate job must admit reusable calls independently of their input tag")
+	}
+	for _, required := range []string{
+		`IS_REUSABLE_CALL: ${{ contains(toJSON(inputs), '"tag"') }}`,
+		`STABLE_TAG: ${{ !contains(toJSON(inputs), '"tag"') && github.ref_name || inputs.tag }}`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("reusable invocation policy lacks %q", required)
+		}
+	}
+	if strings.Count(text, "if: steps.tag.outputs.preview != 'true'") != 3 {
+		t.Fatal("setup, build and gate steps must only skip classified direct previews")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("verification script runs on the Linux release runner")
+	}
+	_, step, found := strings.Cut(text, "      - name: Verify stable tag commit\n")
+	if !found {
+		t.Fatal("missing tag verification step")
+	}
+	step, _, _ = strings.Cut(step, "\n      - ")
+	_, script, found := strings.Cut(step, "        run: |\n")
+	if !found {
+		t.Fatal("missing verification script")
+	}
+	var lines []string
+	for _, line := range strings.Split(script, "\n") {
+		lines = append(lines, strings.TrimPrefix(line, "          "))
+	}
+	script = strings.Join(lines, "\n")
+	directory := t.TempDir()
+	workflowGit(t, directory, "init", "--quiet")
+	workflowGit(t, directory, "-c", "user.name=Workflow Test", "-c", "user.email=workflow@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "--quiet", "-m", "test(release): create workflow fixture")
+	commit := strings.TrimSpace(workflowGit(t, directory, "rev-parse", "HEAD"))
+	workflowGit(t, directory, "-c", "user.name=Workflow Test", "-c", "user.email=workflow@example.invalid", "-c", "tag.gpgsign=false", "tag", "-a", "v1.0.0", "-m", "workflow fixture")
+	for _, test := range []struct {
+		name, event, tag      string
+		pass, preview, called bool
+	}{
+		{"direct stable", "push", "v1.0.0", true, false, false},
+		{"direct preview", "push", "v1.0.0-preview.20261012.1", true, true, false},
+		{"direct invalid hyphen", "push", "v1.0.0-other", false, false, false},
+		{"direct malformed preview", "push", "v1.0.0-preview.bad.1", false, false, false},
+		{"called stable", "workflow_dispatch", "v1.0.0", true, false, true},
+		{"called preview on push", "push", "v1.0.0-preview.20261012.1", false, false, true},
+		{"called invalid hyphen", "workflow_dispatch", "v1.0.0-other", false, false, true},
+		{"called invalid plain", "push", "invalid", false, false, true},
+		{"called empty on stable ref", "push", "", false, false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			outputFile := filepath.Join(t.TempDir(), "output")
+			reusable := "false"
+			if test.called {
+				reusable = "true"
+			}
+			command := exec.Command("bash", "-c", script)
+			command.Dir = directory
+			command.Env = append(os.Environ(), "GITHUB_EVENT_NAME="+test.event, "STABLE_TAG="+test.tag, "GITHUB_SHA="+commit, "GITHUB_OUTPUT="+outputFile, "GITHUB_REF_NAME=v1.0.0", "IS_REUSABLE_CALL="+reusable)
+			output, err := command.CombinedOutput()
+			if test.pass && err != nil {
+				t.Fatalf("verification failed: %v\n%s", err, output)
+			}
+			if !test.pass && (err == nil || !strings.Contains(string(output), "stable release gate: invalid stable tag")) {
+				t.Fatalf("error=%v output=%s; want named invalid-tag refusal", err, output)
+			}
+			marker, readErr := os.ReadFile(outputFile)
+			if readErr != nil && !os.IsNotExist(readErr) {
+				t.Fatal(readErr)
+			}
+			if strings.Contains(string(marker), "preview=true") != test.preview {
+				t.Fatalf("preview marker=%q; want skip=%v", marker, test.preview)
+			}
+		})
+	}
+}
+
+func workflowGit(t *testing.T, directory string, args ...string) string {
+	t.Helper()
+	command := exec.Command("git", args...)
+	command.Dir = directory
+	command.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fixture git: %v\n%s", err, output)
+	}
+	return string(output)
 }
