@@ -97,7 +97,7 @@ func TestImageBuildUsesEmbeddedContextAndCleansUp(t *testing.T) {
 			t.Fatalf("recipe/context paths = %q", args)
 		}
 		fingerprint, err := os.ReadFile(filepath.Join(args[5], "nodesource-signing-key.fingerprint"))
-		if err != nil || string(fingerprint) != "6F71F525282841EEDAF851B42F59B5F99B1BE0B4\n" {
+		if err != nil || string(fingerprint) != expectedFingerprint {
 			t.Fatalf("build fingerprint = %q, error = %v", fingerprint, err)
 		}
 		// Every embedded file must reach the materialized context, not only the recipe's directory.
@@ -225,7 +225,7 @@ func TestImageBuildNormalizesFingerprintAndDerivesTags(t *testing.T) {
 	for _, source := range []fs.FS{image.Context(), os.DirFS(crlf)} {
 		tag, err := image.Build(context.Background(), source, image.BuildOptions{}, func(_ context.Context, args ...string) error {
 			fingerprint, err := os.ReadFile(filepath.Join(args[len(args)-1], "nodesource-signing-key.fingerprint"))
-			if err != nil || string(fingerprint) != "6F71F525282841EEDAF851B42F59B5F99B1BE0B4\n" {
+			if err != nil || string(fingerprint) != expectedFingerprint {
 				t.Fatalf("build fingerprint = %q, error = %v", fingerprint, err)
 			}
 			return nil
