@@ -33,20 +33,23 @@ func ExpectedVersion(t *testing.T, version string) string {
 // CopyCRLFContext copies image build context text with Windows line endings and preserves binary assets.
 func CopyCRLFContext(t *testing.T, source fs.FS, directory string) {
 	t.Helper()
-	context := os.DirFS(directory)
 	err := image.WriteContextAndVisit(source, directory, func(name string) error {
-		data, err := fs.ReadFile(context, name)
-		if err != nil {
-			return err
-		}
-		if image.IsBinary(name, data) {
-			return nil
-		}
-		data = ToCRLF(data)
-		file := filepath.Join(directory, filepath.FromSlash(name))
-		return os.WriteFile(file, data, 0600)
+		return RewriteFileToCRLF(directory, name)
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+// RewriteFileToCRLF rewrites one text fixture file with Windows line endings, preserving binary bytes.
+func RewriteFileToCRLF(directory, name string) error {
+	file := filepath.Join(directory, filepath.FromSlash(name))
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	if image.IsBinary(name, data) {
+		return nil
+	}
+	return os.WriteFile(file, ToCRLF(image.Normalize(name, data)), 0600)
 }

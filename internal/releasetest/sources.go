@@ -27,7 +27,7 @@ func CopyRepositorySources(t *testing.T, root, destination string) {
 			}
 			return nil
 		}
-		if !isReleaseSource(filepath.ToSlash(relative)) {
+		if !IsReleaseSource(filepath.ToSlash(relative)) {
 			return nil
 		}
 		data, err := os.ReadFile(name)
@@ -46,7 +46,7 @@ func CopyRepositorySources(t *testing.T, root, destination string) {
 	}
 }
 
-// isReleaseSource mirrors scripts/release.sh's module, Go commands, script and linker metadata inputs, plus checkout attributes.
-func isReleaseSource(name string) bool {
+// IsReleaseSource mirrors scripts/release.sh's module, Go commands, script and linker metadata inputs, plus checkout attributes.
+func IsReleaseSource(name string) bool {
 	return name == "go.mod" || name == ".gitattributes" || strings.HasSuffix(name, ".go") || name == "scripts/release.sh" || name == "scripts/version-symbol.txt"
 }

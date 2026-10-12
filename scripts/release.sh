@@ -11,7 +11,21 @@ output=$(cd -- "$2" && pwd)
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd -- "$root"
 
-if [[ $(git rev-parse --is-inside-work-tree 2>/dev/null || true) == true ]]; then
+inside_worktree=false
+if command -v git >/dev/null 2>&1; then
+    if ! inside_worktree=$(git rev-parse --is-inside-work-tree 2>/dev/null); then
+        if [[ -e "$root/.git" || -L "$root/.git" ]]; then
+            printf 'release cannot inspect its Git worktree\n' >&2
+            exit 1
+        fi
+        inside_worktree=false
+    fi
+elif [[ -e "$root/.git" || -L "$root/.git" ]]; then
+    printf 'release requires git to verify its worktree\n' >&2
+    exit 1
+fi
+
+if [[ $inside_worktree == true ]]; then
     tag="refs/tags/v$version"
     if ! tag_commit=$(git rev-parse --verify "$tag^{commit}" 2>/dev/null); then
         printf 'release requires tag %s at HEAD\n' "$tag" >&2
@@ -19,6 +33,11 @@ if [[ $(git rev-parse --is-inside-work-tree 2>/dev/null || true) == true ]]; the
     fi
     if [[ $tag_commit != "$(git rev-parse HEAD)" ]]; then
         printf 'release tag %s does not point to HEAD\n' "$tag" >&2
+        exit 1
+    fi
+    worktree_status=$(git status --porcelain --untracked-files=all)
+    if [[ -n $worktree_status ]]; then
+        printf 'release requires a clean Git worktree (tracked and untracked files)\n' >&2
         exit 1
     fi
 fi
