@@ -80,8 +80,15 @@ jobs:
           }
           git tag "v$env:RELEASE_VERSION" HEAD
           if ($LASTEXITCODE -ne 0) { throw 'Local CI tag failed' }
+      - name: Run CLI tests
+        shell: pwsh
+        run: |
+          go test ./internal/cli -count=1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows CLI tests failed' }
       - name: Run image and release tests with Git for Windows Bash
         shell: pwsh
+        env:
+          SANDBOXED_AGENTS_TEST_HKCU: '1'
         run: |
           go test ./image ./scripts -count=1 -v
           if ($LASTEXITCODE -ne 0) { throw 'Windows image or release tests failed' }

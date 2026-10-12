@@ -46,7 +46,7 @@ func CopyRepositorySources(t *testing.T, root, destination string) {
 	}
 }
 
-// IsReleaseSource mirrors scripts/release.sh's module, workspace, Go commands, script and linker metadata inputs, plus checkout attributes.
+// IsReleaseSource mirrors scripts/release.sh's module, workspace, Go commands, script, linker metadata, and NuGet inputs, plus checkout attributes.
 func IsReleaseSource(name string) bool {
-	return name == "go.mod" || name == "go.work" || name == ".gitattributes" || strings.HasSuffix(name, ".go") || name == "scripts/release.sh" || name == "scripts/version-symbol.txt"
+	return name == "go.mod" || name == "go.work" || name == ".gitattributes" || strings.HasSuffix(name, ".go") || name == "scripts/release.sh" || name == "scripts/version-symbol.txt" || name == "packages/nuget/SandboxedAgents.nuspec" || strings.HasPrefix(name, "packages/nuget/tools/")
 }

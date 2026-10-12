@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>SandboxedAgents</id>
+    <version>$version$</version>
+    <authors>grauzone</authors>
+    <projectUrl>https://github.com/grauzone-labs/sandboxed-agents</projectUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>The sandboxed-agents Windows command. Extract the package and run tools/install-command.ps1 with PowerShell 7 to install for the current user.</description>
+    <tags>sandboxed-agents command cli</tags>
+    <developmentDependency>true</developmentDependency>
+    <repository type="git" url="https://github.com/grauzone-labs/sandboxed-agents" />
+  </metadata>
+</package>

@@ -1,0 +1,88 @@
+package cli
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+// TestWorkspaceRejectsWindowsDefaultInstallDirectory proves validateWorkspaceForHost and public Parse reject the default per-user Windows install directory and overlapping paths while allowing an unrelated sibling, even when the running executable is elsewhere.
+func TestWorkspaceRejectsWindowsDefaultInstallDirectory(t *testing.T) {
+	localAppData := t.TempDir()
+	t.Setenv("LOCALAPPDATA", localAppData)
+	programs := filepath.Join(localAppData, "Programs")
+	install := filepath.Join(programs, "sandboxed-agents")
+	descendant := filepath.Join(install, "workspace")
+	sibling := filepath.Join(programs, "project")
+	for _, directory := range []string{descendant, sibling} {
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, fixture := range []struct {
+		name, path string
+		rejected   bool
+	}{
+		{"directory", install, true},
+		{"ancestor", programs, true},
+		{"descendant", descendant, true},
+		{"sibling", sibling, false},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			err := validateWorkspaceForHost(fixture.path, "windows")
+			if fixture.rejected {
+				if err == nil || !strings.Contains(err.Error(), "workspace overlaps protected host path") {
+					t.Fatalf("workspace %s: error=%v; want protected host path refusal", fixture.path, err)
+				}
+			} else if err != nil {
+				t.Fatalf("unrelated workspace %s: %v", fixture.path, err)
+			}
+		})
+	}
+	t.Run("alias", func(t *testing.T) {
+		alias := filepath.Join(t.TempDir(), "install-alias")
+		if err := os.Symlink(install, alias); err != nil {
+			t.Skipf("directory symlink unavailable: %v", err)
+		}
+		if err := validateWorkspaceForHost(alias, "windows"); err == nil || !strings.Contains(err.Error(), "workspace overlaps protected host path") {
+			t.Fatalf("aliased install directory: error=%v; want protected host path refusal", err)
+		}
+	})
+	t.Run("not installed", func(t *testing.T) {
+		localAppData := t.TempDir()
+		t.Setenv("LOCALAPPDATA", localAppData)
+		programs := filepath.Join(localAppData, "Programs")
+		if err := os.Mkdir(programs, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateWorkspaceForHost(programs, "windows"); err == nil || !strings.Contains(err.Error(), "workspace overlaps protected host path") {
+			t.Fatalf("ancestor of not-yet-created install directory: error=%v; want protected host path refusal", err)
+		}
+	})
+	t.Run("running executable", func(t *testing.T) {
+		executable, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := validateWorkspaceForHost(filepath.Dir(executable), "windows"); err == nil || !strings.Contains(err.Error(), "workspace overlaps protected host path") {
+			t.Fatalf("directory of running executable: error=%v; want protected host path refusal", err)
+		}
+	})
+	t.Run("Linux directory", func(t *testing.T) {
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
+		if err := validateWorkspaceForHost(install, "linux"); err != nil {
+			t.Fatalf("Windows-only default directory on Linux: %v", err)
+		}
+	})
+	t.Run("Windows Parse", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			t.Skip("public Parse Windows path selection requires Windows")
+		}
+		_, err := Parse([]string{"up", "demo", install, "--with", "none"}, "default")
+		if err == nil || !strings.Contains(err.Error(), "workspace overlaps protected host path") {
+			t.Fatalf("Windows Parse install directory: error=%v; want protected host path refusal", err)
+		}
+	})
+}
