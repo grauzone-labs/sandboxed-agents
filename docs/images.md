@@ -75,7 +75,23 @@ To update the expected fingerprint, the maintainer takes these steps:
 7. Build the base image with rootless Podman, `podman build -f image/context/base/Containerfile image/context/base`, and check that apt accepts the repository.
 8. Commit.
 
-Changing the fingerprint file changes the asset hash. Image tags belong to the Podman image build pipeline in issue #12.
+Changing the fingerprint file changes the asset hash, so the base image gets a new tag (see [Build and tags](#build-and-tags)).
+
+## Build and tags
+
+`image/build.go` provides the image build API delivered by issue #12. It is not yet wired into the CLI; issue #18 owns the `build` command integration, toolchain recipes, and rebuild policy.
+
+`image.Build` takes a context, an optional source file system (the embedded context when nil), and a Podman runner that the caller binds to the target its preflight checked. It does the following:
+
+1. It materializes the complete LF-normalized context in a temporary directory.
+2. It hashes the files it wrote, not the source, so the tag matches what Podman receives even if the source changes during the build.
+3. It checks that `base/Containerfile` is a regular file.
+4. It runs `podman build` with `base/Containerfile` as the file, the base tag, and `base` in the temporary directory as the build context.
+5. It removes the temporary directory whether the build succeeds or fails.
+
+`Build` returns the tag only when both the build and the cleanup succeed. A cleanup failure is joined to any build error and clears the tag. Rebuild flags and image labels belong to the caller's runner.
+
+`image.Tag` derives `localhost/sandboxed-agents:SET-HASH` from the asset hash and a toolchain set. `SET` is the canonical set: the toolchain names sorted, deduplicated, and joined with `-`. The base image has no toolchains and uses `SET=none`, so `Build` produces `localhost/sandboxed-agents:none-HASH`. `Tag` does not validate names; the caller checks the set against the toolchain catalog first. The tag does not include the controller group, so groups share images with the same asset hash and set.
 
 ## Tests and limits
 
@@ -83,7 +99,8 @@ The offline test is run with `bash image/test/nodesource/test-check-nodesource-k
 
 Several things are not covered here:
 
-- The Podman image build pipeline, image tags, cleanup, and rebuilding (issue #12). The embedded context and its asset hash are available for that work; release preprocessing does not build a Podman image.
+- The `build` command, toolchain recipes, and the rebuild policy (issue #18). `image.Build` and `image.Tag` exist but no CLI command calls them yet.
+- Podman images in release preprocessing: `scripts/release.sh` does not build one.
 - The Microsoft signing key.
 - Digests of the pulled Debian image or of built images.
 - The live build against the real NodeSource key (issue #18 and the live suite).
