@@ -10,9 +10,10 @@ import (
 	"testing"
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
+	"github.com/grauzone-labs/sandboxed-agents/internal/release"
 )
 
-// ExpectedVersion specifies the version output and asset hash independently of the production formatter.
+// ExpectedVersion specifies the output format independently of the production formatter, using the shared image asset hash.
 func ExpectedVersion(t *testing.T, version string) string {
 	t.Helper()
 	assetHash, err := image.Hash(image.Context())
@@ -25,14 +26,8 @@ func ExpectedVersion(t *testing.T, version string) string {
 // CopyCRLFContext copies image build context text with Windows line endings and preserves binary assets.
 func CopyCRLFContext(t *testing.T, source fs.FS, directory string) {
 	t.Helper()
-	if err := image.WriteContext(source, directory); err != nil {
-		t.Fatal(err)
-	}
 	context := os.DirFS(directory)
-	err := fs.WalkDir(context, ".", func(name string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
-		}
+	err := release.WriteContextAndVisit(source, directory, func(name string) error {
 		data, err := fs.ReadFile(context, name)
 		if err != nil {
 			return err

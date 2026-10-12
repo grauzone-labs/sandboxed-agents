@@ -6,6 +6,8 @@ This document describes the base image recipe in `image/context/base/` and how i
 
 Run `bash scripts/release.sh VERSION OUTPUT_DIRECTORY` with the Go version from `go.mod` on `PATH` to build static Linux and Windows AMD64 executables. The script runs `image/cmd/overlay` to prepare normalized files in a temporary directory and uses a Go build overlay, so the release executable embeds LF bytes even from a CRLF checkout. The checkout stays untouched and the temporary files are removed. A plain `go build` exposes the same normalized context and asset hash at runtime; use the release script for normalization before embedding and reproducible binary bytes. The script produces executables only; package distribution is not implemented.
 
+`.gitattributes` keeps `scripts/*.sh` and `scripts/version-symbol.txt` checkouts at LF.
+
 Release limitations:
 
 - Verification runs the Linux executable's `version` command. The Windows executable's `version` command has not been executed here; Windows checks compare binary bytes and inspect the PE AMD64 machine field.

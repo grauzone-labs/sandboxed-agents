@@ -1,4 +1,4 @@
-// Package release supplies metadata shared by release build tooling.
+// Package release supplies shared build metadata and normalized context preparation.
 package release
 
 import (
