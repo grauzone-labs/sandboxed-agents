@@ -32,6 +32,18 @@ Every toolchain's packages are available for Debian 13. This choice rests on tha
 
 The contents of the base image are set by Feature #3. This recipe installs Node.js only, plus the packages it needs to fetch and check the key: `ca-certificates`, `curl`, and `gnupg`.
 
+## Build pipeline
+
+The public `image.Build` API writes the complete normalized context into a fresh system temporary directory, hashes the written files, invokes a supplied Podman runner, and removes the directory before returning. It removes it after a successful build, a failed build, cancellation, and a failure while preparing the context. Build and cleanup errors are returned; a failed operation returns no image tag. A nil asset source uses the embedded `image.Context`.
+
+`BuildOptions.RecipeDir` selects a directory within the context and defaults to `base`. The build passes that directory and its `Containerfile` to `podman build`, along with the image tag. The caller selects a recipe for the requested toolchain set and supplies a runner bound to the target checked by its preflight. The runner also owns build policy flags and labels. The API does not select a machine or run a preflight itself.
+
+`image.Tag` names images as `localhost/sandboxed-agents:SET-HASH`, using the full SHA256 asset hash. `SET` is `none` for the base image or the sorted, distinct toolchain names joined with `-`, for example `dotnet-playwright`. Its input must have passed catalog validation. Toolchain order and duplicates do not change the tag, and controller groups do not enter it. Changing any embedded asset, including the fingerprint file, changes the hash and tag. LF and CRLF assets produce the same tags.
+
+This pipeline is available for the command implementations. The CLI's `build` command still reports that it is not implemented: issue #13 supplies its prerequisite preflight and Podman target binding, and #18 supplies its rebuild policy, labels, and toolchain recipes. Tag derivation does not enable toolchains in the delivered catalog.
+
+Offline tests exercise the API through a supplied process runner and through fixture executables compiled with LF and CRLF embedded assets against fake Podman. They cover identical hashes and tags, the normalized fingerprint in the temporary context, changed fingerprint tags, and cleanup on success, failure, and cancellation. They do not build an image with real Podman.
+
 ### NodeSource signing key check
 
 The recipe in `image/context/base/Containerfile` downloads the key from https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key into a temporary file. It then runs `check-nodesource-key.sh`, which compares the key in that file with the expected fingerprint in `nodesource-signing-key.fingerprint`. Only after the check passes does the recipe dearmor the key into `/etc/apt/keyrings/nodesource.gpg` and write the apt source line with `signed-by` pointing at that file.
@@ -75,7 +87,7 @@ To update the expected fingerprint, the maintainer takes these steps:
 7. Build the base image with rootless Podman, `podman build -f image/context/base/Containerfile image/context/base`, and check that apt accepts the repository.
 8. Commit.
 
-Changing the fingerprint file changes the asset hash. Image tags belong to the Podman image build pipeline in issue #12.
+Changing the fingerprint file changes the asset hash and the image tags derived by the build pipeline.
 
 ## Tests and limits
 
@@ -83,7 +95,7 @@ The offline test is run with `bash image/test/nodesource/test-check-nodesource-k
 
 Several things are not covered here:
 
-- The Podman image build pipeline, image tags, cleanup, and rebuilding (issue #12). The embedded context and its asset hash are available for that work; release preprocessing does not build a Podman image.
+- CLI build execution, rebuild policy, image labels, and toolchain recipes (issues #13 and #18). The image build API supplies tags and temporary context cleanup; release preprocessing does not build a Podman image.
 - The Microsoft signing key.
 - Digests of the pulled Debian image or of built images.
 - The live build against the real NodeSource key (issue #18 and the live suite).

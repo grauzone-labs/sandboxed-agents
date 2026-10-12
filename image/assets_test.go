@@ -2,6 +2,7 @@ package image_test
 
 import (
 	"bytes"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +11,35 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/image"
 	"github.com/grauzone-labs/sandboxed-agents/internal/releasetest"
 )
+
+// TestEmbeddedFingerprintIsNormalized proves the pinned fingerprint is embedded and written with LF from LF and CRLF sources through the public context and writing APIs.
+func TestEmbeddedFingerprintIsNormalized(t *testing.T) {
+	const name = "base/nodesource-signing-key.fingerprint"
+	const want = "6F71F525282841EEDAF851B42F59B5F99B1BE0B4\n"
+	embedded, err := fs.ReadFile(image.Context(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(embedded) != want {
+		t.Fatalf("embedded fingerprint = %q; want %q", embedded, want)
+	}
+	crlf := t.TempDir()
+	releasetest.CopyCRLFContext(t, image.Context(), crlf)
+	raw, err := os.ReadFile(filepath.Join(crlf, filepath.FromSlash(name)))
+	if err != nil || !bytes.Contains(raw, []byte("\r\n")) {
+		t.Fatalf("CRLF fixture fingerprint = %q, error = %v", raw, err)
+	}
+	for _, source := range []fs.FS{image.Context(), os.DirFS(crlf)} {
+		directory := t.TempDir()
+		if err := image.WriteContext(source, directory); err != nil {
+			t.Fatal(err)
+		}
+		written, err := os.ReadFile(filepath.Join(directory, filepath.FromSlash(name)))
+		if err != nil || string(written) != want {
+			t.Fatalf("written fingerprint = %q, error = %v; want %q", written, err, want)
+		}
+	}
+}
 
 // TestAssetHashIgnoresWindowsLineEndings proves that a CRLF checkout has the LF asset hash through the public image hash API.
 func TestAssetHashIgnoresWindowsLineEndings(t *testing.T) {
