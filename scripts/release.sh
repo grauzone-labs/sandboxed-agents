@@ -11,6 +11,18 @@ output=$(cd -- "$2" && pwd)
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd -- "$root"
 
+if [[ $(git rev-parse --is-inside-work-tree 2>/dev/null || true) == true ]]; then
+    tag="refs/tags/v$version"
+    if ! tag_commit=$(git rev-parse --verify "$tag^{commit}" 2>/dev/null); then
+        printf 'release requires tag %s at HEAD\n' "$tag" >&2
+        exit 1
+    fi
+    if [[ $tag_commit != "$(git rev-parse HEAD)" ]]; then
+        printf 'release tag %s does not point to HEAD\n' "$tag" >&2
+        exit 1
+    fi
+fi
+
 export GOTOOLCHAIN=local CGO_ENABLED=0 GOFLAGS= GOEXPERIMENT= GOAMD64=v1
 required_go=$(awk '$1 == "go" { sub(/\r$/, "", $2); print "go" $2 }' go.mod)
 if [[ $(go env GOVERSION) != "$required_go" ]]; then

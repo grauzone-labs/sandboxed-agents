@@ -9,9 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"path"
-	"path/filepath"
 	"sort"
 )
 
@@ -26,6 +24,14 @@ func IsBinary(name string, data []byte) bool {
 	return path.Ext(name) == BinarySuffix || bytes.Contains(data, []byte{0})
 }
 
+// Normalize converts text asset CRLF line endings to LF and preserves binary bytes.
+func Normalize(name string, data []byte) []byte {
+	if IsBinary(name, data) {
+		return data
+	}
+	return bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
+}
+
 // Context returns a read-only, LF-normalized embedded image build context.
 // Paths are relative to context; BinarySuffix files and NUL-containing files retain their exact bytes.
 func Context() fs.FS {
@@ -36,17 +42,6 @@ func Context() fs.FS {
 	return normalizedFS{context}
 }
 
-// WriteContext writes an LF-normalized image build context into directory, preserving binary asset bytes.
-func WriteContext(source fs.FS, directory string) error {
-	return walkAssets(source, func(path string, data []byte) error {
-		name := filepath.Join(directory, filepath.FromSlash(path))
-		if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
-			return err
-		}
-		return os.WriteFile(name, data, 0600)
-	})
-}
-
 // Hash returns the SHA256 asset hash of a normalized image build context.
 // It hashes "sandboxed-agents:image-context:v1\n" followed by files in lexical path order. Each file
 // contributes its uint64 big-endian path length, path bytes, uint64 big-endian
@@ -54,7 +49,7 @@ func WriteContext(source fs.FS, directory string) error {
 func Hash(context fs.FS) (string, error) {
 	hash := sha256.New()
 	hash.Write([]byte("sandboxed-agents:image-context:v1\n"))
-	err := walkAssets(context, func(path string, data []byte) error {
+	_, err := walkAssets(context, func(path string, data []byte) error {
 		binary.Write(hash, binary.BigEndian, uint64(len(path)))
 		hash.Write([]byte(path))
 		binary.Write(hash, binary.BigEndian, uint64(len(data)))
@@ -68,7 +63,7 @@ func Hash(context fs.FS) (string, error) {
 }
 
 // walkAssets owns normalization, regular-file validation, global path ordering and reads.
-func walkAssets(source fs.FS, visit func(string, []byte) error) error {
+func walkAssets(source fs.FS, visit func(string, []byte) error) ([]string, error) {
 	if _, normalized := source.(normalizedFS); !normalized {
 		source = normalizedFS{source}
 	}
@@ -84,19 +79,19 @@ func walkAssets(source fs.FS, visit func(string, []byte) error) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	sort.Strings(paths)
 	for _, name := range paths {
 		data, err := fs.ReadFile(source, name)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if err := visit(name, data); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return paths, nil
 }
 
 // normalizedFS keeps normalization in one place for the asset hash and release preprocessing.
@@ -123,9 +118,7 @@ func (context normalizedFS) Open(name string) (fs.File, error) {
 	if closeErr != nil {
 		return nil, closeErr
 	}
-	if !IsBinary(name, data) {
-		data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
-	}
+	data = Normalize(name, data)
 	return &normalizedFile{Reader: bytes.NewReader(data), info: normalizedInfo{FileInfo: info, size: int64(len(data))}}, nil
 }
 

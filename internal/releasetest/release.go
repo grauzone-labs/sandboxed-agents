@@ -13,7 +13,7 @@ import (
 )
 
 // ReleaseVersion is the injected version used by release tests.
-const ReleaseVersion = "v0.0.30-test"
+const ReleaseVersion = "0.0.30-test"
 
 // ToCRLF converts LF-normalized text to Windows line endings.
 func ToCRLF(data []byte) []byte {
