@@ -13,18 +13,18 @@ import (
 // StableGateEvidence contains the observations used to decide whether a stable
 // release may be published. Records are keyed by their prerelease asset names.
 type StableGateEvidence struct {
-	Commit    string           `json:"commit"`
-	Preview   *PreviewEvidence `json:"preview"`
-	CICommit  string           `json:"ci_commit"`
-	CIGreen   bool             `json:"ci_green"`
-	AssetHash string           `json:"asset_hash"`
+	Commit    string
+	Preview   *PreviewEvidence
+	CICommit  string
+	CIGreen   bool
+	AssetHash string
 }
 
 // PreviewEvidence describes a published prerelease and its validation records.
 type PreviewEvidence struct {
-	Commit    string            `json:"commit"`
-	Records   map[string][]byte `json:"records"`
-	AssetHash string            `json:"asset_hash"`
+	Commit    string
+	Records   map[string][]byte
+	AssetHash string
 }
 
 // ValidationRecordFilenames returns the exact prerelease asset names required

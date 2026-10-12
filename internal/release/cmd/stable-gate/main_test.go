@@ -115,7 +115,7 @@ func TestStableGateCommandRefusesGitHubEvidenceFailures(t *testing.T) {
 	}
 }
 
-// TestStableTagWorkflowRunsGate proves stable tags run the gate in a read-only workflow, providing no publication path before its success.
+// TestStableTagWorkflowRunsGate proves workflow calls and v* tag pushes run only the read-only gate through .github/workflows/stable-release-gate.yml's trigger and job mappings.
 func TestStableTagWorkflowRunsGate(t *testing.T) {
 	data, err := os.ReadFile("../../../../.github/workflows/stable-release-gate.yml")
 	if os.IsNotExist(err) {
@@ -125,6 +125,30 @@ func TestStableTagWorkflowRunsGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
+	// Inspect only the root event mapping: an unrelated workflow_call string
+	// in a comment or job must not make the reusable-workflow check pass.
+	_, afterOn, found := strings.Cut(text, "'on':\n")
+	if !found {
+		t.Fatal("stable-release-gate.yml has no event mapping")
+	}
+	var eventLines []string
+	for _, line := range strings.Split(afterOn, "\n") {
+		if line != "" && !strings.HasPrefix(line, " ") {
+			break
+		}
+		eventLines = append(eventLines, line)
+	}
+	for _, required := range []string{"  workflow_call:", "  push:", "    tags: ['v*']"} {
+		found := false
+		for _, line := range eventLines {
+			if line == required {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("stable-release-gate.yml event mapping lacks %q", required)
+		}
+	}
 	for _, required := range []string{"tags: ['v*']", "!contains(github.ref_name, '-')", "contents: read", "actions: read", "go run ./internal/release/cmd/stable-gate", "--commit \"$GITHUB_SHA\"", "--asset-hash \"$asset_hash\""} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("stable workflow lacks %q", required)
