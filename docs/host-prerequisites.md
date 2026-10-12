@@ -25,7 +25,7 @@ Every other Linux interface that the executable uses is available at 4.4.0 or be
 
 ## Windows 11 x64
 
-The supported floor is Podman client 4.7.0 or newer and Podman machine 4.7.0 or newer, with a running rootless WSL2 machine. Epic #1 sets this floor as the supported minimum. The confirmation below shows that 4.7.0 is the lowest version that supports the interfaces the executable uses.
+The supported floor is Podman client 4.7.0 or newer and Podman machine 4.7.0 or newer, with a running rootless WSL2 machine. Epic #1 sets this floor as the supported minimum. The confirmation below shows that 4.7.0 is the lowest version that supports the confirmed interfaces the executable uses.
 
 The following Podman interfaces were confirmed for Windows from versioned sources:
 
