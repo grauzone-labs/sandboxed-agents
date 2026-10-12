@@ -90,6 +90,9 @@ func collectEvidence(repository, tag, commit, hash string) (release.StableGateEv
 	// Preserve a named reason when candidates exist but none validates. A
 	// missing preview stays nil so the evaluator gives its prerelease refusal.
 	if lookupRefusal != nil {
+		if refusal != nil {
+			return evidence, fmt.Errorf("%w; %v", refusal, lookupRefusal)
+		}
 		return evidence, lookupRefusal
 	}
 	if refusal == nil {

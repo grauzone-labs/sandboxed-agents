@@ -325,7 +325,7 @@ func stableGateWorkflow(t *testing.T) string {
 	return string(data)
 }
 
-// TestStableGateCommandContinuesAfterTagLookupFailure proves a failed preview commit lookup cannot hide a later valid preview and remains named when none validates through the real command with fake GitHub evidence.
+// TestStableGateCommandContinuesAfterTagLookupFailure proves a failed preview lookup yields to valid candidates and follows an invalid candidate's primary refusal through the real command with fake GitHub evidence.
 func TestStableGateCommandContinuesAfterTagLookupFailure(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("GitHub adapter uses the Linux preview")
@@ -351,6 +351,13 @@ func TestStableGateCommandContinuesAfterTagLookupFailure(t *testing.T) {
 				}
 			} else if err == nil || !strings.Contains(string(output), "prerelease tag v1.0.0-preview.20261012.2") || !strings.Contains(string(output), "lookup failed") {
 				t.Fatalf("error=%v output=%s; want named preview tag lookup refusal", err, output)
+			}
+			if scenario == "later invalid candidate" {
+				candidate := strings.Index(string(output), "live-suite-linux.json: validation file missing from prerelease")
+				lookup := strings.Index(string(output), "prerelease tag v1.0.0-preview.20261012.2")
+				if candidate < 0 || lookup <= candidate {
+					t.Fatalf("output=%s; want candidate validation refusal first, followed by named lookup failure", output)
+				}
 			}
 		})
 	}
