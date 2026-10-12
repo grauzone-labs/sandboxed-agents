@@ -19,6 +19,8 @@ var executable string
 var fakeExecutable string
 var releaseExecutable string
 
+const releaseVersion = "v0.0.30-test"
+
 // nestedGuardEnv carries the PID of the process that started the nested run.
 const nestedGuardEnv = "TEST_OFFLINE_GUARD_NESTED"
 
@@ -49,7 +51,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	releaseBuild := exec.Command("go", "build", "-ldflags", "-X "+versionSymbol+"=v0.0.30-test", "-o", releaseExecutable, ".")
+	releaseBuild := exec.Command("go", "build", "-ldflags", "-X "+versionSymbol+"="+releaseVersion, "-o", releaseExecutable, ".")
 	if output, err := releaseBuild.CombinedOutput(); err != nil {
 		panic(string(output) + err.Error())
 	}
@@ -69,7 +71,7 @@ func TestVersionReportsInjectedRelease(t *testing.T) {
 	command := exec.Command(releaseExecutable, "version")
 	command.Env = fakes.Env(os.Environ())
 	output, err := command.CombinedOutput()
-	want := releasetest.ExpectedVersion(t, "v0.0.30-test")
+	want := releasetest.ExpectedVersion(t, releaseVersion)
 	if err != nil || string(output) != want {
 		t.Fatalf("version: error=%v output=%q; want %q", err, output, want)
 	}

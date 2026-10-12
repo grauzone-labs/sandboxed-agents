@@ -1,3 +1,5 @@
 image/context/** text eol=lf
 image/test/** text eol=lf
 image/context/**/*.bin binary
+scripts/*.sh text eol=lf
+scripts/version-symbol.txt text eol=lf
