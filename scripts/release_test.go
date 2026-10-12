@@ -54,21 +54,7 @@ func assertReproducibleRelease(t *testing.T, root string) {
 	}
 	crlfArtifacts := t.TempDir()
 	buildRelease(t, crlfCheckout, crlfArtifacts)
-	for _, name := range []string{linuxArtifact, windowsArtifact} {
-		want, err := os.ReadFile(filepath.Join(first, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, dir := range []string{second, crlfArtifacts} {
-			got, err := os.ReadFile(filepath.Join(dir, name))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(got, want) {
-				t.Fatalf("%s differs between release outputs %s and %s", name, first, dir)
-			}
-		}
-	}
+	assertReleaseArtifactsEqual(t, first, second, crlfArtifacts)
 	windows, err := pe.Open(filepath.Join(first, windowsArtifact))
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +137,6 @@ func TestReleaseIsolatesWorkspaceConfiguration(t *testing.T) {
 		tagReleaseRepository(t, checkout)
 		baseline, isolated := t.TempDir(), t.TempDir()
 		command := releaseCommand(t, checkout, baseline)
-		setReleaseTestDirectoryAndEnvironment(command, checkout)
 		command.Env = append(command.Env, "GOWORK=off", "GOENV=off")
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("baseline release: %v\n%s", err, output)
@@ -161,7 +146,6 @@ func TestReleaseIsolatesWorkspaceConfiguration(t *testing.T) {
 			t.Fatal(err)
 		}
 		command = releaseCommand(t, checkout, isolated)
-		setReleaseTestDirectoryAndEnvironment(command, checkout)
 		callerEnvironment := command.Env
 		command.Env = nil
 		for _, entry := range callerEnvironment {
@@ -173,20 +157,26 @@ func TestReleaseIsolatesWorkspaceConfiguration(t *testing.T) {
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("caller-isolated release: %v\n%s", err, output)
 		}
-		for _, name := range []string{linuxArtifact, windowsArtifact} {
-			want, err := os.ReadFile(filepath.Join(baseline, name))
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := os.ReadFile(filepath.Join(isolated, name))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(got, want) {
-				t.Fatalf("%s differs with caller workspace/configuration settings", name)
-			}
-		}
+		assertReleaseArtifactsEqual(t, baseline, isolated)
 	})
+}
+
+// TestReleaseIsolatesFIPSConfiguration proves caller FIPS settings cannot alter either executable's bytes through the actual release script for the same clean tagged commit.
+func TestReleaseIsolatesFIPSConfiguration(t *testing.T) {
+	checkout := createReleaseRepository(t, releaseRepositoryOrSkip(t))
+	tagReleaseRepository(t, checkout)
+	baseline, isolated := t.TempDir(), t.TempDir()
+	command := releaseCommand(t, checkout, baseline)
+	command.Env = append(command.Env, "GOFIPS140=off")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("baseline release: %v\n%s", err, output)
+	}
+	command = releaseCommand(t, checkout, isolated)
+	command.Env = append(command.Env, "GOFIPS140=v1.0.0")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("caller FIPS release: %v\n%s", err, output)
+	}
+	assertReleaseArtifactsEqual(t, baseline, isolated)
 }
 
 func writeIgnoredFile(t *testing.T, checkout, relative string, data []byte) {
@@ -291,7 +281,6 @@ func assertReleaseRefused(t *testing.T, checkout, diagnostic string) {
 	t.Helper()
 	outputDirectory := t.TempDir()
 	command := releaseCommand(t, checkout, outputDirectory)
-	setReleaseTestDirectoryAndEnvironment(command, checkout)
 	output, err := command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), diagnostic) {
 		t.Fatalf("release error=%v output=%q; want refusal containing %q", err, output, diagnostic)
@@ -387,17 +376,39 @@ func releaseBash(t *testing.T) string {
 	return configured
 }
 
+// releaseCommand creates the actual release script command with its repository directory and offline test environment.
 func releaseCommand(t *testing.T, root, output string) *exec.Cmd {
 	t.Helper()
-	return exec.Command(releaseBash(t), filepath.ToSlash(filepath.Join(root, "scripts/release.sh")), releasetest.ReleaseVersion, filepath.ToSlash(output))
+	command := exec.Command(releaseBash(t), filepath.ToSlash(filepath.Join(root, "scripts/release.sh")), releasetest.ReleaseVersion, filepath.ToSlash(output))
+	setReleaseTestDirectoryAndEnvironment(command, root)
+	return command
 }
 
 func buildRelease(t *testing.T, root, output string) {
 	t.Helper()
 	command := releaseCommand(t, root, output)
-	setReleaseTestDirectoryAndEnvironment(command, root)
 	if result, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("release build: %v\n%s", err, result)
+	}
+}
+
+// assertReleaseArtifactsEqual proves both Linux and Windows release outputs match the baseline byte for byte.
+func assertReleaseArtifactsEqual(t *testing.T, baseline string, directories ...string) {
+	t.Helper()
+	for _, name := range []string{linuxArtifact, windowsArtifact} {
+		want, err := os.ReadFile(filepath.Join(baseline, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, directory := range directories {
+			got, err := os.ReadFile(filepath.Join(directory, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Fatalf("%s differs between release outputs %s and %s", name, baseline, directory)
+			}
+		}
 	}
 }
 

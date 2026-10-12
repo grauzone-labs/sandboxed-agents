@@ -53,7 +53,7 @@ if [[ $inside_worktree == true ]]; then
     fi
 fi
 
-export GOTOOLCHAIN=local CGO_ENABLED=0 GOFLAGS= GOEXPERIMENT= GOAMD64=v1 GOWORK=off GOENV=off
+export GOTOOLCHAIN=local CGO_ENABLED=0 GOFLAGS= GOEXPERIMENT= GOAMD64=v1 GOWORK=off GOENV=off GOFIPS140=off
 required_go=$(awk '$1 == "go" { sub(/\r$/, "", $2); print "go" $2 }' go.mod)
 if [[ $(go env GOVERSION) != "$required_go" ]]; then
     printf 'release requires %s on PATH\n' "$required_go" >&2
