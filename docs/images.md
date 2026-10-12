@@ -8,16 +8,16 @@ Run `bash scripts/release.sh VERSION OUTPUT_DIRECTORY` with the Go version from 
 
 `.gitattributes` keeps `go.mod`, `scripts/*.sh`, and `scripts/version-symbol.txt` checkouts at LF.
 
-Inside a Git worktree, `VERSION` requires the literal tag `vVERSION` to point at `HEAD`; annotated tags are peeled to their commit. For example, version `1.2.3` requires `v1.2.3`. Missing tags or tags on another commit stop the release before building. Source directories outside Git remain buildable.
+Inside a Git worktree, `VERSION` requires the literal tag `vVERSION` to point at `HEAD`; annotated tags are peeled to their commit. For example, version `1.2.3` requires `v1.2.3`. The worktree must also be clean, including tracked edits and untracked files. Missing or mismatched tags and dirty worktrees stop the release before building. If the source root has a `.git` entry, Git must be available to verify it. Source directories outside Git remain buildable.
 
 `go test ./scripts -count=1 -v` compares builds of the same tagged temporary commit with LF and CRLF assets, all Go sources, and module/linker metadata. On Windows, set `SANDBOXED_AGENTS_RELEASE_BASH` to the Git for Windows executable, such as `C:\Program Files\Git\bin\bash.exe`. The Windows test requires that setting and runs the Windows executable's `version` command. Linux tests run on Linux; the Windows test skips other hosts.
 
-`.github/workflows/release-reproducibility.yml` runs Linux and native Windows jobs for pushes, pull requests, and manual runs. Each runner creates a local CI tag at its checkout's commit, and the Windows job compares its asset hash with the Linux job's output. Those runner tags are not pushed.
+`.github/workflows/release-reproducibility.yml` runs Linux and native Windows jobs on Blacksmith for pushes to `main`, pull requests, and manual runs. Each runner creates a local CI tag at its checkout's commit. The Windows job executes the Windows binary, compares its asset hash with Linux, and compares its executable SHA256 with the Linux-cross-compiled Windows executable SHA256. Those runner tags are not pushed.
 
 Release limitations:
 
-- Verification here runs the Linux executable's `version` command. The Windows executable has not been run locally; local Windows checks compare cross-compiled bytes and inspect the PE AMD64 machine field.
-- The new native Windows CI job has not been executed here. Its configured Git for Windows Bash build and Windows asset hash comparison must pass in CI.
+- Local verification executes the Linux binary and checks cross-compiled Windows bytes and the PE AMD64 machine field; this Linux host cannot execute the Windows binary.
+- CI runs the Windows binary on Blacksmith with configured Git for Windows Bash, comparing its asset hash and executable SHA256 with Linux outputs. Native Windows verification belongs to CI.
 - A plain `go build` from a CRLF checkout embeds raw CRLF bytes and normalizes the context only at runtime. The release script normalizes text before embedding.
 - [ADR 0001](adr/0001-go-for-host-executable-and-in-container-manager.md) requires building the manager for Linux before the host executable. The manager does not exist yet, so this release script builds and embeds no manager.
 - NUL detection preserves tree bytes only during build normalization. Git's forced-text attributes can change line endings in non-`.bin` files, including NUL-containing files. Every binary asset must use `.bin` for exact bytes through Git; this naming convention has no further enforcement or content validation.
@@ -74,7 +74,7 @@ To update the expected fingerprint, the maintainer takes these steps:
 7. Build the base image with rootless Podman, `podman build -f image/context/base/Containerfile image/context/base`, and check that apt accepts the repository.
 8. Commit.
 
-Changing the fingerprint file changes the asset hash and therefore the image tags.
+Changing the fingerprint file changes the asset hash. Image tags belong to the Podman image build pipeline in issue #12.
 
 ## Tests and limits
 

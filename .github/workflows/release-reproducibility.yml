@@ -2,17 +2,22 @@ name: Release reproducibility
 
 'on':
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  RELEASE_VERSION: 0.0.0-ci-${{ github.sha }}
+
 jobs:
   linux:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       hash: ${{ steps.version.outputs.hash }}
+      windows_sha256: ${{ steps.version.outputs.windows_sha256 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -21,25 +26,31 @@ jobs:
           cache: false
       - name: Tag the runner checkout
         shell: bash
-        run: git tag "v0.0.0-ci-${GITHUB_SHA}" HEAD
+        run: git tag "v$RELEASE_VERSION" HEAD
       - name: Run the offline suite
         run: go test ./... -count=1
       - name: Build releases and report Linux version
         id: version
         shell: bash
         run: |
-          bash scripts/release.sh "0.0.0-ci-${GITHUB_SHA}" "$RUNNER_TEMP/release-output"
+          bash scripts/release.sh "$RELEASE_VERSION" "$RUNNER_TEMP/release-output"
           version_output=$("$RUNNER_TEMP/release-output/sandboxed-agents-linux-amd64" version)
           printf '%s\n' "$version_output"
           asset_hash=$(printf '%s\n' "$version_output" | awk '$1 == "asset-sha256" { print $2 }')
           [[ $asset_hash =~ ^[0-9a-f]{64}$ ]]
           printf 'hash=%s\n' "$asset_hash" >> "$GITHUB_OUTPUT"
+          windows_sha256=$(sha256sum "$RUNNER_TEMP/release-output/sandboxed-agents-windows-amd64.exe" | awk '{ print $1 }')
+          [[ $windows_sha256 =~ ^[0-9a-f]{64}$ ]]
+          printf 'Windows executable SHA256: %s\n' "$windows_sha256"
+          printf 'windows_sha256=%s\n' "$windows_sha256" >> "$GITHUB_OUTPUT"
 
   windows:
     needs: linux
     runs-on: blacksmith-2vcpu-windows-2025
     env:
       SANDBOXED_AGENTS_RELEASE_BASH: 'C:\Program Files\Git\bin\bash.exe'
+      EXPECTED_HASH: ${{ needs.linux.outputs.hash }}
+      EXPECTED_WINDOWS_SHA256: ${{ needs.linux.outputs.windows_sha256 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -49,31 +60,37 @@ jobs:
       - name: Check out Go sources with Windows line endings and tag HEAD
         shell: pwsh
         run: |
-          git -c core.autocrlf=true checkout --force -- .
-          if ($LASTEXITCODE -ne 0) { throw 'CRLF checkout failed' }
+          git config core.autocrlf true
+          if ($LASTEXITCODE -ne 0) { throw 'Local CRLF configuration failed' }
+          git read-tree --empty
+          if ($LASTEXITCODE -ne 0) { throw 'CI index invalidation failed' }
+          git -c core.autocrlf=true reset --hard HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'CRLF checkout rematerialization failed' }
           $sources = Get-ChildItem -Recurse -Filter '*.go'
           if ($sources.Count -eq 0) { throw 'No Go sources found' }
           foreach ($source in $sources) {
             $contents = [System.IO.File]::ReadAllText($source.FullName)
             if (-not $contents.Contains("`r`n")) { throw "Go source lacks CRLF: $($source.FullName)" }
           }
-          git tag "v0.0.0-ci-$env:GITHUB_SHA" HEAD
+          git tag "v$env:RELEASE_VERSION" HEAD
           if ($LASTEXITCODE -ne 0) { throw 'Local CI tag failed' }
       - name: Run release tests with Git for Windows Bash
         shell: pwsh
         run: |
           go test ./scripts -count=1 -v
           if ($LASTEXITCODE -ne 0) { throw 'Windows release tests failed' }
-      - name: Build releases and compare Windows asset hash
+      - name: Build releases and compare Windows asset hash and executable digest
         shell: pwsh
         run: |
-          $version = "0.0.0-ci-$env:GITHUB_SHA"
           $outputDirectory = "$env:RUNNER_TEMP/release-output".Replace('\', '/')
-          & $env:SANDBOXED_AGENTS_RELEASE_BASH scripts/release.sh $version $outputDirectory
+          & $env:SANDBOXED_AGENTS_RELEASE_BASH scripts/release.sh $env:RELEASE_VERSION $outputDirectory
           if ($LASTEXITCODE -ne 0) { throw 'Windows release build failed' }
           $versionOutput = & "$env:RUNNER_TEMP/release-output/sandboxed-agents-windows-amd64.exe" version
           if ($LASTEXITCODE -ne 0) { throw 'Windows version failed' }
           $versionOutput
-          if ($versionOutput[0] -ne "sandboxed-agents $version") { throw 'Injected Windows version differs' }
+          if ($versionOutput[0] -ne "sandboxed-agents $env:RELEASE_VERSION") { throw 'Injected Windows version differs' }
           $assetHash = ($versionOutput | Where-Object { $_ -match '^asset-sha256 ' }) -replace '^asset-sha256 ', ''
-          if ($assetHash -ne '${{ needs.linux.outputs.hash }}') { throw 'Windows and Linux asset hashes differ' }
+          if ($assetHash -ne $env:EXPECTED_HASH) { throw 'Windows and Linux asset hashes differ' }
+          $windowsSHA256 = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP/release-output/sandboxed-agents-windows-amd64.exe").Hash.ToLowerInvariant()
+          "Windows executable SHA256: $windowsSHA256"
+          if ($windowsSHA256 -ne $env:EXPECTED_WINDOWS_SHA256) { throw 'Windows-built and Linux-cross-compiled Windows executables differ' }
