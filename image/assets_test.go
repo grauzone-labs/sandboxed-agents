@@ -12,10 +12,10 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/releasetest"
 )
 
-// expectedFingerprint records the independently documented pin in docs/images.md.
+// expectedFingerprint records the independently documented fingerprint in docs/images.md.
 const expectedFingerprint = "6F71F525282841EEDAF851B42F59B5F99B1BE0B4\n"
 
-// TestEmbeddedFingerprintIsNormalized proves the pinned fingerprint is embedded and written with LF from LF and CRLF sources through the public context and writing APIs.
+// TestEmbeddedFingerprintIsNormalized proves the expected fingerprint is embedded and written with LF from LF and CRLF sources through the public context and writing APIs.
 func TestEmbeddedFingerprintIsNormalized(t *testing.T) {
 	const name = "base/nodesource-signing-key.fingerprint"
 	embedded, err := fs.ReadFile(image.Context(), name)
@@ -134,7 +134,7 @@ func TestBinaryContextAssetsRetainBytes(t *testing.T) {
 	}
 }
 
-// TestFingerprintEditChangesAssetHash proves that editing the pinned signing key fingerprint file changes the asset hash through the public image hash API.
+// TestFingerprintEditChangesAssetHash proves that editing the expected signing key fingerprint file changes the asset hash through the public image hash API.
 func TestFingerprintEditChangesAssetHash(t *testing.T) {
 	directory := t.TempDir()
 	if err := image.WriteContext(image.Context(), directory); err != nil {
