@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
-	"github.com/grauzone-labs/sandboxed-agents/internal/release"
 )
 
 func main() {
@@ -34,7 +33,7 @@ func writeOverlay(directory string) error {
 	}
 	overlay := struct{ Replace map[string]string }{Replace: make(map[string]string)}
 	contextDirectory := filepath.Join(directory, "context")
-	err = release.WriteContextAndVisit(image.Context(), contextDirectory, func(path string) error {
+	err = image.WriteContextAndVisit(image.Context(), contextDirectory, func(path string) error {
 		replacement := filepath.Join(contextDirectory, filepath.FromSlash(path))
 		overlay.Replace[filepath.Join(root, "image", "context", filepath.FromSlash(path))] = replacement
 		return nil
