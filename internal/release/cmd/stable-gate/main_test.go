@@ -298,22 +298,31 @@ func TestStableGateCommandRequiresMatchingPreviewVersion(t *testing.T) {
 func TestStableTagWorkflowVerifiesTagCommit(t *testing.T) {
 	text := stableGateWorkflow(t)
 	checkout := strings.Index(text, "uses: actions/checkout@v7")
-	lookup := strings.Index(text, `git rev-parse --verify "refs/tags/${STABLE_TAG}^{commit}"`)
-	compare := strings.Index(text, `[[ "$tag_commit" == "$GITHUB_SHA" ]]`)
+	verification := strings.Index(text, "bash scripts/verify-stable-tag.sh")
+	if verification < 0 {
+		t.Fatal("stable-release-gate.yml does not call the actual stable-tag verification script")
+	}
 	build := strings.Index(text, "bash scripts/release.sh")
 	gate := strings.Index(text, "go run ./internal/release/cmd/stable-gate")
-	if lookup < 0 || compare < 0 {
-		t.Fatal("stable-release-gate.yml does not verify the actual tag commit against GITHUB_SHA")
+	if checkout < 0 || build < 0 || gate < 0 || !(checkout < verification && verification < build && build < gate) {
+		t.Fatal("stable-release-gate.yml must order checkout, verification script, build, then gate")
 	}
-	if checkout < 0 || build < 0 || gate < 0 || !(checkout < lookup && lookup < compare && compare < build && build < gate) {
-		t.Fatal("stable-release-gate.yml must order checkout, actual tag lookup/comparison, build, then gate")
+	data, err := os.ReadFile(stableTagScript(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	lookup := strings.Index(script, `git rev-parse --verify "refs/tags/${STABLE_TAG}^{commit}"`)
+	compare := strings.Index(script, `[[ "$tag_commit" == "$GITHUB_SHA" ]]`)
+	if lookup < 0 || compare <= lookup {
+		t.Fatal("verification script must peel the actual tag before comparing with GITHUB_SHA")
 	}
 	for _, reason := range []string{"stable release gate: stable tag does not resolve to a commit", "stable release gate: stable tag commit differs from workflow commit"} {
-		position := strings.Index(text, reason)
-		if position < lookup || position > build {
-			t.Fatalf("actual tag check lacks pre-build refusal %q", reason)
+		if !strings.Contains(script, reason) {
+			t.Fatalf("verification script lacks refusal %q", reason)
 		}
 	}
+
 }
 
 func stableGateWorkflow(t *testing.T) string {
@@ -363,7 +372,7 @@ func TestStableGateCommandContinuesAfterTagLookupFailure(t *testing.T) {
 	}
 }
 
-// TestStableTagWorkflowValidatesCalls proves invalid reusable inputs fail and only well-formed direct preview pushes skip gate steps through .github/workflows/stable-release-gate.yml's event policy and actual verification script.
+// TestStableTagWorkflowValidatesCalls proves invalid reusable inputs fail and only direct previews skip gate steps through .github/workflows/stable-release-gate.yml and its actual scripts/verify-stable-tag.sh.
 func TestStableTagWorkflowValidatesCalls(t *testing.T) {
 	text := stableGateWorkflow(t)
 	if !strings.Contains(text, `if: github.event_name == 'push' || contains(toJSON(inputs), '"tag"')`) {
@@ -383,25 +392,9 @@ func TestStableTagWorkflowValidatesCalls(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("verification script runs on the Linux release runner")
 	}
-	_, step, found := strings.Cut(text, "      - name: Verify stable tag commit\n")
-	if !found {
-		t.Fatal("missing tag verification step")
-	}
-	step, _, _ = strings.Cut(step, "\n      - ")
-	_, script, found := strings.Cut(step, "        run: |\n")
-	if !found {
-		t.Fatal("missing verification script")
-	}
-	var lines []string
-	for _, line := range strings.Split(script, "\n") {
-		lines = append(lines, strings.TrimPrefix(line, "          "))
-	}
-	script = strings.Join(lines, "\n")
-	directory := t.TempDir()
-	workflowGit(t, directory, "init", "--quiet")
-	workflowGit(t, directory, "-c", "user.name=Workflow Test", "-c", "user.email=workflow@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "--quiet", "-m", "test(release): create workflow fixture")
-	commit := strings.TrimSpace(workflowGit(t, directory, "rev-parse", "HEAD"))
-	workflowGit(t, directory, "-c", "user.name=Workflow Test", "-c", "user.email=workflow@example.invalid", "-c", "tag.gpgsign=false", "tag", "-a", "v1.0.0", "-m", "workflow fixture")
+	script := stableTagScript(t)
+	directory, commit := stableTagFixture(t)
+
 	for _, test := range []struct {
 		name, event, tag      string
 		pass, preview, called bool
@@ -422,7 +415,7 @@ func TestStableTagWorkflowValidatesCalls(t *testing.T) {
 			if test.called {
 				reusable = "true"
 			}
-			command := exec.Command("bash", "-c", script)
+			command := exec.Command("bash", script)
 			command.Dir = directory
 			command.Env = append(os.Environ(), "GITHUB_EVENT_NAME="+test.event, "STABLE_TAG="+test.tag, "GITHUB_SHA="+commit, "GITHUB_OUTPUT="+outputFile, "GITHUB_REF_NAME=v1.0.0", "IS_REUSABLE_CALL="+reusable)
 			output, err := command.CombinedOutput()
@@ -453,4 +446,113 @@ func workflowGit(t *testing.T, directory string, args ...string) string {
 		t.Fatalf("fixture git: %v\n%s", err, output)
 	}
 	return string(output)
+}
+
+// TestStableGateCommandValidatesBeforeBinaryFetch proves a failed record is named before a missing binary and prevents binary retrieval through the real command with fake GitHub requests.
+func TestStableGateCommandValidatesBeforeBinaryFetch(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("GitHub adapter uses the Linux preview")
+	}
+	for _, binary := range []string{"missing", "present"} {
+		t.Run(binary, func(t *testing.T) {
+			directory := githubFixture(t)
+			var record map[string]any
+			readJSON(t, directory, "linux.json", &record)
+			record["result"] = "fail"
+			writeJSON(t, directory, "linux.json", record)
+			if binary == "missing" {
+				var previews []map[string]any
+				readJSON(t, directory, "releases.json", &previews)
+				previews[0]["assets"] = previews[0]["assets"].([]any)[:3]
+				writeJSON(t, directory, "releases.json", previews)
+			}
+			output, err := runGitHubGate(t, directory)
+			if err == nil || !strings.Contains(string(output), "live-suite-linux.json: validation gate did not pass") {
+				t.Fatalf("error=%v output=%s; want primary record failure before binary", err, output)
+			}
+			requests, err := os.ReadFile(filepath.Join(directory, "requests.log"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(requests), "repos/owner/repo/releases/assets/4") {
+				t.Fatal("failing validation fetched the preview binary")
+			}
+		})
+	}
+}
+
+// TestStableGateCommandRetainsAllRefusals proves candidate, version, and tag lookup failures remain named in that priority order through the real command with fake GitHub evidence.
+func TestStableGateCommandRetainsAllRefusals(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("GitHub adapter uses the Linux preview")
+	}
+	directory := githubFixture(t)
+	var previews []map[string]any
+	readJSON(t, directory, "releases.json", &previews)
+	previews[0]["assets"] = []any{}
+	unresolved := map[string]any{"tag_name": "v1.0.0-preview.20261012.2", "prerelease": true, "assets": []any{}}
+	wrong := map[string]any{"tag_name": "v2.0.0-preview.20261012.1", "prerelease": true, "assets": []any{}}
+	writeJSON(t, directory, "releases.json", append([]map[string]any{unresolved, wrong}, previews...))
+	var responses map[string]string
+	readJSON(t, directory, "responses.json", &responses)
+	responses["repos/owner/repo/commits/v2.0.0-preview.20261012.1"] = "commit.json"
+	writeJSON(t, directory, "responses.json", responses)
+	output, err := runGitHubGate(t, directory)
+	candidate := strings.Index(string(output), "live-suite-linux.json: validation file missing")
+	version := strings.Index(string(output), "prerelease version:")
+	lookup := strings.Index(string(output), "prerelease tag v1.0.0-preview.20261012.2:")
+	if err == nil || candidate < 0 || version <= candidate || lookup <= version {
+		t.Fatalf("error=%v output=%s; want candidate, version, and lookup refusals in order", err, output)
+	}
+}
+
+// TestStableTagScriptVerifiesRefs proves matching annotated and lightweight tags pass while missing or mismatched refs fail by name through the workflow's actual scripts/verify-stable-tag.sh on temporary Git data.
+func TestStableTagScriptVerifiesRefs(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("verification script runs on the Linux release runner")
+	}
+	directory, commit := stableTagFixture(t)
+	for _, test := range []struct{ name, tag, refusal string }{
+		{"matching annotated", "v1.0.0", ""},
+		{"matching lightweight", "v1.0.1", ""},
+		{"missing", "v1.0.3", "stable release gate: stable tag does not resolve to a commit"},
+		{"mismatched", "v1.0.2", "stable release gate: stable tag commit differs from workflow commit"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			command := exec.Command("bash", stableTagScript(t))
+			command.Dir = directory
+			command.Env = append(os.Environ(), "STABLE_TAG="+test.tag, "GITHUB_SHA="+commit, "IS_REUSABLE_CALL=true", "GITHUB_EVENT_NAME=push")
+			output, err := command.CombinedOutput()
+			if test.refusal == "" {
+				if err != nil {
+					t.Fatalf("matching tag failed: %v\n%s", err, output)
+				}
+			} else if err == nil || !strings.Contains(string(output), test.refusal) {
+				t.Fatalf("error=%v output=%s; want %q", err, output, test.refusal)
+			}
+		})
+	}
+}
+
+func stableTagScript(t *testing.T) string {
+	t.Helper()
+	path, err := filepath.Abs("../../../../scripts/verify-stable-tag.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func stableTagFixture(t *testing.T) (string, string) {
+	t.Helper()
+	directory := t.TempDir()
+	workflowGit(t, directory, "init", "--quiet")
+	workflowGit(t, directory, "-c", "user.name=Workflow Test", "-c", "user.email=workflow@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "--quiet", "-m", "test(release): create workflow fixture")
+	commit := strings.TrimSpace(workflowGit(t, directory, "rev-parse", "HEAD"))
+	workflowGit(t, directory, "-c", "user.name=Workflow Test", "-c", "user.email=workflow@example.invalid", "-c", "tag.gpgsign=false", "tag", "-a", "v1.0.0", "-m", "workflow fixture")
+	workflowGit(t, directory, "tag", "v1.0.1")
+	workflowGit(t, directory, "-c", "user.name=Workflow Test", "-c", "user.email=workflow@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "--quiet", "-m", "test(release): advance workflow fixture")
+	workflowGit(t, directory, "tag", "v1.0.2")
+	workflowGit(t, directory, "checkout", "--quiet", commit)
+	return directory, commit
 }

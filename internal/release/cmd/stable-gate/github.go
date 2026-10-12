@@ -75,10 +75,16 @@ func collectEvidence(repository, tag, commit, hash string) (release.StableGateEv
 			}
 			ciCollected = true
 		}
-		candidate, err := collectPreview(base, preview, resolved.SHA)
+		candidate, err := collectPreviewRecords(base, preview, resolved.SHA)
 		if err == nil {
 			evidence.Preview = candidate
-			err = release.EvaluateStableGate(evidence)
+			err = release.ValidateStableGatePrerequisites(evidence)
+		}
+		if err == nil {
+			candidate.AssetHash, err = collectPreviewHash(base, preview)
+		}
+		if err == nil {
+			err = release.ValidateStableAssetHash(evidence.AssetHash, candidate.AssetHash)
 		}
 		if err == nil {
 			return evidence, nil
@@ -89,22 +95,24 @@ func collectEvidence(repository, tag, commit, hash string) (release.StableGateEv
 	}
 	// Preserve a named reason when candidates exist but none validates. A
 	// missing preview stays nil so the evaluator gives its prerelease refusal.
-	if lookupRefusal != nil {
-		if refusal != nil {
-			return evidence, fmt.Errorf("%w; %v", refusal, lookupRefusal)
+	for _, additional := range []error{versionRefusal, lookupRefusal} {
+		if additional == nil {
+			continue
 		}
-		return evidence, lookupRefusal
+		if refusal == nil {
+			refusal = additional
+		} else {
+			refusal = fmt.Errorf("%w; %v", refusal, additional)
+		}
 	}
 	if refusal == nil {
-		if versionRefusal != nil {
-			return evidence, versionRefusal
-		}
 		return evidence, release.EvaluateStableGate(evidence)
 	}
+
 	return evidence, refusal
 }
 
-func collectPreview(base string, preview githubRelease, commit string) (*release.PreviewEvidence, error) {
+func collectPreviewRecords(base string, preview githubRelease, commit string) (*release.PreviewEvidence, error) {
 	candidate := &release.PreviewEvidence{Tag: preview.TagName, Commit: commit, Records: map[string][]byte{}}
 	for _, filename := range release.ValidationRecordFilenames() {
 		assetID := preview.assetID(filename)
@@ -117,19 +125,19 @@ func collectPreview(base string, preview githubRelease, commit string) (*release
 		}
 		candidate.Records[filename] = data
 	}
+	return candidate, nil
+}
+
+func collectPreviewHash(base string, preview githubRelease) (string, error) {
 	id := preview.assetID("sandboxed-agents-linux-amd64")
 	if id == 0 {
-		return nil, fmt.Errorf("asset hash: Linux preview binary missing")
+		return "", fmt.Errorf("asset hash: Linux preview binary missing")
 	}
 	data, err := githubAsset(base, id)
 	if err != nil {
-		return nil, fmt.Errorf("asset hash: %w", err)
+		return "", fmt.Errorf("asset hash: %w", err)
 	}
-	candidate.AssetHash, err = previewAssetHash(data)
-	if err != nil {
-		return nil, err
-	}
-	return candidate, nil
+	return previewAssetHash(data)
 }
 
 func collectCI(base string, evidence *release.StableGateEvidence) error {
