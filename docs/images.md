@@ -1,6 +1,10 @@
 # Images
 
-This document describes the base image recipe in `image/context/base/` and how it checks the NodeSource signing key before it trusts the NodeSource package repository. The image build context is planned to be embedded in the host executable, as described in [ADR 0001](adr/0001-go-for-host-executable-and-in-container-manager.md).
+This document describes the base image recipe in `image/context/base/` and how it checks the NodeSource signing key before it trusts the NodeSource package repository. The host executable embeds the image build context, as described in [ADR 0001](adr/0001-go-for-host-executable-and-in-container-manager.md).
+
+`image/assets.go` owns the `go:embed` directive. Its `Context` API supplies a read-only context with CRLF text line endings normalized to LF. All context files are text except files ending in `.bin`, which retain their exact bytes and are marked binary in `.gitattributes`. The context hash includes sorted relative paths and normalized contents with length prefixes; it excludes file modes and timestamps. `sandboxed-agents version` prints the version followed by `asset-sha256 HASH`.
+
+Run `bash scripts/release.sh VERSION OUTPUT_DIRECTORY` with the Go version from `go.mod` on `PATH` to build static Linux and Windows AMD64 executables. The script prepares normalized files in a temporary directory and uses a Go build overlay, so the release executable embeds LF bytes even from a CRLF checkout. The checkout stays untouched and the temporary files are removed. A plain `go build` exposes the same normalized context and hash at runtime; use the release script for normalization before embedding and reproducible binary bytes. The script produces executables only; package distribution is not implemented.
 
 ## Base image
 
@@ -61,7 +65,7 @@ The offline test is run with `bash image/test/nodesource/test-check-nodesource-k
 
 Several things are not covered here:
 
-- The embedding of the fingerprint file in the build context, and the line-ending normalization at build time (issue #12). This change sets LF line endings for `image/context/**` and `image/test/**` in `.gitattributes`; issue #12 checks that the build uses them.
+- The Podman image build pipeline, image tags, cleanup, and rebuilding (issue #12). The embedded context and its hash are available for that work; release preprocessing does not build a Podman image.
 - The Microsoft signing key.
 - Digests of the pulled Debian image or of built images.
 - The live build against the real NodeSource key (issue #18 and the live suite).
