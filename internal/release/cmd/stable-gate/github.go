@@ -17,8 +17,12 @@ import (
 
 // All GitHub operations in this adapter are reads. Publication is owned by the
 // workflow caller, which must depend on a successful gate.
-func collectEvidence(repository, commit, hash string) (release.StableGateEvidence, error) {
-	evidence := release.StableGateEvidence{Commit: commit, AssetHash: hash}
+func collectEvidence(repository, tag, commit, hash string) (release.StableGateEvidence, error) {
+	evidence := release.StableGateEvidence{Tag: tag, Commit: commit, AssetHash: hash}
+	version, err := release.StableTagVersion(tag)
+	if err != nil {
+		return evidence, err
+	}
 	if !regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`).MatchString(repository) || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(commit) {
 		return evidence, fmt.Errorf("usage: --repository OWNER/REPO and --commit full SHA are required")
 	}
@@ -38,9 +42,11 @@ func collectEvidence(repository, commit, hash string) (release.StableGateEvidenc
 		return evidence, fmt.Errorf("prerelease: %w", err)
 	}
 	var refusal error
+	var versionRefusal error
 	ciCollected := false
 	for _, preview := range releases {
-		if !preview.Prerelease || preview.Draft || !previewTag.MatchString(preview.TagName) {
+		previewVersion := release.PreviewTagVersion(preview.TagName)
+		if !preview.Prerelease || preview.Draft || previewVersion == "" {
 			continue
 		}
 		var resolved struct {
@@ -50,6 +56,10 @@ func collectEvidence(repository, commit, hash string) (release.StableGateEvidenc
 			return evidence, fmt.Errorf("prerelease tag %s: %w", preview.TagName, err)
 		}
 		if resolved.SHA != commit {
+			continue
+		}
+		if previewVersion != version {
+			versionRefusal = fmt.Errorf("prerelease version: no preview for stable tag %s on commit %s", tag, commit)
 			continue
 		}
 		if !ciCollected {
@@ -73,13 +83,16 @@ func collectEvidence(repository, commit, hash string) (release.StableGateEvidenc
 	// Preserve a named reason when candidates exist but none validates. A
 	// missing preview stays nil so the evaluator gives its prerelease refusal.
 	if refusal == nil {
+		if versionRefusal != nil {
+			return evidence, versionRefusal
+		}
 		return evidence, release.EvaluateStableGate(evidence)
 	}
 	return evidence, refusal
 }
 
 func collectPreview(base string, preview githubRelease, commit string) (*release.PreviewEvidence, error) {
-	candidate := &release.PreviewEvidence{Commit: commit, Records: map[string][]byte{}}
+	candidate := &release.PreviewEvidence{Tag: preview.TagName, Commit: commit, Records: map[string][]byte{}}
 	for _, filename := range release.ValidationRecordFilenames() {
 		assetID := preview.assetID(filename)
 		if assetID == 0 {
@@ -152,8 +165,6 @@ func collectCI(base string, evidence *release.StableGateEvidence) error {
 	evidence.CIGreen = passed["linux"] && passed["windows"]
 	return nil
 }
-
-var previewTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+-preview\.[0-9]{8}\.[0-9]+$`)
 
 type githubRelease struct {
 	TagName    string `json:"tag_name"`
