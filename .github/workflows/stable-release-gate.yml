@@ -2,6 +2,11 @@ name: Stable release gate
 
 'on':
   workflow_call:
+    inputs:
+      tag:
+        description: Stable tag vX.Y.Z pointing to the caller's commit.
+        required: true
+        type: string
   push:
     tags: ['v*']
 
@@ -13,7 +18,9 @@ jobs:
   gate:
     # Preview tags never publish to registries. The publication workflow in #36
     # must depend on this gate, including the asset hash comparison, succeeding.
-    if: "!contains(github.ref_name, '-')"
+    if: "!contains(inputs.tag || github.ref_name, '-')"
+    env:
+      STABLE_TAG: ${{ inputs.tag || github.ref_name }}
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
@@ -26,8 +33,8 @@ jobs:
       - name: Validate stable tag and build stable binaries
         shell: bash
         run: |
-          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'stable release gate: invalid stable tag' >&2; exit 1; }
-          bash scripts/release.sh "${GITHUB_REF_NAME#v}" "$RUNNER_TEMP/stable-release"
+          [[ "$STABLE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'stable release gate: invalid stable tag' >&2; exit 1; }
+          bash scripts/release.sh "${STABLE_TAG#v}" "$RUNNER_TEMP/stable-release"
       - name: Require a validated preview on this commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -36,4 +43,4 @@ jobs:
           version_output=$("$RUNNER_TEMP/stable-release/sandboxed-agents-linux-amd64" version)
           asset_hash=$(printf '%s\n' "$version_output" | awk '$1 == "asset-sha256" { print $2 }')
           go run ./internal/release/cmd/stable-gate \
-            --repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --asset-hash "$asset_hash"
+            --tag "$STABLE_TAG" --repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --asset-hash "$asset_hash"

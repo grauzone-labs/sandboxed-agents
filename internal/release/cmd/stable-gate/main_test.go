@@ -74,7 +74,7 @@ func writeJSON(t *testing.T, directory, name string, value any) {
 }
 func runGitHubGate(t *testing.T, directory string, extraArgs ...string) ([]byte, error) {
 	t.Helper()
-	args := append([]string{"run", ".", "--repository", "owner/repo", "--commit", "0123456789abcdef0123456789abcdef01234567", "--asset-hash", strings.Repeat("a", 64)}, extraArgs...)
+	args := append([]string{"run", ".", "--tag", "v1.0.0", "--repository", "owner/repo", "--commit", "0123456789abcdef0123456789abcdef01234567", "--asset-hash", strings.Repeat("a", 64)}, extraArgs...)
 	command := exec.Command("go", args...)
 	command.Env = append(os.Environ(), "PATH="+directory+string(os.PathListSeparator)+os.Getenv("PATH"), "GATE_FIXTURE="+directory, "GH_TOKEN=", "GITHUB_TOKEN=", "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local")
 	return command.CombinedOutput()
@@ -138,7 +138,7 @@ func TestStableTagWorkflowRunsGate(t *testing.T) {
 		}
 		eventLines = append(eventLines, line)
 	}
-	for _, required := range []string{"  workflow_call:", "  push:", "    tags: ['v*']"} {
+	for _, required := range []string{"  workflow_call:", "    inputs:", "      tag:", "        required: true", "        type: string", "  push:", "    tags: ['v*']"} {
 		found := false
 		for _, line := range eventLines {
 			if line == required {
@@ -149,7 +149,7 @@ func TestStableTagWorkflowRunsGate(t *testing.T) {
 			t.Fatalf("stable-release-gate.yml event mapping lacks %q", required)
 		}
 	}
-	for _, required := range []string{"tags: ['v*']", "!contains(github.ref_name, '-')", "contents: read", "actions: read", "go run ./internal/release/cmd/stable-gate", "--commit \"$GITHUB_SHA\"", "--asset-hash \"$asset_hash\""} {
+	for _, required := range []string{"tags: ['v*']", "!contains(inputs.tag || github.ref_name, '-')", "contents: read", "actions: read", "go run ./internal/release/cmd/stable-gate", "STABLE_TAG: ${{ inputs.tag || github.ref_name }}", "--tag \"$STABLE_TAG\"", "bash scripts/release.sh \"${STABLE_TAG#v}\"", "--commit \"$GITHUB_SHA\"", "--asset-hash \"$asset_hash\""} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("stable workflow lacks %q", required)
 		}
@@ -256,6 +256,46 @@ func TestStableGateCommandNamesInvalidValidationFiles(t *testing.T) {
 			output, err := runGitHubGate(t, directory)
 			if err == nil || !strings.Contains(string(output), test.filename) || !strings.Contains(string(output), test.reason) {
 				t.Fatalf("error=%v output=%s; want named %s refusal", err, output, test.filename)
+			}
+		})
+	}
+}
+
+// TestStableGateCommandRequiresMatchingPreviewVersion proves wrong-version same-commit previews are skipped with a named version refusal unless a matching validated candidate exists through the real command with fake GitHub evidence.
+func TestStableGateCommandRequiresMatchingPreviewVersion(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("GitHub adapter uses the Linux preview")
+	}
+	for _, scenario := range []string{"only wrong version", "wrong version before matching validated", "wrong version before matching invalid"} {
+		t.Run(scenario, func(t *testing.T) {
+			directory := githubFixture(t)
+			var previews []map[string]any
+			readJSON(t, directory, "releases.json", &previews)
+			wrong := map[string]any{"tag_name": "v2.0.0-preview.20261012.1", "prerelease": true, "draft": false, "assets": []any{}}
+			if scenario == "only wrong version" {
+				previews = nil
+			}
+			if scenario == "wrong version before matching invalid" {
+				previews[0]["assets"] = []any{}
+			}
+			writeJSON(t, directory, "releases.json", append([]map[string]any{wrong}, previews...))
+			var responses map[string]string
+			readJSON(t, directory, "responses.json", &responses)
+			responses["repos/owner/repo/commits/v2.0.0-preview.20261012.1"] = "commit.json"
+			writeJSON(t, directory, "responses.json", responses)
+			output, err := runGitHubGate(t, directory)
+			if scenario == "wrong version before matching validated" {
+				if err != nil || !strings.Contains(string(output), "gates passed") {
+					t.Fatalf("error=%v output=%s; want matching validated preview pass", err, output)
+				}
+			} else {
+				reason := "version"
+				if scenario == "wrong version before matching invalid" {
+					reason = "live-suite-linux.json"
+				}
+				if err == nil || !strings.Contains(string(output), reason) {
+					t.Fatalf("error=%v output=%s; want named %s refusal", err, output, reason)
+				}
 			}
 		})
 	}

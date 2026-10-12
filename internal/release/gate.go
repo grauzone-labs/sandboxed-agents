@@ -13,6 +13,7 @@ import (
 // StableGateEvidence contains the observations used to decide whether a stable
 // release may be published. Records are keyed by their prerelease asset names.
 type StableGateEvidence struct {
+	Tag       string
 	Commit    string
 	Preview   *PreviewEvidence
 	CICommit  string
@@ -22,6 +23,7 @@ type StableGateEvidence struct {
 
 // PreviewEvidence describes a published prerelease and its validation records.
 type PreviewEvidence struct {
+	Tag       string
 	Commit    string
 	Records   map[string][]byte
 	AssetHash string
@@ -36,11 +38,18 @@ func ValidationRecordFilenames() []string {
 // EvaluateStableGate refuses publication unless the preview validates the release.
 // It reads only supplied evidence, never the network or the host environment.
 func EvaluateStableGate(evidence StableGateEvidence) error {
+	version, err := StableTagVersion(evidence.Tag)
+	if err != nil {
+		return err
+	}
 	if evidence.Preview == nil {
-		return fmt.Errorf("prerelease: no published preview on commit %s", evidence.Commit)
+		return fmt.Errorf("prerelease: no published preview for %s on commit %s", evidence.Tag, evidence.Commit)
 	}
 	if evidence.Preview.Commit != evidence.Commit {
 		return fmt.Errorf("prerelease: preview commit differs from release commit")
+	}
+	if PreviewTagVersion(evidence.Preview.Tag) != version {
+		return fmt.Errorf("prerelease version: preview tag does not match stable tag %s", evidence.Tag)
 	}
 	for _, filename := range ValidationRecordFilenames() {
 		data, ok := evidence.Preview.Records[filename]
@@ -189,6 +198,27 @@ func uniqueJSONKeys(decoder *json.Decoder) error {
 
 var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var assetSHA = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var stableTagPattern = regexp.MustCompile(`^v([0-9]+\.[0-9]+\.[0-9]+)$`)
+var previewTagPattern = regexp.MustCompile(`^v([0-9]+\.[0-9]+\.[0-9]+)-preview\.[0-9]{8}\.[0-9]+$`)
+
+// StableTagVersion returns X.Y.Z only for a stable tag of the form vX.Y.Z.
+func StableTagVersion(tag string) (string, error) {
+	match := stableTagPattern.FindStringSubmatch(tag)
+	if match == nil {
+		return "", fmt.Errorf("stable tag: expected vX.Y.Z")
+	}
+	return match[1], nil
+}
+
+// PreviewTagVersion returns X.Y.Z for vX.Y.Z-preview.YYYYMMDD.N, or an empty
+// string when the tag is not a preview.
+func PreviewTagVersion(tag string) string {
+	match := previewTagPattern.FindStringSubmatch(tag)
+	if match == nil {
+		return ""
+	}
+	return match[1]
+}
 
 func exactFields(fields map[string]json.RawMessage, expected []string) bool {
 	if len(fields) != len(expected) {

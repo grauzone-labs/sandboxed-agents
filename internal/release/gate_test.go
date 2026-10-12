@@ -16,7 +16,7 @@ func validatedEvidence() release.StableGateEvidence {
 		records["live-suite-"+platform+".json"] = []byte(`{"schema_version":2,"kind":"live-suite","commit":"` + gateCommit + `","platform":"` + platform + `","result":"pass","image_part_selected":true,"image_part_ran":true,"image_coverage_complete":true,"checks":[{"name":"image-build","result":"pass"}]}`)
 	}
 	records["manual-checklist.json"] = []byte(`{"schema_version":1,"kind":"manual-checklist","commit":"` + gateCommit + `","result":"pass","checks":[{"name":"agent-login","result":"pass","date":"2026-10-12","platform":"linux"}]}`)
-	return release.StableGateEvidence{Commit: gateCommit, Preview: &release.PreviewEvidence{Commit: gateCommit, Records: records, AssetHash: strings.Repeat("a", 64)}, CICommit: gateCommit, CIGreen: true, AssetHash: strings.Repeat("a", 64)}
+	return release.StableGateEvidence{Tag: "v1.0.0", Commit: gateCommit, Preview: &release.PreviewEvidence{Tag: "v1.0.0-preview.20261012.1", Commit: gateCommit, Records: records, AssetHash: strings.Repeat("a", 64)}, CICommit: gateCommit, CIGreen: true, AssetHash: strings.Repeat("a", 64)}
 }
 
 // TestStableGateRequiresValidationFiles proves all three exact validation filenames are mandatory through EvaluateStableGate.
@@ -114,7 +114,7 @@ func TestStableGateValidatesRecords(t *testing.T) {
 
 // TestStableGateRequiresPreview proves a release without a same-commit prerelease is refused through EvaluateStableGate.
 func TestStableGateRequiresPreview(t *testing.T) {
-	err := release.EvaluateStableGate(release.StableGateEvidence{Commit: gateCommit})
+	err := release.EvaluateStableGate(release.StableGateEvidence{Tag: "v1.0.0", Commit: gateCommit})
 	if err == nil || !strings.Contains(err.Error(), "prerelease") {
 		t.Fatalf("error = %v; want named prerelease refusal", err)
 	}
@@ -122,7 +122,7 @@ func TestStableGateRequiresPreview(t *testing.T) {
 
 // TestStableGateRequiresSameCommit proves a prerelease on another commit is refused through EvaluateStableGate.
 func TestStableGateRequiresSameCommit(t *testing.T) {
-	err := release.EvaluateStableGate(release.StableGateEvidence{Commit: gateCommit, Preview: &release.PreviewEvidence{Commit: strings.Repeat("a", 40)}})
+	err := release.EvaluateStableGate(release.StableGateEvidence{Tag: "v1.0.0", Commit: gateCommit, Preview: &release.PreviewEvidence{Tag: "v1.0.0-preview.20261012.1", Commit: strings.Repeat("a", 40)}})
 	if err == nil || !strings.Contains(err.Error(), "prerelease") {
 		t.Fatalf("error = %v; want named prerelease commit refusal", err)
 	}
@@ -158,10 +158,20 @@ func TestStableGateRequiresSameAssetHash(t *testing.T) {
 	}
 }
 
-// TestStableGateAcceptsValidatedPreview proves a same-commit preview with valid records, green CI and the same asset hash passes through EvaluateStableGate.
+// TestStableGateAcceptsValidatedPreview proves a same-version and same-commit preview with valid records, green CI and the same asset hash passes through EvaluateStableGate.
 func TestStableGateAcceptsValidatedPreview(t *testing.T) {
-	if err := release.EvaluateStableGate(validatedEvidence()); err != nil {
-		t.Fatal(err)
+	for _, tags := range []struct{ stable, preview string }{
+		{"v1.0.0", "v1.0.0-preview.20261012.1"},
+		{"v2.0.0", "v2.0.0-preview.20261012.2"},
+	} {
+		t.Run(tags.stable, func(t *testing.T) {
+			evidence := validatedEvidence()
+			evidence.Tag = tags.stable
+			evidence.Preview.Tag = tags.preview
+			if err := release.EvaluateStableGate(evidence); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -207,5 +217,40 @@ func TestStableGateRejectsMismatchedLivePlatform(t *testing.T) {
 	err := release.EvaluateStableGate(evidence)
 	if err == nil || !strings.Contains(err.Error(), "live-suite-windows-11.json") || !strings.Contains(err.Error(), "platform") {
 		t.Fatalf("error=%v; want named Windows platform refusal", err)
+	}
+}
+
+// TestStableGateRequiresMatchingPreviewVersion proves a fully validated same-commit preview must have the stable tag's X.Y.Z through EvaluateStableGate.
+func TestStableGateRequiresMatchingPreviewVersion(t *testing.T) {
+	for _, tag := range []string{"v2.0.0-preview.20261012.1", "v1.1.0-preview.20261012.1", "v1.0.1-preview.20261012.1", "v1.0.00-preview.20261012.1"} {
+		t.Run(tag, func(t *testing.T) {
+			evidence := validatedEvidence()
+			evidence.Preview.Tag = tag
+			if err := release.EvaluateStableGate(evidence); err == nil || !strings.Contains(err.Error(), "version") {
+				t.Fatalf("error=%v; want named preview version refusal", err)
+			}
+		})
+	}
+}
+
+// TestStableGateRequiresWellFormedTags proves stable and preview tag syntax is validated independently of passing records through EvaluateStableGate.
+func TestStableGateRequiresWellFormedTags(t *testing.T) {
+	for _, tag := range []string{"", "1.0.0", "v1.0", "v1.0.0-preview.20261012.1"} {
+		t.Run("stable/"+tag, func(t *testing.T) {
+			evidence := validatedEvidence()
+			evidence.Tag = tag
+			if err := release.EvaluateStableGate(evidence); err == nil || !strings.Contains(err.Error(), "stable tag") {
+				t.Fatalf("error=%v; want named stable tag refusal", err)
+			}
+		})
+	}
+	for _, tag := range []string{"", "v1.0.0", "v1.0.0-preview.2026101.1", "v1.0.0-preview.20261012.1-extra"} {
+		t.Run("preview/"+tag, func(t *testing.T) {
+			evidence := validatedEvidence()
+			evidence.Preview.Tag = tag
+			if err := release.EvaluateStableGate(evidence); err == nil || !strings.Contains(err.Error(), "version") {
+				t.Fatalf("error=%v; want named preview version refusal", err)
+			}
+		})
 	}
 }
