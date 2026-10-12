@@ -13,7 +13,7 @@ The behavior described here follows Epic #1, its Features, and the ADRs. The exe
 | Linux amd64 | Rootless Podman 4.4.0 | A usable pasta program on the engine side |
 | Windows 11 x64 | Podman client 4.7.0 and Podman machine 4.7.0 | A running, rootless WSL2 machine, and a usable pasta program on the engine side |
 
-The preflight checks the host prerequisites before `build`, `up`, and `update`. The `check` command runs it too.
+The preflight is planned to check the host prerequisites automatically before `build`, `up`, and `update`. The `check` command is planned to run it on its own too.
 
 ## Linux amd64
 
