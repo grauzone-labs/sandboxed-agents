@@ -44,7 +44,11 @@ func TestMain(m *testing.M) {
 		panic(string(output) + err.Error())
 	}
 	releaseExecutable = filepath.Join(dir, "release"+suffix)
-	releaseBuild := exec.Command("go", "build", "-ldflags", "-X github.com/grauzone-labs/sandboxed-agents/internal/cli.version=v0.0.30-test", "-o", releaseExecutable, ".")
+	versionSymbol, err := os.ReadFile("../../scripts/version-symbol.txt")
+	if err != nil {
+		panic(err)
+	}
+	releaseBuild := exec.Command("go", "build", "-ldflags", "-X "+strings.TrimSpace(string(versionSymbol))+"=v0.0.30-test", "-o", releaseExecutable, ".")
 	if output, err := releaseBuild.CombinedOutput(); err != nil {
 		panic(string(output) + err.Error())
 	}
@@ -58,7 +62,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// TestVersionReportsInjectedRelease proves that a linker-injected release tag and the embedded context identity are printed through the built CLI binary without external calls.
+// TestVersionReportsInjectedRelease proves that a linker-injected release tag and the asset hash are printed through the built CLI binary without external calls.
 func TestVersionReportsInjectedRelease(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	command := exec.Command(releaseExecutable, "version")
@@ -68,7 +72,7 @@ func TestVersionReportsInjectedRelease(t *testing.T) {
 	if hashErr != nil {
 		t.Fatal(hashErr)
 	}
-	want := "sandboxed-agents v0.0.30-test\nasset-sha256 " + hash + "\n"
+	want := testutil.ExpectedVersion("v0.0.30-test", hash)
 	if err != nil || string(output) != want {
 		t.Fatalf("version: error=%v output=%q; want %q", err, output, want)
 	}
@@ -388,7 +392,7 @@ func TestVersionIgnoresInvalidControllerGroup(t *testing.T) {
 			if hashErr != nil {
 				t.Fatal(hashErr)
 			}
-			want := "sandboxed-agents development\nasset-sha256 " + hash + "\n"
+			want := testutil.ExpectedVersion("development", hash)
 			if status := exitStatus(t, err); status != 0 || string(output) != want {
 				t.Fatalf("version: status=%d output=%q; want status=0 and version", status, output)
 			}

@@ -1,4 +1,4 @@
-// Package image supplies the embedded image build context and its identity.
+// Package image supplies the embedded image build context and its asset hash.
 package image
 
 import (
@@ -9,15 +9,20 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"path"
+	"path/filepath"
 	"sort"
 )
 
 //go:embed all:context
 var embedded embed.FS
 
+// BinarySuffix marks binary assets that must retain their exact bytes.
+const BinarySuffix = ".bin"
+
 // Context returns a read-only, LF-normalized embedded image build context.
-// Paths are relative to context; files ending in .bin retain their exact bytes.
+// Paths are relative to context; BinarySuffix files and NUL-containing files retain their exact bytes.
 func Context() fs.FS {
 	context, err := fs.Sub(embedded, "context")
 	if err != nil {
@@ -26,7 +31,31 @@ func Context() fs.FS {
 	return normalizedFS{context}
 }
 
-// Hash returns the SHA256 identity of a normalized image build context.
+// WriteContext writes an LF-normalized image build context into directory, preserving binary asset bytes.
+func WriteContext(source fs.FS, directory string) error {
+	if _, normalized := source.(normalizedFS); !normalized {
+		source = normalizedFS{source}
+	}
+	return fs.WalkDir(source, ".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("image context %s: only regular files are supported", path)
+		}
+		data, err := fs.ReadFile(source, path)
+		if err != nil {
+			return err
+		}
+		name := filepath.Join(directory, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
+			return err
+		}
+		return os.WriteFile(name, data, 0600)
+	})
+}
+
+// Hash returns the SHA256 asset hash of a normalized image build context.
 // It hashes "sandboxed-agents:image-context:v1\n" followed by files in lexical path order. Each file
 // contributes its uint64 big-endian path length, path bytes, uint64 big-endian
 // content length, and content bytes. Directories, modes and times are excluded.
@@ -64,7 +93,7 @@ func Hash(context fs.FS) (string, error) {
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
-// normalizedFS keeps normalization in one place for hashing and build inputs.
+// normalizedFS keeps normalization in one place for the asset hash and release preprocessing.
 type normalizedFS struct{ fs.FS }
 
 func (context normalizedFS) Open(name string) (fs.File, error) {
@@ -88,7 +117,7 @@ func (context normalizedFS) Open(name string) (fs.File, error) {
 	if closeErr != nil {
 		return nil, closeErr
 	}
-	if path.Ext(name) != ".bin" {
+	if path.Ext(name) != BinarySuffix && !bytes.Contains(data, []byte{0}) {
 		data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
 	}
 	return &normalizedFile{Reader: bytes.NewReader(data), info: normalizedInfo{FileInfo: info, size: int64(len(data))}}, nil
