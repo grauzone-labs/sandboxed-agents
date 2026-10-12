@@ -83,24 +83,24 @@ func TestImageBuildFromCRLFCheckoutExecutables(t *testing.T) {
 	}
 }
 
-// TestImageBuildUsesEmbeddedContextAndCleansUp proves a build receives the embedded recipe and normalized fingerprint and leaves no temporary context through the public image build API.
+// TestImageBuildUsesEmbeddedContextAndCleansUp proves a build receives the embedded base Containerfile and normalized fingerprint, uses the base image tag, and leaves no temporary context through the public image build API.
 func TestImageBuildUsesEmbeddedContextAndCleansUp(t *testing.T) {
 	var directory string
 	var requestedTag string
-	tag, err := image.Build(context.Background(), image.Context(), image.BuildOptions{}, func(ctx context.Context, args ...string) error {
+	tag, err := image.Build(context.Background(), image.Context(), func(ctx context.Context, args ...string) error {
 		if len(args) != 6 || args[0] != "build" || args[1] != "--file" || args[3] != "--tag" {
-			t.Fatalf("Podman argv = %q; want build --file RECIPE --tag TAG CONTEXT", args)
+			t.Fatalf("Podman argv = %q; want build --file CONTAINERFILE --tag TAG CONTEXT", args)
 		}
 		directory = filepath.Dir(args[5])
 		requestedTag = args[4]
 		if args[2] != filepath.Join(directory, "base", "Containerfile") || args[5] != filepath.Join(directory, "base") {
-			t.Fatalf("recipe/context paths = %q", args)
+			t.Fatalf("Containerfile/context paths = %q", args)
 		}
 		fingerprint, err := os.ReadFile(filepath.Join(args[5], "nodesource-signing-key.fingerprint"))
 		if err != nil || string(fingerprint) != expectedFingerprint {
 			t.Fatalf("build fingerprint = %q, error = %v", fingerprint, err)
 		}
-		// Every embedded file must reach the materialized context, not only the recipe's directory.
+		// Every embedded file must reach the materialized context, not only the Containerfile's directory.
 		err = fs.WalkDir(image.Context(), ".", func(name string, entry fs.DirEntry, err error) error {
 			if err != nil || entry.IsDir() {
 				return err
@@ -151,7 +151,7 @@ func TestImageBuildCleansUpAfterFailure(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			var directory string
-			tag, err := image.Build(ctx, nil, image.BuildOptions{}, func(received context.Context, args ...string) error {
+			tag, err := image.Build(ctx, nil, func(received context.Context, args ...string) error {
 				directory = filepath.Dir(args[len(args)-1])
 				if _, err := os.Stat(filepath.Join(directory, "base", "Containerfile")); err != nil {
 					t.Fatal(err)
@@ -175,16 +175,14 @@ func TestImageBuildCleansUpAfterFailure(t *testing.T) {
 	}
 }
 
-// TestImageBuildRefusesInvalidInputsWithoutLeavingContext proves mixed none, missing recipes, invalid assets, and pre-cancelled builds leave no context or Podman call through the public build API.
+// TestImageBuildRefusesInvalidInputsWithoutLeavingContext proves a missing Containerfile, invalid assets, and pre-cancelled builds leave no context or Podman call through the public build API.
 func TestImageBuildRefusesInvalidInputsWithoutLeavingContext(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		source    fs.FS
-		options   image.BuildOptions
 		cancelled bool
 	}{
-		{name: "mixed none", options: image.BuildOptions{Toolchains: []string{"none", "native"}}},
-		{name: "missing recipe", source: fstest.MapFS{"base/fingerprint": {Data: []byte("fingerprint\n")}}},
+		{name: "missing Containerfile", source: fstest.MapFS{"base/fingerprint": {Data: []byte("fingerprint\n")}}},
 		{name: "invalid asset", source: fstest.MapFS{"base/link": {Mode: fs.ModeSymlink}}},
 		{name: "cancelled", cancelled: true},
 	} {
@@ -198,7 +196,7 @@ func TestImageBuildRefusesInvalidInputsWithoutLeavingContext(t *testing.T) {
 			if test.cancelled {
 				cancel()
 			}
-			tag, err := image.Build(ctx, test.source, test.options, func(context.Context, ...string) error {
+			tag, err := image.Build(ctx, test.source, func(context.Context, ...string) error {
 				t.Fatal("Podman called for invalid input")
 				return nil
 			})
@@ -222,7 +220,7 @@ func TestImageBuildNormalizesFingerprintAndDerivesTags(t *testing.T) {
 	releasetest.CopyCRLFContext(t, image.Context(), crlf)
 	var tags []string
 	for _, source := range []fs.FS{image.Context(), os.DirFS(crlf)} {
-		tag, err := image.Build(context.Background(), source, image.BuildOptions{}, func(_ context.Context, args ...string) error {
+		tag, err := image.Build(context.Background(), source, func(_ context.Context, args ...string) error {
 			fingerprint, err := os.ReadFile(filepath.Join(args[len(args)-1], "nodesource-signing-key.fingerprint"))
 			if err != nil || string(fingerprint) != expectedFingerprint {
 				t.Fatalf("build fingerprint = %q, error = %v", fingerprint, err)
@@ -240,7 +238,7 @@ func TestImageBuildNormalizesFingerprintAndDerivesTags(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(crlf, "base", "nodesource-signing-key.fingerprint"), []byte("0000000000000000000000000000000000000000\r\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	changedTag, err := image.Build(context.Background(), os.DirFS(crlf), image.BuildOptions{}, func(_ context.Context, args ...string) error {
+	changedTag, err := image.Build(context.Background(), os.DirFS(crlf), func(_ context.Context, args ...string) error {
 		fingerprint, err := os.ReadFile(filepath.Join(args[len(args)-1], "nodesource-signing-key.fingerprint"))
 		if err != nil || string(fingerprint) != "0000000000000000000000000000000000000000\n" {
 			t.Fatalf("changed build fingerprint = %q, error = %v", fingerprint, err)
@@ -268,33 +266,14 @@ func TestImageTagsIdentifyToolchainSets(t *testing.T) {
 		{[]string{"playwright", "dotnet", "dotnet"}, "localhost/sandboxed-agents:dotnet-playwright-" + hash},
 	} {
 		before := append([]string(nil), test.set...)
-		if got, err := image.Tag(hash, test.set); err != nil || got != test.want {
-			t.Errorf("Tag(%q) = %q, error = %v; want %q", test.set, got, err, test.want)
+		if got := image.Tag(hash, test.set); got != test.want {
+			t.Errorf("Tag(%q) = %q; want %q", test.set, got, test.want)
 		}
 		if !reflect.DeepEqual(before, test.set) {
 			t.Errorf("Tag changed input from %q to %q", before, test.set)
 		}
 	}
-	original, err := image.Tag(hash, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	changed, err := image.Tag("b25ef61c2fbd6d4e034154492b542f255f949e8d779163f2cde86c34b54a577d", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if original == changed {
+	if image.Tag(hash, nil) == image.Tag("b25ef61c2fbd6d4e034154492b542f255f949e8d779163f2cde86c34b54a577d", nil) {
 		t.Error("different asset hashes have the same tag")
-	}
-}
-
-// TestImageTagRejectsMixedNone proves none cannot be combined with other toolchains through the public image tag API.
-func TestImageTagRejectsMixedNone(t *testing.T) {
-	const hash = "a25ef61c2fbd6d4e034154492b542f255f949e8d779163f2cde86c34b54a577d"
-	for _, set := range [][]string{{"none", "dotnet"}, {"native", "none"}, {"none", "none", "azure"}} {
-		tag, err := image.Tag(hash, set)
-		if tag != "" || err == nil || err.Error() != `toolchain "none" must stand alone` {
-			t.Errorf("Tag(%q) = %q, error = %v; want no tag and none-mixing error", set, tag, err)
-		}
 	}
 }

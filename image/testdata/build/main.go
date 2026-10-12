@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	tag, err := image.Build(context.Background(), nil, image.BuildOptions{}, func(ctx context.Context, args ...string) error {
+	tag, err := image.Build(context.Background(), nil, func(ctx context.Context, args ...string) error {
 		command := exec.CommandContext(ctx, "podman", args...)
 		command.Stdout, command.Stderr = os.Stdout, os.Stderr
 		return command.Run()
@@ -28,11 +28,6 @@ func main() {
 	fmt.Println("asset-sha256", hash)
 	fmt.Println("image-tag", tag)
 	for _, toolchains := range [][]string{{"dotnet", "playwright"}, {"azure", "native"}} {
-		imageTag, err := image.Tag(hash, toolchains)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		fmt.Println("image-tag", imageTag)
+		fmt.Println("image-tag", image.Tag(hash, toolchains))
 	}
 }
