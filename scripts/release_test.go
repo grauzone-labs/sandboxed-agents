@@ -45,7 +45,7 @@ func assertReproducibleRelease(t *testing.T, root string) {
 	buildRelease(t, baseline, first)
 	buildRelease(t, baseline, second)
 	crlfCheckout := cloneReleaseRepository(t, baseline)
-	makeCheckoutCRLF(t, crlfCheckout)
+	rewriteReleaseInputsToCRLF(t, crlfCheckout)
 	expectedCommit := gitOutput(t, baseline, "rev-parse", "HEAD")
 	for _, ref := range []string{"HEAD", "refs/tags/v" + releasetest.ReleaseVersion + "^{commit}"} {
 		if got := gitOutput(t, crlfCheckout, "rev-parse", ref); got != expectedCommit {
@@ -96,6 +96,52 @@ func TestReleaseRefusesVersionTagOnAnotherCommit(t *testing.T) {
 	assertReleaseRefused(t, checkout, "release tag refs/tags/v"+releasetest.ReleaseVersion+" does not point to HEAD")
 }
 
+// TestReleaseRefusesUntrackedFiles proves an untracked file in a tagged temporary worktree is refused through the actual release script before outputs are built.
+func TestReleaseRefusesUntrackedFiles(t *testing.T) {
+	checkout := createReleaseRepository(t, releaseRepository(t))
+	tagReleaseRepository(t, checkout)
+	if err := os.WriteFile(filepath.Join(checkout, "untracked.txt"), []byte("extra input\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	assertReleaseRefused(t, checkout, "release requires a clean Git worktree")
+}
+
+// TestReleaseRefusesTrackedChanges proves a tracked edit in a tagged temporary worktree is refused through the actual release script before outputs are built.
+func TestReleaseRefusesTrackedChanges(t *testing.T) {
+	checkout := createReleaseRepository(t, releaseRepository(t))
+	tagReleaseRepository(t, checkout)
+	file, err := os.OpenFile(filepath.Join(checkout, "go.mod"), os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("\n// tracked edit\n"); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	assertReleaseRefused(t, checkout, "release requires a clean Git worktree")
+}
+
+// TestReleaseRefusesMissingGit proves a tagged temporary worktree with Git absent from PATH gets a clear prerequisite refusal through the actual release script before outputs are built.
+func TestReleaseRefusesMissingGit(t *testing.T) {
+	checkout := createReleaseRepository(t, releaseRepository(t))
+	tagReleaseRepository(t, checkout)
+	programs := t.TempDir()
+	for _, name := range []string{"bash", "go", "awk", "mkdir", "dirname", "mktemp", "rm"} {
+		program, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(program, filepath.Join(programs, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", programs)
+	assertReleaseRefused(t, checkout, "release requires git to verify its worktree")
+}
+
 func tagReleaseRepository(t *testing.T, directory string) {
 	t.Helper()
 	runGit(t, directory, "tag", "-a", "v"+releasetest.ReleaseVersion, "-m", "release fixture")
@@ -104,7 +150,7 @@ func tagReleaseRepository(t *testing.T, directory string) {
 func cloneReleaseRepository(t *testing.T, source string) string {
 	t.Helper()
 	checkout := t.TempDir()
-	runGit(t, t.TempDir(), "clone", "--quiet", "--no-hardlinks", "-c", "core.autocrlf=false", source, checkout)
+	runGit(t, t.TempDir(), "clone", "--quiet", "--no-hardlinks", "-c", "core.autocrlf=true", source, checkout)
 	return checkout
 }
 
@@ -168,7 +214,7 @@ func TestReleaseVersionSymbolAcceptsCRLFMetadata(t *testing.T) {
 	baseline := createReleaseRepository(t, root)
 	tagReleaseRepository(t, baseline)
 	crlfCheckout := cloneReleaseRepository(t, baseline)
-	makeCheckoutCRLF(t, crlfCheckout)
+	rewriteReleaseInputsToCRLF(t, crlfCheckout)
 	gotSymbol, err := release.VersionSymbol(os.DirFS(crlfCheckout))
 	if err != nil || gotSymbol != wantSymbol {
 		t.Fatalf("metadata symbol = %q, error=%v; want %q", gotSymbol, err, wantSymbol)
@@ -251,8 +297,8 @@ func buildRelease(t *testing.T, root, output string) {
 	}
 }
 
-// makeCheckoutCRLF rewrites image context text, module metadata, symbol metadata, and all Go source files after cloning the same tagged commit.
-func makeCheckoutCRLF(t *testing.T, checkout string) {
+// rewriteReleaseInputsToCRLF rewrites selected release inputs and context text, preserving binaries and keeping checkout attributes and the executable release script at LF.
+func rewriteReleaseInputsToCRLF(t *testing.T, checkout string) {
 	t.Helper()
 	countGo := 0
 	err := filepath.WalkDir(checkout, func(name string, entry fs.DirEntry, err error) error {
@@ -269,18 +315,15 @@ func makeCheckoutCRLF(t *testing.T, checkout string) {
 			}
 			return nil
 		}
-		if relative != "go.mod" && relative != filepath.Join("scripts", "version-symbol.txt") && !strings.HasSuffix(relative, ".go") && !strings.HasPrefix(filepath.ToSlash(relative), "image/context/") {
+		relative = filepath.ToSlash(relative)
+		if relative == ".gitattributes" || relative == "scripts/release.sh" || !releasetest.IsReleaseSource(relative) && !strings.HasPrefix(relative, "image/context/") {
 			return nil
+		}
+		if err := releasetest.RewriteFileToCRLF(checkout, relative); err != nil {
+			return err
 		}
 		data, err := os.ReadFile(name)
 		if err != nil {
-			return err
-		}
-		if image.IsBinary(filepath.ToSlash(relative), data) {
-			return nil
-		}
-		data = releasetest.ToCRLF(image.Normalize(filepath.ToSlash(relative), data))
-		if err := os.WriteFile(name, data, 0600); err != nil {
 			return err
 		}
 		if strings.HasSuffix(name, ".go") {
@@ -299,5 +342,10 @@ func makeCheckoutCRLF(t *testing.T, checkout string) {
 	}
 	if countGo == 0 {
 		t.Fatal("CRLF fixture contains no Go sources")
+	}
+	// Refresh only the fixture index so forced-LF attributes recognize normalized CRLF bytes; HEAD and tag stay unchanged, and no staged changes are allowed.
+	runGit(t, checkout, "add", "--renormalize", ".")
+	if status := gitOutput(t, checkout, "status", "--porcelain", "--untracked-files=all"); status != "" {
+		t.Fatalf("CRLF fixture must remain Git-clean: %s", status)
 	}
 }
