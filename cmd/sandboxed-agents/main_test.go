@@ -1,7 +1,6 @@
 package main_test
 
 import (
-	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,20 +9,25 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/grauzone-labs/sandboxed-agents/image"
+	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
 var executable string
 var fakeExecutable string
+var releaseExecutable string
 
 // nestedGuardEnv carries the PID of the process that started the nested run.
 const nestedGuardEnv = "TEST_OFFLINE_GUARD_NESTED"
 
-// TestMain prepares the built CLI and fake process binaries for the suite, reuses them in nested runs, and removes its temporary build directory after testing.
+// TestMain prepares development, release, and fake binaries for the built CLI seam, reuses them in nested runs, and removes its temporary build directory after testing.
 func TestMain(m *testing.M) {
 	// Nested test runs reuse parent-built binaries with an isolated PATH.
 	executable = os.Getenv("TEST_SANDBOXED_AGENTS_EXECUTABLE")
 	fakeExecutable = os.Getenv("TEST_FAKE_EXECUTABLE")
-	if executable != "" && fakeExecutable != "" {
+	releaseExecutable = os.Getenv("TEST_RELEASE_EXECUTABLE")
+	if executable != "" && fakeExecutable != "" && releaseExecutable != "" {
 		os.Exit(m.Run())
 	}
 	dir, err := os.MkdirTemp("", "sandboxed-agents-cli-")
@@ -39,6 +43,11 @@ func TestMain(m *testing.M) {
 	if output, err := build.CombinedOutput(); err != nil {
 		panic(string(output) + err.Error())
 	}
+	releaseExecutable = filepath.Join(dir, "release"+suffix)
+	releaseBuild := exec.Command("go", "build", "-ldflags", "-X github.com/grauzone-labs/sandboxed-agents/internal/cli.version=v0.0.30-test", "-o", releaseExecutable, ".")
+	if output, err := releaseBuild.CombinedOutput(); err != nil {
+		panic(string(output) + err.Error())
+	}
 	fakeExecutable = filepath.Join(dir, "fake"+suffix)
 	fakeBuild := exec.Command("go", "build", "-o", fakeExecutable, "../../internal/testutil/testdata/fake.go")
 	if output, err := fakeBuild.CombinedOutput(); err != nil {
@@ -47,6 +56,23 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
+}
+
+// TestVersionReportsInjectedRelease proves that a linker-injected release tag and the embedded context identity are printed through the built CLI binary without external calls.
+func TestVersionReportsInjectedRelease(t *testing.T) {
+	fakes := testutil.Install(t, fakeExecutable)
+	command := exec.Command(releaseExecutable, "version")
+	command.Env = fakes.Env(os.Environ())
+	output, err := command.CombinedOutput()
+	hash, hashErr := image.Hash(image.Context())
+	if hashErr != nil {
+		t.Fatal(hashErr)
+	}
+	want := "sandboxed-agents v0.0.30-test\nasset-sha256 " + hash + "\n"
+	if err != nil || string(output) != want {
+		t.Fatalf("version: error=%v output=%q; want %q", err, output, want)
+	}
+	assertNoExternalCalls(t, fakes)
 }
 
 // TestUnknownCommandIsUsageError proves that an unknown command exits unsuccessfully with a usage diagnostic through the built CLI binary without Podman or SSH calls.
@@ -74,7 +100,7 @@ func TestOfflineSuiteDoesNotStartLiveTests(t *testing.T) {
 	}
 	child := exec.Command(testExecutable, "-test.v", "-test.run=.")
 	child.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{
-		"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable,
+		"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable, "TEST_RELEASE_EXECUTABLE": releaseExecutable,
 		nestedGuardEnv: strconv.Itoa(os.Getpid()),
 	})
 	output, err := child.CombinedOutput()
@@ -99,7 +125,7 @@ func TestLiveOptInSelectsOnlyExplicitOne(t *testing.T) {
 			child := exec.Command(testExecutable, "-test.v", "-test.run=^TestLivePodmanVersion$")
 			child.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{
 				testutil.LiveTestsEnv:              value,
-				"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable,
+				"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable, "TEST_RELEASE_EXECUTABLE": releaseExecutable,
 			})
 			output, err := child.CombinedOutput()
 			if err != nil {
@@ -129,7 +155,7 @@ func TestLiveOptInFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
 			}
 			environment := testutil.Env(fakes.Env(os.Environ()), map[string]string{
 				testutil.LiveTestsEnv:              "1",
-				"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable,
+				"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable, "TEST_RELEASE_EXECUTABLE": releaseExecutable,
 				"TEST_PODMAN_EXIT": "23", "TEST_PODMAN_OUTPUT": "scripted Podman failure\n",
 			})
 			if availability == "missing" {
@@ -358,7 +384,12 @@ func TestVersionIgnoresInvalidControllerGroup(t *testing.T) {
 			command := exec.Command(executable, "version")
 			command.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{"SANDBOXED_AGENTS_GROUP": group})
 			output, err := command.CombinedOutput()
-			if status := exitStatus(t, err); status != 0 || string(output) != "sandboxed-agents development\n" {
+			hash, hashErr := image.Hash(image.Context())
+			if hashErr != nil {
+				t.Fatal(hashErr)
+			}
+			want := "sandboxed-agents development\nasset-sha256 " + hash + "\n"
+			if status := exitStatus(t, err); status != 0 || string(output) != want {
 				t.Fatalf("version: status=%d output=%q; want status=0 and version", status, output)
 			}
 			assertNoExternalCalls(t, fakes)

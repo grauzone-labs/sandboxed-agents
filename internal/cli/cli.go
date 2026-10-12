@@ -6,8 +6,12 @@ import (
 	"io"
 	"os"
 
+	"github.com/grauzone-labs/sandboxed-agents/image"
 	"github.com/grauzone-labs/sandboxed-agents/internal/checks"
 )
+
+// version is overridden with -ldflags -X for release builds.
+var version = "development"
 
 // Run returns zero only when the requested operation succeeds. Command bodies
 // are deliberately absent; a parsed command cannot silently claim success.
@@ -28,7 +32,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if request.Command == "version" {
-		fmt.Fprintln(stdout, "sandboxed-agents development")
+		hash, err := image.Hash(image.Context())
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintln(stdout, "sandboxed-agents", version)
+		fmt.Fprintln(stdout, "asset-sha256", hash)
 		return 0
 	}
 	fmt.Fprintf(stderr, "%s: not implemented\n", request.Command)
