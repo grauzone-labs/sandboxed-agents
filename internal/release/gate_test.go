@@ -78,8 +78,8 @@ func TestStableGateValidatesRecords(t *testing.T) {
 		t.Run("live/missing "+field, func(t *testing.T) {
 			evidence := validatedEvidence()
 			changeRecord(t, &evidence, "live-suite-linux.json", func(r map[string]any) { delete(r, field) })
-			if err := release.EvaluateStableGate(evidence); err == nil {
-				t.Fatal("accepted missing live field")
+			if err := release.EvaluateStableGate(evidence); err == nil || !strings.Contains(err.Error(), "live-suite-linux.json") {
+				t.Fatalf("error=%v; want named missing live field", err)
 			}
 		})
 	}
@@ -87,8 +87,8 @@ func TestStableGateValidatesRecords(t *testing.T) {
 		t.Run("live/false "+field, func(t *testing.T) {
 			evidence := validatedEvidence()
 			changeRecord(t, &evidence, "live-suite-linux.json", func(r map[string]any) { r[field] = false })
-			if err := release.EvaluateStableGate(evidence); err == nil {
-				t.Fatal("accepted incomplete image coverage")
+			if err := release.EvaluateStableGate(evidence); err == nil || !strings.Contains(err.Error(), "live-suite-linux.json") {
+				t.Fatalf("error=%v; want named incomplete image coverage", err)
 			}
 		})
 	}
@@ -96,8 +96,8 @@ func TestStableGateValidatesRecords(t *testing.T) {
 		t.Run("manual/missing "+field, func(t *testing.T) {
 			evidence := validatedEvidence()
 			changeRecord(t, &evidence, "manual-checklist.json", func(r map[string]any) { delete(r["checks"].([]any)[0].(map[string]any), field) })
-			if err := release.EvaluateStableGate(evidence); err == nil {
-				t.Fatal("accepted incomplete manual check")
+			if err := release.EvaluateStableGate(evidence); err == nil || !strings.Contains(err.Error(), "manual-checklist.json") {
+				t.Fatalf("error=%v; want named incomplete manual check", err)
 			}
 		})
 	}
@@ -105,8 +105,8 @@ func TestStableGateValidatesRecords(t *testing.T) {
 		t.Run("malformed "+data[:1], func(t *testing.T) {
 			evidence := validatedEvidence()
 			evidence.Preview.Records["live-suite-linux.json"] = []byte(data)
-			if err := release.EvaluateStableGate(evidence); err == nil {
-				t.Fatal("accepted malformed live record")
+			if err := release.EvaluateStableGate(evidence); err == nil || !strings.Contains(err.Error(), "live-suite-linux.json") {
+				t.Fatalf("error=%v; want named malformed live record", err)
 			}
 		})
 	}
@@ -162,5 +162,50 @@ func TestStableGateRequiresSameAssetHash(t *testing.T) {
 func TestStableGateAcceptsValidatedPreview(t *testing.T) {
 	if err := release.EvaluateStableGate(validatedEvidence()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestStableGateRejectsDuplicateValidationKeys proves repeated keys in records and nested checks cannot overwrite a failure through EvaluateStableGate and name the rejected file.
+func TestStableGateRejectsDuplicateValidationKeys(t *testing.T) {
+	for _, filename := range []string{"live-suite-linux.json", "live-suite-windows-11.json", "manual-checklist.json"} {
+		for _, duplicate := range []struct{ name, find, replacement string }{
+			{"overall result", "\"result\":\"pass\"", "\"result\":\"fail\",\"result\":\"pass\""},
+			{"nested check result", "\"checks\":[{", "\"checks\":[{\"result\":\"fail\","},
+			{"escaped duplicate name", "\"checks\":[{", "\"checks\":[{\"\\u006eame\":\"other\","},
+		} {
+			t.Run(filename+"/"+duplicate.name, func(t *testing.T) {
+				evidence := validatedEvidence()
+				original := string(evidence.Preview.Records[filename])
+				changed := strings.Replace(original, duplicate.find, duplicate.replacement, 1)
+				if changed == original {
+					t.Fatal("duplicate-key fixture did not change")
+				}
+				evidence.Preview.Records[filename] = []byte(changed)
+				err := release.EvaluateStableGate(evidence)
+				if err == nil || !strings.Contains(err.Error(), filename) || !strings.Contains(err.Error(), "duplicate") {
+					t.Fatalf("error=%v; want named duplicate-key refusal", err)
+				}
+			})
+		}
+	}
+}
+
+// TestStableGateRejectsEmptyManualChecklist proves a passing overall result cannot validate a checklist with no checks through EvaluateStableGate and names manual-checklist.json.
+func TestStableGateRejectsEmptyManualChecklist(t *testing.T) {
+	evidence := validatedEvidence()
+	changeRecord(t, &evidence, "manual-checklist.json", func(record map[string]any) { record["checks"] = []any{} })
+	err := release.EvaluateStableGate(evidence)
+	if err == nil || !strings.Contains(err.Error(), "manual-checklist.json") {
+		t.Fatalf("error=%v; want named empty-checklist refusal", err)
+	}
+}
+
+// TestStableGateRejectsMismatchedLivePlatform proves a Windows live record naming Linux is refused by its Windows filename through EvaluateStableGate.
+func TestStableGateRejectsMismatchedLivePlatform(t *testing.T) {
+	evidence := validatedEvidence()
+	changeRecord(t, &evidence, "live-suite-windows-11.json", func(record map[string]any) { record["platform"] = "linux" })
+	err := release.EvaluateStableGate(evidence)
+	if err == nil || !strings.Contains(err.Error(), "live-suite-windows-11.json") || !strings.Contains(err.Error(), "platform") {
+		t.Fatalf("error=%v; want named Windows platform refusal", err)
 	}
 }

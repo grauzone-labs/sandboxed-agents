@@ -68,6 +68,9 @@ func validateRecord(data []byte, filename, commit string) error {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return fmt.Errorf("invalid validation JSON")
 	}
+	if err := uniqueJSONKeys(json.NewDecoder(bytes.NewReader(data))); err != nil {
+		return err
+	}
 	manual := filename == "manual-checklist.json"
 	expected := []string{"schema_version", "kind", "commit", "result", "checks"}
 	if !manual {
@@ -112,6 +115,9 @@ func validateRecord(data []byte, filename, commit string) error {
 	if bytes.Equal(fields["checks"], []byte("null")) || json.Unmarshal(fields["checks"], &checks) != nil {
 		return fmt.Errorf("checks must be an array of objects")
 	}
+	if manual && len(checks) == 0 {
+		return fmt.Errorf("manual checklist contains no checks")
+	}
 	for _, check := range checks {
 		expectedCheck := []string{"name", "result"}
 		if manual {
@@ -139,6 +145,44 @@ func validateRecord(data []byte, filename, commit string) error {
 				return fmt.Errorf("manual check platform is invalid")
 			}
 		}
+	}
+	return nil
+}
+
+// uniqueJSONKeys detects repeated fields that map decoding would hide.
+func uniqueJSONKeys(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("invalid validation JSON")
+	}
+	switch token {
+	case json.Delim('{'):
+		seen := map[string]bool{}
+		for decoder.More() {
+			key, err := decoder.Token()
+			if err != nil {
+				return fmt.Errorf("invalid validation JSON")
+			}
+			name := key.(string)
+			if seen[name] {
+				return fmt.Errorf("duplicate validation JSON field")
+			}
+			seen[name] = true
+			if err := uniqueJSONKeys(decoder); err != nil {
+				return err
+			}
+		}
+	case json.Delim('['):
+		for decoder.More() {
+			if err := uniqueJSONKeys(decoder); err != nil {
+				return err
+			}
+		}
+	default:
+		return nil
+	}
+	if _, err := decoder.Token(); err != nil {
+		return fmt.Errorf("invalid validation JSON")
 	}
 	return nil
 }

@@ -10,24 +10,6 @@ import (
 	"testing"
 )
 
-// TestStableGateCommandNamesRefusal proves a missing preview produces non-zero exit and a named gate through the real stable-gate command with local offline evidence.
-func TestStableGateCommandNamesRefusal(t *testing.T) {
-	evidence := filepath.Join(t.TempDir(), "evidence.json")
-	data, err := json.Marshal(map[string]any{"commit": "0123456789abcdef0123456789abcdef01234567"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(evidence, data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	command := exec.Command("go", "run", ".", "--evidence", evidence)
-	command.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local")
-	output, err := command.CombinedOutput()
-	if err == nil || !strings.Contains(string(output), "prerelease") {
-		t.Fatalf("error=%v output=%s; want named preview refusal", err, output)
-	}
-}
-
 // TestStableGateCommandAcceptsGitHubPreview proves release evidence fetched through fake GitHub APIs passes through the real gate command without network or credentials.
 func TestStableGateCommandAcceptsGitHubPreview(t *testing.T) {
 	if runtime.GOOS != "linux" {
@@ -90,9 +72,10 @@ func writeJSON(t *testing.T, directory, name string, value any) {
 		t.Fatal(err)
 	}
 }
-func runGitHubGate(t *testing.T, directory string) ([]byte, error) {
+func runGitHubGate(t *testing.T, directory string, extraArgs ...string) ([]byte, error) {
 	t.Helper()
-	command := exec.Command("go", "run", ".", "--repository", "owner/repo", "--commit", "0123456789abcdef0123456789abcdef01234567", "--asset-hash", strings.Repeat("a", 64))
+	args := append([]string{"run", ".", "--repository", "owner/repo", "--commit", "0123456789abcdef0123456789abcdef01234567", "--asset-hash", strings.Repeat("a", 64)}, extraArgs...)
+	command := exec.Command("go", args...)
 	command.Env = append(os.Environ(), "PATH="+directory+string(os.PathListSeparator)+os.Getenv("PATH"), "GATE_FIXTURE="+directory, "GH_TOKEN=", "GITHUB_TOKEN=", "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local")
 	return command.CombinedOutput()
 }
@@ -195,5 +178,61 @@ func readJSON(t *testing.T, directory, name string, target any) {
 	}
 	if err := json.Unmarshal(data, target); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestStableGateCommandRefusesLocalEvidence proves a fabricated local pass cannot bypass GitHub collection through the real command's options.
+func TestStableGateCommandRefusesLocalEvidence(t *testing.T) {
+	directory := githubFixture(t)
+	commit := "0123456789abcdef0123456789abcdef01234567"
+	records := map[string][]byte{}
+	for _, platform := range []string{"linux", "windows-11"} {
+		records["live-suite-"+platform+".json"] = []byte(`{"schema_version":2,"kind":"live-suite","commit":"` + commit + `","platform":"` + platform + `","result":"pass","image_part_selected":true,"image_part_ran":true,"image_coverage_complete":true,"checks":[]}`)
+	}
+	records["manual-checklist.json"] = []byte(`{"schema_version":1,"kind":"manual-checklist","commit":"` + commit + `","result":"pass","checks":[{"name":"agent-login","result":"pass","date":"2026-10-12","platform":"linux"}]}`)
+	writeJSON(t, directory, "evidence.json", map[string]any{"commit": commit, "ci_commit": commit, "ci_green": true, "asset_hash": strings.Repeat("a", 64), "preview": map[string]any{"commit": commit, "asset_hash": strings.Repeat("a", 64), "records": records}})
+	output, err := runGitHubGate(t, directory, "--evidence", filepath.Join(directory, "evidence.json"))
+	if err == nil || !strings.Contains(string(output), "flag provided but not defined: -evidence") {
+		t.Fatalf("error=%v output=%s; want removed local-evidence option refused", err, output)
+	}
+}
+
+// TestStableGateCommandNamesInvalidValidationFiles proves ambiguous, empty and platform-mismatched validation records fail with exact prerelease filenames through the real command with fake GitHub evidence.
+func TestStableGateCommandNamesInvalidValidationFiles(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("GitHub adapter uses the Linux preview")
+	}
+	directory := githubFixture(t)
+	for _, test := range []struct{ name, file, filename, reason string }{
+		{"duplicate result", "linux.json", "live-suite-linux.json", "duplicate"},
+		{"empty manual checklist", "manual.json", "manual-checklist.json", "no checks"},
+		{"Windows record names Linux", "windows.json", "live-suite-windows-11.json", "platform"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(directory, test.file)
+			original, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.WriteFile(path, original, 0600)
+			if test.name == "duplicate result" {
+				if err := os.WriteFile(path, append([]byte(`{"result":"fail",`), original[1:]...), 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				var record map[string]any
+				readJSON(t, directory, test.file, &record)
+				if test.name == "empty manual checklist" {
+					record["checks"] = []any{}
+				} else {
+					record["platform"] = "linux"
+				}
+				writeJSON(t, directory, test.file, record)
+			}
+			output, err := runGitHubGate(t, directory)
+			if err == nil || !strings.Contains(string(output), test.filename) || !strings.Contains(string(output), test.reason) {
+				t.Fatalf("error=%v output=%s; want named %s refusal", err, output, test.filename)
+			}
+		})
 	}
 }
