@@ -10,7 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/grauzone-labs/sandboxed-agents/image"
+	"github.com/grauzone-labs/sandboxed-agents/internal/release"
+	"github.com/grauzone-labs/sandboxed-agents/internal/releasetest"
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
@@ -44,11 +45,11 @@ func TestMain(m *testing.M) {
 		panic(string(output) + err.Error())
 	}
 	releaseExecutable = filepath.Join(dir, "release"+suffix)
-	versionSymbol, err := os.ReadFile("../../scripts/version-symbol.txt")
+	versionSymbol, err := release.VersionSymbol(os.DirFS("../.."))
 	if err != nil {
 		panic(err)
 	}
-	releaseBuild := exec.Command("go", "build", "-ldflags", "-X "+strings.TrimSpace(string(versionSymbol))+"=v0.0.30-test", "-o", releaseExecutable, ".")
+	releaseBuild := exec.Command("go", "build", "-ldflags", "-X "+versionSymbol+"=v0.0.30-test", "-o", releaseExecutable, ".")
 	if output, err := releaseBuild.CombinedOutput(); err != nil {
 		panic(string(output) + err.Error())
 	}
@@ -68,11 +69,7 @@ func TestVersionReportsInjectedRelease(t *testing.T) {
 	command := exec.Command(releaseExecutable, "version")
 	command.Env = fakes.Env(os.Environ())
 	output, err := command.CombinedOutput()
-	hash, hashErr := image.Hash(image.Context())
-	if hashErr != nil {
-		t.Fatal(hashErr)
-	}
-	want := testutil.ExpectedVersion("v0.0.30-test", hash)
+	want := releasetest.ExpectedVersion(t, "v0.0.30-test")
 	if err != nil || string(output) != want {
 		t.Fatalf("version: error=%v output=%q; want %q", err, output, want)
 	}
@@ -388,11 +385,7 @@ func TestVersionIgnoresInvalidControllerGroup(t *testing.T) {
 			command := exec.Command(executable, "version")
 			command.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{"SANDBOXED_AGENTS_GROUP": group})
 			output, err := command.CombinedOutput()
-			hash, hashErr := image.Hash(image.Context())
-			if hashErr != nil {
-				t.Fatal(hashErr)
-			}
-			want := testutil.ExpectedVersion("development", hash)
+			want := releasetest.ExpectedVersion(t, "development")
 			if status := exitStatus(t, err); status != 0 || string(output) != want {
 				t.Fatalf("version: status=%d output=%q; want status=0 and version", status, output)
 			}

@@ -20,10 +20,7 @@ fi
 
 overlay_directory=$(mktemp -d)
 trap 'rm -rf -- "$overlay_directory"' EXIT
-GOOS=$(go env GOHOSTOS) GOARCH=$(go env GOHOSTARCH) go run ./image/cmd/prepare "$overlay_directory"
-
-version_symbol=$(< "$root/scripts/version-symbol.txt")
-version_symbol=${version_symbol%$'\r'}
+version_symbol=$(GOOS=$(go env GOHOSTOS) GOARCH=$(go env GOHOSTARCH) go run ./image/cmd/overlay "$overlay_directory")
 
 for target in linux windows; do
     suffix=

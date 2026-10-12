@@ -63,6 +63,10 @@ The container filesystem a sandbox is created from: the base contents every sand
 The image with the base contents and no toolchains, produced by `build` and selected by `--with none`. Toolchain images are layered on it, so toolchain sets share its layers.
 _Avoid_: Default image, root image
 
+**Asset hash**:
+The SHA-256 hash of sorted paths and normalized bytes in the embedded image build context.
+_Avoid_: Asset identity, context identity, context hash
+
 ### Ownership
 
 **Controller group**:

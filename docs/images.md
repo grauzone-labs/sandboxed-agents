@@ -2,16 +2,17 @@
 
 This document describes the base image recipe in `image/context/base/` and how it checks the NodeSource signing key before it trusts the NodeSource package repository. The host executable embeds the image build context, as described in [ADR 0001](adr/0001-go-for-host-executable-and-in-container-manager.md).
 
-`image/assets.go` owns the `go:embed` directive. Its `Context` API supplies a read-only context with CRLF text line endings normalized to LF. Files ending in `.bin` or containing NUL bytes retain their exact bytes; `.gitattributes` marks `.bin` files as binary. The asset hash includes sorted relative paths and normalized contents with length prefixes; it excludes file modes and timestamps. `sandboxed-agents version` prints the version followed by `asset-sha256 HASH`.
+`image/assets.go` owns the `go:embed` directive. Its `Context` API supplies a read-only context with CRLF text line endings normalized to LF. At build time, `.bin` files and NUL-containing files preserve the bytes already present in the tree. `.gitattributes` marks `.bin` files as binary and forces other context files to text, so binary assets must use `.bin` to preserve exact bytes through Git. The asset hash includes sorted relative paths and normalized contents with length prefixes; it excludes file modes and timestamps. `sandboxed-agents version` prints the version followed by `asset-sha256 HASH`.
 
-Run `bash scripts/release.sh VERSION OUTPUT_DIRECTORY` with the Go version from `go.mod` on `PATH` to build static Linux and Windows AMD64 executables. The script prepares normalized files in a temporary directory and uses a Go build overlay, so the release executable embeds LF bytes even from a CRLF checkout. The checkout stays untouched and the temporary files are removed. A plain `go build` exposes the same normalized context and asset hash at runtime; use the release script for normalization before embedding and reproducible binary bytes. The script produces executables only; package distribution is not implemented.
+Run `bash scripts/release.sh VERSION OUTPUT_DIRECTORY` with the Go version from `go.mod` on `PATH` to build static Linux and Windows AMD64 executables. The script runs `image/cmd/overlay` to prepare normalized files in a temporary directory and uses a Go build overlay, so the release executable embeds LF bytes even from a CRLF checkout. The checkout stays untouched and the temporary files are removed. A plain `go build` exposes the same normalized context and asset hash at runtime; use the release script for normalization before embedding and reproducible binary bytes. The script produces executables only; package distribution is not implemented.
 
 Release limitations:
 
 - Verification runs the Linux executable's `version` command. The Windows executable's `version` command has not been executed here; Windows checks compare binary bytes and inspect the PE AMD64 machine field.
+- Native Windows build hosts are untested. The release integration test skips non-Linux build hosts.
 - A plain `go build` from a CRLF checkout embeds raw CRLF bytes and normalizes the context only at runtime. The release script normalizes text before embedding.
 - [ADR 0001](adr/0001-go-for-host-executable-and-in-container-manager.md) requires building the manager for Linux before the host executable. The manager does not exist yet, so this release script builds and embeds no manager.
-- Build normalization preserves `.bin` files and NUL-containing files. Binary assets without NUL must use the `.bin` suffix; this naming convention has no further enforcement or content validation.
+- NUL detection preserves tree bytes only during build normalization. Git's forced-text attributes can change line endings in non-`.bin` files, including NUL-containing files. Every binary asset must use `.bin` for exact bytes through Git; this naming convention has no further enforcement or content validation.
 - npm and NuGet packages do not exist and are not produced or tested by this script.
 
 ## Base image
