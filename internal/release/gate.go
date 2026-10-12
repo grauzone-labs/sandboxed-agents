@@ -38,6 +38,15 @@ func ValidationRecordFilenames() []string {
 // EvaluateStableGate refuses publication unless the preview validates the release.
 // It reads only supplied evidence, never the network or the host environment.
 func EvaluateStableGate(evidence StableGateEvidence) error {
+	if err := ValidateStableGatePrerequisites(evidence); err != nil {
+		return err
+	}
+	return ValidateStableAssetHash(evidence.AssetHash, evidence.Preview.AssetHash)
+}
+
+// ValidateStableGatePrerequisites checks tags, commits, records and CI before a
+// collector downloads or executes the preview binary for its asset hash.
+func ValidateStableGatePrerequisites(evidence StableGateEvidence) error {
 	version, err := StableTagVersion(evidence.Tag)
 	if err != nil {
 		return err
@@ -63,7 +72,12 @@ func EvaluateStableGate(evidence StableGateEvidence) error {
 	if !evidence.CIGreen || evidence.CICommit != evidence.Commit {
 		return fmt.Errorf("CI: offline suite is not green on the release commit")
 	}
-	if !assetSHA.MatchString(evidence.AssetHash) || evidence.AssetHash != evidence.Preview.AssetHash {
+	return nil
+}
+
+// ValidateStableAssetHash completes a gate whose prerequisites already passed.
+func ValidateStableAssetHash(stable, preview string) error {
+	if !assetSHA.MatchString(stable) || stable != preview {
 		return fmt.Errorf("asset hash: preview and stable binaries differ or hash is missing")
 	}
 	return nil

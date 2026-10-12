@@ -14,6 +14,16 @@ func main() {
 		os.Exit(1)
 	}
 	root := os.Getenv("GATE_FIXTURE")
+	log, err := os.OpenFile(filepath.Join(root, "requests.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		panic(err)
+	}
+	if _, err := fmt.Fprintln(log, os.Args[2]); err != nil {
+		panic(err)
+	}
+	if err := log.Close(); err != nil {
+		panic(err)
+	}
 	data, err := os.ReadFile(filepath.Join(root, "responses.json"))
 	if err != nil {
 		panic(err)
