@@ -1,0 +1,38 @@
+name: Stable release gate
+
+'on':
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gate:
+    # Preview tags never publish to registries. The publication workflow in #36
+    # must depend on this gate, including the asset hash comparison, succeeding.
+    if: "!contains(github.ref_name, '-')"
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Validate stable tag and build stable binaries
+        shell: bash
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'stable release gate: invalid stable tag' >&2; exit 1; }
+          bash scripts/release.sh "${GITHUB_REF_NAME#v}" "$RUNNER_TEMP/stable-release"
+      - name: Require a validated preview on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version_output=$("$RUNNER_TEMP/stable-release/sandboxed-agents-linux-amd64" version)
+          asset_hash=$(printf '%s\n' "$version_output" | awk '$1 == "asset-sha256" { print $2 }')
+          go run ./internal/release/cmd/stable-gate \
+            --repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --asset-hash "$asset_hash"
