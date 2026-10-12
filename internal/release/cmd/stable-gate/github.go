@@ -37,6 +37,8 @@ func collectEvidence(repository, commit, hash string) (release.StableGateEvidenc
 	}); err != nil {
 		return evidence, fmt.Errorf("prerelease: %w", err)
 	}
+	var refusal error
+	ciCollected := false
 	for _, preview := range releases {
 		if !preview.Prerelease || preview.Draft || !previewTag.MatchString(preview.TagName) {
 			continue
@@ -50,39 +52,62 @@ func collectEvidence(repository, commit, hash string) (release.StableGateEvidenc
 		if resolved.SHA != commit {
 			continue
 		}
-		evidence.Preview = &release.PreviewEvidence{Commit: resolved.SHA, Records: map[string][]byte{}}
-		for _, filename := range []string{"live-suite-linux.json", "live-suite-windows-11.json", "manual-checklist.json"} {
-			assetID := preview.assetID(filename)
-			if assetID == 0 {
-				return evidence, fmt.Errorf("%s: validation file missing from prerelease", filename)
+		if !ciCollected {
+			if err := collectCI(base, &evidence); err != nil {
+				return evidence, err
 			}
-			data, err := githubAsset(base, assetID)
-			if err != nil {
-				return evidence, fmt.Errorf("%s: %w", filename, err)
-			}
-			evidence.Preview.Records[filename] = data
+			ciCollected = true
 		}
-		id := preview.assetID("sandboxed-agents-linux-amd64")
-		if id == 0 {
-			return evidence, fmt.Errorf("asset hash: Linux preview binary missing")
+		candidate, err := collectPreview(base, preview, resolved.SHA)
+		if err == nil {
+			evidence.Preview = candidate
+			err = release.EvaluateStableGate(evidence)
 		}
-		data, err := githubAsset(base, id)
-		if err != nil {
-			return evidence, fmt.Errorf("asset hash: %w", err)
+		if err == nil {
+			return evidence, nil
 		}
-		evidence.Preview.AssetHash, err = previewAssetHash(data)
-		if err != nil {
-			return evidence, err
+		if refusal == nil {
+			refusal = err
 		}
-		break
 	}
-	if evidence.Preview == nil {
-		return evidence, nil
+	// Preserve a named reason when candidates exist but none validates. A
+	// missing preview stays nil so the evaluator gives its prerelease refusal.
+	return evidence, refusal
+}
+
+func collectPreview(base string, preview githubRelease, commit string) (*release.PreviewEvidence, error) {
+	candidate := &release.PreviewEvidence{Commit: commit, Records: map[string][]byte{}}
+	for _, filename := range release.ValidationRecordFilenames() {
+		assetID := preview.assetID(filename)
+		if assetID == 0 {
+			return nil, fmt.Errorf("%s: validation file missing from prerelease", filename)
+		}
+		data, err := githubAsset(base, assetID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", filename, err)
+		}
+		candidate.Records[filename] = data
 	}
+	id := preview.assetID("sandboxed-agents-linux-amd64")
+	if id == 0 {
+		return nil, fmt.Errorf("asset hash: Linux preview binary missing")
+	}
+	data, err := githubAsset(base, id)
+	if err != nil {
+		return nil, fmt.Errorf("asset hash: %w", err)
+	}
+	candidate.AssetHash, err = previewAssetHash(data)
+	if err != nil {
+		return nil, err
+	}
+	return candidate, nil
+}
+
+func collectCI(base string, evidence *release.StableGateEvidence) error {
 	// Runs are newest first. An old passing run never hides a newer failed or
 	// still-running push run on the same commit.
 	var latest *githubRun
-	if err := githubPages(base+"/actions/workflows/release-reproducibility.yml/runs?head_sha="+commit+"&event=push&per_page=100", func(raw json.RawMessage) error {
+	if err := githubPages(base+"/actions/workflows/release-reproducibility.yml/runs?head_sha="+evidence.Commit+"&event=push&per_page=100", func(raw json.RawMessage) error {
 		var page struct {
 			Runs []githubRun `json:"workflow_runs"`
 		}
@@ -90,21 +115,21 @@ func collectEvidence(repository, commit, hash string) (release.StableGateEvidenc
 			return err
 		}
 		for _, run := range page.Runs {
-			if latest == nil && run.HeadSHA == commit {
+			if latest == nil && run.HeadSHA == evidence.Commit {
 				copy := run
 				latest = &copy
 			}
 		}
 		return nil
 	}); err != nil {
-		return evidence, fmt.Errorf("CI: %w", err)
+		return fmt.Errorf("CI: %w", err)
 	}
 	if latest == nil {
-		return evidence, nil
+		return nil
 	}
 	evidence.CICommit = latest.HeadSHA
 	if latest.Status != "completed" || latest.Conclusion != "success" {
-		return evidence, nil
+		return nil
 	}
 	passed := map[string]bool{}
 	if err := githubPages(fmt.Sprintf("%s/actions/runs/%d/jobs?per_page=100", base, latest.ID), func(raw json.RawMessage) error {
@@ -119,10 +144,10 @@ func collectEvidence(repository, commit, hash string) (release.StableGateEvidenc
 		}
 		return nil
 	}); err != nil {
-		return evidence, fmt.Errorf("CI: %w", err)
+		return fmt.Errorf("CI: %w", err)
 	}
 	evidence.CIGreen = passed["linux"] && passed["windows"]
-	return evidence, nil
+	return nil
 }
 
 var previewTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+-preview\.[0-9]{8}\.[0-9]+$`)

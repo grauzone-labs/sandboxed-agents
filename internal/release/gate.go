@@ -27,6 +27,12 @@ type PreviewEvidence struct {
 	AssetHash string            `json:"asset_hash"`
 }
 
+// ValidationRecordFilenames returns the exact prerelease asset names required
+// by the gate. Each call returns a new slice, so callers cannot change the policy.
+func ValidationRecordFilenames() []string {
+	return []string{"live-suite-linux.json", "live-suite-windows-11.json", "manual-checklist.json"}
+}
+
 // EvaluateStableGate refuses publication unless the preview validates the release.
 // It reads only supplied evidence, never the network or the host environment.
 func EvaluateStableGate(evidence StableGateEvidence) error {
@@ -36,7 +42,7 @@ func EvaluateStableGate(evidence StableGateEvidence) error {
 	if evidence.Preview.Commit != evidence.Commit {
 		return fmt.Errorf("prerelease: preview commit differs from release commit")
 	}
-	for _, filename := range []string{"live-suite-linux.json", "live-suite-windows-11.json", "manual-checklist.json"} {
+	for _, filename := range ValidationRecordFilenames() {
 		data, ok := evidence.Preview.Records[filename]
 		if !ok {
 			return fmt.Errorf("%s: validation file missing from prerelease", filename)

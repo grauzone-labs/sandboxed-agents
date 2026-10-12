@@ -153,3 +153,47 @@ func TestStableTagWorkflowRunsGate(t *testing.T) {
 		}
 	}
 }
+
+// TestStableGateCommandFindsValidatedPreview proves an incomplete or failing same-commit candidate cannot hide a validated preview through the real command with fake GitHub evidence.
+func TestStableGateCommandFindsValidatedPreview(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("GitHub adapter uses the Linux preview")
+	}
+	for _, first := range []string{"missing validation file", "failed validation record"} {
+		t.Run(first, func(t *testing.T) {
+			directory := githubFixture(t)
+			var previews []map[string]any
+			readJSON(t, directory, "releases.json", &previews)
+			candidate := map[string]any{"tag_name": "v1.0.0-preview.20261012.2", "prerelease": true, "draft": false, "assets": []any{}}
+			if first == "failed validation record" {
+				candidate["assets"] = []any{map[string]any{"id": 5, "name": "live-suite-linux.json"}, map[string]any{"id": 2, "name": "live-suite-windows-11.json"}, map[string]any{"id": 3, "name": "manual-checklist.json"}, map[string]any{"id": 4, "name": "sandboxed-agents-linux-amd64"}}
+			}
+			previews = append([]map[string]any{candidate}, previews...)
+			writeJSON(t, directory, "releases.json", previews)
+			var responses map[string]string
+			readJSON(t, directory, "responses.json", &responses)
+			responses["repos/owner/repo/commits/v1.0.0-preview.20261012.2"] = "commit.json"
+			responses["repos/owner/repo/releases/assets/5"] = "failed-linux.json"
+			writeJSON(t, directory, "responses.json", responses)
+			var record map[string]any
+			readJSON(t, directory, "linux.json", &record)
+			record["result"] = "fail"
+			writeJSON(t, directory, "failed-linux.json", record)
+			output, err := runGitHubGate(t, directory)
+			if err != nil || !strings.Contains(string(output), "gates passed") {
+				t.Fatalf("error=%v output=%s; want later validated preview to pass", err, output)
+			}
+		})
+	}
+}
+
+func readJSON(t *testing.T, directory, name string, target any) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(directory, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, target); err != nil {
+		t.Fatal(err)
+	}
+}
