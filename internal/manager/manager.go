@@ -1,0 +1,111 @@
+// Package manager owns version and agent session queries inside a sandbox.
+package manager
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+)
+
+var (
+	agentIdentity = Identity{UID: 1000, GID: 1000}
+	rootIdentity  = Identity{UID: 0, GID: 0}
+)
+
+// Identity is the effective user and group of a process.
+type Identity struct{ UID, GID int }
+
+// Process is a program start requested at the operating-system seam.
+type Process struct {
+	Program        string
+	Args           []string
+	Identity       Identity
+	Stdout, Stderr io.Writer
+}
+
+// Effects supplies only operating-system operations; command behavior runs real.
+// Reexec starts this same trusted manager executable, ignoring Program.
+type Effects struct {
+	Identity func() Identity
+	Groups   func() ([]int, error)
+	UIDs     func() (real, effective, saved int)
+	GIDs     func() (real, effective, saved int)
+	Start    func(Process) error
+	Reexec   func(Process) error
+}
+
+// RunWithEffects returns the manager command's exit status at injected OS seams.
+// Version answers without identity checks. Root session queries re-exec a
+// trusted agent worker; only a verified agent identity may reach tmux.
+func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) int {
+	if len(args) == 1 && args[0] == "version" {
+		fmt.Fprintln(stdout, "sandboxed-agents-manager development")
+		return 0
+	}
+	if len(args) == 1 && args[0] == "sessions" {
+		if effects.Identity() == rootIdentity {
+			return reexecWorker([]string{"__worker", "sessions"}, stdout, stderr, effects)
+		}
+		return sessions(stdout, stderr, effects)
+	}
+	if len(args) == 2 && args[0] == "__worker" && args[1] == "sessions" {
+		return sessions(stdout, stderr, effects)
+	}
+	fmt.Fprintln(stderr, "usage: sandboxed-agents-manager version | sessions")
+	return 2
+}
+
+func reexecWorker(args []string, stdout, stderr io.Writer, effects Effects) int {
+	return exitStatus(effects.Reexec(Process{Args: args, Identity: agentIdentity, Stdout: stdout, Stderr: stderr}), stderr)
+}
+
+func sessions(stdout, stderr io.Writer, effects Effects) int {
+	if effects.UIDs == nil || effects.GIDs == nil {
+		fmt.Fprintln(stderr, "agent work requires verified real, effective, and saved UID and GID 1000")
+		return 1
+	}
+	ruid, euid, suid := effects.UIDs()
+	rgid, egid, sgid := effects.GIDs()
+	if ruid != agentIdentity.UID || euid != agentIdentity.UID || suid != agentIdentity.UID ||
+		rgid != agentIdentity.GID || egid != agentIdentity.GID || sgid != agentIdentity.GID {
+		fmt.Fprintln(stderr, "agent work requires real, effective, and saved UID and GID 1000")
+		return 1
+	}
+	if effects.Groups == nil {
+		fmt.Fprintln(stderr, "agent work requires verified supplementary groups")
+		return 1
+	}
+	groups, err := effects.Groups()
+	if err != nil {
+		fmt.Fprintf(stderr, "cannot verify agent supplementary groups: %v\n", err)
+		return 1
+	}
+	if len(groups) != 0 && !(len(groups) == 1 && groups[0] == agentIdentity.GID) {
+		fmt.Fprintln(stderr, "agent work requires empty supplementary groups or only GID 1000")
+		return 1
+	}
+	var tmuxStderr bytes.Buffer
+	err = effects.Start(Process{Program: "tmux", Args: []string{"list-sessions", "-F", "#{session_name}"}, Identity: agentIdentity, Stdout: stdout, Stderr: &tmuxStderr})
+	_, connectionMessage, _ := strings.Cut(tmuxStderr.String(), "error connecting to")
+	var exit interface{ ExitCode() int }
+	if errors.As(err, &exit) && exit.ExitCode() == 1 &&
+		(strings.Contains(tmuxStderr.String(), "no server running") || strings.Contains(connectionMessage, "(No such file or directory)")) {
+		return 0
+	}
+	fmt.Fprint(stderr, tmuxStderr.String())
+	return exitStatus(err, stderr)
+}
+
+func exitStatus(err error, stderr io.Writer) int {
+	if err == nil {
+		return 0
+	}
+	fmt.Fprintln(stderr, err)
+	var exit interface{ ExitCode() int }
+	if errors.As(err, &exit) && exit.ExitCode() > 0 {
+		return exit.ExitCode()
+	}
+	return 1
+}
