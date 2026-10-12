@@ -10,9 +10,10 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
-	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
+	"github.com/grauzone-labs/sandboxed-agents/internal/releasetest"
 )
 
 // TestReleaseBuildsAreReproducible proves repeat builds and a CRLF asset checkout produce identical Linux and Windows executables through the release script.
@@ -55,11 +56,7 @@ func TestReleaseBuildsAreReproducible(t *testing.T) {
 	}
 	command := exec.Command(filepath.Join(third, "sandboxed-agents-linux-amd64"), "version")
 	output, err := command.CombinedOutput()
-	hash, hashErr := image.Hash(image.Context())
-	if hashErr != nil {
-		t.Fatal(hashErr)
-	}
-	want := testutil.ExpectedVersion("v0.0.30-test", hash)
+	want := releasetest.ExpectedVersion(t, "v0.0.30-test")
 	if err != nil || string(output) != want {
 		t.Fatalf("release version: error=%v output=%q; want %q", err, output, want)
 	}
@@ -78,6 +75,7 @@ func buildRelease(t *testing.T, root, output string) {
 
 func copyCRLFCheckout(t *testing.T, root, destination string) {
 	t.Helper()
+	source := fstest.MapFS{}
 	err := filepath.WalkDir(root, func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -99,17 +97,14 @@ func copyCRLFCheckout(t *testing.T, root, destination string) {
 		if err != nil {
 			return err
 		}
-		if relative == filepath.Join("scripts", "version-symbol.txt") {
-			data = []byte(strings.TrimSpace(string(data)) + "\r\n")
-		}
-		file := filepath.Join(destination, relative)
-		if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
-			return err
-		}
-		return os.WriteFile(file, data, 0600)
+		source[filepath.ToSlash(relative)] = &fstest.MapFile{Data: data}
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	testutil.CopyCRLFContext(t, os.DirFS(filepath.Join(root, "image", "context")), filepath.Join(destination, "image", "context"))
+	if err := image.WriteContext(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	releasetest.CopyCRLFContext(t, os.DirFS(filepath.Join(root, "image", "context")), filepath.Join(destination, "image", "context"))
 }

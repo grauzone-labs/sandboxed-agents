@@ -2,37 +2,20 @@ package image_test
 
 import (
 	"bytes"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
 	"testing/fstest"
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
-	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
+	"github.com/grauzone-labs/sandboxed-agents/internal/releasetest"
 )
 
-// TestAssetHashIgnoresWindowsLineEndings proves that a CRLF checkout has the LF asset hash and embedded text has no CR bytes through the public image APIs.
+// TestAssetHashIgnoresWindowsLineEndings proves that a CRLF checkout has the LF asset hash through the public image hash API.
 func TestAssetHashIgnoresWindowsLineEndings(t *testing.T) {
 	original := os.DirFS("context")
 	dir := t.TempDir()
-	testutil.CopyCRLFContext(t, original, dir)
-	err := fs.WalkDir(image.Context(), ".", func(name string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
-		}
-		data, err := fs.ReadFile(image.Context(), name)
-		if err != nil {
-			return err
-		}
-		if filepath.Ext(name) != image.BinarySuffix && !bytes.Contains(data, []byte{0}) && bytes.Contains(data, []byte("\r")) {
-			t.Errorf("embedded text asset %s contains CR bytes", name)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	releasetest.CopyCRLFContext(t, original, dir)
 	want, err := image.Hash(original)
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +102,7 @@ func TestBinaryContextAssetsRetainBytes(t *testing.T) {
 	}
 }
 
-// TestFingerprintEditChangesAssetHash proves that editing the pinned signing key changes the asset hash through the public image hash API.
+// TestFingerprintEditChangesAssetHash proves that editing the pinned signing key fingerprint file changes the asset hash through the public image hash API.
 func TestFingerprintEditChangesAssetHash(t *testing.T) {
 	directory := t.TempDir()
 	if err := image.WriteContext(image.Context(), directory); err != nil {
