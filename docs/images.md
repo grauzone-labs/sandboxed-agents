@@ -2,9 +2,17 @@
 
 This document describes the base image recipe in `image/context/base/` and how it checks the NodeSource signing key before it trusts the NodeSource package repository. The host executable embeds the image build context, as described in [ADR 0001](adr/0001-go-for-host-executable-and-in-container-manager.md).
 
-`image/assets.go` owns the `go:embed` directive. Its `Context` API supplies a read-only context with CRLF text line endings normalized to LF. All context files are text except files ending in `.bin`, which retain their exact bytes and are marked binary in `.gitattributes`. The context hash includes sorted relative paths and normalized contents with length prefixes; it excludes file modes and timestamps. `sandboxed-agents version` prints the version followed by `asset-sha256 HASH`.
+`image/assets.go` owns the `go:embed` directive. Its `Context` API supplies a read-only context with CRLF text line endings normalized to LF. Files ending in `.bin` or containing NUL bytes retain their exact bytes; `.gitattributes` marks `.bin` files as binary. The asset hash includes sorted relative paths and normalized contents with length prefixes; it excludes file modes and timestamps. `sandboxed-agents version` prints the version followed by `asset-sha256 HASH`.
 
-Run `bash scripts/release.sh VERSION OUTPUT_DIRECTORY` with the Go version from `go.mod` on `PATH` to build static Linux and Windows AMD64 executables. The script prepares normalized files in a temporary directory and uses a Go build overlay, so the release executable embeds LF bytes even from a CRLF checkout. The checkout stays untouched and the temporary files are removed. A plain `go build` exposes the same normalized context and hash at runtime; use the release script for normalization before embedding and reproducible binary bytes. The script produces executables only; package distribution is not implemented.
+Run `bash scripts/release.sh VERSION OUTPUT_DIRECTORY` with the Go version from `go.mod` on `PATH` to build static Linux and Windows AMD64 executables. The script prepares normalized files in a temporary directory and uses a Go build overlay, so the release executable embeds LF bytes even from a CRLF checkout. The checkout stays untouched and the temporary files are removed. A plain `go build` exposes the same normalized context and asset hash at runtime; use the release script for normalization before embedding and reproducible binary bytes. The script produces executables only; package distribution is not implemented.
+
+Release limitations:
+
+- Verification runs the Linux executable's `version` command. The Windows executable's `version` command has not been executed here; Windows checks compare binary bytes and inspect the PE AMD64 machine field.
+- A plain `go build` from a CRLF checkout embeds raw CRLF bytes and normalizes the context only at runtime. The release script normalizes text before embedding.
+- [ADR 0001](adr/0001-go-for-host-executable-and-in-container-manager.md) requires building the manager for Linux before the host executable. The manager does not exist yet, so this release script builds and embeds no manager.
+- Build normalization preserves `.bin` files and NUL-containing files. Binary assets without NUL must use the `.bin` suffix; this naming convention has no further enforcement or content validation.
+- npm and NuGet packages do not exist and are not produced or tested by this script.
 
 ## Base image
 
@@ -65,7 +73,7 @@ The offline test is run with `bash image/test/nodesource/test-check-nodesource-k
 
 Several things are not covered here:
 
-- The Podman image build pipeline, image tags, cleanup, and rebuilding (issue #12). The embedded context and its hash are available for that work; release preprocessing does not build a Podman image.
+- The Podman image build pipeline, image tags, cleanup, and rebuilding (issue #12). The embedded context and its asset hash are available for that work; release preprocessing does not build a Podman image.
 - The Microsoft signing key.
 - Digests of the pulled Debian image or of built images.
 - The live build against the real NodeSource key (issue #18 and the live suite).

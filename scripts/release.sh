@@ -18,15 +18,18 @@ if [[ $(go env GOVERSION) != "$required_go" ]]; then
     exit 1
 fi
 
-build_inputs=$(mktemp -d)
-trap 'rm -rf -- "$build_inputs"' EXIT
-GOOS=$(go env GOHOSTOS) GOARCH=$(go env GOHOSTARCH) go run ./image/cmd/prepare "$build_inputs"
+overlay_directory=$(mktemp -d)
+trap 'rm -rf -- "$overlay_directory"' EXIT
+GOOS=$(go env GOHOSTOS) GOARCH=$(go env GOHOSTARCH) go run ./image/cmd/prepare "$overlay_directory"
+
+version_symbol=$(< "$root/scripts/version-symbol.txt")
+version_symbol=${version_symbol%$'\r'}
 
 for target in linux windows; do
     suffix=
     if [[ $target == windows ]]; then suffix=.exe; fi
-    GOOS=$target GOARCH=amd64 go build -overlay "$build_inputs/overlay.json" \
+    GOOS=$target GOARCH=amd64 go build -overlay "$overlay_directory/overlay.json" \
         -trimpath -buildvcs=false \
-        -ldflags "-buildid= -X github.com/grauzone-labs/sandboxed-agents/internal/cli.version=$version" \
+        -ldflags "-buildid= -X $version_symbol=$version" \
         -o "$output/sandboxed-agents-$target-amd64$suffix" ./cmd/sandboxed-agents
 done

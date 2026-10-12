@@ -1,4 +1,4 @@
-// Command prepare writes release-only LF-normalized Go embed overlay inputs.
+// Command prepare writes normalized overlay inputs for the release build.
 package main
 
 import (
@@ -32,22 +32,15 @@ func prepare(directory string) error {
 		return err
 	}
 	overlay := struct{ Replace map[string]string }{Replace: make(map[string]string)}
-	context := image.Context()
-	err = fs.WalkDir(context, ".", func(path string, entry fs.DirEntry, err error) error {
+	contextDirectory := filepath.Join(directory, "context")
+	if err := image.WriteContext(image.Context(), contextDirectory); err != nil {
+		return err
+	}
+	err = fs.WalkDir(os.DirFS(contextDirectory), ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
 			return err
 		}
-		data, err := fs.ReadFile(context, path)
-		if err != nil {
-			return err
-		}
-		replacement := filepath.Join(directory, "context", filepath.FromSlash(path))
-		if err := os.MkdirAll(filepath.Dir(replacement), 0700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(replacement, data, 0600); err != nil {
-			return err
-		}
+		replacement := filepath.Join(contextDirectory, filepath.FromSlash(path))
 		overlay.Replace[filepath.Join(root, "image", "context", filepath.FromSlash(path))] = replacement
 		return nil
 	})

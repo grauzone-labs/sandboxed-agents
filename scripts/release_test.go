@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
+	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
 // TestReleaseBuildsAreReproducible proves repeat builds and a CRLF asset checkout produce identical Linux and Windows executables through the release script.
@@ -58,7 +59,7 @@ func TestReleaseBuildsAreReproducible(t *testing.T) {
 	if hashErr != nil {
 		t.Fatal(hashErr)
 	}
-	want := "sandboxed-agents v0.0.30-test\nasset-sha256 " + hash + "\n"
+	want := testutil.ExpectedVersion("v0.0.30-test", hash)
 	if err != nil || string(output) != want {
 		t.Fatalf("release version: error=%v output=%q; want %q", err, output, want)
 	}
@@ -86,20 +87,20 @@ func copyCRLFCheckout(t *testing.T, root, destination string) {
 			return err
 		}
 		if entry.IsDir() {
-			if relative != "." && strings.HasPrefix(entry.Name(), ".") {
+			if relative == filepath.Join("image", "context") || relative != "." && strings.HasPrefix(entry.Name(), ".") {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if relative != "go.mod" && relative != ".gitattributes" && !strings.HasSuffix(relative, ".go") && !strings.HasPrefix(relative, "image"+string(filepath.Separator)+"context"+string(filepath.Separator)) && relative != filepath.Join("scripts", "release.sh") {
+		if relative != "go.mod" && relative != ".gitattributes" && !strings.HasSuffix(relative, ".go") && relative != filepath.Join("scripts", "release.sh") && relative != filepath.Join("scripts", "version-symbol.txt") {
 			return nil
 		}
 		data, err := os.ReadFile(name)
 		if err != nil {
 			return err
 		}
-		if strings.HasPrefix(relative, filepath.Join("image", "context")+string(filepath.Separator)) && filepath.Ext(name) != ".bin" {
-			data = bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n"))
+		if relative == filepath.Join("scripts", "version-symbol.txt") {
+			data = []byte(strings.TrimSpace(string(data)) + "\r\n")
 		}
 		file := filepath.Join(destination, relative)
 		if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
@@ -110,4 +111,5 @@ func copyCRLFCheckout(t *testing.T, root, destination string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testutil.CopyCRLFContext(t, os.DirFS(filepath.Join(root, "image", "context")), filepath.Join(destination, "image", "context"))
 }
