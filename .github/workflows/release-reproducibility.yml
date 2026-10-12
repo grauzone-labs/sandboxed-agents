@@ -20,8 +20,8 @@ jobs:
       linux_sha256: ${{ steps.version.outputs.linux_sha256 }}
       windows_sha256: ${{ steps.version.outputs.windows_sha256 }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: false
@@ -54,12 +54,12 @@ jobs:
     runs-on: blacksmith-2vcpu-windows-2025
     env:
       SANDBOXED_AGENTS_RELEASE_BASH: 'C:\Program Files\Git\bin\bash.exe'
-      ASSET_HASH: ${{ needs.linux.outputs.linux_asset_hash }}
+      EXPECTED_ASSET_HASH: ${{ needs.linux.outputs.linux_asset_hash }}
       EXPECTED_LINUX_SHA256: ${{ needs.linux.outputs.linux_sha256 }}
       EXPECTED_WINDOWS_SHA256: ${{ needs.linux.outputs.windows_sha256 }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: false
@@ -96,7 +96,7 @@ jobs:
           $versionOutput
           if ($versionOutput[0] -ne "sandboxed-agents $env:RELEASE_VERSION") { throw 'Injected Windows version differs' }
           $assetHash = ($versionOutput | Where-Object { $_ -match '^asset-sha256 ' }) -replace '^asset-sha256 ', ''
-          if ($assetHash -ne $env:ASSET_HASH) { throw 'Windows and Linux asset hashes differ' }
+          if ($assetHash -ne $env:EXPECTED_ASSET_HASH) { throw 'Windows and Linux asset hashes differ' }
           $windowsSHA256 = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP/release-output/sandboxed-agents-windows-amd64.exe").Hash.ToLowerInvariant()
           "Windows executable SHA256: $windowsSHA256"
           if ($windowsSHA256 -ne $env:EXPECTED_WINDOWS_SHA256) { throw 'Windows-built and Linux-cross-compiled Windows executables differ' }
