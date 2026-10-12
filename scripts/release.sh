@@ -45,7 +45,7 @@ if [[ $inside_worktree == true ]]; then
         exit 1
     fi
     ignored_inputs=$(git ls-files --others --ignored --exclude-standard -- \
-        ':(glob)image/context/**' 'go.mod' '.gitattributes' ':(glob)**/*.go' \
+        ':(glob)image/context/**' 'go.mod' 'go.work' '.gitattributes' ':(glob)**/*.go' \
         'scripts/release.sh' 'scripts/version-symbol.txt')
     if [[ -n $ignored_inputs ]]; then
         printf 'release refuses ignored release inputs:\n%s\n' "$ignored_inputs" >&2
@@ -53,7 +53,7 @@ if [[ $inside_worktree == true ]]; then
     fi
 fi
 
-export GOTOOLCHAIN=local CGO_ENABLED=0 GOFLAGS= GOEXPERIMENT= GOAMD64=v1
+export GOTOOLCHAIN=local CGO_ENABLED=0 GOFLAGS= GOEXPERIMENT= GOAMD64=v1 GOWORK=off GOENV=off
 required_go=$(awk '$1 == "go" { sub(/\r$/, "", $2); print "go" $2 }' go.mod)
 if [[ $(go env GOVERSION) != "$required_go" ]]; then
     printf 'release requires %s on PATH\n' "$required_go" >&2

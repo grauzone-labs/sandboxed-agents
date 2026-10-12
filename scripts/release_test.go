@@ -25,7 +25,7 @@ const (
 
 // TestReleaseBuildsAreReproducible proves the same tagged commit yields identical Linux and Windows executables from LF and CRLF assets, Go sources, and metadata through the release script on Linux.
 func TestReleaseBuildsAreReproducible(t *testing.T) {
-	assertReproducibleRelease(t, releaseRepository(t))
+	assertReproducibleRelease(t, releaseRepositoryOrSkip(t))
 }
 
 // TestWindowsReleaseBuildsAreReproducible proves the same tagged commit yields identical executable bytes and a working Windows version command through explicitly configured Git for Windows Bash.
@@ -82,14 +82,14 @@ func assertReproducibleRelease(t *testing.T, root string) {
 
 // TestReleaseRefusesMissingVersionTag proves an untagged commit is refused through the actual release script before outputs are built.
 func TestReleaseRefusesMissingVersionTag(t *testing.T) {
-	root := releaseRepository(t)
+	root := releaseRepositoryOrSkip(t)
 	checkout := createReleaseRepository(t, root)
 	assertReleaseRefused(t, checkout, "release requires tag refs/tags/v"+releasetest.ReleaseVersion)
 }
 
 // TestReleaseRefusesVersionTagOnAnotherCommit proves a tag targeting a previous commit is refused through the actual release script before outputs are built.
 func TestReleaseRefusesVersionTagOnAnotherCommit(t *testing.T) {
-	root := releaseRepository(t)
+	root := releaseRepositoryOrSkip(t)
 	checkout := createReleaseRepository(t, root)
 	tagReleaseRepository(t, checkout)
 	runGit(t, checkout, "commit", "--quiet", "--allow-empty", "-m", "test(release): advance fixture HEAD")
@@ -98,7 +98,7 @@ func TestReleaseRefusesVersionTagOnAnotherCommit(t *testing.T) {
 
 // TestReleaseRefusesUntrackedFiles proves an untracked file in a tagged temporary worktree is refused through the actual release script before outputs are built.
 func TestReleaseRefusesUntrackedFiles(t *testing.T) {
-	checkout := createReleaseRepository(t, releaseRepository(t))
+	checkout := createReleaseRepository(t, releaseRepositoryOrSkip(t))
 	tagReleaseRepository(t, checkout)
 	if err := os.WriteFile(filepath.Join(checkout, "untracked.txt"), []byte("extra input\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ func TestReleaseRefusesUntrackedFiles(t *testing.T) {
 
 // TestReleaseRefusesIgnoredContextFiles proves an ignored file embedded from image/context is refused through the actual release script in a clean tagged temporary worktree.
 func TestReleaseRefusesIgnoredContextFiles(t *testing.T) {
-	checkout := createReleaseRepository(t, releaseRepository(t))
+	checkout := createReleaseRepository(t, releaseRepositoryOrSkip(t))
 	tagReleaseRepository(t, checkout)
 	writeIgnoredFile(t, checkout, "image/context/ignored-input.txt", []byte("ignored asset\n"))
 	assertReleaseRefused(t, checkout, "release refuses ignored release inputs")
@@ -116,7 +116,7 @@ func TestReleaseRefusesIgnoredContextFiles(t *testing.T) {
 
 // TestReleaseAllowsIgnoredFilesOutsideInputs proves the same ignored filename outside release inputs remains buildable through the actual release script in a tagged temporary worktree.
 func TestReleaseAllowsIgnoredFilesOutsideInputs(t *testing.T) {
-	checkout := createReleaseRepository(t, releaseRepository(t))
+	checkout := createReleaseRepository(t, releaseRepositoryOrSkip(t))
 	tagReleaseRepository(t, checkout)
 	writeIgnoredFile(t, checkout, "cache/ignored-input.txt", []byte("irrelevant cache\n"))
 	output := t.TempDir()
@@ -126,7 +126,7 @@ func TestReleaseAllowsIgnoredFilesOutsideInputs(t *testing.T) {
 
 // TestReleaseRefusesIgnoredGoSources proves root and nested ignored Go inputs are refused through the actual release script in otherwise clean tagged temporary worktrees.
 func TestReleaseRefusesIgnoredGoSources(t *testing.T) {
-	root := releaseRepository(t)
+	root := releaseRepositoryOrSkip(t)
 	for _, name := range []string{"ignored.go", "image/ignored.go"} {
 		t.Run(name, func(t *testing.T) {
 			checkout := createReleaseRepository(t, root)
@@ -135,6 +135,58 @@ func TestReleaseRefusesIgnoredGoSources(t *testing.T) {
 			assertReleaseRefused(t, checkout, "release refuses ignored release inputs")
 		})
 	}
+}
+
+// TestReleaseIsolatesWorkspaceConfiguration proves ignored root workspaces are refused and caller workspace/configuration settings cannot alter tagged release bytes through the actual release script.
+func TestReleaseIsolatesWorkspaceConfiguration(t *testing.T) {
+	root := releaseRepositoryOrSkip(t)
+	t.Run("ignored root workspace", func(t *testing.T) {
+		checkout := createReleaseRepository(t, root)
+		tagReleaseRepository(t, checkout)
+		writeIgnoredFile(t, checkout, "go.work", []byte("go 1.27.2\nuse .\n"))
+		assertReleaseRefused(t, checkout, "release refuses ignored release inputs")
+	})
+	t.Run("caller workspace and Go environment", func(t *testing.T) {
+		checkout := createReleaseRepository(t, root)
+		tagReleaseRepository(t, checkout)
+		baseline, isolated := t.TempDir(), t.TempDir()
+		command := releaseCommand(t, checkout, baseline)
+		setReleaseTestDirectoryAndEnvironment(command, checkout)
+		command.Env = append(command.Env, "GOWORK=off", "GOENV=off")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("baseline release: %v\n%s", err, output)
+		}
+		configuration := filepath.Join(t.TempDir(), "go-env")
+		if err := os.WriteFile(configuration, []byte("GOROOT="+filepath.ToSlash(filepath.Join(t.TempDir(), "missing-goroot"))+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		command = releaseCommand(t, checkout, isolated)
+		setReleaseTestDirectoryAndEnvironment(command, checkout)
+		callerEnvironment := command.Env
+		command.Env = nil
+		for _, entry := range callerEnvironment {
+			if !strings.HasPrefix(entry, "GOROOT=") {
+				command.Env = append(command.Env, entry)
+			}
+		}
+		command.Env = append(command.Env, "GOWORK="+filepath.Join(t.TempDir(), "missing.work"), "GOENV="+configuration)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("caller-isolated release: %v\n%s", err, output)
+		}
+		for _, name := range []string{linuxArtifact, windowsArtifact} {
+			want, err := os.ReadFile(filepath.Join(baseline, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(filepath.Join(isolated, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Fatalf("%s differs with caller workspace/configuration settings", name)
+			}
+		}
+	})
 }
 
 func writeIgnoredFile(t *testing.T, checkout, relative string, data []byte) {
@@ -157,7 +209,7 @@ func writeIgnoredFile(t *testing.T, checkout, relative string, data []byte) {
 
 // TestReleaseRefusesTrackedChanges proves a tracked edit in a tagged temporary worktree is refused through the actual release script before outputs are built.
 func TestReleaseRefusesTrackedChanges(t *testing.T) {
-	checkout := createReleaseRepository(t, releaseRepository(t))
+	checkout := createReleaseRepository(t, releaseRepositoryOrSkip(t))
 	tagReleaseRepository(t, checkout)
 	file, err := os.OpenFile(filepath.Join(checkout, "go.mod"), os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
@@ -175,7 +227,7 @@ func TestReleaseRefusesTrackedChanges(t *testing.T) {
 
 // TestReleaseRefusesMissingGit proves a tagged temporary worktree with Git absent from PATH gets a clear prerequisite refusal through the actual release script before outputs are built.
 func TestReleaseRefusesMissingGit(t *testing.T) {
-	checkout := createReleaseRepository(t, releaseRepository(t))
+	checkout := createReleaseRepository(t, releaseRepositoryOrSkip(t))
 	tagReleaseRepository(t, checkout)
 	programs := t.TempDir()
 	for _, name := range []string{"bash", "go", "awk", "mkdir", "dirname", "mktemp", "rm"} {
@@ -239,8 +291,7 @@ func assertReleaseRefused(t *testing.T, checkout, diagnostic string) {
 	t.Helper()
 	outputDirectory := t.TempDir()
 	command := releaseCommand(t, checkout, outputDirectory)
-	command.Dir = checkout
-	command.Env = releaseTestEnvironment()
+	setReleaseTestDirectoryAndEnvironment(command, checkout)
 	output, err := command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), diagnostic) {
 		t.Fatalf("release error=%v output=%q; want refusal containing %q", err, output, diagnostic)
@@ -254,7 +305,7 @@ func assertReleaseRefused(t *testing.T, checkout, diagnostic string) {
 
 // TestReleaseVersionSymbolAcceptsCRLFMetadata proves the Go metadata reader and actual release script use the same canonical linker target from CRLF metadata through their build interfaces.
 func TestReleaseVersionSymbolAcceptsCRLFMetadata(t *testing.T) {
-	root := releaseRepository(t)
+	root := releaseRepositoryOrSkip(t)
 	metadata, err := os.ReadFile(filepath.Join(root, "scripts", "version-symbol.txt"))
 	if err != nil {
 		t.Fatal(err)
@@ -269,8 +320,7 @@ func TestReleaseVersionSymbolAcceptsCRLFMetadata(t *testing.T) {
 		t.Fatalf("metadata symbol = %q, error=%v; want %q", gotSymbol, err, wantSymbol)
 	}
 	reader := exec.Command("go", "run", "./internal/release/cmd/version-symbol")
-	reader.Dir = crlfCheckout
-	reader.Env = releaseTestEnvironment()
+	setReleaseTestDirectoryAndEnvironment(reader, crlfCheckout)
 	symbolOutput, err := reader.CombinedOutput()
 	if err != nil || string(symbolOutput) != gotSymbol+"\n" {
 		t.Fatalf("build command symbol = %q, error=%v; want Go reader symbol %q", symbolOutput, err, gotSymbol+"\n")
@@ -280,7 +330,8 @@ func TestReleaseVersionSymbolAcceptsCRLFMetadata(t *testing.T) {
 	assertReleaseVersion(t, outputDirectory)
 }
 
-func releaseRepository(t *testing.T) string {
+// releaseRepositoryOrSkip returns the repository for Linux release tests and skips every other host.
+func releaseRepositoryOrSkip(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("release script integration requires a Linux build host")
@@ -300,6 +351,11 @@ func repositoryRoot(t *testing.T) string {
 // releaseTestEnvironment prevents toolchain downloads (GOTOOLCHAIN=local), clears caller build flags (GOFLAGS), and disables the module proxy (GOPROXY=off) and checksum database (GOSUMDB=off).
 func releaseTestEnvironment() []string {
 	return append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=", "GOPROXY=off", "GOSUMDB=off")
+}
+
+func setReleaseTestDirectoryAndEnvironment(command *exec.Cmd, directory string) {
+	command.Dir = directory
+	command.Env = releaseTestEnvironment()
 }
 
 func assertReleaseVersion(t *testing.T, directory string) {
@@ -339,8 +395,7 @@ func releaseCommand(t *testing.T, root, output string) *exec.Cmd {
 func buildRelease(t *testing.T, root, output string) {
 	t.Helper()
 	command := releaseCommand(t, root, output)
-	command.Dir = root
-	command.Env = releaseTestEnvironment()
+	setReleaseTestDirectoryAndEnvironment(command, root)
 	if result, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("release build: %v\n%s", err, result)
 	}
