@@ -24,14 +24,6 @@ Release limitations:
 - NUL detection preserves tree bytes only during build normalization. Git's forced-text attributes can change line endings in non-`.bin` files, including NUL-containing files. Every binary asset must use `.bin` for exact bytes through Git; this naming convention has no further enforcement or content validation.
 - npm and NuGet packages do not exist and are not produced or tested by this script.
 
-## Base image
-
-The base image is Debian 13 (trixie) slim, which uses glibc, with Node.js 24 LTS installed on top. Debian 13 is the current stable release, while Debian 12 is only in its LTS period. Node.js 24 remains an LTS release.
-
-Every toolchain's packages are available for Debian 13. This choice rests on that statement. This repository does not verify it; the per-toolchain builds and smoke checks (the acceptance criteria of Feature #3, and the live suite) do.
-
-The contents of the base image are set by Feature #3. This recipe installs Node.js only, plus the packages it needs to fetch and check the key: `ca-certificates`, `curl`, and `gnupg`.
-
 ## Build pipeline
 
 The public `image.Build` API writes the complete normalized context into a fresh system temporary directory, hashes the written files, invokes a supplied Podman runner, and removes the directory before returning. It removes it after a successful build, a failed build, cancellation, and a failure while preparing the context. Build and cleanup errors are returned; a failed operation returns no image tag. A nil asset source uses the embedded `image.Context`.
@@ -43,6 +35,14 @@ The public `image.Build` API writes the complete normalized context into a fresh
 This pipeline is available for the command implementations. The CLI's `build` command still reports that it is not implemented: issue #13 supplies its prerequisite preflight and Podman target binding, and #18 supplies its rebuild policy, labels, and toolchain recipes. Tag derivation does not enable toolchains in the delivered catalog.
 
 Offline tests exercise the API through a supplied process runner and through fixture executables compiled with LF and CRLF embedded assets against fake Podman. They cover identical hashes and tags, the normalized fingerprint in the temporary context, changed fingerprint tags, and cleanup on success, failure, and cancellation. They do not build an image with real Podman.
+
+## Base image
+
+The base image is Debian 13 (trixie) slim, which uses glibc, with Node.js 24 LTS installed on top. Debian 13 is the current stable release, while Debian 12 is only in its LTS period. Node.js 24 remains an LTS release.
+
+Every toolchain's packages are available for Debian 13. This choice rests on that statement. This repository does not verify it; the per-toolchain builds and smoke checks (the acceptance criteria of Feature #3, and the live suite) do.
+
+The contents of the base image are set by Feature #3. This recipe installs Node.js only, plus the packages it needs to fetch and check the key: `ca-certificates`, `curl`, and `gnupg`.
 
 ### NodeSource signing key check
 

@@ -80,11 +80,11 @@ jobs:
           }
           git tag "v$env:RELEASE_VERSION" HEAD
           if ($LASTEXITCODE -ne 0) { throw 'Local CI tag failed' }
-      - name: Run release tests with Git for Windows Bash
+      - name: Run image and release tests with Git for Windows Bash
         shell: pwsh
         run: |
-          go test ./scripts -count=1 -v
-          if ($LASTEXITCODE -ne 0) { throw 'Windows release tests failed' }
+          go test ./image ./scripts -count=1 -v
+          if ($LASTEXITCODE -ne 0) { throw 'Windows image or release tests failed' }
       - name: Build releases and compare asset hash and both executable digests
         shell: pwsh
         run: |

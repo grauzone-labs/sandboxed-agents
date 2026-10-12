@@ -12,16 +12,18 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/releasetest"
 )
 
+// expectedFingerprint records the independently documented pin in docs/images.md.
+const expectedFingerprint = "6F71F525282841EEDAF851B42F59B5F99B1BE0B4\n"
+
 // TestEmbeddedFingerprintIsNormalized proves the pinned fingerprint is embedded and written with LF from LF and CRLF sources through the public context and writing APIs.
 func TestEmbeddedFingerprintIsNormalized(t *testing.T) {
 	const name = "base/nodesource-signing-key.fingerprint"
-	const want = "6F71F525282841EEDAF851B42F59B5F99B1BE0B4\n"
 	embedded, err := fs.ReadFile(image.Context(), name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(embedded) != want {
-		t.Fatalf("embedded fingerprint = %q; want %q", embedded, want)
+	if string(embedded) != expectedFingerprint {
+		t.Fatalf("embedded fingerprint = %q; want %q", embedded, expectedFingerprint)
 	}
 	crlf := t.TempDir()
 	releasetest.CopyCRLFContext(t, image.Context(), crlf)
@@ -35,8 +37,8 @@ func TestEmbeddedFingerprintIsNormalized(t *testing.T) {
 			t.Fatal(err)
 		}
 		written, err := os.ReadFile(filepath.Join(directory, filepath.FromSlash(name)))
-		if err != nil || string(written) != want {
-			t.Fatalf("written fingerprint = %q, error = %v; want %q", written, err, want)
+		if err != nil || string(written) != expectedFingerprint {
+			t.Fatalf("written fingerprint = %q, error = %v; want %q", written, err, expectedFingerprint)
 		}
 	}
 }
