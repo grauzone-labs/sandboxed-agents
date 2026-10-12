@@ -27,6 +27,12 @@ func main() {
 	}
 	fmt.Println("asset-sha256", hash)
 	fmt.Println("image-tag", tag)
-	fmt.Println("image-tag", image.Tag(hash, []string{"dotnet", "playwright"}))
-	fmt.Println("image-tag", image.Tag(hash, []string{"azure", "native"}))
+	for _, toolchains := range [][]string{{"dotnet", "playwright"}, {"azure", "native"}} {
+		imageTag, err := image.Tag(hash, toolchains)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("image-tag", imageTag)
+	}
 }

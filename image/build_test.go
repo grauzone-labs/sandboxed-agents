@@ -175,7 +175,7 @@ func TestImageBuildCleansUpAfterFailure(t *testing.T) {
 	}
 }
 
-// TestImageBuildRefusesInvalidInputsWithoutLeavingContext proves malformed recipe paths, missing recipes, invalid assets, and pre-cancelled builds leave no context or Podman call through the public build API.
+// TestImageBuildRefusesInvalidInputsWithoutLeavingContext proves mixed none, missing recipes, invalid assets, and pre-cancelled builds leave no context or Podman call through the public build API.
 func TestImageBuildRefusesInvalidInputsWithoutLeavingContext(t *testing.T) {
 	for _, test := range []struct {
 		name      string
@@ -183,9 +183,8 @@ func TestImageBuildRefusesInvalidInputsWithoutLeavingContext(t *testing.T) {
 		options   image.BuildOptions
 		cancelled bool
 	}{
-		{name: "escaping recipe", options: image.BuildOptions{RecipeDir: "../base"}},
-		{name: "Windows path", options: image.BuildOptions{RecipeDir: `C:\base`}},
-		{name: "missing recipe", source: fstest.MapFS{"base/fingerprint": {Data: []byte("pin\n")}}},
+		{name: "mixed none", options: image.BuildOptions{Toolchains: []string{"none", "native"}}},
+		{name: "missing recipe", source: fstest.MapFS{"base/fingerprint": {Data: []byte("fingerprint\n")}}},
 		{name: "invalid asset", source: fstest.MapFS{"base/link": {Mode: fs.ModeSymlink}}},
 		{name: "cancelled", cancelled: true},
 	} {
@@ -217,7 +216,7 @@ func TestImageBuildRefusesInvalidInputsWithoutLeavingContext(t *testing.T) {
 	}
 }
 
-// TestImageBuildNormalizesFingerprintAndDerivesTags proves CRLF assets yield the LF build tag and normalized pin while a changed pin yields a new tag through the public build API.
+// TestImageBuildNormalizesFingerprintAndDerivesTags proves CRLF assets yield the LF build tag and normalized fingerprint while a changed fingerprint yields a new tag through the public build API.
 func TestImageBuildNormalizesFingerprintAndDerivesTags(t *testing.T) {
 	crlf := t.TempDir()
 	releasetest.CopyCRLFContext(t, image.Context(), crlf)
@@ -269,14 +268,33 @@ func TestImageTagsIdentifyToolchainSets(t *testing.T) {
 		{[]string{"playwright", "dotnet", "dotnet"}, "localhost/sandboxed-agents:dotnet-playwright-" + hash},
 	} {
 		before := append([]string(nil), test.set...)
-		if got := image.Tag(hash, test.set); got != test.want {
-			t.Errorf("Tag(%q) = %q; want %q", test.set, got, test.want)
+		if got, err := image.Tag(hash, test.set); err != nil || got != test.want {
+			t.Errorf("Tag(%q) = %q, error = %v; want %q", test.set, got, err, test.want)
 		}
 		if !reflect.DeepEqual(before, test.set) {
 			t.Errorf("Tag changed input from %q to %q", before, test.set)
 		}
 	}
-	if image.Tag(hash, nil) == image.Tag("b25ef61c2fbd6d4e034154492b542f255f949e8d779163f2cde86c34b54a577d", nil) {
+	original, err := image.Tag(hash, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := image.Tag("b25ef61c2fbd6d4e034154492b542f255f949e8d779163f2cde86c34b54a577d", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if original == changed {
 		t.Error("different asset hashes have the same tag")
+	}
+}
+
+// TestImageTagRejectsMixedNone proves none cannot be combined with other toolchains through the public image tag API.
+func TestImageTagRejectsMixedNone(t *testing.T) {
+	const hash = "a25ef61c2fbd6d4e034154492b542f255f949e8d779163f2cde86c34b54a577d"
+	for _, set := range [][]string{{"none", "dotnet"}, {"native", "none"}, {"none", "none", "azure"}} {
+		tag, err := image.Tag(hash, set)
+		if tag != "" || err == nil || err.Error() != `toolchain "none" must stand alone` {
+			t.Errorf("Tag(%q) = %q, error = %v; want no tag and none-mixing error", set, tag, err)
+		}
 	}
 }

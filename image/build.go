@@ -6,21 +6,18 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 )
 
-// BuildOptions selects the toolchain set and the recipe directory within the embedded context.
-// Toolchains must have passed catalog validation; RecipeDir defaults to "base".
-// The caller selects a recipe that builds precisely that toolchain set.
+// BuildOptions selects the toolchain set used to derive the image tag.
+// Toolchains must have passed catalog validation.
 type BuildOptions struct {
 	Toolchains []string
-	RecipeDir  string
 }
 
-// Build writes the image assets, invokes Podman, and removes the temporary context.
+// Build writes the image assets, builds the existing base recipe with Podman, and removes the temporary context.
 // The caller supplies a Podman runner bound to the target checked by its preflight.
 // A nil source uses Context. Rebuild flags and image labels belong to the caller's runner.
 // It returns the image tag only when the build and cleanup both succeed.
@@ -30,13 +27,6 @@ func Build(ctx context.Context, source fs.FS, options BuildOptions, podman func(
 	}
 	if err := ctx.Err(); err != nil {
 		return "", err
-	}
-	recipeDir := options.RecipeDir
-	if recipeDir == "" {
-		recipeDir = "base"
-	}
-	if !fs.ValidPath(recipeDir) || strings.ContainsAny(recipeDir, "\\:") {
-		return "", fmt.Errorf("invalid image recipe directory %q", recipeDir)
 	}
 	if source == nil {
 		source = Context()
@@ -60,7 +50,7 @@ func Build(ctx context.Context, source fs.FS, options BuildOptions, podman func(
 	if err != nil {
 		return "", fmt.Errorf("hash image build context: %w", err)
 	}
-	recipe := path.Join(recipeDir, "Containerfile")
+	const recipe = "base/Containerfile"
 	info, err := fs.Stat(written, recipe)
 	if err != nil {
 		return "", fmt.Errorf("image recipe %s: %w", recipe, err)
@@ -71,8 +61,11 @@ func Build(ctx context.Context, source fs.FS, options BuildOptions, podman func(
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	imageTag := Tag(hash, options.Toolchains)
-	if err := podman(ctx, "build", "--file", filepath.Join(directory, filepath.FromSlash(recipe)), "--tag", imageTag, filepath.Join(directory, filepath.FromSlash(recipeDir))); err != nil {
+	imageTag, err := Tag(hash, options.Toolchains)
+	if err != nil {
+		return "", err
+	}
+	if err := podman(ctx, "build", "--file", filepath.Join(directory, filepath.FromSlash(recipe)), "--tag", imageTag, filepath.Join(directory, "base")); err != nil {
 		return "", fmt.Errorf("build image %s: %w", imageTag, err)
 	}
 	return imageTag, nil
@@ -80,13 +73,17 @@ func Build(ctx context.Context, source fs.FS, options BuildOptions, podman func(
 
 // Tag identifies an asset hash and a validated toolchain set independently of controller groups.
 // The caller supplies a SHA256 asset hash and a set accepted by the command's catalog validation.
-func Tag(assetHash string, toolchains []string) string {
+// It rejects none when combined with any other toolchain.
+func Tag(assetHash string, toolchains []string) (string, error) {
 	set := slices.Clone(toolchains)
 	slices.Sort(set)
 	set = slices.Compact(set)
+	if len(set) > 1 && slices.Contains(set, "none") {
+		return "", fmt.Errorf("toolchain %q must stand alone", "none")
+	}
 	name := strings.Join(set, "-")
 	if name == "" {
 		name = "none"
 	}
-	return "localhost/sandboxed-agents:" + name + "-" + assetHash
+	return "localhost/sandboxed-agents:" + name + "-" + assetHash, nil
 }
