@@ -96,7 +96,7 @@ func noMutation(t *testing.T, calls [][]string) {
 	t.Helper()
 	for _, call := range calls {
 		for _, arg := range call {
-			if arg == "build" || arg == "create" || arg == "start" || arg == "run" || arg == "rm" || arg == "rename" {
+			if arg == "build" || arg == "create" || arg == "start" || arg == "run" || arg == "volume" || arg == "rm" || arg == "rename" {
 				t.Fatalf("unexpected mutation: %v", calls)
 			}
 		}

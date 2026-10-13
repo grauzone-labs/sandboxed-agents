@@ -149,7 +149,7 @@ func TestUpRefusesUnavailableRequestedPort(t *testing.T) {
 // TestUpSkipsStoppedNamedSandboxPortWithoutOwner proves a stopped sandbox's recorded port stays reserved even when its owner label is missing through RunWithHost and fake Podman.
 func TestUpSkipsStoppedNamedSandboxPortWithoutOwner(t *testing.T) {
 	f := portHost(t)
-	f.responses["ps --all --format json"] = response{Output: `[{"Names":["sandboxed-agents.other.x"],"State":"exited","Labels":{"io.sandboxed-agents.port":"2222"}}]`}
+	f.responses[portInventory] = response{Output: `[{"Names":["sandboxed-agents.other.x"],"State":"exited","Labels":{"io.sandboxed-agents.port":"2222"}}]`}
 	status, output, calls := f.run(t, "up", "demo")
 	if status != 1 || !strings.Contains(output, "127.0.0.1:2223:22/tcp") {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)

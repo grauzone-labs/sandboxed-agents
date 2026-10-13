@@ -1,11 +1,15 @@
 package cli_test
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
+	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
 func baseTag(t *testing.T) string {
@@ -34,13 +38,13 @@ func TestUpBuildsAbsentImage(t *testing.T) {
 			buildIndex = i
 		}
 	}
-	if buildIndex < 0 {
+	if buildIndex < 1 {
 		t.Fatalf("missing build: %v", calls)
 	}
 	if !reflect.DeepEqual(calls[buildIndex-1], []string{"image", "exists", tag}) {
 		t.Fatalf("wrong build order: %v", calls)
 	}
-	assertNoSandboxCreation(t, calls)
+	assertExpectedBuildAndNoOtherMutations(t, calls, buildIndex, "", tag)
 }
 
 // TestBuildRetainsExistingSandboxes proves explicit build uses the shared image builder and never queries or replaces old sandboxes through RunWithHost and fake Podman.
@@ -54,6 +58,7 @@ func TestBuildRetainsExistingSandboxes(t *testing.T) {
 	if len(calls) != 3 || len(calls[2]) < 1 || calls[2][0] != "build" {
 		t.Fatalf("build touched sandbox: %v", calls)
 	}
+	assertExpectedBuildAndNoOtherMutations(t, calls, 2, "", baseTag(t))
 }
 
 // TestUpUsesPresentImage proves up skips build for an existing shared image through RunWithHost and fake Podman.
@@ -113,7 +118,7 @@ func TestImageBuildFailureStopsUp(t *testing.T) {
 	if status != 1 || !strings.Contains(output, "build rejected") || strings.Contains(output, "sandbox creation is not implemented") {
 		t.Fatalf("status=%d output=%q", status, output)
 	}
-	assertNoSandboxCreation(t, calls)
+	assertExpectedBuildAndNoOtherMutations(t, calls, len(calls)-1, "", baseTag(t))
 }
 
 // TestWindowsImageBuildUsesCheckedTarget proves every image and sandbox lookup and build keeps the preflight-selected connection through RunWithHost and fake Podman.
@@ -127,17 +132,20 @@ func TestWindowsImageBuildUsesCheckedTarget(t *testing.T) {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
 	buildFound := false
-	for _, call := range calls {
+	buildIndex := -1
+	for index, call := range calls {
 		if len(call) > 0 && call[0] == "build" {
 			t.Fatalf("unbound build: %v", call)
 		}
 		if len(call) > 2 && call[0] == "--connection" && call[1] == "chosen" && call[2] == "build" {
 			buildFound = true
+			buildIndex = index
 		}
 	}
 	if !buildFound {
 		t.Fatalf("no bound build: %v", calls)
 	}
+	assertExpectedBuildAndNoOtherMutations(t, calls, buildIndex, "chosen", baseTag(t))
 }
 
 // TestBuildAndUpAgreeOnNoneImageTag proves build and absent-image up select, build, and report the same tag for --with none through RunWithHost and fake Podman.
@@ -156,11 +164,13 @@ func TestBuildAndUpAgreeOnNoneImageTag(t *testing.T) {
 	if tag != baseTag(t) || !strings.Contains(output, "built image "+tag) {
 		t.Fatalf("build tag=%q output=%q", tag, output)
 	}
+	assertExpectedBuildAndNoOtherMutations(t, calls, len(calls)-1, "", tag)
 	previousCallCount := len(calls)
 	f.responses["container exists sandboxed-agents.default.demo"] = response{Exit: 1}
 	f.responses["image exists "+tag] = response{Exit: 1}
 	_, output, calls = f.run(t, "up", "demo", "--with", "none")
 	found := false
+	buildIndex := -1
 	for index, call := range calls[previousCallCount:] {
 		if len(call) > 0 && call[0] == "build" {
 			found = true
@@ -168,6 +178,7 @@ func TestBuildAndUpAgreeOnNoneImageTag(t *testing.T) {
 				t.Fatalf("up built tag differs: %v", call)
 			}
 			absolute := previousCallCount + index
+			buildIndex = index
 			if absolute == 0 || !reflect.DeepEqual(calls[absolute-1], []string{"image", "exists", tag}) {
 				t.Fatalf("up checked a different tag: %v", calls)
 			}
@@ -176,13 +187,49 @@ func TestBuildAndUpAgreeOnNoneImageTag(t *testing.T) {
 	if !found || !strings.Contains(output, "image "+tag+" prepared;") {
 		t.Fatalf("up tag=%q output=%q calls=%v", tag, output, calls)
 	}
+	assertExpectedBuildAndNoOtherMutations(t, calls[previousCallCount:], buildIndex, "", tag)
 }
 
-func assertNoSandboxCreation(t *testing.T, calls [][]string) {
+func assertExpectedBuildAndNoOtherMutations(t *testing.T, calls [][]string, buildIndex int, connection, tag string) {
 	t.Helper()
-	for _, call := range calls {
-		if len(call) > 0 && (call[0] == "create" || call[0] == "run" || call[0] == "volume") {
-			t.Fatalf("unexpected sandbox creation: %v", calls)
-		}
+	if buildIndex < 0 || buildIndex >= len(calls) {
+		t.Fatalf("missing expected build: %v", calls)
+	}
+	prefix := []string{}
+	if connection != "" {
+		prefix = []string{"--connection", connection}
+	}
+	call := calls[buildIndex]
+	if len(call) != len(prefix)+6 {
+		t.Fatalf("unexpected build shape: %v", call)
+	}
+	context := call[len(call)-1]
+	expected := append(append([]string{}, prefix...), "build", "--file", filepath.Join(context, "Containerfile"), "--tag", tag, context)
+	if !filepath.IsAbs(context) || filepath.Base(context) != "base" || !reflect.DeepEqual(call, expected) {
+		t.Fatalf("unexpected build arguments: %v; want %v", call, expected)
+	}
+	// Exempt only the validated build command itself, never its other arguments.
+	arguments := append(append([]string{}, call[:len(prefix)]...), call[len(prefix)+1:]...)
+	noMutation(t, [][]string{arguments})
+	remaining := append(append([][]string{}, calls[:buildIndex]...), calls[buildIndex+1:]...)
+	noMutation(t, remaining)
+}
+
+// TestMutationAssertionRejectsConnectionPrefixedCreate proves a connection flag cannot hide a create operation from the test guard through an isolated test process.
+func TestMutationAssertionRejectsConnectionPrefixedCreate(t *testing.T) {
+	const childEnv = "TEST_CLI_MUTATION_GUARD_CHILD"
+	if os.Getenv(childEnv) == "1" {
+		noMutation(t, [][]string{{"--connection", "chosen", "create", "sandboxed-agents.default.demo"}})
+		return
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(executable, "-test.run=^TestMutationAssertionRejectsConnectionPrefixedCreate$")
+	command.Env = testutil.Env(os.Environ(), map[string]string{childEnv: "1"})
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "unexpected mutation") {
+		t.Fatalf("mutation guard accepted connection-prefixed create: error=%v output=%s", err, output)
 	}
 }
