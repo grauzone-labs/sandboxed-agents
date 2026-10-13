@@ -107,6 +107,32 @@ func TestReleaseRefusesMalformedVersionsBeforeArtifacts(t *testing.T) {
 	}
 }
 
+// TestNuGetCommandPackagePermissions proves the package command emits a NuGet command package readable by its owner, group, and others through the output file's Unix permissions.
+func TestNuGetCommandPackagePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("NuGet command package Unix permissions require a Unix host")
+	}
+	root := repositoryRoot(t)
+	output := t.TempDir()
+	for _, name := range []string{linuxArtifact, windowsArtifact} {
+		if err := os.WriteFile(filepath.Join(output, name), []byte("release fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	command := exec.Command("go", "run", "./internal/nuget/cmd/package", "1.2.3", root, output)
+	setReleaseTestDirectoryAndEnvironment(command, root)
+	if result, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("package command: %v\n%s", err, result)
+	}
+	info, err := os.Stat(filepath.Join(output, "SandboxedAgents.1.2.3.nupkg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0644 {
+		t.Fatalf("NuGet command package permissions = %#o; want 0644", got)
+	}
+}
+
 // TestNuGetPackageRejectsNumericLeadingZeros proves the package command refuses numeric leading zeros rejected by NuGet before writing package artifacts.
 func TestNuGetPackageRejectsNumericLeadingZeros(t *testing.T) {
 	root := repositoryRoot(t)

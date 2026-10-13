@@ -112,6 +112,9 @@ func writeArchive(destination string, files map[string][]byte) error {
 	if err := archive.Close(); err != nil {
 		return err
 	}
+	if err := file.Chmod(0644); err != nil {
+		return err
+	}
 	if err := file.Close(); err != nil {
 		return err
 	}
