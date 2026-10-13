@@ -212,7 +212,12 @@ func TestSocketWorkspaceFailsBeforePreflight(t *testing.T) {
 	}
 	defer listener.Close()
 	status, output, calls := f.run(t, "up", "agent01", socket)
-	if status != 2 || !strings.Contains(output, "not a directory") || len(calls) != 0 {
+	// Windows cannot stat a Unix socket file, so its step-1 refusal names that failure instead.
+	refusal := "not a directory"
+	if runtime.GOOS == "windows" {
+		refusal = "cannot be accessed"
+	}
+	if status != 2 || !strings.Contains(output, "step 1:") || !strings.Contains(output, refusal) || len(calls) != 0 {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
 	if calls := testutil.Invocations(t, f.fakes.SSHLog); len(calls) != 0 {
