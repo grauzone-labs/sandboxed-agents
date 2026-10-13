@@ -26,8 +26,9 @@ func TestUpAllocatesLoopbackPort(t *testing.T) {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
 	noMutation(t, calls)
-	if !reflect.DeepEqual(calls[len(calls)-1], strings.Fields(portInventory)) {
-		t.Fatalf("port inventory=%v", calls)
+	expected := [][]string{{"--version"}, {"info", "--format", "json"}, {"container", "exists", "sandboxed-agents.default.demo"}, strings.Fields(portInventory), {"image", "exists", baseTag(t)}}
+	if !reflect.DeepEqual(calls, expected) {
+		t.Fatalf("port/image query order=%v; want %v", calls, expected)
 	}
 }
 
@@ -155,4 +156,21 @@ func TestUpSkipsStoppedNamedSandboxPortWithoutOwner(t *testing.T) {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
 	noMutation(t, calls)
+}
+
+// TestUpRefusesRecordedPortBeforeMissingImageBuild proves a taken explicit port stops up before building an absent image through RunWithHost and fake Podman.
+func TestUpRefusesRecordedPortBeforeMissingImageBuild(t *testing.T) {
+	f := portHost(t)
+	f.responses["image exists "+baseTag(t)] = response{Exit: 1}
+	f.responses["build *"] = response{}
+	f.responses[portInventory] = response{Output: `[{"Labels":{"io.sandboxed-agents.owner":"other","io.sandboxed-agents.port":"2300"}}]`}
+	status, output, calls := f.run(t, "up", "demo", "--port", "2300")
+	if status != 1 || !strings.Contains(output, "SSH port 2300 is already recorded") {
+		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+	}
+	noMutation(t, calls)
+	expected := [][]string{{"--version"}, {"info", "--format", "json"}, {"container", "exists", "sandboxed-agents.default.demo"}, strings.Fields(portInventory)}
+	if !reflect.DeepEqual(calls, expected) {
+		t.Fatalf("taken port queries=%v; want %v", calls, expected)
+	}
 }
