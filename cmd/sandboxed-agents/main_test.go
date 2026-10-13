@@ -250,7 +250,7 @@ func TestCommandGrammar(t *testing.T) {
 			if lifecycle && tc.status != 2 {
 				calls := testutil.Invocations(t, caseFakes.PodmanLog)
 				for _, call := range calls {
-					if len(call) < 2 || call[0] != "container" || call[1] != "exists" {
+					if len(call) < 2 || call[0] != "container" || (call[1] != "exists" && call[1] != "inspect") {
 						t.Fatalf("unexpected lifecycle grammar call: %v", calls)
 					}
 				}
@@ -758,5 +758,251 @@ func TestLifecycleLocksAreEmptyPersistentAndRejectNonregularPaths(t *testing.T) 
 	}
 	if after := testutil.Invocations(t, fakes.PodmanLog); !reflect.DeepEqual(before, after) {
 		t.Fatalf("nonregular lock made lookup: %v", after)
+	}
+}
+
+func ownedLifecycleResponses(running bool) map[string]lifecycleResponse {
+	return map[string]lifecycleResponse{
+		"container exists sandboxed-agents.default.demo":                                                 {},
+		"container inspect sandboxed-agents.default.demo":                                                {Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default"}},"State":{"Running":` + strconv.FormatBool(running) + `}}]`},
+		"container exists sandboxed-agents-backup.default.demo":                                          {Exit: 1},
+		"volume exists sandboxed-agents.default.demo.workspace":                                          {Exit: 1},
+		"volume exists sandboxed-agents.default.demo.home":                                               {Exit: 1},
+		"volume exists sandboxed-agents.default.demo.ssh":                                                {Exit: 1},
+		"exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager sessions": {},
+		"start sandboxed-agents.default.demo":                                                            {},
+		"stop sandboxed-agents.default.demo":                                                             {},
+		"restart sandboxed-agents.default.demo":                                                          {},
+	}
+}
+
+func lifecycleMutations(calls [][]string) [][]string {
+	var mutations [][]string
+	for _, call := range calls {
+		if len(call) > 0 && (call[0] == "start" || call[0] == "stop" || call[0] == "restart" || call[0] == "rm") {
+			mutations = append(mutations, call)
+		}
+	}
+	return mutations
+}
+
+// TestLifecycleStartChangesOnlyStoppedSandbox proves start is idempotent for a running sandbox and starts a stopped sandbox without preflight through RunWithHost.
+func TestLifecycleStartChangesOnlyStoppedSandbox(t *testing.T) {
+	for _, running := range []bool{true, false} {
+		t.Run(strconv.FormatBool(running), func(t *testing.T) {
+			fakes := lifecycleHarness(t, ownedLifecycleResponses(running))
+			status, output := lifecycleRun("start", "demo")
+			if status != 0 {
+				t.Fatalf("status=%d output=%s", status, output)
+			}
+			var want [][]string
+			if !running {
+				want = [][]string{{"start", "sandboxed-agents.default.demo"}}
+			}
+			calls := testutil.Invocations(t, fakes.PodmanLog)
+			if got := lifecycleMutations(calls); !reflect.DeepEqual(got, want) {
+				t.Fatalf("mutations=%v want=%v", got, want)
+			}
+			for _, call := range calls {
+				if call[0] == "--version" || call[0] == "info" || call[0] == "exec" {
+					t.Fatalf("unexpected prerequisite/session query: %v", calls)
+				}
+			}
+			if calls := testutil.Invocations(t, fakes.SSHLog); len(calls) != 0 {
+				t.Fatalf("SSH calls=%v", calls)
+			}
+		})
+	}
+}
+
+// TestLifecycleStopAndRestartPreserveRequestedState proves stop on stopped is a no-op, restart on stopped starts, and running transitions use only their Podman action through RunWithHost.
+func TestLifecycleStopAndRestartPreserveRequestedState(t *testing.T) {
+	for _, tc := range []struct {
+		verb    string
+		running bool
+		action  string
+	}{{"stop", false, ""}, {"stop", true, "stop"}, {"restart", false, "start"}, {"restart", true, "restart"}} {
+		t.Run(tc.verb+strconv.FormatBool(tc.running), func(t *testing.T) {
+			fakes := lifecycleHarness(t, ownedLifecycleResponses(tc.running))
+			status, output := lifecycleRun(tc.verb, "demo")
+			if status != 0 {
+				t.Fatalf("status=%d output=%s", status, output)
+			}
+			var want [][]string
+			if tc.action != "" {
+				want = [][]string{{tc.action, "sandboxed-agents.default.demo"}}
+			}
+			if calls := testutil.Invocations(t, fakes.PodmanLog); !reflect.DeepEqual(lifecycleMutations(calls), want) {
+				t.Fatalf("calls=%v want mutations=%v", calls, want)
+			}
+			if calls := testutil.Invocations(t, fakes.SSHLog); len(calls) != 0 {
+				t.Fatalf("SSH calls=%v", calls)
+			}
+		})
+	}
+}
+
+// TestLifecycleRefusesEveryOwnerConflictBeforeMutation proves container, volume, and backup owner labels authorize lifecycle changes and refusals name Podman objects through RunWithHost.
+func TestLifecycleRefusesEveryOwnerConflictBeforeMutation(t *testing.T) {
+	for _, verb := range []string{"start", "stop", "restart", "remove"} {
+		for _, object := range []string{"container", "workspace", "home", "ssh", "backup"} {
+			for _, owner := range []string{"", "foreign"} {
+				t.Run(verb+"/"+object+"/"+owner, func(t *testing.T) {
+					responses := ownedLifecycleResponses(true)
+					name := "sandboxed-agents.default.demo"
+					if object == "container" {
+						responses["container inspect "+name] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"` + owner + `"}},"State":{"Running":true}}]`}
+					} else if object == "backup" {
+						name = "sandboxed-agents-backup.default.demo"
+						responses["container exists "+name] = lifecycleResponse{}
+						responses["container inspect "+name] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"` + owner + `"}}}]`}
+					} else {
+						name += "." + object
+						responses["volume exists "+name] = lifecycleResponse{}
+						responses["volume inspect "+name] = lifecycleResponse{Output: `[{"Labels":{"io.sandboxed-agents.owner":"` + owner + `"}}]`}
+					}
+					fakes := lifecycleHarness(t, responses)
+					status, output := lifecycleRun(verb, "demo")
+					if status == 0 || !strings.Contains(output, "owner conflict") || !strings.Contains(output, name) || !strings.Contains(output, "Podman") {
+						t.Fatalf("status=%d output=%s", status, output)
+					}
+					calls := testutil.Invocations(t, fakes.PodmanLog)
+					if len(lifecycleMutations(calls)) != 0 {
+						t.Fatalf("mutations=%v", calls)
+					}
+					for _, call := range calls {
+						if call[0] == "exec" {
+							t.Fatalf("guard before ownership: %v", calls)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestLifecycleChecksUnknownAndInterruptedSandboxBeforeChanges proves absent names and owned backup containers refuse before mutation or session queries through RunWithHost.
+func TestLifecycleChecksUnknownAndInterruptedSandboxBeforeChanges(t *testing.T) {
+	for _, verb := range []string{"start", "stop", "restart", "remove"} {
+		for _, kind := range []string{"unknown", "backup"} {
+			t.Run(verb+"/"+kind, func(t *testing.T) {
+				responses := ownedLifecycleResponses(true)
+				want := "does not exist in this controller group"
+				if kind == "unknown" {
+					responses["container exists sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 1}
+				} else {
+					want = "update demo"
+					responses["container exists sandboxed-agents-backup.default.demo"] = lifecycleResponse{}
+					responses["container inspect sandboxed-agents-backup.default.demo"] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default"}}}]`}
+				}
+				fakes := lifecycleHarness(t, responses)
+				status, output := lifecycleRun(verb, "demo")
+				if status == 0 || !strings.Contains(output, want) {
+					t.Fatalf("status=%d output=%s want=%s", status, output, want)
+				}
+				calls := testutil.Invocations(t, fakes.PodmanLog)
+				if len(lifecycleMutations(calls)) != 0 {
+					t.Fatalf("mutations=%v", calls)
+				}
+				for _, call := range calls {
+					if call[0] == "exec" {
+						t.Fatalf("guard before sandbox checks: %v", calls)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestLifecyclePodmanFailuresDoNotReportSuccessOrRetry proves malformed inspections and failed mutations stop without success or automatic retries through RunWithHost.
+func TestLifecyclePodmanFailuresDoNotReportSuccessOrRetry(t *testing.T) {
+	for _, tc := range []struct {
+		key      string
+		response lifecycleResponse
+		message  string
+	}{
+		{"container inspect sandboxed-agents.default.demo", lifecycleResponse{Output: "{"}, "invalid inspect answer"},
+		{"container inspect sandboxed-agents.default.demo", lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default"}}}]`}, "running state is missing"},
+		{"start sandboxed-agents.default.demo", lifecycleResponse{Exit: 23}, "exit status 23"},
+	} {
+		t.Run(tc.message, func(t *testing.T) {
+			responses := ownedLifecycleResponses(false)
+			responses[tc.key] = tc.response
+			fakes := lifecycleHarness(t, responses)
+			status, output := lifecycleRun("start", "demo")
+			if status == 0 || !strings.Contains(output, tc.message) || strings.Contains(output, "is running") {
+				t.Fatalf("status=%d output=%s", status, output)
+			}
+			count := 0
+			for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
+				if strings.Join(call, " ") == tc.key {
+					count++
+				}
+			}
+			if count != 1 {
+				t.Fatalf("failed call count=%d", count)
+			}
+		})
+	}
+}
+
+// TestLifecycleWindowsSelectsOneTargetWithoutPreflight proves machine queries alone select and bind lifecycle operations while stripping ambient targets through RunWithHost.
+func TestLifecycleWindowsSelectsOneTargetWithoutPreflight(t *testing.T) {
+	for _, verb := range []string{"start", "stop", "restart"} {
+		t.Run(verb, func(t *testing.T) {
+			responses := map[string]lifecycleResponse{
+				"machine list --format json": {Output: `[{"Name":"chosen","Default":true,"VMType":"wsl"}]`},
+				"machine inspect chosen":     {Output: `[{"Name":"chosen","State":"running","Rootful":false}]`},
+			}
+			for key, response := range ownedLifecycleResponses(true) {
+				responses["--connection chosen "+key] = response
+			}
+			fakes := lifecycleHarness(t, responses)
+			t.Setenv("CONTAINER_HOST", "unexpected")
+			t.Setenv("CONTAINER_CONNECTION", "unexpected")
+			t.Setenv("CONTAINER_SSHKEY", "unexpected")
+			envLog := filepath.Join(t.TempDir(), "environment.json")
+			t.Setenv("TEST_PODMAN_ENV_LOG", envLog)
+			var output bytes.Buffer
+			status := cli.RunWithHost([]string{verb, "demo"}, &output, &output, cli.Host{Platform: "windows"})
+			if status != 0 {
+				t.Fatalf("status=%d output=%s", status, output.String())
+			}
+			calls := testutil.Invocations(t, fakes.PodmanLog)
+			wantPrefix := [][]string{{"machine", "list", "--format", "json"}, {"machine", "inspect", "chosen"}}
+			if len(calls) < 3 || !reflect.DeepEqual(calls[:2], wantPrefix) {
+				t.Fatalf("machine calls=%v", calls)
+			}
+			for _, call := range calls[2:] {
+				if len(call) < 3 || call[0] != "--connection" || call[1] != "chosen" || call[2] == "info" || call[2] == "--version" || call[2] == "version" {
+					t.Fatalf("unbound/preflight call=%v", call)
+				}
+			}
+			data, err := os.ReadFile(envLog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var environment []string
+			if err := json.Unmarshal(data, &environment); err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range environment {
+				if strings.HasPrefix(entry, "CONTAINER_HOST=") || strings.HasPrefix(entry, "CONTAINER_CONNECTION=") || strings.HasPrefix(entry, "CONTAINER_SSHKEY=") {
+					t.Fatalf("ambient target retained: %s", entry)
+				}
+			}
+		})
+	}
+}
+
+// TestLifecycleDeferredSSHSetupDoesNotClaimSuccess proves start --ssh-config refuses its unavailable setup before starting a sandbox through RunWithHost.
+func TestLifecycleDeferredSSHSetupDoesNotClaimSuccess(t *testing.T) {
+	fakes := lifecycleHarness(t, ownedLifecycleResponses(false))
+	status, output := lifecycleRun("start", "demo", "--ssh-config")
+	if status == 0 || !strings.Contains(output, "SSH setup is not implemented") {
+		t.Fatalf("status=%d output=%s", status, output)
+	}
+	if calls := testutil.Invocations(t, fakes.PodmanLog); len(lifecycleMutations(calls)) != 0 {
+		t.Fatalf("mutations=%v", calls)
 	}
 }

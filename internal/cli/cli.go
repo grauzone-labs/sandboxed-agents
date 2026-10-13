@@ -120,10 +120,12 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			return 1
 		}
 		defer lock.Close()
-		if _, err := target.exists(containerResource, DerivedNames(request.Group, request.Name).Container); err != nil {
+		if err := changeSandboxState(request, target, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
+		return 0
+
 	}
 	fmt.Fprintf(stderr, "%s: not implemented\n", request.Command)
 	return 1

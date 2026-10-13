@@ -14,6 +14,7 @@ type resourceKind string
 
 const (
 	containerResource resourceKind = "container"
+	volumeResource    resourceKind = "volume"
 	imageResource     resourceKind = "image"
 )
 
