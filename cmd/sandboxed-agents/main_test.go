@@ -235,7 +235,7 @@ func TestCommandGrammar(t *testing.T) {
 			}
 		})
 	}
-	assertNoExternalCalls(t, fakes)
+	assertOnlyPreflightQueries(t, fakes)
 }
 
 func exitStatus(t *testing.T, err error) int {
@@ -269,7 +269,7 @@ func TestAgentAndToolchainSelectionsUseDeliveredCatalogs(t *testing.T) {
 	}{
 		{"agents", "bogus", 2, `unknown agent "bogus": no valid names are available yet`},
 		{"with", "bogus", 2, `unknown toolchain "bogus": no valid names are available yet`},
-		{"with", "none", 1, "up: not implemented"},
+		{"with", "none", 1, "step 2:"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.option+"="+tc.value, func(t *testing.T) {
@@ -281,7 +281,7 @@ func TestAgentAndToolchainSelectionsUseDeliveredCatalogs(t *testing.T) {
 			}
 		})
 	}
-	assertNoExternalCalls(t, fakes)
+	assertOnlyPreflightQueries(t, fakes)
 }
 
 // TestAgentCommandsRejectUnknownAgentsBeforeExternalCalls proves that every agent command rejects an unknown agent at step 1 through the built CLI binary before Podman or SSH runs.
@@ -331,7 +331,7 @@ func TestLoginWorkflowsAreValidatedBeforeExternalCalls(t *testing.T) {
 	}
 }
 
-// TestControllerGroupAndSandboxNames proves that valid names reach the stub and invalid controller group or sandbox names produce usage errors through the built CLI binary without external calls.
+// TestControllerGroupAndSandboxNames proves that valid names reach preflight and invalid controller group or sandbox names produce usage errors through the built CLI binary without external calls.
 func TestControllerGroupAndSandboxNames(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	cases := []struct {
@@ -358,7 +358,7 @@ func TestControllerGroupAndSandboxNames(t *testing.T) {
 			}
 		})
 	}
-	assertNoExternalCalls(t, fakes)
+	assertOnlyPreflightQueries(t, fakes)
 }
 
 // TestUnsetControllerGroupUsesDefault proves that an unset controller group lets up reach its not-implemented stub through the built CLI binary without Podman or SSH calls.
@@ -371,10 +371,10 @@ func TestUnsetControllerGroupUsesDefault(t *testing.T) {
 		}
 	}
 	output, err := command.CombinedOutput()
-	if status := exitStatus(t, err); status != 1 || string(output) != "up: not implemented\n" {
-		t.Fatalf("unset controller group: status=%d output=%q; want status=1 and not implemented", status, output)
+	if status := exitStatus(t, err); status != 1 || !strings.Contains(string(output), "step 2:") {
+		t.Fatalf("unset controller group: status=%d output=%q; want status=1 and preflight failure", status, output)
 	}
-	assertNoExternalCalls(t, fakes)
+	assertOnlyPreflightQueries(t, fakes)
 }
 
 // TestVersionIgnoresInvalidControllerGroup proves that version succeeds with its expected output despite an invalid or empty controller group through the built CLI binary without external calls.
@@ -425,12 +425,12 @@ func TestResourceOptionGrammar(t *testing.T) {
 			if status := exitStatus(t, err); status != tc.status {
 				t.Fatalf("status=%d want=%d output=%s", status, tc.status, output)
 			}
-			if tc.option == "cpus" && tc.status == 1 && string(output) != "up: not implemented\n" {
-				t.Fatalf("output=%q; want the not-implemented path", output)
+			if tc.option == "cpus" && tc.status == 1 && !strings.Contains(string(output), "step 2:") {
+				t.Fatalf("output=%q; want the preflight path", output)
 			}
 		})
 	}
-	assertNoExternalCalls(t, fakes)
+	assertOnlyPreflightQueries(t, fakes)
 }
 
 // TestWorkspacePathsFailBeforeExternalCalls proves that a workspace directory reaches the stub while missing, non-directory, protected, and aliased protected paths fail through the built CLI binary before external calls.
@@ -472,7 +472,7 @@ func TestWorkspacePathsFailBeforeExternalCalls(t *testing.T) {
 			}
 		})
 	}
-	assertNoExternalCalls(t, fakes)
+	assertOnlyPreflightQueries(t, fakes)
 }
 
 // TestExternalFakesRecordArgvAndScriptResponses proves that fake Podman and SSH preserve argument boundaries and return scripted output and exit status through the fake process harness.
@@ -534,4 +534,16 @@ func TestMalformedArgumentsRemainUsageErrors(t *testing.T) {
 		})
 	}
 	assertNoExternalCalls(t, fakes)
+}
+
+func assertOnlyPreflightQueries(t *testing.T, fakes testutil.Fakes) {
+	t.Helper()
+	for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
+		if !reflect.DeepEqual(call, []string{"--version"}) && !reflect.DeepEqual(call, []string{"info", "--format", "json"}) && !reflect.DeepEqual(call, []string{"machine", "list", "--format", "json"}) {
+			t.Fatalf("unexpected call beyond preflight: %v", call)
+		}
+	}
+	if calls := testutil.Invocations(t, fakes.SSHLog); len(calls) != 0 {
+		t.Fatalf("unexpected SSH calls: %v", calls)
+	}
 }
