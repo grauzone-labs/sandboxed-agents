@@ -21,7 +21,7 @@ The refusal of a taken lock is step 3 of the ten-step order of checks that the E
 1. usage, invalid names, unknown agent, integration, workflow, and toolchain names, and path errors, without calling Podman;
 2. the preflight, for the commands that run it (`build`, `up`, `update`);
 3. a taken lifecycle lock, for `up`, `start`, `stop`, `restart`, `remove`, and `update`;
-4. an unknown sandbox name, or a sandbox of which only volumes remain when the command needs a container;
+4. an unknown sandbox name, or a sandbox of which only volumes remain when the command needs a container; when one of those volumes has a missing or different owner, that owner conflict is reported here instead (Feature #2);
 5. a missing or different owner of the container or of one of the sandbox's volumes;
 6. an interrupted update;
 7. a stopped sandbox, for commands that need a running container;
