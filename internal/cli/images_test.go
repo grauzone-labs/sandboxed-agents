@@ -147,3 +147,41 @@ func TestWindowsImageBuildUsesCheckedTarget(t *testing.T) {
 		t.Fatalf("no bound build: %v", calls)
 	}
 }
+
+// TestBuildAndUpAgreeOnNoneImageTag proves build and absent-image up select, build, and report the same tag for --with none through RunWithHost and fake Podman.
+func TestBuildAndUpAgreeOnNoneImageTag(t *testing.T) {
+	f := linuxHost(t)
+	f.responses["build *"] = response{}
+	status, output, calls := f.run(t, "build", "--with", "none")
+	if status != 0 {
+		t.Fatalf("build status=%d output=%q", status, output)
+	}
+	buildCall := calls[len(calls)-1]
+	if len(buildCall) != 6 || buildCall[0] != "build" || buildCall[3] != "--tag" {
+		t.Fatalf("build calls=%v", calls)
+	}
+	tag := buildCall[4]
+	if tag != baseTag(t) || !strings.Contains(output, "built image "+tag) {
+		t.Fatalf("build tag=%q output=%q", tag, output)
+	}
+	previousCallCount := len(calls)
+	f.responses["container exists sandboxed-agents.default.demo"] = response{Exit: 1}
+	f.responses["image exists "+tag] = response{Exit: 1}
+	_, output, calls = f.run(t, "up", "demo", "--with", "none")
+	found := false
+	for index, call := range calls[previousCallCount:] {
+		if len(call) > 0 && call[0] == "build" {
+			found = true
+			if len(call) != 6 || call[3] != "--tag" || call[4] != tag {
+				t.Fatalf("up built tag differs: %v", call)
+			}
+			absolute := previousCallCount + index
+			if absolute == 0 || !reflect.DeepEqual(calls[absolute-1], []string{"image", "exists", tag}) {
+				t.Fatalf("up checked a different tag: %v", calls)
+			}
+		}
+	}
+	if !found || !strings.Contains(output, "image "+tag+" prepared;") {
+		t.Fatalf("up tag=%q output=%q calls=%v", tag, output, calls)
+	}
+}

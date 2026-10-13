@@ -22,8 +22,8 @@ func (p podmanTarget) exists(kind, name string) (bool, error) {
 	return false, err
 }
 
-func buildImage(p podmanTarget, output io.Writer) (string, error) {
-	return image.Build(context.Background(), nil, func(ctx context.Context, args ...string) error {
+func buildImage(p podmanTarget, toolchains []string, output io.Writer) (string, error) {
+	return image.BuildWithToolchains(context.Background(), nil, toolchains, func(ctx context.Context, args ...string) error {
 		result, err := p.query(args...)
 		if result != "" {
 			fmt.Fprint(output, result)
@@ -52,7 +52,7 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		return err
 	}
 	if !exists {
-		tag, err = buildImage(p, output)
+		tag, err = buildImage(p, request.Toolchains, output)
 		if err != nil {
 			return err
 		}

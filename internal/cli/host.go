@@ -61,10 +61,13 @@ func preflight(h Host) (podmanTarget, error) {
 	if h.Platform != "linux" || h.Architecture != "amd64" {
 		return p, fmt.Errorf("supported hosts are Linux amd64 and Windows 11 x64")
 	}
-	return p, linuxPreflight(h)
+	return p, linuxPreflight(p)
 }
 
-func linuxPreflight(h Host) error {
+const minimumLinuxPodmanMinor = 4
+
+func linuxPreflight(p podmanTarget) error {
+	h := p.host
 	var failures []error
 	requireProgram := func(name string) bool {
 		if _, err := exec.LookPath(name); err != nil {
@@ -74,12 +77,11 @@ func linuxPreflight(h Host) error {
 		return true
 	}
 	if requireProgram("podman") {
-		minor := 4
-		output, err := (podmanTarget{host: h}).query("--version")
-		if err != nil || !atLeast(output, 4, minor, 0) {
-			failures = append(failures, fmt.Errorf("Podman >= 4.%d.0 is required (client version: %q; query: %v)", minor, strings.TrimSpace(output), err))
+		output, err := p.query("--version")
+		if err != nil || !atLeast(output, 4, minimumLinuxPodmanMinor, 0) {
+			failures = append(failures, fmt.Errorf("Podman >= 4.%d.0 is required (client version: %q; query: %v)", minimumLinuxPodmanMinor, strings.TrimSpace(output), err))
 		}
-		info, err := (podmanTarget{host: h}).info()
+		info, err := p.info()
 		if err != nil {
 			failures = append(failures, err)
 		} else {
@@ -133,9 +135,9 @@ func subordinateRange(h Host, path string, account *user.User) bool {
 		if len(parts) != 3 || (parts[0] != account.Username && parts[0] != account.Uid) {
 			continue
 		}
-		start, e1 := strconv.ParseUint(parts[1], 10, 32)
-		count, e2 := strconv.ParseUint(parts[2], 10, 32)
-		if e1 == nil && e2 == nil && count > 0 && start+count <= 1<<32 {
+		start, startParseErr := strconv.ParseUint(parts[1], 10, 32)
+		count, countParseErr := strconv.ParseUint(parts[2], 10, 32)
+		if startParseErr == nil && countParseErr == nil && count > 0 && start+count <= 1<<32 {
 			return true
 		}
 	}

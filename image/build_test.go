@@ -277,3 +277,24 @@ func TestImageTagsIdentifyToolchainSets(t *testing.T) {
 		t.Error("different asset hashes have the same tag")
 	}
 }
+
+// TestImageBuildUsesSelectedToolchainTag proves the selected toolchain set identifies both the Podman build and returned image through the public image builder seam.
+func TestImageBuildUsesSelectedToolchainTag(t *testing.T) {
+	hash, err := image.Hash(image.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolchains := []string{"native", "native"}
+	want := image.Tag(hash, toolchains)
+	var builtTag string
+	tag, err := image.BuildWithToolchains(context.Background(), image.Context(), toolchains, func(_ context.Context, args ...string) error {
+		if len(args) != 6 || args[3] != "--tag" {
+			t.Fatalf("Podman build args=%v", args)
+		}
+		builtTag = args[4]
+		return nil
+	})
+	if err != nil || tag != want || builtTag != want {
+		t.Fatalf("returned=%q built=%q error=%v; want %q", tag, builtTag, err, want)
+	}
+}
