@@ -618,6 +618,7 @@ type lifecycleResponse struct {
 	Output             string
 	Exit               int
 	ReadyFile, WaitFor string
+	HoldOutputUntil    string
 }
 
 func lifecycleHarness(t *testing.T, responses map[string]lifecycleResponse) testutil.Fakes {
@@ -1421,4 +1422,114 @@ func TestLifecycleVolumesOnlyRefusesContainerCommandsBeforeChanges(t *testing.T)
 			})
 		}
 	}
+}
+
+// TestLifecycleManagerInheritedOutputCannotHoldCommandOpen proves stop, restart, and remove refuse an unavailable manager within a bound when an exited Podman's child retains output through RunWithHost.
+func TestLifecycleManagerInheritedOutputCannotHoldCommandOpen(t *testing.T) {
+	for _, verb := range []string{"stop", "restart", "remove"} {
+		t.Run(verb, func(t *testing.T) {
+			release := filepath.Join(t.TempDir(), "release-output")
+			responses := ownedLifecycleResponses(true)
+			responses["exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager sessions"] = lifecycleResponse{HoldOutputUntil: release}
+			fakes := lifecycleHarness(t, responses)
+			type result struct {
+				status int
+				output string
+			}
+			done := make(chan result, 1)
+			go func() { status, output := lifecycleRun(verb, "demo"); done <- result{status, output} }()
+			defer func() {
+				if err := os.WriteFile(release, nil, 0600); err != nil {
+					t.Error(err)
+					return
+				}
+				deadline := time.Now().Add(2 * time.Second)
+				for {
+					if _, err := os.Stat(release + ".done"); err == nil {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Error("fake output-holding child did not finish after release")
+						break
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+			}()
+			var got result
+			select {
+			case got = <-done:
+			case <-time.After(4 * time.Second):
+				// Release the child before reporting failure so even the broken code exits.
+				if err := os.WriteFile(release, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case <-done:
+				case <-time.After(12 * time.Second):
+					t.Fatal("command did not exit after releasing bounded fake child")
+				}
+				t.Fatal("manager query remained blocked by inherited output beyond four seconds")
+			}
+			if got.status == 0 || !strings.Contains(got.output, "cannot rule out running sessions") || !strings.Contains(got.output, "--force") || !strings.Contains(got.output, "WaitDelay expired") {
+				t.Fatalf("status=%d output=%s", got.status, got.output)
+			}
+			if calls := testutil.Invocations(t, fakes.PodmanLog); len(lifecycleMutations(calls)) != 0 {
+				t.Fatalf("mutations=%v", calls)
+			}
+		})
+	}
+}
+
+// TestLifecycleStateRootIgnoresRelativeXDG proves Linux lifecycle commands fall back to home for relative or empty XDG state paths and keep absolute paths through RunWithHost.
+func TestLifecycleStateRootIgnoresRelativeXDG(t *testing.T) {
+	for _, kind := range []string{"relative", "empty", "absolute"} {
+		t.Run(kind, func(t *testing.T) {
+			fakes := lifecycleHarness(t, ownedLifecycleResponses(true))
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			root := filepath.Join(home, ".local", "state")
+			xdg := "relative-state"
+			if kind == "empty" {
+				xdg = ""
+			}
+			if kind == "absolute" {
+				root = t.TempDir()
+				xdg = root
+			}
+			t.Setenv("XDG_STATE_HOME", xdg)
+			status, output := lifecycleRun("start", "demo")
+			if status != 0 {
+				t.Fatalf("status=%d output=%s", status, output)
+			}
+			lock := filepath.Join(root, "sandboxed-agents", "group-default", "locks", "9a4080e774a647b4e19f0a6c7f45385183ffd91df8d99b0dcd9cdae7ea2d401c")
+			info, err := os.Stat(lock)
+			if err != nil || !info.Mode().IsRegular() || info.Size() != 0 {
+				t.Fatalf("lock=%s info=%v error=%v", lock, info, err)
+			}
+			if calls := testutil.Invocations(t, fakes.PodmanLog); len(lifecycleMutations(calls)) != 0 {
+				t.Fatalf("mutations=%v", calls)
+			}
+		})
+	}
+}
+
+// TestWorkspaceProtectsFallbackStateForRelativeXDG proves up refuses a bind containing the Linux fallback host state before external calls when XDG state is relative through RunWithHost.
+func TestWorkspaceProtectsFallbackStateForRelativeXDG(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("public workspace validation uses the real host platform")
+	}
+	fakes := lifecycleHarness(t, nil)
+	home := t.TempDir()
+	protected := filepath.Join(home, ".local", "state", "sandboxed-agents")
+	if err := os.MkdirAll(protected, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", "relative-state")
+	status, output := lifecycleRun("up", "demo", protected)
+	if status != 2 || !strings.Contains(output, "workspace overlaps protected host path") || !strings.Contains(output, protected) {
+		t.Fatalf("status=%d output=%s", status, output)
+	}
+	assertNoExternalCalls(t, fakes)
 }

@@ -7,14 +7,16 @@ import (
 	"path/filepath"
 )
 
-func lifecycleStateRoot(platform string) (string, error) {
+// hostStateRoot resolves host state, ignoring relative XDG_STATE_HOME values
+// on Linux and requiring an absolute LOCALAPPDATA path on Windows.
+func hostStateRoot(platform string) (string, error) {
 	root := os.Getenv("XDG_STATE_HOME")
 	if platform == "windows" {
 		root = os.Getenv("LOCALAPPDATA")
 		if root == "" {
 			return "", fmt.Errorf("LOCALAPPDATA is required for host state")
 		}
-	} else if root == "" {
+	} else if root == "" || !filepath.IsAbs(root) {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", err
