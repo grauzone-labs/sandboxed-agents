@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -13,6 +14,19 @@ import (
 )
 
 func main() {
+	// A bounded child deliberately keeps the parent's inherited output open.
+	if len(os.Args) == 3 && os.Args[1] == "--test-hold-output" {
+		defer os.WriteFile(os.Args[2]+".done", nil, 0600)
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(os.Args[2]); err == nil {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return
+	}
+
 	prefix := "TEST_" + strings.ToUpper(strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe"))
 	file, err := os.OpenFile(os.Getenv(prefix+"_LOG"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
@@ -36,6 +50,7 @@ func main() {
 			Stderr             string
 			Exit               int
 			ReadyFile, WaitFor string
+			HoldOutputUntil    string
 		}
 		if err := json.Unmarshal([]byte(script), &responses); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -57,6 +72,23 @@ func main() {
 			}
 		}
 		if ok {
+			if response.HoldOutputUntil != "" {
+				executable, err := os.Executable()
+				if err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					os.Exit(125)
+				}
+				child := exec.Command(executable, "--test-hold-output", response.HoldOutputUntil)
+				child.Stdout, child.Stderr = os.Stdout, os.Stderr
+				if err := child.Start(); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					os.Exit(125)
+				}
+				if err := child.Process.Release(); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					os.Exit(125)
+				}
+			}
 			if response.ReadyFile != "" {
 				if err := os.WriteFile(response.ReadyFile, nil, 0600); err != nil {
 					fmt.Fprintln(os.Stderr, err)

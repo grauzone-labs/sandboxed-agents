@@ -35,7 +35,7 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		if err == nil {
 			switch request.Command {
 			case "up", "start", "stop", "restart", "remove":
-				stateRoot, err = lifecycleStateRoot(host.Platform)
+				stateRoot, err = hostStateRoot(host.Platform)
 			}
 		}
 		return err

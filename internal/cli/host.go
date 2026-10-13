@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Host supplies platform facts and read-only file/user queries to the command
@@ -246,14 +247,15 @@ type podmanTarget struct {
 }
 
 func (p podmanTarget) query(args ...string) (string, error) {
-	return p.queryContext(context.Background(), args...)
+	return p.queryContext(context.Background(), 0, args...)
 }
 
-func (p podmanTarget) queryContext(ctx context.Context, args ...string) (string, error) {
+func (p podmanTarget) queryContext(ctx context.Context, waitDelay time.Duration, args ...string) (string, error) {
 	if p.connection != "" {
 		args = append([]string{"--connection", p.connection}, args...)
 	}
 	command := exec.CommandContext(ctx, "podman", args...)
+	command.WaitDelay = waitDelay
 	command.Env = p.environment()
 	// Only stdout is query data. Preserve both streams in failure diagnostics so
 	// stderr warnings cannot corrupt successful JSON or plain-text responses.

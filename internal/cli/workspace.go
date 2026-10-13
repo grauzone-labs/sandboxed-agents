@@ -32,19 +32,22 @@ func validateWorkspaceForHost(path, hostOS string) error {
 	if err != nil {
 		return err
 	}
-	stateRoot := os.Getenv("XDG_STATE_HOME")
-	if stateRoot == "" {
-		stateRoot = filepath.Join(home, ".local", "state")
-	}
+	var stateRoot, localAppData string
 	if hostOS == "windows" {
-		stateRoot = os.Getenv("LOCALAPPDATA")
-		if stateRoot == "" {
+		localAppData = os.Getenv("LOCALAPPDATA")
+		if localAppData == "" {
 			return fmt.Errorf("LOCALAPPDATA is required to identify protected host state")
 		}
+		stateRoot = filepath.Join(localAppData, "sandboxed-agents")
+	} else {
+		stateRoot, err = hostStateRoot(hostOS)
+		if err != nil {
+			return err
+		}
 	}
-	protectedPaths := []string{executable, filepath.Join(home, ".ssh"), filepath.Join(stateRoot, "sandboxed-agents")}
+	protectedPaths := []string{executable, filepath.Join(home, ".ssh"), stateRoot}
 	if hostOS == "windows" {
-		protectedPaths = append(protectedPaths, filepath.Join(stateRoot, "Programs", "sandboxed-agents"))
+		protectedPaths = append(protectedPaths, filepath.Join(localAppData, "Programs", "sandboxed-agents"))
 	}
 	// Other package launchers and temporary build inputs join this set when those
 	// later command bodies are implemented.

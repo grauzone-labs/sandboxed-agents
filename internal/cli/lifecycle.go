@@ -192,7 +192,9 @@ func guardSessions(request Request, p podmanTarget) (sessionReport, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	output, err := p.queryContext(ctx, args...)
+	// Bound inherited output pipes too: killing or reaping Podman does not
+	// close pipes that its descendants still hold. Other queries keep no delay.
+	output, err := p.queryContext(ctx, time.Second, args...)
 	if err != nil {
 		if request.Options["force"] != "" {
 			return sessionReport{unavailable: true}, nil
