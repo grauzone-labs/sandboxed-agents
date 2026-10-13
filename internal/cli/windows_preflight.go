@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+const minimumWindowsPodmanVersion = "4.7.0"
+
 func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 	var failures []error
 	build, err := p.host.WindowsBuild()
@@ -23,32 +25,35 @@ func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 		}
 	}
 	if _, err := exec.LookPath("podman"); err != nil {
-		failures = append(failures, fmt.Errorf("podman is required on PATH"))
+		cause := fmt.Errorf("podman is required on PATH")
+		failures = append(failures, cause)
+		failures = append(failures, unverifiedPrerequisites(cause,
+			fmt.Sprintf("Podman >= %s is required", minimumWindowsPodmanVersion),
+			"a running Podman machine is required", "a WSL2 Podman machine is required", "a rootless Podman machine is required")...)
+		failures = append(failures, unverifiedMachinePrerequisites(cause)...)
 		return p, errors.Join(failures...)
 	}
 	output, err := p.query("--version")
-	if err != nil || !atLeast(output, 4, 7, 0) {
-		failures = append(failures, fmt.Errorf("Podman >= 4.7.0 is required (client version: %q; query: %v)", strings.TrimSpace(output), err))
+	if err != nil || !atLeastFloor(output, minimumWindowsPodmanVersion) {
+		failures = append(failures, fmt.Errorf("Podman >= %s is required (client version: %q; query: %v)", minimumWindowsPodmanVersion, strings.TrimSpace(output), err))
 	}
 	selected, err := selectWindowsTarget(p)
 	if err != nil {
 		failures = append(failures, err)
+		failures = append(failures, unverifiedMachinePrerequisites(fmt.Errorf("no running rootless WSL2 machine was selected"))...)
 	} else {
 		p = selected
-	}
-	if err == nil {
 		// --version identifies the local client. The bound JSON Server.Version
 		// identifies the machine's engine, so a newer client cannot mask an old engine.
 		versionOutput, versionErr := p.query("version", "--format", "json")
 		var versions struct{ Server *struct{ Version string } }
-		if versionErr != nil || json.Unmarshal([]byte(versionOutput), &versions) != nil || versions.Server == nil || !atLeast(versions.Server.Version, 4, 7, 0) {
-			failures = append(failures, fmt.Errorf("Podman machine >= 4.7.0 is required (version query: %v)", versionErr))
+		if versionErr != nil || json.Unmarshal([]byte(versionOutput), &versions) != nil || versions.Server == nil || !atLeastFloor(versions.Server.Version, minimumWindowsPodmanVersion) {
+			failures = append(failures, fmt.Errorf("Podman machine >= %s is required (version query: %v)", minimumWindowsPodmanVersion, versionErr))
 		}
-	}
-	if err == nil {
+
 		info, infoErr := p.info()
 		if infoErr != nil {
-			failures = append(failures, infoErr)
+			failures = append(failures, unverifiedPrerequisites(infoErr, "rootless Podman is required", "cgroups v2 is required")...)
 		} else {
 			if info.Host.CgroupVersion != "v2" {
 				failures = append(failures, fmt.Errorf("cgroups v2 is required"))
@@ -57,14 +62,50 @@ func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 				failures = append(failures, fmt.Errorf("rootless Podman is required"))
 			}
 		}
-	}
-	if err == nil {
+
 		local := p
 		local.connection = ""
 		controllers, controllerErr := machineControllers(local, p.connection)
 		failures = append(failures, controllerFailures(controllers, controllerErr)...)
 	}
 	return p, errors.Join(failures...)
+}
+
+// atLeastFloor keeps a named semantic-version floor in one place for comparisons and diagnostics.
+func atLeastFloor(value, minimum string) bool {
+	parts := versionPattern.FindStringSubmatch(minimum)
+	if len(parts) != 4 {
+		return false
+	}
+	var floor [3]int
+	for index := range floor {
+		component, err := strconv.Atoi(parts[index+1])
+		if err != nil {
+			return false
+		}
+		floor[index] = component
+	}
+	return atLeast(value, floor[0], floor[1], floor[2])
+}
+
+func unverifiedPrerequisites(cause error, requirements ...string) []error {
+	var failures []error
+	for _, requirement := range requirements {
+		failures = append(failures, fmt.Errorf("%s (cannot verify: %v)", requirement, cause))
+	}
+	return failures
+}
+
+func unverifiedMachineSelection(cause error) error {
+	failures := append([]error{cause}, unverifiedPrerequisites(cause, "a running Podman machine is required", "a WSL2 Podman machine is required", "a rootless Podman machine is required")...)
+	return errors.Join(failures...)
+}
+
+func unverifiedMachinePrerequisites(cause error) []error {
+	return unverifiedPrerequisites(cause,
+		fmt.Sprintf("Podman machine >= %s is required", minimumWindowsPodmanVersion),
+		"rootless Podman is required", "cgroups v2 is required",
+		"delegated cgroup cpu controller is required", "delegated cgroup memory controller is required", "delegated cgroup pids controller is required")
 }
 
 type machine struct {
@@ -76,14 +117,14 @@ type machine struct {
 func selectWindowsTarget(p podmanTarget) (podmanTarget, error) {
 	output, err := p.query("machine", "list", "--format", "json")
 	if err != nil {
-		return p, err
+		return p, unverifiedMachineSelection(err)
 	}
 	var machines []machine
 	if err := json.Unmarshal([]byte(output), &machines); err != nil {
-		return p, fmt.Errorf("read Podman machine list: %w", err)
+		return p, unverifiedMachineSelection(fmt.Errorf("read Podman machine list: %w", err))
 	}
 	if len(machines) == 0 {
-		return p, fmt.Errorf("a Podman machine is required")
+		return p, unverifiedMachineSelection(fmt.Errorf("a Podman machine is required"))
 	}
 	chosen := machines[0]
 	if len(machines) > 1 {
@@ -95,32 +136,42 @@ func selectWindowsTarget(p podmanTarget) (podmanTarget, error) {
 			}
 		}
 		if defaults != 1 {
-			return p, fmt.Errorf("select one default Podman machine when several exist")
+			return p, unverifiedMachineSelection(fmt.Errorf("select one default Podman machine when several exist"))
 		}
 	}
 	if chosen.Name == "" || strings.HasPrefix(chosen.Name, "-") || strings.ContainsAny(chosen.Name, "\r\n\x00") {
-		return p, fmt.Errorf("invalid Podman machine name %q", chosen.Name)
+		return p, unverifiedMachineSelection(fmt.Errorf("invalid Podman machine name %q", chosen.Name))
+	}
+	var failures []error
+	if chosen.VMType != "wsl" {
+		failures = append(failures, fmt.Errorf("a WSL2 Podman machine is required"))
 	}
 	output, err = p.query("machine", "inspect", chosen.Name)
 	if err != nil {
-		return p, err
+		failures = append(failures, err)
+		failures = append(failures, unverifiedPrerequisites(err, "a running Podman machine is required", "a rootless Podman machine is required")...)
+		return p, errors.Join(failures...)
 	}
 	var inspected []struct {
 		Name, State string
 		Rootful     *bool
 	}
 	if err := json.Unmarshal([]byte(output), &inspected); err != nil || len(inspected) != 1 || inspected[0].Name != chosen.Name {
-		return p, fmt.Errorf("read Podman machine inspect: invalid answer")
+		cause := fmt.Errorf("read Podman machine inspect: invalid answer")
+		failures = append(failures, cause)
+		failures = append(failures, unverifiedPrerequisites(cause, "a running Podman machine is required", "a rootless Podman machine is required")...)
+		return p, errors.Join(failures...)
 	}
 	if inspected[0].State != "running" {
-		return p, fmt.Errorf("a running Podman machine is required")
-	}
-	if chosen.VMType != "wsl" {
-		return p, fmt.Errorf("a WSL2 Podman machine is required")
+		failures = append(failures, fmt.Errorf("a running Podman machine is required"))
 	}
 	if inspected[0].Rootful == nil || *inspected[0].Rootful {
-		return p, fmt.Errorf("a rootless Podman machine is required (Rootful must be reported)")
+		failures = append(failures, fmt.Errorf("a rootless Podman machine is required (Rootful must be reported)"))
 	}
+	if err := errors.Join(failures...); err != nil {
+		return p, err
+	}
+
 	p.connection = chosen.Name
 	return p, nil
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 )
 
 // OwnerLabel names the authoritative controller group on Podman resources.
@@ -14,11 +15,14 @@ const OwnerLabel = "io.sandboxed-agents.owner"
 const SSHPortLabel = "io.sandboxed-agents.port"
 
 func allocatePort(p podmanTarget, requested string) (uint16, error) {
-	output, err := p.query("ps", "--all", "--filter", "label="+OwnerLabel, "--format", "json")
+	output, err := p.query("ps", "--all", "--format", "json")
 	if err != nil {
 		return 0, err
 	}
-	var records []struct{ Labels map[string]string }
+	var records []struct {
+		Names  []string
+		Labels map[string]string
+	}
 	if err := json.Unmarshal([]byte(output), &records); err != nil {
 		return 0, fmt.Errorf("read recorded SSH ports: %w", err)
 	}
@@ -27,6 +31,13 @@ func allocatePort(p podmanTarget, requested string) (uint16, error) {
 	}
 	reserved := make(map[uint16]bool)
 	for _, record := range records {
+		_, managed := record.Labels[OwnerLabel]
+		for _, name := range record.Names {
+			managed = managed || strings.HasPrefix(name, "sandboxed-agents.")
+		}
+		if !managed {
+			continue
+		}
 		value := record.Labels[SSHPortLabel]
 		if value == "" {
 			return 0, fmt.Errorf("read recorded SSH ports: sandbox port label is missing")
