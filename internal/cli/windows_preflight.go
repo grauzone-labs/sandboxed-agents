@@ -30,8 +30,17 @@ const (
 	rootlessMachineRequirement = "a rootless Podman machine is required"
 )
 
+func windowsClientVersionRequirement() string {
+	return fmt.Sprintf("Podman >= %s is required", minimumWindowsPodmanVersion)
+}
+
+func windowsMachineVersionRequirement() string {
+	return fmt.Sprintf("Podman machine >= %s is required", minimumWindowsPodmanVersion)
+}
+
 func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 	var failures []error
+	clientVersionRequirement := windowsClientVersionRequirement()
 	build, err := p.host.WindowsBuild()
 	workstation, productErr := p.host.WindowsWorkstation()
 	if err != nil || productErr != nil || !workstation || build < minimumWindows11Build {
@@ -52,14 +61,14 @@ func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 		cause := fmt.Errorf("podman is required on PATH")
 		failures = append(failures, cause)
 		failures = append(failures, unverifiedPrerequisites(cause,
-			fmt.Sprintf("Podman >= %s is required", minimumWindowsPodmanVersion),
+			clientVersionRequirement,
 			runningMachineRequirement, wslMachineRequirement, rootlessMachineRequirement)...)
 		failures = append(failures, unverifiedMachinePrerequisites(cause)...)
 		return p, errors.Join(failures...)
 	}
 	output, err := p.query("--version")
 	if err != nil || !atLeastFloor(output, minimumWindowsPodmanVersion) {
-		failures = append(failures, fmt.Errorf("Podman >= %s is required (client version: %q; query: %v)", minimumWindowsPodmanVersion, strings.TrimSpace(output), err))
+		failures = append(failures, fmt.Errorf("%s (client version: %q; query: %v)", clientVersionRequirement, strings.TrimSpace(output), err))
 	}
 	selected, err := selectWindowsTarget(p)
 	if err != nil {
@@ -72,7 +81,7 @@ func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 		versionOutput, versionErr := p.query("version", "--format", "json")
 		var versions struct{ Server *struct{ Version string } }
 		if versionErr != nil || json.Unmarshal([]byte(versionOutput), &versions) != nil || versions.Server == nil || !atLeastFloor(versions.Server.Version, minimumWindowsPodmanVersion) {
-			failures = append(failures, fmt.Errorf("Podman machine >= %s is required (version query: %v)", minimumWindowsPodmanVersion, versionErr))
+			failures = append(failures, fmt.Errorf("%s (version query: %v)", windowsMachineVersionRequirement(), versionErr))
 		}
 
 		info, infoErr := p.info()
@@ -95,6 +104,8 @@ func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 		if automountErr != nil {
 			failures = append(failures, fmt.Errorf("read automount root for machine %q: %w", p.connection, automountErr))
 		} else {
+			// Preflight accepts and records custom roots. Refusing a workspace under
+			// a custom root belongs to #14 and is not yet implemented.
 			p.automountRoot = root
 		}
 	}
@@ -105,14 +116,14 @@ func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 // defaults while an unreadable existing file fails. Plain argv remain safe when
 // the transport joins arguments; live Windows confirmation is still pending.
 func machineAutomountRoot(local podmanTarget, name string) (string, error) {
-	if output, err := local.query("machine", "ssh", name, "test", "-e", "/etc/wsl.conf"); err != nil {
+	if output, err := machineSSH(local, name, "test", "-e", "/etc/wsl.conf"); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == 1 && strings.TrimSpace(output) == "" {
 			return "/mnt/", nil
 		}
 		return "", err
 	}
-	config, err := local.query("machine", "ssh", name, "cat", "/etc/wsl.conf")
+	config, err := machineSSH(local, name, "cat", "/etc/wsl.conf")
 	if err != nil {
 		return "", err
 	}
@@ -183,7 +194,7 @@ func unverifiedMachineSelection(cause error) error {
 
 func unverifiedMachinePrerequisites(cause error) []error {
 	requirements := []string{
-		fmt.Sprintf("Podman machine >= %s is required", minimumWindowsPodmanVersion),
+		windowsMachineVersionRequirement(),
 		"rootless Podman is required", "cgroups v2 is required",
 	}
 	for _, name := range requiredCgroupControllers {
@@ -263,7 +274,7 @@ func selectWindowsTarget(p podmanTarget) (podmanTarget, error) {
 // machineControllers uses simple read-only commands so the machine transport
 // does not need to preserve a shell script's argument quoting.
 func machineControllers(local podmanTarget, name string) (string, error) {
-	output, err := local.query("machine", "ssh", name, "id", "-u")
+	output, err := machineSSH(local, name, "id", "-u")
 	if err != nil {
 		return "", err
 	}
@@ -278,10 +289,14 @@ func machineControllers(local podmanTarget, name string) (string, error) {
 		if !machineReadPath.MatchString(path) {
 			return nil, fmt.Errorf("unsupported machine cgroup path %q", path)
 		}
-		output, err := local.query("machine", "ssh", name, "cat", path)
+		output, err := machineSSH(local, name, "cat", path)
 		return []byte(output), err
 	}
 	return delegatedControllers(readFile, uid)
+}
+
+func machineSSH(local podmanTarget, name string, argv ...string) (string, error) {
+	return local.query(append([]string{"machine", "ssh", name}, argv...)...)
 }
 
 var machineReadPath = regexp.MustCompile(`^/[A-Za-z0-9_./:@-]+$`)
