@@ -33,8 +33,8 @@ func buildImage(p podmanTarget, toolchains []string, output io.Writer) (string, 
 }
 
 func prepareUp(request Request, p podmanTarget, output io.Writer) error {
-	// Sandbox lifecycle checks and mutations, including ADR-0007's lock,
-	// belong to #14. This boundary only detects reuse and prepares new images.
+	// Container and volume creation belong to #14; ADR-0007's lifecycle lock
+	// belongs to #16. This boundary only detects reuse and prepares new images.
 	exists, err := p.exists("container", DerivedNames(request.Group, request.Name).Container)
 	if err != nil {
 		return err
