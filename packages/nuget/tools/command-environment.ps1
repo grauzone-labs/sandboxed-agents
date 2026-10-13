@@ -61,7 +61,7 @@ function Test-CommandPathEntry([string] $Entry, [string] $Directory, [Microsoft.
     }
     Write-CommandNuGet32Debug 'GetFullPath exceptionType=<none>'
     $equal = [string]::Equals($expanded.TrimEnd('\', '/'), $Directory.TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)
-    Write-CommandNuGet32Debug "normalizedEquality=$equal"
+    Write-CommandNuGet32Debug "normalizedEquality=$equal normalizedPath=<$expanded> directory=<$Directory>"
     return $equal
 }
 
