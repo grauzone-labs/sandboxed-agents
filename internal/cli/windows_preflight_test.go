@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -27,6 +28,7 @@ func windowsHost(t *testing.T) *fixture {
 		"machine ssh chosen id -u":                  {Output: "1000\n"},
 		"machine ssh chosen cat /proc/self/cgroup":  {Output: "0::/user.slice/user-1000.slice/session-1.scope\n"},
 		windowsControllerRead:                       {Output: "cpu memory pids"},
+		windowsAutomountExists:                      {},
 		windowsAutomountRead:                        {Output: ""},
 	}
 	return f
@@ -35,7 +37,52 @@ func windowsHost(t *testing.T) *fixture {
 // windowsControllerRead names the read-only delegated controller query.
 const windowsControllerRead = "machine ssh chosen cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers"
 
-const windowsAutomountRead = "machine ssh chosen sh -c cat /etc/wsl.conf 2>/dev/null; true"
+const windowsAutomountRead = "machine ssh chosen cat /etc/wsl.conf"
+const windowsAutomountExists = "machine ssh chosen test -e /etc/wsl.conf"
+
+// TestWindowsAbsentAutomountFileUsesDefaultWithoutRead proves an absent wsl.conf defaults to /mnt/ after an existence check without a read through RunWithHost and fake Podman processes.
+func TestWindowsAbsentAutomountFileUsesDefaultWithoutRead(t *testing.T) {
+	f := windowsHost(t)
+	f.responses[windowsAutomountExists] = response{Exit: 1}
+	status, output, calls := f.run(t, "check")
+	if status != 0 || !strings.Contains(output, "machine chosen automount root /mnt/") {
+		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+	}
+	existenceQueries := 0
+	for _, call := range calls {
+		if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "test", "-e", "/etc/wsl.conf"}) {
+			existenceQueries++
+		} else if len(call) > 3 && call[0] == "machine" && call[1] == "ssh" && (call[3] == "sh" || reflect.DeepEqual(call[3:], []string{"cat", "/etc/wsl.conf"})) {
+			t.Fatalf("absent configuration was read: %v", call)
+		}
+	}
+	if existenceQueries != 1 {
+		t.Fatalf("existence queries=%d calls=%v", existenceQueries, calls)
+	}
+	noMutation(t, calls)
+}
+
+// TestWindowsAutomountExistenceFailureStopsWork proves existence-query transport diagnostics are not mistaken for absence and stop mutations through RunWithHost and fake Podman.
+func TestWindowsAutomountExistenceFailureStopsWork(t *testing.T) {
+	for _, code := range []int{1, 125} {
+		for _, args := range [][]string{{"check"}, {"build"}, {"up", "demo"}} {
+			t.Run(strings.Join(args, "-")+"-"+strconv.Itoa(code), func(t *testing.T) {
+				f := windowsHost(t)
+				f.responses[windowsAutomountExists] = response{Output: "transport unavailable", Exit: code}
+				status, output, calls := f.run(t, args...)
+				if status != 1 || !strings.Contains(output, "automount root") || !strings.Contains(output, "chosen") || !strings.Contains(output, "transport unavailable") {
+					t.Fatalf("status=%d output=%q", status, output)
+				}
+				for _, call := range calls {
+					if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "cat", "/etc/wsl.conf"}) {
+						t.Fatalf("configuration read after failed existence query: %v", calls)
+					}
+				}
+				noMutation(t, calls)
+			})
+		}
+	}
+}
 
 // TestWindowsPreflightUsesNativeArchitecture proves native AMD64 is accepted independently of process architecture while ARM64 and lookup errors refuse work through RunWithHost and fake Podman processes.
 func TestWindowsPreflightUsesNativeArchitecture(t *testing.T) {
@@ -220,10 +267,14 @@ func TestWindowsControllerQueriesUseSimpleMachineCommands(t *testing.T) {
 		t.Fatalf("status=%d output=%q", status, output)
 	}
 	queries := 0
-	automountQueries := 0
+	automountExistenceQueries, automountReadQueries := 0, 0
 	for _, call := range calls {
-		if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "sh", "-c", "cat /etc/wsl.conf 2>/dev/null; true"}) {
-			automountQueries++
+		if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "test", "-e", "/etc/wsl.conf"}) {
+			automountExistenceQueries++
+			continue
+		}
+		if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "cat", "/etc/wsl.conf"}) {
+			automountReadQueries++
 			continue
 		}
 		if len(call) > 2 && call[0] == "machine" && call[1] == "ssh" {
@@ -236,8 +287,8 @@ func TestWindowsControllerQueriesUseSimpleMachineCommands(t *testing.T) {
 	if queries != 3 {
 		t.Fatalf("queries=%d calls=%v", queries, calls)
 	}
-	if automountQueries != 1 {
-		t.Fatalf("automount queries=%d calls=%v", automountQueries, calls)
+	if automountExistenceQueries != 1 || automountReadQueries != 1 {
+		t.Fatalf("automount existence queries=%d read queries=%d calls=%v", automountExistenceQueries, automountReadQueries, calls)
 	}
 	noMutation(t, calls)
 }
@@ -340,7 +391,7 @@ func TestWindowsCheckReportsCustomAutomountRoot(t *testing.T) {
 	noMutation(t, calls)
 }
 
-// TestWindowsCheckReportsDefaultAutomountRoot proves absent configuration or an absent automount root key records /mnt/ through RunWithHost and fake Podman.
+// TestWindowsCheckReportsDefaultAutomountRoot proves an existing empty configuration or absent automount root key records /mnt/ after existence and read queries through RunWithHost and fake Podman.
 func TestWindowsCheckReportsDefaultAutomountRoot(t *testing.T) {
 	for _, config := range []string{"", "[automount]\nenabled = true\n", "[network]\nroot=/unrelated/\n"} {
 		t.Run(config, func(t *testing.T) {
@@ -349,6 +400,31 @@ func TestWindowsCheckReportsDefaultAutomountRoot(t *testing.T) {
 			status, output, calls := f.run(t, "check")
 			if status != 0 || !strings.Contains(output, "machine chosen automount root /mnt/") {
 				t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+			}
+			var rootQueries [][]string
+			for _, call := range calls {
+				if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "test", "-e", "/etc/wsl.conf"}) || reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "cat", "/etc/wsl.conf"}) {
+					rootQueries = append(rootQueries, call)
+				}
+			}
+			expected := [][]string{{"machine", "ssh", "chosen", "test", "-e", "/etc/wsl.conf"}, {"machine", "ssh", "chosen", "cat", "/etc/wsl.conf"}}
+			if !reflect.DeepEqual(rootQueries, expected) {
+				t.Fatalf("automount queries=%v; want %v", rootQueries, expected)
+			}
+			noMutation(t, calls)
+		})
+	}
+}
+
+// TestWindowsExistingAutomountFileReadFailureStopsWork proves an existing but unreadable wsl.conf reports its raw cause and selected machine without mutations through RunWithHost and fake Podman.
+func TestWindowsExistingAutomountFileReadFailureStopsWork(t *testing.T) {
+	for _, args := range [][]string{{"check"}, {"build"}, {"up", "demo"}} {
+		t.Run(strings.Join(args, "-"), func(t *testing.T) {
+			f := windowsHost(t)
+			f.responses[windowsAutomountRead] = response{Output: "cat: /etc/wsl.conf: Permission denied", Exit: 1}
+			status, output, calls := f.run(t, args...)
+			if status != 1 || !strings.Contains(output, "automount root") || !strings.Contains(output, "chosen") || !strings.Contains(output, "Permission denied") {
+				t.Fatalf("status=%d output=%q", status, output)
 			}
 			noMutation(t, calls)
 		})
