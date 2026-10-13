@@ -298,3 +298,30 @@ func TestImageBuildUsesSelectedToolchainTag(t *testing.T) {
 		t.Fatalf("returned=%q built=%q error=%v; want %q", tag, builtTag, err, want)
 	}
 }
+
+// TestImageBuildDeclaresKeepalive proves the materialized embedded build context declares sleep infinity through the public image.Build seam supplied to Podman.
+func TestImageBuildDeclaresKeepalive(t *testing.T) {
+	_, err := image.Build(context.Background(), nil, func(_ context.Context, args ...string) error {
+		containerfile, err := os.ReadFile(args[2])
+		if err != nil {
+			t.Fatal(err)
+		}
+		const want = `ENTRYPOINT ["sleep", "infinity"]`
+		found := false
+		for _, line := range strings.Split(string(containerfile), "\n") {
+			if strings.HasPrefix(line, "ENTRYPOINT ") {
+				if line != want {
+					t.Fatalf("image entrypoint=%q; want=%q", line, want)
+				}
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("materialized Containerfile lacks keepalive entrypoint %q", want)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
