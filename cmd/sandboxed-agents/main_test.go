@@ -224,8 +224,12 @@ func TestCommandGrammar(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	for _, tc := range cases {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			caseFakes := fakes
+			if tc.status == 2 {
+				caseFakes = testutil.Install(t, fakeExecutable)
+			}
 			command := exec.Command(executable, tc.args...)
-			command.Env = fakes.Env(os.Environ())
+			command.Env = caseFakes.Env(os.Environ())
 			output, err := command.CombinedOutput()
 			status := exitStatus(t, err)
 			if status != tc.status {
@@ -233,6 +237,9 @@ func TestCommandGrammar(t *testing.T) {
 			}
 			if (tc.status == 2) != strings.Contains(string(output), "usage:") {
 				t.Fatalf("unexpected diagnostic: %s", output)
+			}
+			if tc.status == 2 {
+				assertNoExternalCalls(t, caseFakes)
 			}
 		})
 	}
@@ -347,8 +354,12 @@ func TestControllerGroupAndSandboxNames(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.group+"/"+tc.name, func(t *testing.T) {
+			caseFakes := fakes
+			if tc.status == 2 {
+				caseFakes = testutil.Install(t, fakeExecutable)
+			}
 			command := exec.Command(executable, "up", tc.name)
-			command.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{"SANDBOXED_AGENTS_GROUP": tc.group})
+			command.Env = testutil.Env(caseFakes.Env(os.Environ()), map[string]string{"SANDBOXED_AGENTS_GROUP": tc.group})
 			output, err := command.CombinedOutput()
 			if status := exitStatus(t, err); status != tc.status {
 				t.Fatalf("status=%d want=%d output=%s", status, tc.status, output)
@@ -358,6 +369,9 @@ func TestControllerGroupAndSandboxNames(t *testing.T) {
 			}
 			if tc.group == "" && !strings.HasPrefix(string(output), "step 1: invalid controller group \"\"\n") {
 				t.Fatalf("empty controller group diagnostic: %s", output)
+			}
+			if tc.status == 2 {
+				assertNoExternalCalls(t, caseFakes)
 			}
 		})
 	}
@@ -424,14 +438,21 @@ func TestResourceOptionGrammar(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.option+"="+tc.value, func(t *testing.T) {
+			caseFakes := fakes
+			if tc.status == 2 {
+				caseFakes = testutil.Install(t, fakeExecutable)
+			}
 			command := exec.Command(executable, "up", "demo", "--"+tc.option, tc.value)
-			command.Env = fakes.Env(os.Environ())
+			command.Env = caseFakes.Env(os.Environ())
 			output, err := command.CombinedOutput()
 			if status := exitStatus(t, err); status != tc.status {
 				t.Fatalf("status=%d want=%d output=%s", status, tc.status, output)
 			}
 			if tc.option == "cpus" && tc.status == 1 && !strings.Contains(string(output), "step 2:") {
 				t.Fatalf("output=%q; want the preflight path", output)
+			}
+			if tc.status == 2 {
+				assertNoExternalCalls(t, caseFakes)
 			}
 		})
 	}
@@ -470,11 +491,18 @@ func TestWorkspacePathsReachPreflightOrFailBeforePodman(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
+			caseFakes := fakes
+			if tc.status == 2 {
+				caseFakes = testutil.Install(t, fakeExecutable)
+			}
 			command := exec.Command(executable, "up", "demo", tc.path, "--with", "none")
-			command.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{"HOME": home, "USERPROFILE": home, "XDG_STATE_HOME": state, "LOCALAPPDATA": state})
+			command.Env = testutil.Env(caseFakes.Env(os.Environ()), map[string]string{"HOME": home, "USERPROFILE": home, "XDG_STATE_HOME": state, "LOCALAPPDATA": state})
 			output, err := command.CombinedOutput()
 			if status := exitStatus(t, err); status != tc.status {
 				t.Fatalf("status=%d want=%d output=%s", status, tc.status, output)
+			}
+			if tc.status == 2 {
+				assertNoExternalCalls(t, caseFakes)
 			}
 		})
 	}
@@ -552,4 +580,17 @@ func assertOnlyPreflightQueries(t *testing.T, fakes testutil.Fakes) {
 	if calls := testutil.Invocations(t, fakes.SSHLog); len(calls) != 0 {
 		t.Fatalf("unexpected SSH calls: %v", calls)
 	}
+}
+
+// TestMissingWorkspaceFailsBeforeUnusablePreflight proves a missing workspace remains a path usage error without Podman or SSH calls through the built CLI binary and failing process fakes.
+func TestMissingWorkspaceFailsBeforeUnusablePreflight(t *testing.T) {
+	fakes := testutil.Install(t, fakeExecutable)
+	missing := filepath.Join(t.TempDir(), "missing")
+	command := exec.Command(executable, "up", "demo", missing)
+	command.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{"TEST_PODMAN_OUTPUT": "unexpected preflight sentinel", "TEST_PODMAN_EXIT": "125", "TEST_SSH_EXIT": "125"})
+	output, err := command.CombinedOutput()
+	if status := exitStatus(t, err); status != 2 || !strings.HasPrefix(string(output), "step 1: workspace ") || !strings.Contains(string(output), strconv.Quote(missing)) || strings.Contains(string(output), "unexpected preflight sentinel") {
+		t.Fatalf("status=%d output=%q; want missing workspace usage error before preflight", status, output)
+	}
+	assertNoExternalCalls(t, fakes)
 }
