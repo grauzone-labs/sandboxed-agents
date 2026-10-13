@@ -136,6 +136,14 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 			return err
 		}
 		fmt.Fprintf(output, "removed sandbox %s\n", request.Name)
+		for _, volume := range objects.volumes {
+			fmt.Fprintf(output, "kept volume %s\n", volume)
+		}
+		if len(objects.volumes) > 0 {
+			fmt.Fprintf(output, "SSH authorization remains in the kept volumes and is replaced by the next ssh-config %s --install\n", request.Name)
+		}
+		// Host SSH setup installation is deferred; there are no managed SSH files
+		// produced by this executable to clean up yet.
 		return nil
 	}
 	action, state := request.Command, "running"
