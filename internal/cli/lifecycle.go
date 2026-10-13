@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
+	"time"
 )
 
 type sandboxContainer struct {
@@ -105,9 +107,6 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 	if err != nil {
 		return err
 	}
-	if request.Command == "remove" {
-		return fmt.Errorf("remove: not implemented")
-	}
 	container := objects.container
 	if container.State.Running == nil {
 		return fmt.Errorf("read container %s: running state is missing", name)
@@ -116,6 +115,29 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 		return fmt.Errorf("start: SSH setup is not implemented")
 	}
 	running := *container.State.Running
+	if request.Command == "remove" && request.Options["volumes"] != "" {
+		return fmt.Errorf("remove --volumes: not implemented (#20)")
+	}
+	var ended sessionReport
+	if running && request.Command != "start" {
+		ended, err = guardSessions(request, p)
+		if err != nil {
+			return err
+		}
+	}
+	if request.Command == "remove" {
+		if running {
+			if _, err := p.query("stop", name); err != nil {
+				return err
+			}
+			ended.write(output, request.Name)
+		}
+		if _, err := p.query("rm", name); err != nil {
+			return err
+		}
+		fmt.Fprintf(output, "removed sandbox %s\n", request.Name)
+		return nil
+	}
 	action, state := request.Command, "running"
 	switch request.Command {
 	case "start":
@@ -137,6 +159,41 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 			return err
 		}
 	}
+	ended.write(output, request.Name)
 	fmt.Fprintf(output, "sandbox %s is %s\n", request.Name, state)
 	return nil
+}
+
+type sessionReport struct {
+	names       string
+	unavailable bool
+}
+
+func (r sessionReport) write(output io.Writer, name string) {
+	if r.unavailable {
+		fmt.Fprintf(output, "sandbox %s: sessions that may have been running were ended and cannot be named\n", name)
+	} else if r.names != "" {
+		fmt.Fprintf(output, "sandbox %s: ended agent sessions: %s\n", name, r.names)
+	}
+}
+
+func guardSessions(request Request, p podmanTarget) (sessionReport, error) {
+	args, err := ManagerQueryArgs(DerivedNames(request.Group, request.Name).Container, "/usr/local/bin/sandboxed-agents-manager", "sessions")
+	if err != nil {
+		return sessionReport{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	output, err := p.queryContext(ctx, args...)
+	if err != nil {
+		if request.Options["force"] != "" {
+			return sessionReport{unavailable: true}, nil
+		}
+		return sessionReport{}, fmt.Errorf("sandbox %q: cannot rule out running sessions; use --force (%w)", request.Name, err)
+	}
+	sessions := strings.TrimSpace(output)
+	if sessions != "" && request.Options["force"] == "" {
+		return sessionReport{}, fmt.Errorf("sandbox %q has running agent sessions: %s; use --force", request.Name, strings.ReplaceAll(sessions, "\n", ", "))
+	}
+	return sessionReport{names: strings.ReplaceAll(sessions, "\n", ", ")}, nil
 }
