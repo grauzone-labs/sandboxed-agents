@@ -22,6 +22,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 // RunWithHost runs the public command boundary with read-only host facts supplied
 // by the caller. Zero-valued fields use the real host; processes still run on PATH.
 func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
+	host = host.defaults()
+	var stateRoot string
 	var request Request
 	err := checks.Run(checks.Checks{Usage: func() error {
 		group, set := os.LookupEnv("SANDBOXED_AGENTS_GROUP")
@@ -30,6 +32,12 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		}
 		var err error
 		request, err = Parse(args, group)
+		if err == nil {
+			switch request.Command {
+			case "up", "start", "stop", "restart", "remove":
+				stateRoot, err = lifecycleStateRoot(host.Platform)
+			}
+		}
 		return err
 	}})
 	if err != nil {
@@ -85,7 +93,34 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		if err != nil {
 			return 1
 		}
+		lock, err := acquireLifecycleLock(stateRoot, request)
+		if err != nil {
+			fmt.Fprintln(stderr, "step 3:", err)
+			return 1
+		}
+		defer lock.Close()
 		if err := prepareUp(request, target, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	case "start", "stop", "restart", "remove":
+		target := podmanTarget{host: host, environment: os.Environ}
+		if host.Platform == "windows" {
+			target.environment = windowsPodmanEnvironment
+			var err error
+			target, err = selectWindowsTarget(target)
+			if err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+		}
+		lock, err := acquireLifecycleLock(stateRoot, request)
+		if err != nil {
+			fmt.Fprintln(stderr, "step 3:", err)
+			return 1
+		}
+		defer lock.Close()
+		if _, err := target.exists(containerResource, DerivedNames(request.Group, request.Name).Container); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}

@@ -63,7 +63,8 @@ func (f Fakes) Env(base []string) []string {
 		"TEST_PODMAN_RESPONSES": "", "TEST_PODMAN_ENV_LOG": "",
 		"TEST_SSH_OUTPUT": "", "TEST_SSH_EXIT": "0",
 		"SANDBOXED_AGENTS_GROUP": "default",
-		LiveTestsEnv:             "",
+		"XDG_STATE_HOME":         f.Dir, "LOCALAPPDATA": f.Dir,
+		LiveTestsEnv: "",
 	})
 }
 
