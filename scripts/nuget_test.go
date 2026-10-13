@@ -22,7 +22,7 @@ func TestNuGetCommandScripts(t *testing.T) {
 	if err != nil {
 		t.Skip("NuGet command script tests require PowerShell 7 (pwsh)")
 	}
-	for _, scenario := range []string{"install", "upgrade", "checksum", "copied-checksum", "remove", "path", "default-no-path", "path-aliases", "path-errors", "relative-path", "empty-path", "preexisting-path", "owned-path", "path-during-copy", "path-registry-kind", "replacement-failure", "locked-upgrade", "windows-registry"} {
+	for _, scenario := range []string{"install", "upgrade", "checksum", "copied-checksum", "remove", "path", "default-no-path", "path-aliases", "path-errors", "relative-path", "empty-path", "preexisting-path", "owned-path", "path-during-copy", "path-registry-kind", "path-write-failure", "replacement-failure", "locked-upgrade", "windows-registry"} {
 		t.Run(scenario, func(t *testing.T) {
 			if scenario == "locked-upgrade" && runtime.GOOS != "windows" {
 				t.Skip("executable sharing-lock replacement behavior requires Windows")

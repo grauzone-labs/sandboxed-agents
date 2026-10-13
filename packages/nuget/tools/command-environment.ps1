@@ -133,7 +133,14 @@ function Set-CommandUserPath($State, [string] $Directory, $Record, [switch] $Rem
     if ($Remove -and $updated.Length -eq 0 -and -not $Record.WasEmpty) {
         $State.Key.DeleteValue('Path', $false)
     } else {
-        $State.Key.SetValue('Path', $updated, $State.Kind)
+        try {
+            $State.Key.SetValue('Path', $updated, $State.Kind)
+        } catch {
+            if (-not $Record.Added) {
+                Remove-Item -LiteralPath $Record.File -Force -ErrorAction SilentlyContinue
+            }
+            throw
+        }
     }
     Send-CommandEnvironmentChange
 }
