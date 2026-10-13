@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"runtime"
 	"slices"
 	"strings"
 
@@ -64,10 +63,10 @@ var commands = map[string]commandSpec{
 
 // Parse enforces command-first grammar and step 1 checks before any Podman call.
 func Parse(args []string, group string) (Request, error) {
-	return parseForHost(args, group, runtime.GOOS)
+	return parseForHost(args, group, Host{}.defaults())
 }
 
-func parseForHost(args []string, group, hostOS string) (Request, error) {
+func parseForHost(args []string, group string, host Host) (Request, error) {
 	request := Request{Group: group, Options: make(map[string]string), Resources: DefaultResources()}
 	if len(args) == 0 {
 		return request, fmt.Errorf("a command is required")
@@ -245,12 +244,14 @@ func parseForHost(args []string, group, hostOS string) (Request, error) {
 		}
 	}
 	if request.Command == "up" && len(request.Args) == 2 {
-		workspace, err := resolvedPath(request.Args[1])
+		workspace, err := host.WorkspacePath(request.Args[1])
 		if err != nil {
-			return request, fmt.Errorf("workspace %q: %w", request.Args[1], err)
-		}
-		if err := validateWorkspaceForHost(workspace, hostOS); err != nil {
 			return request, err
+		}
+		if host.Platform == "windows" {
+			if _, err := windowsWorkspacePath(workspace); err != nil {
+				return request, err
+			}
 		}
 		request.Args[1] = workspace
 	}

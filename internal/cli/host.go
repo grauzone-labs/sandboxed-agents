@@ -33,6 +33,8 @@ type Host struct {
 	Stdin                     io.Reader
 	IsInputTerminal           func(io.Reader) bool
 	IsOutputTerminal          func(io.Writer) bool
+	// WorkspacePath returns a canonical directory after protected-path checks.
+	WorkspacePath func(string) (string, error)
 }
 
 func (h Host) defaults() Host {
@@ -68,6 +70,12 @@ func (h Host) defaults() Host {
 	}
 	if h.IsOutputTerminal == nil {
 		h.IsOutputTerminal = isOutputTerminal
+	}
+	if h.WorkspacePath == nil {
+		platform := h.Platform
+		h.WorkspacePath = func(path string) (string, error) {
+			return workspacePathForHost(path, platform)
+		}
 	}
 	return h
 }
