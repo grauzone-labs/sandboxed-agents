@@ -11,6 +11,9 @@ import (
 // OwnerLabel names the authoritative controller group on Podman resources.
 const OwnerLabel = "io.sandboxed-agents.owner"
 
+// SandboxNameLabel records the user's sandbox name on its container and volumes.
+const SandboxNameLabel = "io.sandboxed-agents.name"
+
 // SSHPortLabel records the host port reserved by a sandbox, even while stopped.
 const SSHPortLabel = "io.sandboxed-agents.port"
 

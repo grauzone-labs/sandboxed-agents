@@ -86,3 +86,31 @@ func TestWorkspaceRejectsWindowsDefaultInstallDirectory(t *testing.T) {
 		}
 	})
 }
+
+// TestWindowsWorkspacePathTranslation proves resolved Windows drive paths translate to the default WSL automount tree and unsupported network/relative paths fail at the named path-translation check.
+func TestWindowsWorkspacePathTranslation(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{`C:\projects\demo`, `/mnt/c/projects/demo`},
+		{`D:\project with spaces`, `/mnt/d/project with spaces`},
+		{`z:/project,with,commas`, `/mnt/z/project,with,commas`},
+		{`C:\`, `/mnt/c/`},
+		{`\\?\C:\projects\demo`, `/mnt/c/projects/demo`},
+		{`\\server\share\project`, ``},
+		{`\\?\UNC\server\share\project`, ``},
+		{`C:project`, ``},
+		{`project`, ``},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			got, err := windowsWorkspacePath(tc.input)
+			if tc.want == "" {
+				if err == nil {
+					t.Fatalf("unsupported Windows workspace %q translated to %q", tc.input, got)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("Windows workspace %q: got=%q error=%v; want=%q", tc.input, got, err, tc.want)
+			}
+		})
+	}
+}

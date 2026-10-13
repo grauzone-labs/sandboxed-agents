@@ -13,6 +13,11 @@ func validateWorkspace(path string) error {
 }
 
 func validateWorkspaceForHost(path, hostOS string) error {
+	resolved, err := resolvedPath(path)
+	if err != nil {
+		return fmt.Errorf("workspace %q: %w", path, err)
+	}
+	path = resolved
 	info, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("workspace %q: %w", path, err)
@@ -20,10 +25,7 @@ func validateWorkspaceForHost(path, hostOS string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("workspace %q is not a directory", path)
 	}
-	workspace, err := resolvedPath(path)
-	if err != nil {
-		return fmt.Errorf("workspace %q: %w", path, err)
-	}
+	workspace := resolved
 	executable, err := os.Executable()
 	if err != nil {
 		return err
@@ -49,18 +51,68 @@ func validateWorkspaceForHost(path, hostOS string) error {
 	if hostOS == "windows" {
 		protectedPaths = append(protectedPaths, filepath.Join(localAppData, "Programs", "sandboxed-agents"))
 	}
-	// Other package launchers and temporary build inputs join this set when those
-	// later command bodies are implemented.
+	launchers, err := packageLaunchers(executable)
+	if err != nil {
+		return err
+	}
+	protectedPaths = append(protectedPaths, launchers...)
+	buildRoot := os.TempDir()
+	resolvedBuildRoot, err := resolvedPath(buildRoot)
+	if err != nil {
+		return fmt.Errorf("protected host path %q: %w", buildRoot, err)
+	}
+	// Builds allocate their inputs under this root after Parse. Refuse its
+	// ancestors, while allowing ordinary project directories below it.
+	if within(resolvedBuildRoot, workspace) {
+		return fmt.Errorf("workspace overlaps protected host path %q (temporary build root)", buildRoot)
+	}
+	entries, err := os.ReadDir(buildRoot)
+	if err != nil {
+		return fmt.Errorf("read protected temporary build inputs in %q: %w", buildRoot, err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "sandboxed-agents-build-") {
+			protectedPaths = append(protectedPaths, filepath.Join(buildRoot, entry.Name()))
+		}
+	}
 	for _, path := range protectedPaths {
 		protected, err := resolvedPath(path)
 		if err != nil {
 			return fmt.Errorf("protected host path %q: %w", path, err)
 		}
-		if within(workspace, protected) || within(protected, workspace) {
+		// A launcher can itself be a symlink outside its install directory.
+		// Protect both its target and the directory entry users invoke.
+		parent, err := resolvedPath(filepath.Dir(path))
+		if err != nil {
+			return fmt.Errorf("protected host path %q: %w", path, err)
+		}
+		entry := filepath.Join(parent, filepath.Base(path))
+		if within(workspace, protected) || within(protected, workspace) || within(entry, workspace) {
 			return fmt.Errorf("workspace overlaps protected host path %q", path)
 		}
 	}
 	return nil
+}
+
+func packageLaunchers(executable string) ([]string, error) {
+	directories := append([]string{filepath.Dir(executable)}, filepath.SplitList(os.Getenv("PATH"))...)
+	var paths []string
+	for _, directory := range directories {
+		for _, name := range []string{"sandboxed-agents", "sandboxed-agents.exe", "sandboxed-agents.cmd", "sandboxed-agents.ps1"} {
+			path := filepath.Join(directory, name)
+			info, err := os.Lstat(path)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("protected package launcher %q: %w", path, err)
+			}
+			if !info.IsDir() {
+				paths = append(paths, path)
+			}
+		}
+	}
+	return paths, nil
 }
 
 // Resolve existing ancestors too: protected host paths may not have been created.
@@ -94,4 +146,15 @@ func within(path, parent string) bool {
 	}
 	relative, err := filepath.Rel(parent, path)
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+// Windows binds address a resolved local drive through WSL's default automount.
+// UNC paths have no corresponding drive mount and must not be guessed.
+func windowsWorkspacePath(path string) (string, error) {
+	normalized := strings.ReplaceAll(path, `\`, "/")
+	normalized = strings.TrimPrefix(normalized, "//?/")
+	if len(normalized) < 3 || normalized[1:3] != ":/" || !((normalized[0] >= 'A' && normalized[0] <= 'Z') || (normalized[0] >= 'a' && normalized[0] <= 'z')) {
+		return "", fmt.Errorf("workspace %q must be on an absolute Windows drive path for WSL", path)
+	}
+	return "/mnt/" + strings.ToLower(normalized[:1]) + "/" + normalized[3:], nil
 }

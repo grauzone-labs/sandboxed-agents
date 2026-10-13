@@ -35,63 +35,67 @@ func TestMalformedPortsFailBeforeBrokenPreflight(t *testing.T) {
 func portHost(t *testing.T) *fixture {
 	t.Helper()
 	f := linuxHost(t)
+	scriptNewSandbox(t, f, "default", "demo")
 	f.responses["container exists sandboxed-agents.default.demo"] = response{Exit: 1}
 	f.responses["image exists "+baseTag(t)] = response{}
 	f.responses[portInventory] = response{Output: "[]"}
 	return f
 }
 
-// TestUpAllocatesLoopbackPort proves up prepares a loopback-only SSH publish option through RunWithHost and fake Podman without creating resources.
+// TestUpAllocatesLoopbackPort proves up creates only a loopback SSH publication through RunWithHost and fake Podman with the required owned resources.
 func TestUpAllocatesLoopbackPort(t *testing.T) {
 	f := portHost(t)
 	status, output, calls := f.run(t, "up", "demo")
-	if status != 1 || !strings.Contains(output, "--publish 127.0.0.1:2222:22/tcp") || !strings.Contains(output, "sandbox creation is not implemented (#14)") {
+	if status != 0 || !strings.Contains(output, "--publish 127.0.0.1:2222:22/tcp") {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
-	noMutation(t, calls)
+	assertNewSandbox(t, calls, "", "default", "demo", baseTag(t), "", "2222", "8589934592", "4", "2048", "1073741824")
 	expected := [][]string{{"--version"}, {"info", "--format", "json"}, {"container", "exists", "sandboxed-agents.default.demo"}, strings.Fields(portInventory), {"image", "exists", baseTag(t)}}
-	if !reflect.DeepEqual(calls, expected) {
+	if !reflect.DeepEqual(calls[:5], expected) {
 		t.Fatalf("port/image query order=%v; want %v", calls, expected)
 	}
 }
 
-// TestUpAllocatesDistinctPortsInSameGroup proves successive sandbox preparations skip ports recorded by their controller group through RunWithHost and fake Podman.
+// TestUpAllocatesDistinctPortsInSameGroup proves successive sandbox creations skip ports recorded by their controller group through RunWithHost and fake Podman.
 func TestUpAllocatesDistinctPortsInSameGroup(t *testing.T) {
 	f := portHost(t)
-	status, first, _ := f.run(t, "up", "demo")
-	if status != 1 || !strings.Contains(first, "127.0.0.1:2222:22/tcp") {
+	status, first, firstCalls := f.run(t, "up", "demo")
+	if status != 0 || !strings.Contains(first, "127.0.0.1:2222:22/tcp") {
 		t.Fatalf("first=%q", first)
 	}
+	assertNewSandbox(t, firstCalls, "", "default", "demo", baseTag(t), "", "2222", "8589934592", "4", "2048", "1073741824")
 	f.responses[portInventory] = response{Output: `[{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}}]`}
+	scriptNewSandbox(t, f, "default", "second")
 	f.responses["container exists sandboxed-agents.default.second"] = response{Exit: 1}
 	status, second, calls := f.run(t, "up", "second")
-	if status != 1 || !strings.Contains(second, "127.0.0.1:2223:22/tcp") {
+	if status != 0 || !strings.Contains(second, "127.0.0.1:2223:22/tcp") {
 		t.Fatalf("second=%q", second)
 	}
-	noMutation(t, calls)
+	assertNewSandbox(t, calls[len(firstCalls):], "", "default", "second", baseTag(t), "", "2223", "8589934592", "4", "2048", "1073741824")
 }
 
-// TestUpUsesRequestedLoopbackPort proves an explicit SSH port prepares only the requested loopback publication through RunWithHost.
+// TestUpUsesRequestedLoopbackPort proves an explicit SSH port uses only the requested loopback publication through RunWithHost.
 func TestUpUsesRequestedLoopbackPort(t *testing.T) {
 	f := portHost(t)
 	status, output, calls := f.run(t, "up", "demo", "--port", "2300")
-	if status != 1 || !strings.Contains(output, "--publish 127.0.0.1:2300:22/tcp") {
+	if status != 0 || !strings.Contains(output, "--publish 127.0.0.1:2300:22/tcp") {
 		t.Fatalf("status=%d output=%q", status, output)
 	}
-	noMutation(t, calls)
+	assertNewSandbox(t, calls, "", "default", "demo", baseTag(t), "", "2300", "8589934592", "4", "2048", "1073741824")
 }
 
 // TestUpSkipsStoppedPortsAcrossGroups proves all groups' recorded SSH ports remain reserved for stopped sandboxes and no foreign group is queried or mutated beyond the port inventory through RunWithHost.
 func TestUpSkipsStoppedPortsAcrossGroups(t *testing.T) {
 	f := portHost(t)
 	t.Setenv("SANDBOXED_AGENTS_GROUP", "current")
+	scriptNewSandbox(t, f, "current", "demo")
 	f.responses["container exists sandboxed-agents.current.demo"] = response{Exit: 1}
 	f.responses[portInventory] = response{Output: `[{"State":"exited","Labels":{"io.sandboxed-agents.owner":"other","io.sandboxed-agents.port":"2222"}},{"State":"running","Labels":{"io.sandboxed-agents.owner":"third","io.sandboxed-agents.port":"2223"}}]`}
 	status, output, calls := f.run(t, "up", "demo")
-	if status != 1 || !strings.Contains(output, "127.0.0.1:2224:22/tcp") {
+	if status != 0 || !strings.Contains(output, "127.0.0.1:2224:22/tcp") {
 		t.Fatalf("status=%d output=%q", status, output)
 	}
-	noMutation(t, calls)
+	assertNewSandbox(t, calls, "", "current", "demo", baseTag(t), "", "2224", "8589934592", "4", "2048", "1073741824")
 	for _, call := range calls {
 		joined := strings.Join(call, " ")
 		if strings.Contains(joined, "other") || strings.Contains(joined, "third") || (len(call) > 0 && call[0] == "inspect") {
@@ -138,10 +142,10 @@ func TestUpSkipsUnavailableHostPorts(t *testing.T) {
 		return nil
 	}
 	status, output, calls := f.run(t, "up", "demo")
-	if status != 1 || !strings.Contains(output, "127.0.0.1:2223:22/tcp") || !reflect.DeepEqual(probed, []uint16{2222, 2223}) {
+	if status != 0 || !strings.Contains(output, "127.0.0.1:2223:22/tcp") || !reflect.DeepEqual(probed, []uint16{2222, 2223}) {
 		t.Fatalf("status=%d output=%q probes=%v", status, output, probed)
 	}
-	noMutation(t, calls)
+	assertNewSandbox(t, calls, "", "default", "demo", baseTag(t), "", "2223", "8589934592", "4", "2048", "1073741824")
 }
 
 // TestUpRefusesMissingRecordedPort proves an incomplete managed sandbox port record cannot be treated as an available port through RunWithHost.
@@ -175,10 +179,10 @@ func TestUpSkipsStoppedNamedSandboxPortWithoutOwner(t *testing.T) {
 	f := portHost(t)
 	f.responses[portInventory] = response{Output: `[{"Names":["sandboxed-agents.other.x"],"State":"exited","Labels":{"io.sandboxed-agents.port":"2222"}}]`}
 	status, output, calls := f.run(t, "up", "demo")
-	if status != 1 || !strings.Contains(output, "127.0.0.1:2223:22/tcp") {
+	if status != 0 || !strings.Contains(output, "127.0.0.1:2223:22/tcp") {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
-	noMutation(t, calls)
+	assertNewSandbox(t, calls, "", "default", "demo", baseTag(t), "", "2223", "8589934592", "4", "2048", "1073741824")
 }
 
 // TestUpRefusesRecordedPortBeforeMissingImageBuild proves a taken explicit port stops up before building an absent image through RunWithHost and fake Podman.

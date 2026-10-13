@@ -21,15 +21,16 @@ func baseTag(t *testing.T) string {
 	return image.Tag(hash, nil)
 }
 
-// TestUpBuildsAbsentImage proves up builds a missing image without prior build and reaches the deferred creation boundary through RunWithHost and fake Podman.
+// TestUpBuildsAbsentImage proves up builds a missing image without prior build and requests sandbox creation and start through RunWithHost and fake Podman.
 func TestUpBuildsAbsentImage(t *testing.T) {
 	f := linuxHost(t)
+	scriptNewSandbox(t, f, "default", "demo")
 	tag := baseTag(t)
 	f.responses["container exists sandboxed-agents.default.demo"] = response{Exit: 1}
 	f.responses["image exists "+tag] = response{Exit: 1}
 	f.responses["build *"] = response{}
 	status, output, calls := f.run(t, "up", "demo")
-	if status != 1 || !strings.Contains(output, "sandbox creation is not implemented (#14)") || !strings.Contains(output, tag) {
+	if status != 0 || !strings.Contains(output, "sandbox demo running") || !strings.Contains(output, tag) {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
 	buildIndex := -1
@@ -50,6 +51,7 @@ func TestUpBuildsAbsentImage(t *testing.T) {
 // TestBuildRetainsExistingSandboxes proves explicit build uses the shared image builder and never queries or replaces old sandboxes through RunWithHost and fake Podman.
 func TestBuildRetainsExistingSandboxes(t *testing.T) {
 	f := linuxHost(t)
+	scriptNewSandbox(t, f, "default", "demo")
 	f.responses["build *"] = response{}
 	status, output, calls := f.run(t, "build")
 	if status != 0 || !strings.Contains(output, baseTag(t)) {
@@ -64,14 +66,15 @@ func TestBuildRetainsExistingSandboxes(t *testing.T) {
 // TestUpUsesPresentImage proves up skips build for an existing shared image through RunWithHost and fake Podman.
 func TestUpUsesPresentImage(t *testing.T) {
 	f := linuxHost(t)
+	scriptNewSandbox(t, f, "default", "demo")
 	tag := baseTag(t)
 	f.responses["container exists sandboxed-agents.default.demo"] = response{Exit: 1}
 	f.responses["image exists "+tag] = response{}
 	status, output, calls := f.run(t, "up", "demo")
-	if status != 1 || !strings.Contains(output, "sandbox creation is not implemented (#14)") || !strings.Contains(output, tag) {
+	if status != 0 || !strings.Contains(output, "sandbox demo running") || !strings.Contains(output, tag) {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
-	noMutation(t, calls)
+	assertNewSandbox(t, calls, "", "default", "demo", tag, "", "2222", "8589934592", "4", "2048", "1073741824")
 }
 
 // TestUpExistingSandboxDoesNotRebuild proves existing sandboxes bypass image inspection and rebuild, preserving their image at the exported CLI seam.
@@ -124,11 +127,12 @@ func TestImageBuildFailureStopsUp(t *testing.T) {
 // TestWindowsImageBuildUsesCheckedTarget proves every image and sandbox lookup and build keeps the preflight-selected connection through RunWithHost and fake Podman.
 func TestWindowsImageBuildUsesCheckedTarget(t *testing.T) {
 	f := windowsHost(t)
+	scriptNewSandbox(t, f, "default", "demo")
 	f.responses["--connection chosen container exists sandboxed-agents.default.demo"] = response{Exit: 1}
 	f.responses["--connection chosen image exists "+baseTag(t)] = response{Exit: 1}
 	f.responses["--connection chosen build *"] = response{}
 	status, output, calls := f.run(t, "up", "demo")
-	if status != 1 || !strings.Contains(output, "sandbox creation is not implemented (#14)") {
+	if status != 0 || !strings.Contains(output, "sandbox demo running") {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
 	buildFound := false
@@ -151,6 +155,7 @@ func TestWindowsImageBuildUsesCheckedTarget(t *testing.T) {
 // TestBuildAndUpAgreeOnNoneImageTag proves build and absent-image up select, build, and report the same tag for --with none through RunWithHost and fake Podman.
 func TestBuildAndUpAgreeOnNoneImageTag(t *testing.T) {
 	f := linuxHost(t)
+	scriptNewSandbox(t, f, "default", "demo")
 	f.responses["build *"] = response{}
 	status, output, calls := f.run(t, "build", "--with", "none")
 	if status != 0 {
@@ -184,7 +189,7 @@ func TestBuildAndUpAgreeOnNoneImageTag(t *testing.T) {
 			}
 		}
 	}
-	if !found || !strings.Contains(output, "image "+tag+" prepared;") {
+	if !found || !strings.Contains(output, "image "+tag+";") {
 		t.Fatalf("up tag=%q output=%q calls=%v", tag, output, calls)
 	}
 	assertExpectedBuildAndNoOtherMutations(t, calls[previousCallCount:], buildIndex, "", tag)
@@ -212,6 +217,10 @@ func assertExpectedBuildAndNoOtherMutations(t *testing.T, calls [][]string, buil
 	arguments := append(append([]string{}, call[:len(prefix)]...), call[len(prefix)+1:]...)
 	noMutation(t, [][]string{arguments})
 	remaining := append(append([][]string{}, calls[:buildIndex]...), calls[buildIndex+1:]...)
+	if len(calls) > 1 && calls[len(calls)-2][len(calls[len(calls)-2])-2] == "start" {
+		assertNewSandbox(t, calls, connection, "default", "demo", tag, "", "2222", "8589934592", "4", "2048", "1073741824")
+		remaining = remaining[:len(remaining)-9]
+	}
 	noMutation(t, remaining)
 }
 

@@ -31,7 +31,7 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			group = "default"
 		}
 		var err error
-		request, err = Parse(args, group)
+		request, err = parseForHost(args, group, host.Platform)
 		if err == nil {
 			switch request.Command {
 			case "up", "start", "stop", "restart", "remove":
@@ -46,7 +46,7 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		return 2
 	}
 	checkedTarget := func() (podmanTarget, error) {
-		target, err := preflight(host.defaults())
+		target, err := preflight(host)
 		if err != nil {
 			fmt.Fprintln(stderr, "step 2:", err)
 		}
@@ -110,6 +110,7 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
+		return 0
 	case "start", "stop", "restart", "remove":
 		target, err := selectedTarget()
 		if err != nil {
