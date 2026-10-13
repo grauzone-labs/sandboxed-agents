@@ -84,6 +84,7 @@ func linuxPreflight(p podmanTarget) error {
 		info, err := p.info()
 		if err != nil {
 			failures = append(failures, err)
+			failures = append(failures, unverifiedPrerequisites(err, "rootless Podman is required", "cgroups v2 is required")...)
 		} else {
 			if info.Host.Security.Rootless == nil || !*info.Host.Security.Rootless {
 				failures = append(failures, fmt.Errorf("rootless Podman is required"))
@@ -92,6 +93,11 @@ func linuxPreflight(p podmanTarget) error {
 				failures = append(failures, fmt.Errorf("cgroups v2 is required"))
 			}
 		}
+	} else {
+		cause := fmt.Errorf("podman is required on PATH")
+		failures = append(failures, unverifiedPrerequisites(cause,
+			fmt.Sprintf("Podman >= 4.%d.0 is required", minimumLinuxPodmanMinor),
+			"rootless Podman is required", "cgroups v2 is required")...)
 	}
 	for _, name := range []string{"newuidmap", "newgidmap", "pasta", "ssh", "ssh-keygen"} {
 		requireProgram(name)

@@ -8,7 +8,10 @@ import (
 var controllerGroupPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 var sandboxNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
-const containerPrefix = "sandboxed-agents."
+const (
+	containerPrefix = "sandboxed-agents."
+	backupPrefix    = "sandboxed-agents-backup."
+)
 
 func validateNames(group, name string) error {
 	if !controllerGroupPattern.MatchString(group) {
@@ -29,7 +32,7 @@ type ObjectNames struct {
 func DerivedNames(group, name string) ObjectNames {
 	prefix := containerPrefix + group + "." + name
 	return ObjectNames{
-		Container: prefix, Backup: "sandboxed-agents-backup." + group + "." + name,
+		Container: prefix, Backup: backupPrefix + group + "." + name,
 		Workspace: prefix + ".workspace", Home: prefix + ".home", SSH: prefix + ".ssh",
 	}
 }

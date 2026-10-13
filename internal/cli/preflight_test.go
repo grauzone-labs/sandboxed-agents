@@ -255,3 +255,45 @@ func TestCheckNamedSandboxSkipsPreflight(t *testing.T) {
 		t.Fatalf("unexpected SSH calls: %v", calls)
 	}
 }
+
+// TestLinuxFailedInfoReportsUnverifiedPrerequisites proves a failed info query retains its raw cause and separately reports rootless and cgroup checks through RunWithHost and fake Podman.
+func TestLinuxFailedInfoReportsUnverifiedPrerequisites(t *testing.T) {
+	f := linuxHost(t)
+	f.responses["info --format json"] = response{Output: "engine info unavailable", Exit: 125}
+	status, output, calls := f.run(t, "check")
+	if !strings.HasPrefix(output, "step 2: podman info --format json: exit status 125: engine info unavailable\n") {
+		t.Errorf("raw info failure missing: %s", output)
+	}
+	for _, message := range []string{"rootless Podman is required (cannot verify:", "cgroups v2 is required (cannot verify:"} {
+		if !strings.Contains(output, message) {
+			t.Errorf("missing %q: %s", message, output)
+		}
+	}
+	if status != 1 || len(calls) != 2 {
+		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+	}
+	noMutation(t, calls)
+}
+
+// TestLinuxMissingPodmanReportsUnverifiedPrerequisites proves a missing client separately reports unverifiable version, rootless, and cgroup requirements without process calls through RunWithHost.
+func TestLinuxMissingPodmanReportsUnverifiedPrerequisites(t *testing.T) {
+	f := linuxHost(t)
+	if err := os.Remove(fakePath(f, "podman")); err != nil {
+		t.Fatal(err)
+	}
+	status, output, calls := f.run(t, "check")
+	if !strings.HasPrefix(output, "step 2: podman is required on PATH\n") {
+		t.Errorf("missing PATH diagnostic: %s", output)
+	}
+	for _, message := range []string{"Podman >= 4.4.0 is required (cannot verify:", "rootless Podman is required (cannot verify:", "cgroups v2 is required (cannot verify:"} {
+		if !strings.Contains(output, message) {
+			t.Errorf("missing %q: %s", message, output)
+		}
+	}
+	if status != 1 || len(calls) != 0 {
+		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+	}
+	if calls := testutil.Invocations(t, f.fakes.SSHLog); len(calls) != 0 {
+		t.Fatalf("unexpected SSH calls: %v", calls)
+	}
+}
