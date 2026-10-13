@@ -19,8 +19,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return RunWithHost(args, stdout, stderr, Host{})
 }
 
-// RunWithHost runs the public command boundary with read-only host facts supplied
-// by the caller. Zero-valued fields use the real host; processes still run on PATH.
+// RunWithHost runs the public command boundary with host facts and shell input
+// supplied by the caller. Zero-valued fields use the real host; processes run on PATH.
 func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 	host = host.defaults()
 	var stateRoot string
@@ -49,6 +49,13 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		target, err := preflight(host.defaults())
 		if err != nil {
 			fmt.Fprintln(stderr, "step 2:", err)
+		}
+		return target, err
+	}
+	selectedTarget := func() (podmanTarget, error) {
+		target, err := selectTarget(host)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
 		}
 		return target, err
 	}
@@ -104,15 +111,9 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			return 1
 		}
 	case "start", "stop", "restart", "remove":
-		target := podmanTarget{host: host, environment: os.Environ}
-		if host.Platform == "windows" {
-			target.environment = windowsPodmanEnvironment
-			var err error
-			target, err = selectWindowsTarget(target)
-			if err != nil {
-				fmt.Fprintln(stderr, err)
-				return 1
-			}
+		target, err := selectedTarget()
+		if err != nil {
+			return 1
 		}
 		lock, err := acquireLifecycleLock(stateRoot, request)
 		if err != nil {
@@ -121,6 +122,27 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		}
 		defer lock.Close()
 		if err := changeSandboxState(request, target, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "shell":
+		target, err := selectedTarget()
+		if err != nil {
+			return 1
+		}
+		interactive := host.IsInputTerminal(host.Stdin) && host.IsOutputTerminal(stdout)
+		status, err := openShell(request, target, interactive, stdout, stderr)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+		}
+		return status
+	case "fingerprint":
+		target, err := selectedTarget()
+		if err != nil {
+			return 1
+		}
+		if err := printFingerprints(request, target, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
@@ -18,8 +19,8 @@ import (
 	"time"
 )
 
-// Host supplies platform facts and read-only file/user queries to the command
-// boundary, plus a transient loopback availability probe used after preflight.
+// Host supplies platform facts, shell input and terminal detection, and read-only
+// file/user queries, plus a transient loopback probe used after preflight.
 // It does not replace Podman execution or authorize persistent host mutations.
 type Host struct {
 	Platform, Architecture    string
@@ -29,6 +30,9 @@ type Host struct {
 	WindowsWorkstation        func() (bool, error)
 	WindowsNativeArchitecture func() (uint16, error)
 	PortAvailable             func(uint16) error
+	Stdin                     io.Reader
+	IsInputTerminal           func(io.Reader) bool
+	IsOutputTerminal          func(io.Writer) bool
 }
 
 func (h Host) defaults() Host {
@@ -56,19 +60,44 @@ func (h Host) defaults() Host {
 	if h.PortAvailable == nil {
 		h.PortAvailable = loopbackPortAvailable
 	}
+	if h.Stdin == nil {
+		h.Stdin = os.Stdin
+	}
+	if h.IsInputTerminal == nil {
+		h.IsInputTerminal = isInputTerminal
+	}
+	if h.IsOutputTerminal == nil {
+		h.IsOutputTerminal = isOutputTerminal
+	}
 	return h
 }
 
-func preflight(h Host) (podmanTarget, error) {
-	p := podmanTarget{host: h, environment: os.Environ}
+// selectTarget binds commands on existing sandboxes without checking build prerequisites.
+func selectTarget(h Host) (podmanTarget, error) {
+	p := targetForHost(h)
 	if h.Platform == "windows" {
-		p.environment = windowsPodmanEnvironment
+		return selectWindowsTarget(p)
+	}
+	return p, nil
+}
+
+func preflight(h Host) (podmanTarget, error) {
+	p := targetForHost(h)
+	if h.Platform == "windows" {
 		return windowsPreflight(p)
 	}
 	if h.Platform != "linux" || h.Architecture != "amd64" {
 		return p, fmt.Errorf("supported hosts are Linux amd64 and Windows 11 x64")
 	}
 	return p, linuxPreflight(p)
+}
+
+func targetForHost(h Host) podmanTarget {
+	p := podmanTarget{host: h, environment: os.Environ}
+	if h.Platform == "windows" {
+		p.environment = windowsPodmanEnvironment
+	}
+	return p
 }
 
 const minimumLinuxPodmanMinor = 4
@@ -246,14 +275,40 @@ type podmanTarget struct {
 	environment   func() []string
 }
 
+func (p podmanTarget) arguments(args []string) []string {
+	if p.connection != "" {
+		return append([]string{"--connection", p.connection}, args...)
+	}
+	return args
+}
+
+// run streams an attached process on the selected target. Child exit statuses
+// pass through unchanged; launch failures and signal termination add a diagnostic.
+func (p podmanTarget) run(stdin io.Reader, stdout, stderr io.Writer, args ...string) (int, error) {
+	args = p.arguments(args)
+	command := exec.CommandContext(context.Background(), "podman", args...)
+	command.Env = p.environment()
+	command.Stdin, command.Stdout, command.Stderr = stdin, stdout, stderr
+	err := command.Run()
+	if err == nil {
+		return 0, nil
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		if status := exit.ExitCode(); status >= 0 {
+			return status, nil
+		}
+		err = fmt.Errorf("terminated by a signal: %w", err)
+	}
+	return 1, fmt.Errorf("podman %s: %w", strings.Join(args, " "), err)
+}
+
 func (p podmanTarget) query(args ...string) (string, error) {
 	return p.queryContext(context.Background(), 0, args...)
 }
 
 func (p podmanTarget) queryContext(ctx context.Context, waitDelay time.Duration, args ...string) (string, error) {
-	if p.connection != "" {
-		args = append([]string{"--connection", p.connection}, args...)
-	}
+	args = p.arguments(args)
 	command := exec.CommandContext(ctx, "podman", args...)
 	command.WaitDelay = waitDelay
 	command.Env = p.environment()
@@ -273,7 +328,7 @@ func (p podmanTarget) queryContext(ctx context.Context, waitDelay time.Duration,
 }
 
 // windowsPodmanEnvironment reads current variables on each call while stripping
-// ambient remote targets; preflight chooses this policy once for the target.
+// ambient remote targets; target selection chooses this policy once.
 func windowsPodmanEnvironment() []string {
 	var environment []string
 	for _, entry := range os.Environ() {

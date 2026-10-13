@@ -4,6 +4,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,6 +52,7 @@ func main() {
 			Exit               int
 			ReadyFile, WaitFor string
 			HoldOutputUntil    string
+			EchoStdin          bool
 		}
 		if err := json.Unmarshal([]byte(script), &responses); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -110,6 +112,12 @@ func main() {
 			}
 			fmt.Fprint(os.Stdout, response.Output)
 			fmt.Fprint(os.Stderr, response.Stderr)
+			if response.EchoStdin {
+				if _, err := io.Copy(os.Stdout, os.Stdin); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					os.Exit(125)
+				}
+			}
 			code = response.Exit
 		} else {
 			fmt.Fprintln(os.Stderr, "unscripted fake call", os.Args[1:])
