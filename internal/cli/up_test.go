@@ -112,7 +112,7 @@ func runUpExecutable(t *testing.T, f *fixture, args ...string) (int, string, [][
 	return status, string(output), testutil.Invocations(t, f.fakes.PodmanLog)
 }
 
-// TestUpExecutableBoundary supplies read-only host facts to the CLI in an isolated executable, preserving the fake Podman and SSH process boundary for successful create and bind tests.
+// TestUpExecutableBoundary proves up's create and bind outcomes reach the subprocess exit status and output through RunWithHost against fake Podman and SSH.
 func TestUpExecutableBoundary(t *testing.T) {
 	if os.Getenv("TEST_UP_EXECUTABLE") != "1" {
 		t.Skip("subprocess driver only")
@@ -334,5 +334,49 @@ func TestUpInspectsCreatedSandboxRunning(t *testing.T) {
 				t.Fatalf("missing running inspection immediately after start: %v", calls)
 			}
 		})
+	}
+}
+
+// TestUpVerifiesRunningStateAfterStart proves up reports success only for inspected State.Running and otherwise names the stopped sandbox through RunWithHost and fake Podman on Linux and Windows.
+func TestUpVerifiesRunningStateAfterStart(t *testing.T) {
+	for _, platform := range []string{"linux", "windows"} {
+		for _, running := range []bool{false, true} {
+			t.Run(platform+"/"+map[bool]string{false: "stopped", true: "running"}[running], func(t *testing.T) {
+				f := linuxHost(t)
+				connection := ""
+				if platform == "windows" {
+					f = windowsHost(t)
+					connection = "--connection chosen "
+				}
+				scriptNewSandbox(t, f, "default", "agent01")
+				name := "sandboxed-agents.default.agent01"
+				state := "false"
+				if running {
+					state = "true"
+				}
+				f.responses[connection+"container inspect "+name] = response{Output: `[{"State":{"Running":` + state + `}}]`}
+				status, output, calls := f.run(t, "up", "agent01")
+				if running {
+					if status != 0 || !strings.Contains(output, "sandbox agent01 running") {
+						t.Fatalf("status=%d output=%q calls=%v; want inspected running success", status, output, calls)
+					}
+				} else if status != 1 || !strings.Contains(output, name) || !strings.Contains(output, "not running") || strings.Contains(output, "sandbox agent01 running") {
+					t.Fatalf("status=%d output=%q calls=%v; want stopped sandbox error", status, output, calls)
+				}
+				wantLast := connection + "container inspect " + name
+				if len(calls) == 0 || strings.Join(calls[len(calls)-1], " ") != wantLast {
+					t.Fatalf("missing running-state inspection after start: %v", calls)
+				}
+				if len(calls) < 2 || strings.Join(calls[len(calls)-2], " ") != connection+"start "+name {
+					t.Fatalf("running inspection did not follow start: %v", calls)
+				}
+				if err := mountBoundaryError(calls, name, ""); err != nil {
+					t.Fatal(err)
+				}
+				if calls := testutil.Invocations(t, f.fakes.SSHLog); len(calls) != 0 {
+					t.Fatalf("unexpected host SSH calls: %v", calls)
+				}
+			})
+		}
 	}
 }

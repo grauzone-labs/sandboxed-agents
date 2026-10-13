@@ -8,44 +8,41 @@ import (
 	"strings"
 )
 
-func validateWorkspace(path string) error {
-	return validateWorkspaceForHost(path, runtime.GOOS)
+func validateWorkspaceForHost(path, hostOS string) error {
+	_, err := workspacePathForHost(path, hostOS)
+	return err
 }
 
-func validateWorkspaceForHost(path, hostOS string) error {
+func workspacePathForHost(path, hostOS string) (string, error) {
 	resolved, err := resolvedPath(path)
 	if err != nil {
-		return fmt.Errorf("workspace %q: %w", path, err)
+		return "", fmt.Errorf("workspace %q: %w", path, err)
 	}
-	path = resolved
-	info, err := os.Stat(path)
+	info, err := os.Stat(resolved)
 	if err != nil {
-		return fmt.Errorf("workspace %q: %w", path, err)
+		return "", fmt.Errorf("workspace %q: %w", resolved, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("workspace %q is not a directory", path)
+		return "", fmt.Errorf("workspace %q is not a directory", resolved)
 	}
-	workspace := resolved
 	executable, err := os.Executable()
 	if err != nil {
-		return err
+		return "", err
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return err
+		return "", err
 	}
-	var stateRoot, localAppData string
+	var localAppData string
 	if hostOS == "windows" {
 		localAppData = os.Getenv("LOCALAPPDATA")
 		if localAppData == "" {
-			return fmt.Errorf("LOCALAPPDATA is required to identify protected host state")
+			return "", fmt.Errorf("LOCALAPPDATA is required to identify protected host state")
 		}
-		stateRoot = filepath.Join(localAppData, "sandboxed-agents")
-	} else {
-		stateRoot, err = hostStateRoot(hostOS)
-		if err != nil {
-			return err
-		}
+	}
+	stateRoot, err := hostStateRoot(hostOS)
+	if err != nil {
+		return "", err
 	}
 	protectedPaths := []string{executable, filepath.Join(home, ".ssh"), stateRoot}
 	if hostOS == "windows" {
@@ -53,22 +50,22 @@ func validateWorkspaceForHost(path, hostOS string) error {
 	}
 	launchers, err := packageLaunchers(executable)
 	if err != nil {
-		return err
+		return "", err
 	}
 	protectedPaths = append(protectedPaths, launchers...)
 	buildRoot := os.TempDir()
 	resolvedBuildRoot, err := resolvedPath(buildRoot)
 	if err != nil {
-		return fmt.Errorf("protected host path %q: %w", buildRoot, err)
+		return "", fmt.Errorf("protected host path %q: %w", buildRoot, err)
 	}
 	// Builds allocate their inputs under this root after Parse. Refuse its
-	// ancestors, while allowing ordinary project directories below it.
-	if within(resolvedBuildRoot, workspace) {
-		return fmt.Errorf("workspace overlaps protected host path %q (temporary build root)", buildRoot)
+	// ancestors, while allowing ordinary workspace directories below it.
+	if within(resolvedBuildRoot, resolved) {
+		return "", fmt.Errorf("workspace overlaps protected host path %q (temporary build root)", buildRoot)
 	}
 	entries, err := os.ReadDir(buildRoot)
 	if err != nil {
-		return fmt.Errorf("read protected temporary build inputs in %q: %w", buildRoot, err)
+		return "", fmt.Errorf("read protected temporary build inputs in %q: %w", buildRoot, err)
 	}
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), "sandboxed-agents-build-") {
@@ -78,20 +75,20 @@ func validateWorkspaceForHost(path, hostOS string) error {
 	for _, path := range protectedPaths {
 		protected, err := resolvedPath(path)
 		if err != nil {
-			return fmt.Errorf("protected host path %q: %w", path, err)
+			return "", fmt.Errorf("protected host path %q: %w", path, err)
 		}
 		// A launcher can itself be a symlink outside its install directory.
 		// Protect both its target and the directory entry users invoke.
 		parent, err := resolvedPath(filepath.Dir(path))
 		if err != nil {
-			return fmt.Errorf("protected host path %q: %w", path, err)
+			return "", fmt.Errorf("protected host path %q: %w", path, err)
 		}
 		entry := filepath.Join(parent, filepath.Base(path))
-		if within(workspace, protected) || within(protected, workspace) || within(entry, workspace) {
-			return fmt.Errorf("workspace overlaps protected host path %q", path)
+		if within(resolved, protected) || within(protected, resolved) || within(entry, resolved) {
+			return "", fmt.Errorf("workspace overlaps protected host path %q", path)
 		}
 	}
-	return nil
+	return resolved, nil
 }
 
 func packageLaunchers(executable string) ([]string, error) {
@@ -121,7 +118,7 @@ func resolvedPath(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := resolveExistingPath(absolute)
 	if err == nil {
 		return resolved, nil
 	}
@@ -157,4 +154,22 @@ func windowsWorkspacePath(path string) (string, error) {
 		return "", fmt.Errorf("workspace %q must be on an absolute Windows drive path for WSL", path)
 	}
 	return "/mnt/" + strings.ToLower(normalized[:1]) + "/" + normalized[3:], nil
+}
+
+func normalizeWindowsFinalPath(path string) (string, error) {
+	if strings.HasPrefix(path, `\\?\UNC\`) {
+		path = `\\` + strings.TrimPrefix(path, `\\?\UNC\`)
+	} else {
+		path = strings.TrimPrefix(path, `\\?\`)
+	}
+	if len(path) >= 3 && path[1:3] == `:\` && ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) {
+		return path, nil
+	}
+	if strings.HasPrefix(path, `\\`) {
+		parts := strings.Split(strings.TrimPrefix(path, `\\`), `\`)
+		if len(parts) >= 2 && parts[0] != "" && parts[1] != "" {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("unsupported Windows final path %q", path)
 }

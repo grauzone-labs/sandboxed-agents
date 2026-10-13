@@ -31,7 +31,7 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			group = "default"
 		}
 		var err error
-		request, err = parseForHost(args, group, host.Platform)
+		request, err = parseForHost(args, group, host)
 		if err == nil {
 			switch request.Command {
 			case "up", "start", "stop", "restart", "remove":

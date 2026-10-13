@@ -55,7 +55,18 @@ func TestWindowsWorkspaceRefusesCustomAutomountAfterPreflight(t *testing.T) {
 	f.responses["--connection chosen image exists "+baseTag(t)] = response{Exit: 1}
 	f.responses["--connection chosen build *"] = response{}
 	f.responses[windowsAutomountRead] = response{Output: "[automount]\nroot=/custom/drives/\n"}
-	status, output, calls := f.run(t, "up", "agent01", t.TempDir())
+	directory := t.TempDir()
+	f.host.WorkspacePath = func(path string) (string, error) {
+		if path != directory {
+			t.Fatalf("workspace path=%q; want=%q", path, directory)
+		}
+		info, err := os.Stat(path)
+		if err != nil || !info.IsDir() {
+			t.Fatalf("existing workspace fixture: info=%v error=%v", info, err)
+		}
+		return `C:\workspace`, nil
+	}
+	status, output, calls := f.run(t, "up", "agent01", directory)
 	if status != 1 || !strings.Contains(output, "custom WSL automount root") || !strings.Contains(output, "/custom/drives/") {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
@@ -231,5 +242,32 @@ func TestWindowsWorkspaceJunctionPrecedesPreflight(t *testing.T) {
 	}
 	if calls := testutil.Invocations(t, f.fakes.SSHLog); len(calls) != 0 {
 		t.Fatalf("junction workspace reached host SSH: %v", calls)
+	}
+}
+
+// TestWindowsNonDriveWorkspaceFailsBeforePreflight proves existing UNC and other non-drive workspace facts fail step 1 without Podman or SSH through RunWithHost.
+func TestWindowsNonDriveWorkspaceFailsBeforePreflight(t *testing.T) {
+	for _, canonical := range []string{`\\server\share\workspace`, `/existing/non-drive/workspace`} {
+		t.Run(canonical, func(t *testing.T) {
+			f := windowsHost(t)
+			directory := t.TempDir()
+			f.host.WorkspacePath = func(path string) (string, error) {
+				if path != directory {
+					t.Fatalf("workspace path=%q; want=%q", path, directory)
+				}
+				info, err := os.Stat(path)
+				if err != nil || !info.IsDir() {
+					t.Fatalf("existing workspace fixture: info=%v error=%v", info, err)
+				}
+				return canonical, nil
+			}
+			status, output, calls := f.run(t, "up", "agent01", directory)
+			if status != 2 || !strings.Contains(output, "step 1:") || !strings.Contains(output, "absolute Windows drive path") || len(calls) != 0 {
+				t.Fatalf("status=%d output=%q calls=%v; want step 1 drive refusal before preflight", status, output, calls)
+			}
+			if calls := testutil.Invocations(t, f.fakes.SSHLog); len(calls) != 0 {
+				t.Fatalf("unsupported workspace reached host SSH: %v", calls)
+			}
+		})
 	}
 }
