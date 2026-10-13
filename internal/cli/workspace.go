@@ -8,6 +8,13 @@ import (
 	"strings"
 )
 
+func checkWorkspaceAutomount(request Request, p podmanTarget) error {
+	if len(request.Args) == 2 && p.host.Platform == "windows" && p.automountRoot != "/mnt/" && p.automountRoot != "/mnt" {
+		return fmt.Errorf("workspace binds are unsupported with custom WSL automount root %q on machine %q", p.automountRoot, p.connection)
+	}
+	return nil
+}
+
 func validateWorkspaceForHost(path, hostOS string) error {
 	_, err := workspacePathForHost(path, hostOS)
 	return err
@@ -33,20 +40,13 @@ func workspacePathForHost(path, hostOS string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var localAppData string
-	if hostOS == "windows" {
-		localAppData = os.Getenv("LOCALAPPDATA")
-		if localAppData == "" {
-			return "", fmt.Errorf("LOCALAPPDATA is required to identify protected host state")
-		}
-	}
 	stateRoot, err := hostStateRoot(hostOS)
 	if err != nil {
 		return "", err
 	}
 	protectedPaths := []string{executable, filepath.Join(home, ".ssh"), stateRoot}
 	if hostOS == "windows" {
-		protectedPaths = append(protectedPaths, filepath.Join(localAppData, "Programs", "sandboxed-agents"))
+		protectedPaths = append(protectedPaths, filepath.Join(filepath.Dir(stateRoot), "Programs", "sandboxed-agents"))
 	}
 	launchers, err := packageLaunchers(executable)
 	if err != nil {
