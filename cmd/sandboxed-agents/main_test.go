@@ -185,7 +185,8 @@ func TestLiveOptInFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
 	}
 }
 
-// TestCommandGrammar proves that command forms produce their expected success, not-implemented, or usage status through the built CLI binary without Podman or SSH calls.
+// TestCommandGrammar proves command forms produce their expected success, preflight-failure, not-implemented, or usage status through the built CLI binary.
+// Before a deferred stub, only --version, info --format json, or machine list --format json may reach Podman; SSH never runs.
 func TestCommandGrammar(t *testing.T) {
 	cases := []struct {
 		args   []string
@@ -259,7 +260,8 @@ func assertNoExternalCalls(t *testing.T, fakes testutil.Fakes) {
 	}
 }
 
-// TestAgentAndToolchainSelectionsUseDeliveredCatalogs proves that unknown selections are rejected and "none" selects no toolchains through the built CLI binary without external calls.
+// TestAgentAndToolchainSelectionsUseDeliveredCatalogs proves unknown selections fail usage and "none" reaches preflight before the deferred up lifecycle through the built CLI binary.
+// Only --version, info --format json, or machine list --format json may reach Podman; SSH never runs.
 func TestAgentAndToolchainSelectionsUseDeliveredCatalogs(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	cases := []struct {
@@ -361,7 +363,8 @@ func TestControllerGroupAndSandboxNames(t *testing.T) {
 	assertOnlyPreflightQueries(t, fakes)
 }
 
-// TestUnsetControllerGroupUsesDefault proves that an unset controller group lets up reach its not-implemented stub through the built CLI binary without Podman or SSH calls.
+// TestUnsetControllerGroupUsesDefault proves an unset controller group uses default and reaches preflight before the deferred up lifecycle through the built CLI binary.
+// Only --version, info --format json, or machine list --format json may reach Podman; SSH never runs.
 func TestUnsetControllerGroupUsesDefault(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	command := exec.Command(executable, "up", "demo")
@@ -394,7 +397,8 @@ func TestVersionIgnoresInvalidControllerGroup(t *testing.T) {
 	}
 }
 
-// TestResourceOptionGrammar proves that resource options accept supported numeric forms and bounds and reject malformed or out-of-range values through the built CLI binary without external calls.
+// TestResourceOptionGrammar proves valid resource forms reach preflight before the deferred up lifecycle, while malformed or out-of-range values fail usage through the built CLI binary.
+// Only --version, info --format json, or machine list --format json may reach Podman; SSH never runs.
 func TestResourceOptionGrammar(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	cases := []struct {
@@ -433,7 +437,8 @@ func TestResourceOptionGrammar(t *testing.T) {
 	assertOnlyPreflightQueries(t, fakes)
 }
 
-// TestWorkspacePathsFailBeforeExternalCalls proves that a workspace directory reaches the stub while missing, non-directory, protected, and aliased protected paths fail through the built CLI binary before external calls.
+// TestWorkspacePathsFailBeforeExternalCalls proves a workspace directory reaches preflight before the deferred up lifecycle, while invalid or protected paths fail usage through the built CLI binary.
+// Only --version, info --format json, or machine list --format json may reach Podman; SSH never runs.
 func TestWorkspacePathsFailBeforeExternalCalls(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	home := t.TempDir()
