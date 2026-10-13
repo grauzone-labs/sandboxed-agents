@@ -58,8 +58,9 @@ func (h Host) defaults() Host {
 }
 
 func preflight(h Host) (podmanTarget, error) {
-	p := podmanTarget{host: h}
+	p := podmanTarget{host: h, environment: os.Environ}
 	if h.Platform == "windows" {
+		p.environment = windowsPodmanEnvironment
 		return windowsPreflight(p)
 	}
 	if h.Platform != "linux" || h.Architecture != "amd64" {
@@ -110,16 +111,22 @@ func linuxPreflight(p podmanTarget) error {
 	if err != nil || account == nil {
 		failures = append(failures, fmt.Errorf("read current user for subordinate ranges: %v", err))
 	} else {
-		if !subordinateRange(h, "/etc/subuid", account) {
+		if !subordinateRange(h.ReadFile, "/etc/subuid", account) {
 			failures = append(failures, fmt.Errorf("a subordinate UID range is required in /etc/subuid"))
 		}
-		if !subordinateRange(h, "/etc/subgid", account) {
+		if !subordinateRange(h.ReadFile, "/etc/subgid", account) {
 			failures = append(failures, fmt.Errorf("a subordinate GID range is required in /etc/subgid"))
 		}
-		controllers, err := delegatedControllers(h, account.Uid)
+		controllers, err := delegatedControllers(h.ReadFile, account.Uid)
 		failures = append(failures, controllerFailures(controllers, err)...)
 	}
 	return errors.Join(failures...)
+}
+
+var requiredCgroupControllers = [...]string{"cpu", "memory", "pids"}
+
+func controllerRequirement(name string) string {
+	return fmt.Sprintf("delegated cgroup %s controller is required", name)
 }
 
 func controllerFailures(controllers string, queryErr error) []error {
@@ -127,16 +134,16 @@ func controllerFailures(controllers string, queryErr error) []error {
 	if queryErr != nil {
 		failures = append(failures, queryErr)
 	}
-	for _, name := range []string{"cpu", "memory", "pids"} {
+	for _, name := range requiredCgroupControllers {
 		if !slices.Contains(strings.Fields(controllers), name) {
-			failures = append(failures, fmt.Errorf("delegated cgroup %s controller is required", name))
+			failures = append(failures, errors.New(controllerRequirement(name)))
 		}
 	}
 	return failures
 }
 
-func subordinateRange(h Host, path string, account *user.User) bool {
-	data, err := h.ReadFile(path)
+func subordinateRange(readFile func(string) ([]byte, error), path string, account *user.User) bool {
+	data, err := readFile(path)
 	if err != nil {
 		return false
 	}
@@ -154,8 +161,8 @@ func subordinateRange(h Host, path string, account *user.User) bool {
 	return false
 }
 
-func delegatedControllers(h Host, uid string) (string, error) {
-	data, err := h.ReadFile("/proc/self/cgroup")
+func delegatedControllers(readFile func(string) ([]byte, error), uid string) (string, error) {
+	data, err := readFile("/proc/self/cgroup")
 	if err != nil {
 		return "", fmt.Errorf("read delegated cgroup controllers: %w", err)
 	}
@@ -185,7 +192,7 @@ func delegatedControllers(h Host, uid string) (string, error) {
 		}
 		// A non-systemd host is checked at its actual unified cgroup. We never
 		// walk to the host root where controllers may exist without delegation.
-		controllers, err := h.ReadFile(path.Join("/sys/fs/cgroup", location, "cgroup.controllers"))
+		controllers, err := readFile(path.Join("/sys/fs/cgroup", location, "cgroup.controllers"))
 		if err != nil {
 			return "", fmt.Errorf("read delegated cgroup controllers: %w", err)
 		}
@@ -220,6 +227,7 @@ type podmanTarget struct {
 	host          Host
 	connection    string
 	automountRoot string
+	environment   func() []string
 }
 
 func (p podmanTarget) query(args ...string) (string, error) {
@@ -227,23 +235,27 @@ func (p podmanTarget) query(args ...string) (string, error) {
 		args = append([]string{"--connection", p.connection}, args...)
 	}
 	command := exec.CommandContext(context.Background(), "podman", args...)
-	command.Env = os.Environ()
-	if p.host.Platform == "windows" {
-		command.Env = nil
-		for _, entry := range os.Environ() {
-			key, _, _ := strings.Cut(entry, "=")
-			switch strings.ToUpper(key) {
-			case "CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINER_SSHKEY":
-				continue
-			}
-			command.Env = append(command.Env, entry)
-		}
-	}
+	command.Env = p.environment()
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return string(output), fmt.Errorf("podman %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
 	return string(output), nil
+}
+
+// windowsPodmanEnvironment reads current variables on each call while stripping
+// ambient remote targets; preflight chooses this policy once for the target.
+func windowsPodmanEnvironment() []string {
+	var environment []string
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		switch strings.ToUpper(key) {
+		case "CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINER_SSHKEY":
+			continue
+		}
+		environment = append(environment, entry)
+	}
+	return environment
 }
 
 var versionPattern = regexp.MustCompile(`(?:^|\s)([0-9]+)\.([0-9]+)\.([0-9]+)(?:[-+\s]|$)`)
