@@ -5,9 +5,32 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
 const portInventory = "ps --all --format json"
+
+// TestMalformedPortsFailBeforeBrokenPreflight proves invalid explicit ports report usage errors without Podman or SSH calls through RunWithHost and process fakes.
+func TestMalformedPortsFailBeforeBrokenPreflight(t *testing.T) {
+	for _, value := range []string{"abc", "0", "70000"} {
+		t.Run(value, func(t *testing.T) {
+			f := linuxHost(t)
+			f.responses["--version"] = response{Output: "broken preflight", Exit: 125}
+			f.responses["info --format json"] = response{Output: "broken preflight", Exit: 125}
+			status, output, calls := f.run(t, "up", "demo", "--port", value)
+			if status != 2 || !strings.Contains(output, "--port:") {
+				t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+			}
+			if len(calls) != 0 {
+				t.Fatalf("Podman reached before port validation: %v", calls)
+			}
+			if sshCalls := testutil.Invocations(t, f.fakes.SSHLog); len(sshCalls) != 0 {
+				t.Fatalf("SSH reached before port validation: %v", sshCalls)
+			}
+		})
+	}
+}
 
 func portHost(t *testing.T) *fixture {
 	t.Helper()
