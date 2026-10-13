@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -31,9 +32,10 @@ func main() {
 	}
 	if script := os.Getenv(prefix + "_RESPONSES"); script != "" {
 		var responses map[string]struct {
-			Output string
-			Stderr string
-			Exit   int
+			Output             string
+			Stderr             string
+			Exit               int
+			ReadyFile, WaitFor string
 		}
 		if err := json.Unmarshal([]byte(script), &responses); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -55,6 +57,25 @@ func main() {
 			}
 		}
 		if ok {
+			if response.ReadyFile != "" {
+				if err := os.WriteFile(response.ReadyFile, nil, 0600); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					os.Exit(125)
+				}
+			}
+			if response.WaitFor != "" {
+				deadline := time.Now().Add(10 * time.Second)
+				for {
+					if _, err := os.Stat(response.WaitFor); err == nil {
+						break
+					}
+					if time.Now().After(deadline) {
+						fmt.Fprintln(os.Stderr, "fake rendezvous timed out")
+						os.Exit(125)
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
 			fmt.Fprint(os.Stdout, response.Output)
 			fmt.Fprint(os.Stderr, response.Stderr)
 			code = response.Exit

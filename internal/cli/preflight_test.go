@@ -122,6 +122,8 @@ func TestQueryFailurePreservesDiagnosticStreams(t *testing.T) {
 
 func linuxHost(t *testing.T) *fixture {
 	t.Helper()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
 	f := &fixture{fakes: testutil.Install(t, fakeBinary), files: map[string]string{
 		"/etc/subuid": "tester:100000:65536\n", "/etc/subgid": "1000:100000:65536\n",
 		"/proc/self/cgroup": "0::/user.slice/user-1000.slice/user@1000.service/app.slice/terminal.scope\n",

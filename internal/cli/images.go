@@ -42,7 +42,7 @@ func buildImage(p podmanTarget, toolchains []string, output io.Writer) (string, 
 func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 	// Look up the container, validate/allocate its port from inventory, build a
 	// missing image, then report preparation. Container and volume creation
-	// belong to #14; ADR-0007's lifecycle lock belongs to #16.
+	// belong to #14; the caller holds ADR-0007's lifecycle lock.
 	exists, err := p.exists(containerResource, DerivedNames(request.Group, request.Name).Container)
 	if err != nil {
 		return err

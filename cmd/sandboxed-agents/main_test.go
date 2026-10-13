@@ -1,15 +1,20 @@
 package main_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
 	"github.com/grauzone-labs/sandboxed-agents/internal/release"
 	"github.com/grauzone-labs/sandboxed-agents/internal/releasetest"
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
@@ -225,7 +230,8 @@ func TestCommandGrammar(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			caseFakes := fakes
-			if tc.status == 2 {
+			lifecycle := len(tc.args) > 0 && (tc.args[0] == "start" || tc.args[0] == "stop" || tc.args[0] == "restart" || tc.args[0] == "remove")
+			if tc.status == 2 || lifecycle {
 				caseFakes = testutil.Install(t, fakeExecutable)
 			}
 			command := exec.Command(executable, tc.args...)
@@ -240,6 +246,14 @@ func TestCommandGrammar(t *testing.T) {
 			}
 			if tc.status == 2 {
 				assertNoExternalCalls(t, caseFakes)
+			}
+			if lifecycle && tc.status != 2 {
+				calls := testutil.Invocations(t, caseFakes.PodmanLog)
+				for _, call := range calls {
+					if len(call) < 2 || call[0] != "container" || call[1] != "exists" {
+						t.Fatalf("unexpected lifecycle grammar call: %v", calls)
+					}
+				}
 			}
 		})
 	}
@@ -597,4 +611,152 @@ func TestMissingWorkspaceFailsBeforeUnusablePreflight(t *testing.T) {
 		t.Fatalf("status=%d output=%q; want missing workspace usage error before preflight", status, output)
 	}
 	assertNoExternalCalls(t, fakes)
+}
+
+// lifecycleResponse scripts only the external Podman boundary.
+type lifecycleResponse struct {
+	Output             string
+	Exit               int
+	ReadyFile, WaitFor string
+}
+
+func lifecycleHarness(t *testing.T, responses map[string]lifecycleResponse) testutil.Fakes {
+	t.Helper()
+	fakes := testutil.Install(t, fakeExecutable)
+	state := t.TempDir()
+	data, err := json.Marshal(responses)
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment := testutil.Env(fakes.Env(os.Environ()), map[string]string{
+		"XDG_STATE_HOME": state, "LOCALAPPDATA": state, "TEST_PODMAN_RESPONSES": string(data),
+	})
+	for _, entry := range environment {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			t.Setenv(key, value)
+		}
+	}
+	return fakes
+}
+
+func lifecycleRun(args ...string) (int, string) {
+	var output bytes.Buffer
+	status := cli.RunWithHost(args, &output, &output, cli.Host{Platform: "linux"})
+	return status, output.String()
+}
+
+// TestLifecycleLockRefusesBeforeSandboxLookup proves a competing command refuses immediately before any sandbox lookup through RunWithHost and fake Podman.
+func TestLifecycleLockRefusesBeforeSandboxLookup(t *testing.T) {
+	rendezvous := t.TempDir()
+	ready, release := filepath.Join(rendezvous, "ready"), filepath.Join(rendezvous, "release")
+	fakes := lifecycleHarness(t, map[string]lifecycleResponse{
+		"container exists sandboxed-agents.default.demo": {Exit: 1, ReadyFile: ready, WaitFor: release},
+		"--version":          {Output: "podman version 4.4.0"},
+		"info --format json": {Output: `{"host":{"security":{"rootless":true},"cgroupVersion":"v2"}}`},
+	})
+	done := make(chan struct{})
+	go func() { defer close(done); lifecycleRun("start", "demo") }()
+	defer func() { os.WriteFile(release, nil, 0600); <-done }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("first command did not reach lookup")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	host := lifecycleLinuxHost(t, fakes)
+	for _, verb := range []string{"start", "stop", "restart", "remove", "up"} {
+		start := time.Now()
+		var out bytes.Buffer
+		status := cli.RunWithHost([]string{verb, "demo"}, &out, &out, host)
+		output := out.String()
+		if status == 0 || !strings.Contains(output, "demo") || !strings.Contains(output, "another lifecycle command is in progress") || !strings.Contains(output, "retry") || time.Since(start) > time.Second {
+			t.Errorf("%s: status=%d output=%s", verb, status, output)
+		}
+	}
+	calls := testutil.Invocations(t, fakes.PodmanLog)
+	want := [][]string{{"container", "exists", "sandboxed-agents.default.demo"}, {"--version"}, {"info", "--format", "json"}}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls=%v", calls)
+	}
+	for _, args := range [][]string{{"start", "bad/name"}, {"up", "demo", filepath.Join(rendezvous, "missing")}} {
+		status, output := lifecycleRun(args...)
+		if status != 2 || !strings.Contains(output, "step 1:") {
+			t.Fatalf("usage/path before lock: status=%d output=%s", status, output)
+		}
+	}
+	// A failing preflight must win over the lock refusal.
+	status, output := lifecycleRun("up", "demo")
+	if status != 1 || !strings.Contains(output, "step 2:") || strings.Contains(output, "step 3:") {
+		t.Fatalf("preflight before lock: status=%d output=%s", status, output)
+	}
+
+}
+
+func lifecycleLinuxHost(t *testing.T, fakes testutil.Fakes) cli.Host {
+	t.Helper()
+	data, err := os.ReadFile(fakeExecutable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"newuidmap", "newgidmap", "pasta", "ssh-keygen"} {
+		if err := os.WriteFile(filepath.Join(fakes.Dir, name), data, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return cli.Host{Platform: "linux", Architecture: "amd64", CurrentUser: func() (*user.User, error) { return &user.User{Username: "tester", Uid: "1000"}, nil }, ReadFile: func(path string) ([]byte, error) {
+		switch path {
+		case "/etc/subuid", "/etc/subgid":
+			return []byte("tester:100000:65536"), nil
+		case "/proc/self/cgroup":
+			return []byte("0::/user.slice/user-1000.slice/user@1000.service"), nil
+		default:
+			return []byte("cpu memory pids"), nil
+		}
+	}}
+}
+
+// TestLifecycleLocksAreEmptyPersistentAndRejectNonregularPaths proves failed commands retain empty hashed lock files and refuse nonregular paths before lookup through RunWithHost.
+func TestLifecycleLocksAreEmptyPersistentAndRejectNonregularPaths(t *testing.T) {
+	fakes := lifecycleHarness(t, map[string]lifecycleResponse{"container exists *": {Exit: 1}})
+	for _, name := range []string{"demo", "Demo", "con"} {
+		lifecycleRun("start", name)
+	}
+	dir := filepath.Join(os.Getenv("XDG_STATE_HOME"), "sandboxed-agents", "group-default", "locks")
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("lock files=%v", files)
+	}
+	for _, file := range files {
+		if len(file.Name()) != 64 || strings.Trim(file.Name(), "0123456789abcdef") != "" {
+			t.Fatalf("lock filename=%q", file.Name())
+		}
+		info, err := file.Info()
+		if err != nil || !info.Mode().IsRegular() || info.Size() != 0 {
+			t.Fatalf("lock info=%v error=%v", info, err)
+		}
+	}
+	// sha256("sandboxed-agents.default.demo"), fixed independently for ADR-0007.
+	path := filepath.Join(dir, "9a4080e774a647b4e19f0a6c7f45385183ffd91df8d99b0dcd9cdae7ea2d401c")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	before := testutil.Invocations(t, fakes.PodmanLog)
+	status, output := lifecycleRun("start", "demo")
+	if status == 0 || !strings.Contains(output, "not a regular file") {
+		t.Fatalf("status=%d output=%s", status, output)
+	}
+	if after := testutil.Invocations(t, fakes.PodmanLog); !reflect.DeepEqual(before, after) {
+		t.Fatalf("nonregular lock made lookup: %v", after)
+	}
 }
