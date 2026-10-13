@@ -28,6 +28,7 @@ func windowsHost(t *testing.T) *fixture {
 		"machine ssh chosen id -u":                  {Output: "1000\n"},
 		"machine ssh chosen cat /proc/self/cgroup":  {Output: "0::/user.slice/user-1000.slice/session-1.scope\n"},
 		windowsControllerRead:                       {Output: "cpu memory pids"},
+		windowsSubtreeRead:                          {Output: "cpu memory pids"},
 		windowsAutomountExists:                      {},
 		windowsAutomountRead:                        {Output: ""},
 	}
@@ -36,6 +37,33 @@ func windowsHost(t *testing.T) *fixture {
 
 // windowsControllerRead names the read-only delegated controller query.
 const windowsControllerRead = "machine ssh chosen cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers"
+const windowsSubtreeRead = "machine ssh chosen cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.subtree_control"
+
+// TestWindowsDelegationRequiresEnabledSubtreeControllers proves machine controllers must also be enabled and failed subtree reads identify their path through RunWithHost and fake machine SSH processes.
+func TestWindowsDelegationRequiresEnabledSubtreeControllers(t *testing.T) {
+	for _, tc := range []struct {
+		name, message string
+		value         response
+		status        int
+	}{
+		{"pids-not-enabled", "delegated cgroup pids controller is required", response{Output: "cpu memory"}, 1},
+		{"all-enabled", "host prerequisites satisfied", response{Output: "cpu memory pids"}, 0},
+		{"subtree-unreadable", "read delegated cgroup controllers:", response{Stderr: "permission denied", Exit: 125}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := windowsHost(t)
+			f.responses[windowsSubtreeRead] = tc.value
+			status, output, calls := f.run(t, "check")
+			if status != tc.status || !strings.Contains(output, tc.message) {
+				t.Fatalf("status=%d output=%q; want status=%d message=%q", status, output, tc.status, tc.message)
+			}
+			if tc.value.Exit != 0 && (!strings.Contains(output, "cgroup.subtree_control") || !strings.Contains(output, "permission denied")) {
+				t.Fatalf("subtree read failure omitted path/cause: %s", output)
+			}
+			noMutation(t, calls)
+		})
+	}
+}
 
 const windowsAutomountRead = "machine ssh chosen cat /etc/wsl.conf"
 const windowsAutomountExists = "machine ssh chosen test -e /etc/wsl.conf"
@@ -292,6 +320,7 @@ func TestWindowsControllerQueriesUseSimpleMachineCommands(t *testing.T) {
 		t.Fatalf("status=%d output=%q", status, output)
 	}
 	queries := 0
+	var delegationQueries [][]string
 	automountExistenceQueries, automountReadQueries := 0, 0
 	for _, call := range calls {
 		if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "test", "-e", "/etc/wsl.conf"}) {
@@ -304,13 +333,18 @@ func TestWindowsControllerQueriesUseSimpleMachineCommands(t *testing.T) {
 		}
 		if len(call) > 2 && call[0] == "machine" && call[1] == "ssh" {
 			queries++
+			delegationQueries = append(delegationQueries, call)
 			if len(call) != 5 || (call[3] != "id" && call[3] != "cat") {
 				t.Fatalf("unexpected delegation argv: %v", call)
 			}
 		}
 	}
-	if queries != 3 {
+	if queries != 4 {
 		t.Fatalf("queries=%d calls=%v", queries, calls)
+	}
+	expectedDelegation := [][]string{{"machine", "ssh", "chosen", "id", "-u"}, {"machine", "ssh", "chosen", "cat", "/proc/self/cgroup"}, strings.Fields(windowsControllerRead), strings.Fields(windowsSubtreeRead)}
+	if !reflect.DeepEqual(delegationQueries, expectedDelegation) {
+		t.Fatalf("delegation queries=%v; want %v", delegationQueries, expectedDelegation)
 	}
 	if automountExistenceQueries != 1 || automountReadQueries != 1 {
 		t.Fatalf("automount existence queries=%d read queries=%d calls=%v", automountExistenceQueries, automountReadQueries, calls)

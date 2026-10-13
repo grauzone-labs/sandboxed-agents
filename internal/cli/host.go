@@ -162,6 +162,8 @@ func subordinateRange(readFile func(string) ([]byte, error), path string, accoun
 	return false
 }
 
+// delegatedControllers intersects controllers available for delegation with
+// those enabled for children; availability alone does not permit resource limits.
 func delegatedControllers(readFile func(string) ([]byte, error), uid string) (string, error) {
 	data, err := readFile("/proc/self/cgroup")
 	if err != nil {
@@ -197,7 +199,19 @@ func delegatedControllers(readFile func(string) ([]byte, error), uid string) (st
 		if err != nil {
 			return "", fmt.Errorf("read delegated cgroup controllers: %w", err)
 		}
-		return string(controllers), nil
+		subtreePath := path.Join("/sys/fs/cgroup", location, "cgroup.subtree_control")
+		enabled, err := readFile(subtreePath)
+		if err != nil {
+			return "", fmt.Errorf("read delegated cgroup controllers: %s: %w", subtreePath, err)
+		}
+		var delegated []string
+		enabledControllers := strings.Fields(string(enabled))
+		for _, name := range strings.Fields(string(controllers)) {
+			if slices.Contains(enabledControllers, name) {
+				delegated = append(delegated, name)
+			}
+		}
+		return strings.Join(delegated, " "), nil
 	}
 	return "", fmt.Errorf("read delegated cgroup controllers: no unified cgroup")
 }

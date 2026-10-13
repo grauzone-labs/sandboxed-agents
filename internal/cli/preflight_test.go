@@ -45,6 +45,38 @@ type fixture struct {
 	responses map[string]response
 }
 
+const linuxSubtreeControl = "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.subtree_control"
+
+// TestLinuxDelegationRequiresEnabledSubtreeControllers proves available controllers must also be enabled and subtree read failures name their path through RunWithHost's file-reader and fake Podman seams.
+func TestLinuxDelegationRequiresEnabledSubtreeControllers(t *testing.T) {
+	for _, tc := range []struct {
+		name, enabled, message string
+		unreadable             bool
+		status                 int
+	}{
+		{"pids-not-enabled", "cpu memory", "delegated cgroup pids controller is required", false, 1},
+		{"all-enabled", "cpu memory pids", "host prerequisites satisfied", false, 0},
+		{"subtree-unreadable", "", "read delegated cgroup controllers:", true, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := linuxHost(t)
+			if tc.unreadable {
+				delete(f.files, linuxSubtreeControl)
+			} else {
+				f.files[linuxSubtreeControl] = tc.enabled
+			}
+			status, output, calls := f.run(t, "check")
+			if status != tc.status || !strings.Contains(output, tc.message) {
+				t.Fatalf("status=%d output=%q; want status=%d message=%q", status, output, tc.status, tc.message)
+			}
+			if tc.unreadable && !strings.Contains(output, linuxSubtreeControl) {
+				t.Fatalf("subtree read failure omitted path: %s", output)
+			}
+			noMutation(t, calls)
+		})
+	}
+}
+
 // TestCheckParsesInfoStdoutDespiteStderrWarning proves a successful JSON info response remains usable with a stderr warning through RunWithHost and fake Podman processes.
 func TestCheckParsesInfoStdoutDespiteStderrWarning(t *testing.T) {
 	f := linuxHost(t)
@@ -94,6 +126,7 @@ func linuxHost(t *testing.T) *fixture {
 		"/etc/subuid": "tester:100000:65536\n", "/etc/subgid": "1000:100000:65536\n",
 		"/proc/self/cgroup": "0::/user.slice/user-1000.slice/user@1000.service/app.slice/terminal.scope\n",
 		"/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers": "cpu memory pids\n",
+		linuxSubtreeControl: "cpu memory pids\n",
 	}, responses: map[string]response{
 		portInventory:        {Output: "[]"},
 		"--version":          {Output: "podman version 4.4.0\n"},
