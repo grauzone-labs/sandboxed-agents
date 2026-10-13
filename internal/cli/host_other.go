@@ -12,6 +12,6 @@ func windowsWorkstation() (bool, error) {
 	return false, fmt.Errorf("Windows product query is unavailable on this platform")
 }
 
-var windowsNativeArchitecture = func() (uint16, error) {
+func windowsNativeArchitecture() (uint16, error) {
 	return 0, fmt.Errorf("Windows native architecture query is unavailable on this platform")
 }

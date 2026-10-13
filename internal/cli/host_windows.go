@@ -9,7 +9,12 @@ import (
 
 func windowsBuild() (uint32, error) { return windows.RtlGetVersion().BuildNumber, nil }
 
-func windowsWorkstation() (bool, error) { return windows.RtlGetVersion().ProductType == 1, nil }
+// workstationProductType is Windows VER_NT_WORKSTATION, excluding server editions.
+const workstationProductType = 1
+
+func windowsWorkstation() (bool, error) {
+	return windows.RtlGetVersion().ProductType == workstationProductType, nil
+}
 
 // nativeSystemInfo matches SYSTEM_INFO, including its initial WORD union fields
 // and pointer-sized address and affinity fields on both 32-bit and 64-bit hosts.
@@ -27,7 +32,7 @@ type nativeSystemInfo struct {
 	ProcessorRevision         uint16
 }
 
-var windowsNativeArchitecture = func() (uint16, error) {
+func windowsNativeArchitecture() (uint16, error) {
 	procedure := syscall.NewLazyDLL("kernel32.dll").NewProc("GetNativeSystemInfo")
 	if err := procedure.Find(); err != nil {
 		return 0, err
