@@ -33,7 +33,7 @@ func allocatePort(p podmanTarget, requested string) (uint16, error) {
 	for _, record := range records {
 		_, managed := record.Labels[OwnerLabel]
 		for _, name := range record.Names {
-			managed = managed || strings.HasPrefix(name, "sandboxed-agents.")
+			managed = managed || strings.HasPrefix(name, containerPrefix)
 		}
 		if !managed {
 			continue
