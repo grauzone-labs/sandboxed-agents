@@ -48,7 +48,7 @@ if [[ $inside_worktree == true ]]; then
         exit 1
     fi
     ignored_inputs=$(git ls-files --others --ignored --exclude-standard -- \
-        ':(glob)image/context/**' 'go.mod' 'go.work' '.gitattributes' ':(glob)**/*.go' \
+        ':(glob)image/context/**' 'go.mod' 'go.sum' 'go.work' '.gitattributes' ':(glob)**/*.go' \
         'scripts/release.sh' 'scripts/version-symbol.txt' 'packages/nuget/SandboxedAgents.nuspec' \
         ':(glob)packages/nuget/tools/**')
     if [[ -n $ignored_inputs ]]; then
