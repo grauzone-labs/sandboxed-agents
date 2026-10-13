@@ -20,12 +20,13 @@ import (
 // boundary, plus a transient loopback availability probe used after preflight.
 // It does not replace Podman execution or authorize persistent host mutations.
 type Host struct {
-	Platform, Architecture string
-	ReadFile               func(string) ([]byte, error)
-	CurrentUser            func() (*user.User, error)
-	WindowsBuild           func() (uint32, error)
-	WindowsWorkstation     func() (bool, error)
-	PortAvailable          func(uint16) error
+	Platform, Architecture    string
+	ReadFile                  func(string) ([]byte, error)
+	CurrentUser               func() (*user.User, error)
+	WindowsBuild              func() (uint32, error)
+	WindowsWorkstation        func() (bool, error)
+	WindowsNativeArchitecture func() (uint16, error)
+	PortAvailable             func(uint16) error
 }
 
 func (h Host) defaults() Host {
@@ -46,6 +47,9 @@ func (h Host) defaults() Host {
 	}
 	if h.WindowsWorkstation == nil {
 		h.WindowsWorkstation = windowsWorkstation
+	}
+	if h.WindowsNativeArchitecture == nil {
+		h.WindowsNativeArchitecture = windowsNativeArchitecture
 	}
 	if h.PortAvailable == nil {
 		h.PortAvailable = loopbackPortAvailable
@@ -213,8 +217,9 @@ func (p podmanTarget) info() (podmanInfo, error) {
 }
 
 type podmanTarget struct {
-	host       Host
-	connection string
+	host          Host
+	connection    string
+	automountRoot string
 }
 
 func (p podmanTarget) query(args ...string) (string, error) {

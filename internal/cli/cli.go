@@ -59,10 +59,14 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			fmt.Fprintln(stderr, "check NAME: sandbox checks are not implemented")
 			return 1
 		}
-		if _, err := checkedTarget(); err != nil {
+		target, err := checkedTarget()
+		if err != nil {
 			return 1
 		}
 		fmt.Fprintln(stdout, "host prerequisites satisfied")
+		if target.automountRoot != "" {
+			fmt.Fprintf(stdout, "machine %s automount root %s\n", target.connection, target.automountRoot)
+		}
 		return 0
 	case "build":
 		target, err := checkedTarget()

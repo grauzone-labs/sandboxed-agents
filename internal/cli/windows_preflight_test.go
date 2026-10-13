@@ -2,8 +2,10 @@ package cli_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -14,6 +16,7 @@ func windowsHost(t *testing.T) *fixture {
 	f.host.Platform = "windows"
 	f.host.WindowsBuild = func() (uint32, error) { return 22621, nil }
 	f.host.WindowsWorkstation = func() (bool, error) { return true, nil }
+	f.host.WindowsNativeArchitecture = func() (uint16, error) { return 9, nil }
 	f.responses = map[string]response{
 		"--connection chosen " + portInventory:      {Output: "[]"},
 		"--version":                                 {Output: "podman version 4.7.0"},
@@ -24,12 +27,55 @@ func windowsHost(t *testing.T) *fixture {
 		"machine ssh chosen id -u":                  {Output: "1000\n"},
 		"machine ssh chosen cat /proc/self/cgroup":  {Output: "0::/user.slice/user-1000.slice/session-1.scope\n"},
 		windowsControllerRead:                       {Output: "cpu memory pids"},
+		windowsAutomountRead:                        {Output: ""},
 	}
 	return f
 }
 
 // windowsControllerRead names the read-only delegated controller query.
 const windowsControllerRead = "machine ssh chosen cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers"
+
+const windowsAutomountRead = "machine ssh chosen sh -c cat /etc/wsl.conf 2>/dev/null; true"
+
+// TestWindowsPreflightUsesNativeArchitecture proves native AMD64 is accepted independently of process architecture while ARM64 and lookup errors refuse work through RunWithHost and fake Podman processes.
+func TestWindowsPreflightUsesNativeArchitecture(t *testing.T) {
+	for _, tc := range []struct {
+		name, process, message string
+		native                 uint16
+		lookupErr              error
+		status                 int
+	}{
+		{"native-amd64", "386", "host prerequisites satisfied", 9, nil, 0},
+		{"native-arm64", "amd64", "Windows 11 x64 is required", 12, nil, 1},
+		{"lookup-failure", "amd64", "native architecture query: lookup unavailable", 0, errors.New("lookup unavailable"), 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := windowsHost(t)
+			f.host.Architecture = tc.process
+			f.host.WindowsNativeArchitecture = func() (uint16, error) { return tc.native, tc.lookupErr }
+			status, output, calls := f.run(t, "check")
+			if status != tc.status || !strings.Contains(output, tc.message) {
+				t.Fatalf("status=%d output=%q; want status=%d message=%q", status, output, tc.status, tc.message)
+			}
+			noMutation(t, calls)
+		})
+	}
+}
+
+// TestWindowsAutomountConfigFailureStopsWork proves empty roots and unreadable configuration refuse work with a machine-specific diagnostic through RunWithHost and fake Podman processes.
+func TestWindowsAutomountConfigFailureStopsWork(t *testing.T) {
+	for _, config := range []string{"[automount]\nroot = \n", "[automount\nroot=/custom/\n", "\x00"} {
+		t.Run(config, func(t *testing.T) {
+			f := windowsHost(t)
+			f.responses[windowsAutomountRead] = response{Output: config}
+			status, output, calls := f.run(t, "up", "demo")
+			if status != 1 || !strings.Contains(output, "automount root") || !strings.Contains(output, "chosen") {
+				t.Fatalf("status=%d output=%q", status, output)
+			}
+			noMutation(t, calls)
+		})
+	}
+}
 
 // TestWindowsPreflightMissingPrerequisites proves Windows host requirements have distinct diagnostics through RunWithHost and real fake Podman processes on any test platform.
 func TestWindowsPreflightMissingPrerequisites(t *testing.T) {
@@ -72,7 +118,9 @@ func TestWindowsPreflightMissingPrerequisites(t *testing.T) {
 		{"podman", "podman is required on PATH", func(t *testing.T, f *fixture) { os.Remove(fakePath(f, "podman")) }},
 		{"ssh", "ssh is required on PATH", func(t *testing.T, f *fixture) { os.Remove(fakePath(f, "ssh")) }},
 		{"ssh-keygen", "ssh-keygen is required on PATH", func(t *testing.T, f *fixture) { os.Remove(fakePath(f, "ssh-keygen")) }},
-		{"architecture", "Windows 11 x64 is required", func(t *testing.T, f *fixture) { f.host.Architecture = "arm64" }},
+		{"architecture", "Windows 11 x64 is required", func(t *testing.T, f *fixture) {
+			f.host.WindowsNativeArchitecture = func() (uint16, error) { return 12, nil }
+		}},
 		{"machine-rootful-unknown", "a rootless Podman machine is required", func(t *testing.T, f *fixture) {
 			f.responses["machine inspect chosen"] = response{Output: `[{"Name":"chosen","State":"running"}]`}
 		}},
@@ -172,7 +220,12 @@ func TestWindowsControllerQueriesUseSimpleMachineCommands(t *testing.T) {
 		t.Fatalf("status=%d output=%q", status, output)
 	}
 	queries := 0
+	automountQueries := 0
 	for _, call := range calls {
+		if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "sh", "-c", "cat /etc/wsl.conf 2>/dev/null; true"}) {
+			automountQueries++
+			continue
+		}
 		if len(call) > 2 && call[0] == "machine" && call[1] == "ssh" {
 			queries++
 			if len(call) != 5 || (call[3] != "id" && call[3] != "cat") {
@@ -182,6 +235,9 @@ func TestWindowsControllerQueriesUseSimpleMachineCommands(t *testing.T) {
 	}
 	if queries != 3 {
 		t.Fatalf("queries=%d calls=%v", queries, calls)
+	}
+	if automountQueries != 1 {
+		t.Fatalf("automount queries=%d calls=%v", automountQueries, calls)
 	}
 	noMutation(t, calls)
 }
@@ -271,4 +327,45 @@ func TestWindowsFailedInfoReportsUnverifiedPrerequisites(t *testing.T) {
 		t.Fatalf("status=%d output=%q", status, output)
 	}
 	noMutation(t, calls)
+}
+
+// TestWindowsCheckReportsCustomAutomountRoot proves a selected machine's configured root is recorded and reported without refusal through RunWithHost and fake Podman.
+func TestWindowsCheckReportsCustomAutomountRoot(t *testing.T) {
+	f := windowsHost(t)
+	f.responses[windowsAutomountRead] = response{Output: "[automount]\nroot = /custom/drives/\n"}
+	status, output, calls := f.run(t, "check")
+	if status != 0 || !strings.Contains(output, "machine chosen automount root /custom/drives/") {
+		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+	}
+	noMutation(t, calls)
+}
+
+// TestWindowsCheckReportsDefaultAutomountRoot proves absent configuration or an absent automount root key records /mnt/ through RunWithHost and fake Podman.
+func TestWindowsCheckReportsDefaultAutomountRoot(t *testing.T) {
+	for _, config := range []string{"", "[automount]\nenabled = true\n", "[network]\nroot=/unrelated/\n"} {
+		t.Run(config, func(t *testing.T) {
+			f := windowsHost(t)
+			f.responses[windowsAutomountRead] = response{Output: config}
+			status, output, calls := f.run(t, "check")
+			if status != 0 || !strings.Contains(output, "machine chosen automount root /mnt/") {
+				t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+			}
+			noMutation(t, calls)
+		})
+	}
+}
+
+// TestWindowsAutomountQueryFailureStopsWork proves automount transport failures name the selected machine and refuse image or sandbox mutations through RunWithHost.
+func TestWindowsAutomountQueryFailureStopsWork(t *testing.T) {
+	for _, args := range [][]string{{"check"}, {"build"}, {"up", "demo"}} {
+		t.Run(strings.Join(args, "-"), func(t *testing.T) {
+			f := windowsHost(t)
+			f.responses[windowsAutomountRead] = response{Output: "transport unavailable", Exit: 125}
+			status, output, calls := f.run(t, args...)
+			if status != 1 || !strings.Contains(output, "automount root") || !strings.Contains(output, "chosen") || !strings.Contains(output, "transport unavailable") {
+				t.Fatalf("status=%d output=%q", status, output)
+			}
+			noMutation(t, calls)
+		})
+	}
 }

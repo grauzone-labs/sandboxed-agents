@@ -11,13 +11,20 @@ import (
 )
 
 const minimumWindowsPodmanVersion = "4.7.0"
+const nativeAMD64Architecture = 9
 
 func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 	var failures []error
 	build, err := p.host.WindowsBuild()
 	workstation, productErr := p.host.WindowsWorkstation()
-	if err != nil || productErr != nil || !workstation || p.host.Architecture != "amd64" || build < 22000 {
+	if err != nil || productErr != nil || !workstation || build < 22000 {
 		failures = append(failures, fmt.Errorf("Windows 11 x64 is required (build query: %v; product query: %v)", err, productErr))
+	}
+	nativeArchitecture, architectureErr := p.host.WindowsNativeArchitecture()
+	if architectureErr != nil {
+		failures = append(failures, fmt.Errorf("Windows 11 x64 is required (native architecture query: %w)", architectureErr))
+	} else if nativeArchitecture != nativeAMD64Architecture {
+		failures = append(failures, fmt.Errorf("Windows 11 x64 is required (native architecture: %d)", nativeArchitecture))
 	}
 	for _, name := range []string{"ssh", "ssh-keygen"} {
 		if _, err := exec.LookPath(name); err != nil {
@@ -67,8 +74,55 @@ func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 		local.connection = ""
 		controllers, controllerErr := machineControllers(local, p.connection)
 		failures = append(failures, controllerFailures(controllers, controllerErr)...)
+		config, automountErr := local.query("machine", "ssh", p.connection, "sh", "-c", automountRootQuery)
+		if automountErr != nil {
+			failures = append(failures, fmt.Errorf("read automount root for machine %q: %w", p.connection, automountErr))
+		} else {
+			root, parseErr := parseAutomountRoot(config)
+			if parseErr != nil {
+				failures = append(failures, fmt.Errorf("read automount root for machine %q: %w", p.connection, parseErr))
+			} else {
+				p.automountRoot = root
+			}
+		}
 	}
 	return p, errors.Join(failures...)
+}
+
+// automountRootQuery is read-only and treats an absent wsl.conf as defaults.
+// Its shell-argument transport still needs confirmation on a live Windows host.
+const automountRootQuery = "cat /etc/wsl.conf 2>/dev/null; true"
+
+func parseAutomountRoot(config string) (string, error) {
+	if strings.ContainsRune(config, '\x00') {
+		return "", fmt.Errorf("unreadable wsl.conf configuration")
+	}
+	section := ""
+	root := "/mnt/"
+	for _, line := range strings.Split(config, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			if !strings.HasSuffix(line, "]") {
+				return "", fmt.Errorf("malformed wsl.conf section")
+			}
+			section = strings.TrimSpace(line[1 : len(line)-1])
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return "", fmt.Errorf("malformed wsl.conf setting")
+		}
+		if section == "automount" && strings.TrimSpace(key) == "root" {
+			root = strings.TrimSpace(value)
+			if root == "" {
+				return "", fmt.Errorf("wsl.conf automount root is empty")
+			}
+		}
+	}
+	return root, nil
 }
 
 // atLeastFloor keeps a named semantic-version floor in one place for comparisons and diagnostics.
