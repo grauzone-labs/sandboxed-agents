@@ -14,6 +14,9 @@ const OwnerLabel = "io.sandboxed-agents.owner"
 // SSHPortLabel records the host port reserved by a sandbox, even while stopped.
 const SSHPortLabel = "io.sandboxed-agents.port"
 
+// defaultSSHPort is the first port considered when no explicit port is requested.
+const defaultSSHPort = 2222
+
 func allocatePort(p podmanTarget, requested string) (uint16, error) {
 	output, err := p.query("ps", "--all", "--format", "json")
 	if err != nil {
@@ -42,31 +45,42 @@ func allocatePort(p podmanTarget, requested string) (uint16, error) {
 		if value == "" {
 			return 0, fmt.Errorf("read recorded SSH ports: sandbox port label is missing")
 		}
-		port, err := strconv.ParseUint(value, 10, 16)
-		if err != nil || port == 0 {
+		port, err := parseSSHPort(value)
+		if err != nil {
 			return 0, fmt.Errorf("read recorded SSH ports: invalid port %q", value)
 		}
-		reserved[uint16(port)] = true
+		reserved[port] = true
 	}
 	if requested != "" {
-		port, err := strconv.ParseUint(requested, 10, 16)
-		if err != nil || port == 0 {
+		port, err := parseSSHPort(requested)
+		if err != nil {
 			return 0, fmt.Errorf("invalid SSH port %q", requested)
 		}
-		if reserved[uint16(port)] {
+		if reserved[port] {
 			return 0, fmt.Errorf("SSH port %d is already recorded on a sandbox", port)
 		}
-		if err := p.host.PortAvailable(uint16(port)); err != nil {
+		if err := p.host.PortAvailable(port); err != nil {
 			return 0, fmt.Errorf("SSH port %d is unavailable on 127.0.0.1: %w", port, err)
 		}
-		return uint16(port), nil
+		return port, nil
 	}
-	for port := 2222; port <= 65535; port++ {
+	for port := defaultSSHPort; port <= 65535; port++ {
 		if !reserved[uint16(port)] && p.host.PortAvailable(uint16(port)) == nil {
 			return uint16(port), nil
 		}
 	}
-	return 0, fmt.Errorf("no SSH port is available between 2222 and 65535")
+	return 0, fmt.Errorf("no SSH port is available between %d and 65535", defaultSSHPort)
+}
+
+func parseSSHPort(value string) (uint16, error) {
+	port, err := strconv.ParseUint(value, 10, 16)
+	if err != nil {
+		return 0, err
+	}
+	if port == 0 {
+		return 0, fmt.Errorf("SSH port must be nonzero")
+	}
+	return uint16(port), nil
 }
 
 func loopbackPortAvailable(port uint16) error {
