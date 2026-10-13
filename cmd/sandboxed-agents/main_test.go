@@ -190,8 +190,7 @@ func TestLiveOptInFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
 	}
 }
 
-// TestCommandGrammar proves command forms produce their expected success, preflight-failure, not-implemented, or usage status through the built CLI binary.
-// Deferred commands permit only preflight queries; lifecycle forms may read container existence and reject incomplete inspect answers. SSH never runs.
+// TestCommandGrammar proves command forms produce their expected success, preflight-failure, not-implemented, or usage status through the built CLI binary. Deferred commands permit only preflight queries; lifecycle forms may read container existence and reject incomplete inspect answers. SSH never runs.
 func TestCommandGrammar(t *testing.T) {
 	cases := []struct {
 		args   []string
