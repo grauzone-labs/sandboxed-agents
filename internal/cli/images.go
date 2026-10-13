@@ -33,14 +33,19 @@ func buildImage(p podmanTarget, toolchains []string, output io.Writer) (string, 
 }
 
 func prepareUp(request Request, p podmanTarget, output io.Writer) error {
-	// Container and volume creation belong to #14; ADR-0007's lifecycle lock
-	// belongs to #16. This boundary only detects reuse and prepares new images.
+	// Look up the container, validate/allocate its port from inventory, build a
+	// missing image, then report preparation. Container and volume creation
+	// belong to #14; ADR-0007's lifecycle lock belongs to #16.
 	exists, err := p.exists("container", DerivedNames(request.Group, request.Name).Container)
 	if err != nil {
 		return err
 	}
 	if exists {
 		return fmt.Errorf("up: existing sandbox lifecycle is not implemented (#14)")
+	}
+	port, err := allocatePort(p, request.Options["port"])
+	if err != nil {
+		return err
 	}
 	hash, err := image.Hash(image.Context())
 	if err != nil {
@@ -56,10 +61,6 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		if err != nil {
 			return err
 		}
-	}
-	port, err := allocatePort(p, request.Options["port"])
-	if err != nil {
-		return err
 	}
 	return fmt.Errorf("up: image %s prepared; --publish 127.0.0.1:%d:22/tcp; sandbox creation is not implemented (#14)", tag, port)
 }
