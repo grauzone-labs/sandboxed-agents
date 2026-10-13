@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const portInventory = "ps --all --filter label=io.sandboxed-agents.owner --format json"
+const portInventory = "ps --all --format json"
 
 func portHost(t *testing.T) *fixture {
 	t.Helper()
@@ -89,7 +89,7 @@ func TestUpRefusesRecordedRequestedPort(t *testing.T) {
 
 // TestUpRefusesUnreadableRecordedPorts proves malformed or failed port inventories cannot yield a publication through RunWithHost and fake Podman.
 func TestUpRefusesUnreadableRecordedPorts(t *testing.T) {
-	for _, value := range []response{{Output: "{"}, {Exit: 125}, {Output: `[{"Labels":{"io.sandboxed-agents.port":"invalid"}}]`}} {
+	for _, value := range []response{{Output: "{"}, {Exit: 125}, {Output: `[{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"invalid"}}]`}} {
 		t.Run(value.Output, func(t *testing.T) {
 			f := portHost(t)
 			f.responses[portInventory] = value
@@ -142,6 +142,17 @@ func TestUpRefusesUnavailableRequestedPort(t *testing.T) {
 	status, output, calls := f.run(t, "up", "demo", "--port", "2300")
 	if status != 1 || !strings.Contains(output, "SSH port 2300 is unavailable on 127.0.0.1") || strings.Contains(output, "--publish") {
 		t.Fatalf("status=%d output=%q", status, output)
+	}
+	noMutation(t, calls)
+}
+
+// TestUpSkipsStoppedNamedSandboxPortWithoutOwner proves a stopped sandbox's recorded port stays reserved even when its owner label is missing through RunWithHost and fake Podman.
+func TestUpSkipsStoppedNamedSandboxPortWithoutOwner(t *testing.T) {
+	f := portHost(t)
+	f.responses["ps --all --format json"] = response{Output: `[{"Names":["sandboxed-agents.other.x"],"State":"exited","Labels":{"io.sandboxed-agents.port":"2222"}}]`}
+	status, output, calls := f.run(t, "up", "demo")
+	if status != 1 || !strings.Contains(output, "127.0.0.1:2223:22/tcp") {
+		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
 	noMutation(t, calls)
 }

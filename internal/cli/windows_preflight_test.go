@@ -188,3 +188,91 @@ func TestWindowsControllerQueriesUseSimpleMachineCommands(t *testing.T) {
 	}
 	noMutation(t, calls)
 }
+
+// TestWindowsPreflightReportsMissingPodmanDependencies proves a missing client reports every dependent Windows prerequisite as unverifiable without querying or starting a machine through RunWithHost.
+func TestWindowsPreflightReportsMissingPodmanDependencies(t *testing.T) {
+	f := windowsHost(t)
+	f.responses["machine inspect chosen"] = response{Output: `[{"Name":"chosen","State":"stopped","Rootful":false}]`}
+	if err := os.Remove(fakePath(f, "podman")); err != nil {
+		t.Fatal(err)
+	}
+	status, output, calls := f.run(t, "check")
+	for _, message := range []string{"podman is required on PATH", "Podman >= 4.7.0 is required", "a running Podman machine is required", "a WSL2 Podman machine is required", "a rootless Podman machine is required", "Podman machine >= 4.7.0 is required", "rootless Podman is required", "cgroups v2 is required", "delegated cgroup cpu controller is required", "delegated cgroup memory controller is required", "delegated cgroup pids controller is required"} {
+		if !strings.Contains(output, message) {
+			t.Errorf("missing %q: %s", message, output)
+		}
+	}
+	if status != 1 || !strings.Contains(output, "cannot verify") || len(calls) != 0 {
+		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+	}
+}
+
+// TestWindowsPreflightReportsOldClientAndMissingMachine proves an old client and absent machine are reported together with dependent engine checks through RunWithHost and fake Podman.
+func TestWindowsPreflightReportsOldClientAndMissingMachine(t *testing.T) {
+	f := windowsHost(t)
+	f.responses["--version"] = response{Output: "podman version 4.6.2"}
+	f.responses["machine list --format json"] = response{Output: "[]"}
+	status, output, calls := f.run(t, "check")
+	for _, message := range []string{"Podman >= 4.7.0 is required", "a Podman machine is required", "Podman machine >= 4.7.0 is required (cannot verify:", "cgroups v2 is required (cannot verify:"} {
+		if !strings.Contains(output, message) {
+			t.Errorf("missing %q: %s", message, output)
+		}
+	}
+	if status != 1 {
+		t.Fatalf("status=%d output=%q", status, output)
+	}
+	noMutation(t, calls)
+}
+
+// TestWindowsPreflightAggregatesStoppedProviderAndRootfulFailures proves independent machine state, provider, and identity failures are all reported without engine queries through RunWithHost.
+func TestWindowsPreflightAggregatesStoppedProviderAndRootfulFailures(t *testing.T) {
+	f := windowsHost(t)
+	f.responses["machine list --format json"] = response{Output: `[{"Name":"chosen","Default":true,"VMType":"qemu"}]`}
+	f.responses["machine inspect chosen"] = response{Output: `[{"Name":"chosen","State":"stopped","Rootful":true}]`}
+	status, output, calls := f.run(t, "check")
+	for _, message := range []string{"a running Podman machine is required", "a WSL2 Podman machine is required", "a rootless Podman machine is required", "delegated cgroup cpu controller is required (cannot verify:", "delegated cgroup memory controller is required (cannot verify:", "delegated cgroup pids controller is required (cannot verify:"} {
+		if !strings.Contains(output, message) {
+			t.Errorf("missing %q: %s", message, output)
+		}
+	}
+	if status != 1 || len(calls) != 3 {
+		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+	}
+	noMutation(t, calls)
+}
+
+// TestWindowsUnselectedMachineReportsUnverifiedRequirements proves missing or unsafe machine selections report dependent machine facts without inspecting unsafe names through RunWithHost.
+func TestWindowsUnselectedMachineReportsUnverifiedRequirements(t *testing.T) {
+	for _, list := range []string{`[]`, `[{"Name":"-unsafe","VMType":"wsl"}]`} {
+		t.Run(list, func(t *testing.T) {
+			f := windowsHost(t)
+			f.responses["machine list --format json"] = response{Output: list}
+			status, output, calls := f.run(t, "check")
+			for _, message := range []string{"a running Podman machine is required (cannot verify:", "a WSL2 Podman machine is required (cannot verify:", "a rootless Podman machine is required (cannot verify:"} {
+				if !strings.Contains(output, message) {
+					t.Errorf("missing %q: %s", message, output)
+				}
+			}
+			if status != 1 || len(calls) != 2 {
+				t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+			}
+			noMutation(t, calls)
+		})
+	}
+}
+
+// TestWindowsFailedInfoReportsUnverifiedPrerequisites proves an unreadable engine info query reports rootless and cgroup version checks separately through RunWithHost.
+func TestWindowsFailedInfoReportsUnverifiedPrerequisites(t *testing.T) {
+	f := windowsHost(t)
+	f.responses["--connection chosen info --format json"] = response{Exit: 125}
+	status, output, calls := f.run(t, "check")
+	for _, message := range []string{"rootless Podman is required (cannot verify:", "cgroups v2 is required (cannot verify:"} {
+		if !strings.Contains(output, message) {
+			t.Errorf("missing %q: %s", message, output)
+		}
+	}
+	if status != 1 {
+		t.Fatalf("status=%d output=%q", status, output)
+	}
+	noMutation(t, calls)
+}
