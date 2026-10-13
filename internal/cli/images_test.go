@@ -40,11 +40,7 @@ func TestUpBuildsAbsentImage(t *testing.T) {
 	if !reflect.DeepEqual(calls[buildIndex-1], []string{"image", "exists", tag}) {
 		t.Fatalf("wrong build order: %v", calls)
 	}
-	for _, call := range calls {
-		if len(call) > 0 && (call[0] == "create" || call[0] == "run" || call[0] == "volume") {
-			t.Fatalf("#14 mutation: %v", calls)
-		}
-	}
+	assertNoSandboxCreation(t, calls)
 }
 
 // TestBuildRetainsExistingSandboxes proves explicit build uses the shared image builder and never queries or replaces old sandboxes through RunWithHost and fake Podman.
@@ -117,11 +113,7 @@ func TestImageBuildFailureStopsUp(t *testing.T) {
 	if status != 1 || !strings.Contains(output, "build rejected") || strings.Contains(output, "sandbox creation is not implemented") {
 		t.Fatalf("status=%d output=%q", status, output)
 	}
-	for _, call := range calls {
-		if len(call) > 0 && (call[0] == "create" || call[0] == "run" || call[0] == "volume") {
-			t.Fatalf("sandbox work after failed build: %v", calls)
-		}
-	}
+	assertNoSandboxCreation(t, calls)
 }
 
 // TestWindowsImageBuildUsesCheckedTarget proves every image and sandbox lookup and build keeps the preflight-selected connection through RunWithHost and fake Podman.
@@ -183,5 +175,14 @@ func TestBuildAndUpAgreeOnNoneImageTag(t *testing.T) {
 	}
 	if !found || !strings.Contains(output, "image "+tag+" prepared;") {
 		t.Fatalf("up tag=%q output=%q calls=%v", tag, output, calls)
+	}
+}
+
+func assertNoSandboxCreation(t *testing.T, calls [][]string) {
+	t.Helper()
+	for _, call := range calls {
+		if len(call) > 0 && (call[0] == "create" || call[0] == "run" || call[0] == "volume") {
+			t.Fatalf("unexpected sandbox creation: %v", calls)
+		}
 	}
 }

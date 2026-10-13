@@ -333,7 +333,8 @@ func TestLoginWorkflowsAreValidatedBeforeExternalCalls(t *testing.T) {
 	}
 }
 
-// TestControllerGroupAndSandboxNames proves that valid names reach preflight and invalid controller group or sandbox names produce usage errors through the built CLI binary without external calls.
+// TestControllerGroupAndSandboxNames proves valid names reach preflight and invalid controller group or sandbox names fail usage through the built CLI binary.
+// Only --version, info --format json, or machine list --format json may reach Podman; SSH never runs.
 func TestControllerGroupAndSandboxNames(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	cases := []struct {
@@ -437,9 +438,9 @@ func TestResourceOptionGrammar(t *testing.T) {
 	assertOnlyPreflightQueries(t, fakes)
 }
 
-// TestWorkspacePathsFailBeforeExternalCalls proves a workspace directory reaches preflight before the deferred up lifecycle, while invalid or protected paths fail usage through the built CLI binary.
+// TestWorkspacePathsReachPreflightOrFailBeforePodman proves a workspace directory reaches preflight before the deferred up lifecycle, while invalid or protected paths fail usage through the built CLI binary.
 // Only --version, info --format json, or machine list --format json may reach Podman; SSH never runs.
-func TestWorkspacePathsFailBeforeExternalCalls(t *testing.T) {
+func TestWorkspacePathsReachPreflightOrFailBeforePodman(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	home := t.TempDir()
 	workspace := t.TempDir()
