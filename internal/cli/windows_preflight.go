@@ -104,8 +104,8 @@ func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 		if automountErr != nil {
 			failures = append(failures, fmt.Errorf("read automount root for machine %q: %w", p.connection, automountErr))
 		} else {
-			// Preflight accepts and records custom roots. Refusing a workspace under
-			// a custom root belongs to #14 and is not yet implemented.
+			// Preflight accepts and records custom roots. Only a workspace bind
+			// requires the default root, checked after all prerequisites pass.
 			p.automountRoot = root
 		}
 	}

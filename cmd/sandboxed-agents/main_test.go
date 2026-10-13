@@ -1606,3 +1606,27 @@ func TestWorkspaceProtectsFallbackStateForRelativeXDG(t *testing.T) {
 	}
 	assertNoExternalCalls(t, fakes)
 }
+
+// TestInvalidWorkspaceNamesResolvedPathBeforePreflight proves missing and non-directory relative workspaces name their resolved path before any failing Podman/SSH query through the built executable.
+func TestInvalidWorkspaceNamesResolvedPathBeforePreflight(t *testing.T) {
+	for _, kind := range []string{"missing", "file"} {
+		t.Run(kind, func(t *testing.T) {
+			fakes := testutil.Install(t, fakeExecutable)
+			directory := t.TempDir()
+			path := filepath.Join(directory, kind)
+			if kind == "file" {
+				if err := os.WriteFile(path, []byte("data"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			command := exec.Command(executable, "up", "agent01", kind)
+			command.Dir = directory
+			command.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{"TEST_PODMAN_OUTPUT": "broken preflight sentinel", "TEST_PODMAN_EXIT": "125"})
+			output, err := command.CombinedOutput()
+			if status := exitStatus(t, err); status != 2 || !strings.Contains(string(output), strconv.Quote(path)) || strings.Contains(string(output), "broken preflight sentinel") {
+				t.Fatalf("status=%d output=%q; want resolved workspace refusal", status, output)
+			}
+			assertNoExternalCalls(t, fakes)
+		})
+	}
+}

@@ -19,6 +19,9 @@ var fakeBinary string
 
 // TestMain builds the external-process fake used by the exported host CLI seam.
 func TestMain(m *testing.M) {
+	if os.Getenv("TEST_UP_EXECUTABLE") == "1" {
+		os.Exit(m.Run())
+	}
 	dir, err := os.MkdirTemp("", "sandboxed-agents-host-test-")
 	if err != nil {
 		panic(err)
@@ -176,6 +179,9 @@ func (f *fixture) run(t *testing.T, args ...string) (int, string, [][]string) {
 
 func noMutation(t *testing.T, calls [][]string) {
 	t.Helper()
+	if err := mountBoundaryError(calls, "", ""); err != nil {
+		t.Fatal(err)
+	}
 	for _, call := range calls {
 		args := call
 		if len(args) >= 2 && args[0] == "--connection" {
