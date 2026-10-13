@@ -60,6 +60,7 @@ func (f Fakes) Env(base []string) []string {
 		"PATH":            f.Dir,
 		"TEST_PODMAN_LOG": f.PodmanLog, "TEST_SSH_LOG": f.SSHLog,
 		"TEST_PODMAN_OUTPUT": "", "TEST_PODMAN_EXIT": "0",
+		"TEST_PODMAN_RESPONSES": "", "TEST_PODMAN_ENV_LOG": "",
 		"TEST_SSH_OUTPUT": "", "TEST_SSH_EXIT": "0",
 		"SANDBOXED_AGENTS_GROUP": "default",
 		LiveTestsEnv:             "",
