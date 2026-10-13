@@ -268,9 +268,8 @@ func assertNoExternalCalls(t *testing.T, fakes testutil.Fakes) {
 }
 
 // TestAgentAndToolchainSelectionsUseDeliveredCatalogs proves unknown selections fail usage and "none" reaches preflight before the deferred up lifecycle through the built CLI binary.
-// Only --version, info --format json, or machine list --format json may reach Podman; SSH never runs.
+// Unknown selections make no external calls; none permits only Podman's preflight queries and never runs SSH.
 func TestAgentAndToolchainSelectionsUseDeliveredCatalogs(t *testing.T) {
-	fakes := testutil.Install(t, fakeExecutable)
 	cases := []struct {
 		option, value string
 		status        int
@@ -282,15 +281,20 @@ func TestAgentAndToolchainSelectionsUseDeliveredCatalogs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.option+"="+tc.value, func(t *testing.T) {
+			fakes := testutil.Install(t, fakeExecutable)
 			command := exec.Command(executable, "up", "demo", "--"+tc.option, tc.value)
 			command.Env = fakes.Env(os.Environ())
 			output, err := command.CombinedOutput()
 			if status := exitStatus(t, err); status != tc.status || !strings.Contains(string(output), tc.diagnostic) {
 				t.Fatalf("status=%d output=%q; want status=%d diagnostic=%q", status, output, tc.status, tc.diagnostic)
 			}
+			if tc.status == 2 {
+				assertNoExternalCalls(t, fakes)
+			} else {
+				assertOnlyPreflightQueries(t, fakes)
+			}
 		})
 	}
-	assertOnlyPreflightQueries(t, fakes)
 }
 
 // TestAgentCommandsRejectUnknownAgentsBeforeExternalCalls proves that every agent command rejects an unknown agent at step 1 through the built CLI binary before Podman or SSH runs.
