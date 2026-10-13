@@ -34,9 +34,12 @@ func TestMain(m *testing.M) {
 }
 
 type response struct {
-	Output string
-	Stderr string
-	Exit   int
+	Output    string
+	Stderr    string
+	Exit      int
+	EchoStdin bool
+	ReadyFile string
+	WaitFor   string
 }
 type fixture struct {
 	host      cli.Host
@@ -174,7 +177,17 @@ func (f *fixture) run(t *testing.T, args ...string) (int, string, [][]string) {
 func noMutation(t *testing.T, calls [][]string) {
 	t.Helper()
 	for _, call := range calls {
-		for _, arg := range call {
+		args := call
+		if len(args) >= 2 && args[0] == "--connection" {
+			args = args[2:]
+		}
+		if len(args) == 3 && args[0] == "volume" && args[1] == "exists" {
+			continue
+		}
+		if len(args) == 3 && args[0] == "volume" && args[1] == "inspect" {
+			continue
+		}
+		for _, arg := range args {
 			if arg == "build" || arg == "create" || arg == "start" || arg == "run" || arg == "volume" || arg == "rm" || arg == "rename" {
 				t.Fatalf("unexpected mutation: %v", calls)
 			}

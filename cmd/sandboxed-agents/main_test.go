@@ -190,7 +190,8 @@ func TestLiveOptInFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
 	}
 }
 
-// TestCommandGrammar proves command forms produce their expected success, preflight-failure, not-implemented, or usage status through the built CLI binary. Deferred commands permit only preflight queries; lifecycle forms may read container existence and reject incomplete inspect answers. SSH never runs.
+// TestCommandGrammar proves command forms produce their expected success, preflight-failure, not-implemented, or usage status through the built CLI binary.
+// Lifecycle, shell and fingerprint forms select the target, read container existence and reject incomplete inspect answers. Deferred commands permit only preflight queries, and SSH never runs.
 func TestCommandGrammar(t *testing.T) {
 	cases := []struct {
 		args   []string
@@ -230,7 +231,8 @@ func TestCommandGrammar(t *testing.T) {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			caseFakes := fakes
 			lifecycle := len(tc.args) > 0 && (tc.args[0] == "start" || tc.args[0] == "stop" || tc.args[0] == "restart" || tc.args[0] == "remove")
-			if tc.status == 2 || lifecycle {
+			existingSandbox := len(tc.args) > 0 && (tc.args[0] == "shell" || tc.args[0] == "fingerprint")
+			if tc.status == 2 || lifecycle || existingSandbox {
 				caseFakes = testutil.Install(t, fakeExecutable)
 			}
 			command := exec.Command(executable, tc.args...)
@@ -243,6 +245,24 @@ func TestCommandGrammar(t *testing.T) {
 			if (tc.status == 2) != strings.Contains(string(output), "usage:") {
 				t.Fatalf("unexpected diagnostic: %s", output)
 			}
+			if existingSandbox {
+				want := [][]string{
+					{"container", "exists", "sandboxed-agents.default.demo"},
+					{"container", "inspect", "sandboxed-agents.default.demo"},
+				}
+				if runtime.GOOS == "windows" {
+					want = [][]string{{"machine", "list", "--format", "json"}}
+				} else if !strings.Contains(string(output), "read container sandboxed-agents.default.demo: invalid inspect answer") {
+					t.Fatalf("incomplete container inspection was not rejected: %s", output)
+				}
+				if calls := testutil.Invocations(t, caseFakes.PodmanLog); !reflect.DeepEqual(calls, want) {
+					t.Fatalf("calls=%v want=%v", calls, want)
+				}
+				if calls := testutil.Invocations(t, caseFakes.SSHLog); len(calls) != 0 {
+					t.Fatalf("unexpected SSH calls: %v", calls)
+				}
+			}
+
 			if tc.status == 2 {
 				assertNoExternalCalls(t, caseFakes)
 			}

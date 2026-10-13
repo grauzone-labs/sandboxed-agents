@@ -101,6 +101,17 @@ func inspectSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 	return objects, nil
 }
 
+func requireRunning(request Request, objects sandboxObjects) (ObjectNames, error) {
+	names := DerivedNames(request.Group, request.Name)
+	if objects.container.State.Running == nil {
+		return names, fmt.Errorf("read container %s: running state is missing", names.Container)
+	}
+	if !*objects.container.State.Running {
+		return names, fmt.Errorf("sandbox %q is stopped; run sandboxed-agents start %s", request.Name, request.Name)
+	}
+	return names, nil
+}
+
 func changeSandboxState(request Request, p podmanTarget, output io.Writer) error {
 	name := DerivedNames(request.Group, request.Name).Container
 	objects, err := inspectSandbox(request, p)
