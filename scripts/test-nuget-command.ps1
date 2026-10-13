@@ -7,6 +7,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$global:nuget32DiagnosticScenario = $null
 if ($Scenario -eq 'windows-registry' -and $env:SANDBOXED_AGENTS_TEST_HKCU -cne '1') {
     throw 'Real user PATH registry integration requires SANDBOXED_AGENTS_TEST_HKCU=1.'
 }
@@ -53,6 +54,9 @@ class TestUserEnvironment {
 
 function Use-TestUserEnvironment {
     $global:testUserEnvironment = [TestUserEnvironment]::new()
+    if ($Scenario -cin @('path', 'path-aliases')) {
+        $global:nuget32DiagnosticScenario = $Scenario
+    }
     function global:Get-Item {
         param([string] $LiteralPath)
         if ($LiteralPath -cne 'Registry::HKEY_CURRENT_USER') { throw 'Installer read an unrelated registry key' }

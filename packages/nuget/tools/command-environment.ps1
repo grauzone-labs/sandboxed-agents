@@ -32,6 +32,15 @@ function Read-CommandUserPath($Key) {
     return [pscustomobject] @{ Key = $Key; Present = $present; Kind = $kind; Raw = $raw }
 }
 
+function Write-CommandNuGet32Debug([string] $Message) {
+    # Temporary probes are enabled only by the two fake-registry harness scenarios.
+    $scenario = Get-Variable -Name nuget32DiagnosticScenario -Scope Global -ValueOnly -ErrorAction SilentlyContinue
+    $fakeRegistry = Get-Variable -Name testUserEnvironment -Scope Global -ValueOnly -ErrorAction SilentlyContinue
+    if ($scenario -cin @('path', 'path-aliases') -and $null -ne $fakeRegistry -and $fakeRegistry.GetType().Name -ceq 'TestUserEnvironment') {
+        Write-Host "[DEBUG-nuget32] scenario=$scenario $Message"
+    }
+}
+
 function Test-CommandPathEntry([string] $Entry, [string] $Directory, [Microsoft.Win32.RegistryValueKind] $Kind = [Microsoft.Win32.RegistryValueKind]::String) {
     if (-not $Entry) { return $false }
     # Expandable registry strings expand only for comparison; stored entries are unchanged.
@@ -39,9 +48,21 @@ function Test-CommandPathEntry([string] $Entry, [string] $Directory, [Microsoft.
     if ($Kind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) {
         $expanded = [System.Environment]::ExpandEnvironmentVariables($expanded)
     }
-    if (-not [System.IO.Path]::IsPathFullyQualified($expanded)) { return $false }
-    try { $expanded = [System.IO.Path]::GetFullPath($expanded) } catch { return $false }
-    return [string]::Equals($expanded.TrimEnd('\', '/'), $Directory.TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)
+    $qualified = [System.IO.Path]::IsPathFullyQualified($expanded)
+    Write-CommandNuGet32Debug "IsPathFullyQualified=$qualified"
+    if (-not $qualified) { return $false }
+    try {
+        $expanded = [System.IO.Path]::GetFullPath($expanded)
+    } catch {
+        $exceptionType = $_.Exception.GetType().FullName
+        $innerExceptionType = if ($null -eq $_.Exception.InnerException) { '<none>' } else { $_.Exception.InnerException.GetType().FullName }
+        Write-CommandNuGet32Debug "GetFullPath exceptionType=$exceptionType innerExceptionType=$innerExceptionType"
+        return $false
+    }
+    Write-CommandNuGet32Debug 'GetFullPath exceptionType=<none>'
+    $equal = [string]::Equals($expanded.TrimEnd('\', '/'), $Directory.TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)
+    Write-CommandNuGet32Debug "normalizedEquality=$equal"
+    return $equal
 }
 
 function Get-CommandPathRecord([string] $Directory) {
@@ -50,6 +71,9 @@ function Get-CommandPathRecord([string] $Directory) {
     if (Test-Path -LiteralPath $file) {
         try {
             $saved = [System.IO.File]::ReadAllText($file) | ConvertFrom-Json
+            $entryType = if ($null -eq $saved.Entry) { '<null>' } else { $saved.Entry.GetType().FullName }
+            $wasEmptyType = if ($null -eq $saved.WasEmpty) { '<null>' } else { $saved.WasEmpty.GetType().FullName }
+            Write-CommandNuGet32Debug "JSON EntryType=$entryType WasEmptyType=$wasEmptyType"
             if ($saved.Entry -isnot [string] -or $saved.WasEmpty -isnot [bool] -or -not (Test-CommandPathEntry $saved.Entry $Directory)) {
                 throw 'Invalid PATH ownership record'
             }
