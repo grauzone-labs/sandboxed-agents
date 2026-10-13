@@ -246,10 +246,14 @@ type podmanTarget struct {
 }
 
 func (p podmanTarget) query(args ...string) (string, error) {
+	return p.queryContext(context.Background(), args...)
+}
+
+func (p podmanTarget) queryContext(ctx context.Context, args ...string) (string, error) {
 	if p.connection != "" {
 		args = append([]string{"--connection", p.connection}, args...)
 	}
-	command := exec.CommandContext(context.Background(), "podman", args...)
+	command := exec.CommandContext(ctx, "podman", args...)
 	command.Env = p.environment()
 	// Only stdout is query data. Preserve both streams in failure diagnostics so
 	// stderr warnings cannot corrupt successful JSON or plain-text responses.

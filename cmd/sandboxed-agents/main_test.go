@@ -704,7 +704,11 @@ func lifecycleLinuxHost(t *testing.T, fakes testutil.Fakes) cli.Host {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"newuidmap", "newgidmap", "pasta", "ssh-keygen"} {
-		if err := os.WriteFile(filepath.Join(fakes.Dir, name), data, 0700); err != nil {
+		suffix := ""
+		if runtime.GOOS == "windows" {
+			suffix = ".exe"
+		}
+		if err := os.WriteFile(filepath.Join(fakes.Dir, name+suffix), data, 0700); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1004,5 +1008,210 @@ func TestLifecycleDeferredSSHSetupDoesNotClaimSuccess(t *testing.T) {
 	}
 	if calls := testutil.Invocations(t, fakes.PodmanLog); len(lifecycleMutations(calls)) != 0 {
 		t.Fatalf("mutations=%v", calls)
+	}
+}
+
+// TestLifecycleSessionGuardNamesRunningSessions proves stop, restart, and remove refuse named running agent sessions without changes through RunWithHost.
+func TestLifecycleSessionGuardNamesRunningSessions(t *testing.T) {
+	for _, verb := range []string{"stop", "restart", "remove"} {
+		t.Run(verb, func(t *testing.T) {
+			responses := ownedLifecycleResponses(true)
+			responses["exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager sessions"] = lifecycleResponse{Output: "codex-main\nclaude-review\n"}
+			fakes := lifecycleHarness(t, responses)
+			status, output := lifecycleRun(verb, "demo")
+			if status == 0 || !strings.Contains(output, "codex-main") || !strings.Contains(output, "claude-review") || !strings.Contains(output, "--force") {
+				t.Fatalf("status=%d output=%s", status, output)
+			}
+			calls := testutil.Invocations(t, fakes.PodmanLog)
+			if len(lifecycleMutations(calls)) != 0 {
+				t.Fatalf("mutations=%v", calls)
+			}
+			if !reflect.DeepEqual(calls[len(calls)-1], []string{"exec", "--user=0:0", "sandboxed-agents.default.demo", "/usr/local/bin/sandboxed-agents-manager", "sessions"}) {
+				t.Fatalf("last call=%v", calls)
+			}
+		})
+	}
+}
+
+// TestLifecycleForceStillQueriesAndNamesEndedSessions proves force keeps the administrative session query and reports only sessions ended by a successful stop or restart through RunWithHost.
+func TestLifecycleForceStillQueriesAndNamesEndedSessions(t *testing.T) {
+	for _, verb := range []string{"stop", "restart"} {
+		for _, failed := range []bool{false, true} {
+			t.Run(verb+strconv.FormatBool(failed), func(t *testing.T) {
+				responses := ownedLifecycleResponses(true)
+				responses["exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager sessions"] = lifecycleResponse{Output: "codex-main\nclaude-review\n"}
+				if failed {
+					responses[verb+" sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 23}
+				}
+				fakes := lifecycleHarness(t, responses)
+				status, output := lifecycleRun(verb, "demo", "--force")
+				if !failed && (status != 0 || !strings.Contains(output, "ended agent sessions") || !strings.Contains(output, "codex-main") || !strings.Contains(output, "claude-review")) {
+					t.Fatalf("status=%d output=%s", status, output)
+				}
+				if failed && (status == 0 || strings.Contains(output, "ended agent sessions")) {
+					t.Fatalf("failed action claimed ended: status=%d output=%s", status, output)
+				}
+				calls := testutil.Invocations(t, fakes.PodmanLog)
+				if !reflect.DeepEqual(lifecycleMutations(calls), [][]string{{verb, "sandboxed-agents.default.demo"}}) {
+					t.Fatalf("mutations=%v", calls)
+				}
+				if !reflect.DeepEqual(calls[len(calls)-2], []string{"exec", "--user=0:0", "sandboxed-agents.default.demo", "/usr/local/bin/sandboxed-agents-manager", "sessions"}) {
+					t.Fatalf("query must immediately precede mutation: %v", calls)
+				}
+			})
+		}
+	}
+}
+
+// TestLifecycleUnavailableManagerRefusesOrReportsUnknownEndedSessions proves manager failures refuse without force and forced stop/restart report that possible sessions cannot be named through RunWithHost.
+func TestLifecycleUnavailableManagerRefusesOrReportsUnknownEndedSessions(t *testing.T) {
+	for _, verb := range []string{"stop", "restart", "remove"} {
+		for _, force := range []bool{false, true} {
+			if verb == "remove" && force {
+				continue
+			}
+			t.Run(verb+strconv.FormatBool(force), func(t *testing.T) {
+				responses := ownedLifecycleResponses(true)
+				responses["exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager sessions"] = lifecycleResponse{Exit: 125}
+				fakes := lifecycleHarness(t, responses)
+				args := []string{verb, "demo"}
+				if force {
+					args = append(args, "--force")
+				}
+				status, output := lifecycleRun(args...)
+				if force {
+					if status != 0 || !strings.Contains(output, "sessions that may have been running were ended") || !strings.Contains(output, "cannot be named") {
+						t.Fatalf("status=%d output=%s", status, output)
+					}
+				} else if status == 0 || !strings.Contains(output, "cannot rule out running sessions") || !strings.Contains(output, "--force") {
+					t.Fatalf("status=%d output=%s", status, output)
+				}
+				calls := testutil.Invocations(t, fakes.PodmanLog)
+				var want [][]string
+				if force {
+					want = [][]string{{verb, "sandboxed-agents.default.demo"}}
+				}
+				if !reflect.DeepEqual(lifecycleMutations(calls), want) {
+					t.Fatalf("mutations=%v want=%v", calls, want)
+				}
+				queries := 0
+				for _, call := range calls {
+					if call[0] == "exec" {
+						queries++
+					}
+				}
+				if queries != 1 {
+					t.Fatalf("manager queries=%d calls=%v", queries, calls)
+				}
+			})
+		}
+	}
+}
+
+// TestLifecycleUnresponsiveManagerCannotHoldCommandIndefinitely proves the administrative session query times out and refuses before mutation through RunWithHost.
+func TestLifecycleUnresponsiveManagerCannotHoldCommandIndefinitely(t *testing.T) {
+	responses := ownedLifecycleResponses(true)
+	responses["exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager sessions"] = lifecycleResponse{WaitFor: filepath.Join(t.TempDir(), "never-created")}
+	fakes := lifecycleHarness(t, responses)
+	start := time.Now()
+	status, output := lifecycleRun("stop", "demo")
+	if status == 0 || !strings.Contains(output, "cannot rule out running sessions") || !strings.Contains(output, "--force") || time.Since(start) > 5*time.Second {
+		t.Fatalf("elapsed=%s status=%d output=%s", time.Since(start), status, output)
+	}
+	if calls := testutil.Invocations(t, fakes.PodmanLog); len(lifecycleMutations(calls)) != 0 {
+		t.Fatalf("mutations=%v", calls)
+	}
+}
+
+// TestLifecycleForcedRemoveReportsSessionsAfterSuccessfulStop proves forced remove queries sessions, stops before deleting, and names ended sessions even when container deletion fails through RunWithHost.
+func TestLifecycleForcedRemoveReportsSessionsAfterSuccessfulStop(t *testing.T) {
+	for _, unavailable := range []bool{false, true} {
+		for _, failed := range []bool{false, true} {
+			t.Run(strconv.FormatBool(unavailable)+"/"+strconv.FormatBool(failed), func(t *testing.T) {
+				responses := ownedLifecycleResponses(true)
+				query := lifecycleResponse{Output: "codex-main\n"}
+				if unavailable {
+					query.Exit = 125
+					query.Output = "partial-unsafe-name\n"
+				}
+				responses["exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager sessions"] = query
+				responses["rm sandboxed-agents.default.demo"] = lifecycleResponse{}
+				if failed {
+					responses["rm sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 23}
+				}
+				fakes := lifecycleHarness(t, responses)
+				status, output := lifecycleRun("remove", "demo", "--force")
+				if (status != 0) != failed {
+					t.Fatalf("status=%d output=%s", status, output)
+				}
+				if unavailable {
+					if !strings.Contains(output, "sessions that may have been running were ended") || !strings.Contains(output, "cannot be named") || strings.Contains(output, "partial-unsafe-name") {
+						t.Fatalf("output=%s", output)
+					}
+				} else if !strings.Contains(output, "ended agent sessions: codex-main") {
+					t.Fatalf("output=%s", output)
+				}
+				calls := testutil.Invocations(t, fakes.PodmanLog)
+				if !reflect.DeepEqual(lifecycleMutations(calls), [][]string{{"stop", "sandboxed-agents.default.demo"}, {"rm", "sandboxed-agents.default.demo"}}) {
+					t.Fatalf("mutations=%v", calls)
+				}
+				if !reflect.DeepEqual(calls[len(calls)-3], []string{"exec", "--user=0:0", "sandboxed-agents.default.demo", "/usr/local/bin/sandboxed-agents-manager", "sessions"}) {
+					t.Fatalf("query must immediately precede stop: %v", calls)
+				}
+			})
+		}
+	}
+}
+
+// TestLifecycleLockCoversSessionGuardAndMutation proves the lock remains held through manager queries and Podman changes and releases on return through RunWithHost.
+func TestLifecycleLockCoversSessionGuardAndMutation(t *testing.T) {
+	for _, phase := range []string{"manager", "mutation"} {
+		t.Run(phase, func(t *testing.T) {
+			dir := t.TempDir()
+			ready, release := filepath.Join(dir, "ready"), filepath.Join(dir, "release")
+			responses := ownedLifecycleResponses(true)
+			key := "stop sandboxed-agents.default.demo"
+			if phase == "manager" {
+				key = "exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager sessions"
+			}
+			responses[key] = lifecycleResponse{ReadyFile: ready, WaitFor: release}
+			fakes := lifecycleHarness(t, responses)
+			done := make(chan struct{})
+			go func() { defer close(done); lifecycleRun("stop", "demo") }()
+			released := false
+			defer func() {
+				if !released {
+					os.WriteFile(release, nil, 0600)
+					<-done
+				}
+			}()
+			deadline := time.Now().Add(2 * time.Second)
+			for {
+				if _, err := os.Stat(ready); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("command did not reach held phase")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			before := testutil.Invocations(t, fakes.PodmanLog)
+			status, output := lifecycleRun("remove", "demo")
+			if status == 0 || !strings.Contains(output, "another lifecycle command is in progress") {
+				t.Fatalf("status=%d output=%s", status, output)
+			}
+			if after := testutil.Invocations(t, fakes.PodmanLog); !reflect.DeepEqual(before, after) {
+				t.Fatalf("competing lookup=%v", after)
+			}
+			if err := os.WriteFile(release, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			<-done
+			released = true
+			status, output = lifecycleRun("start", "demo")
+			if status != 0 {
+				t.Fatalf("lock not released: status=%d output=%s", status, output)
+			}
+		})
 	}
 }
