@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -236,9 +237,17 @@ func (p podmanTarget) query(args ...string) (string, error) {
 	}
 	command := exec.CommandContext(context.Background(), "podman", args...)
 	command.Env = p.environment()
-	output, err := command.CombinedOutput()
+	// Only stdout is query data. Preserve both streams in failure diagnostics so
+	// stderr warnings cannot corrupt successful JSON or plain-text responses.
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	output, err := command.Output()
 	if err != nil {
-		return string(output), fmt.Errorf("podman %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+		diagnostics := strings.TrimSpace(stderr.String())
+		if stdout := strings.TrimSpace(string(output)); stdout != "" {
+			diagnostics = strings.TrimSpace(stdout + "\n" + diagnostics)
+		}
+		return string(output), fmt.Errorf("podman %s: %w: %s", strings.Join(args, " "), err, diagnostics)
 	}
 	return string(output), nil
 }

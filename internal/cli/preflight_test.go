@@ -35,6 +35,7 @@ func TestMain(m *testing.M) {
 
 type response struct {
 	Output string
+	Stderr string
 	Exit   int
 }
 type fixture struct {
@@ -42,6 +43,49 @@ type fixture struct {
 	fakes     testutil.Fakes
 	files     map[string]string
 	responses map[string]response
+}
+
+// TestCheckParsesInfoStdoutDespiteStderrWarning proves a successful JSON info response remains usable with a stderr warning through RunWithHost and fake Podman processes.
+func TestCheckParsesInfoStdoutDespiteStderrWarning(t *testing.T) {
+	f := linuxHost(t)
+	info := f.responses["info --format json"]
+	info.Stderr = "time=warning level=warning msg=\"logrus warning\"\n"
+	f.responses["info --format json"] = info
+	status, output, calls := f.run(t, "check")
+	if status != 0 || !strings.Contains(output, "host prerequisites satisfied") {
+		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("calls=%v", calls)
+	}
+	noMutation(t, calls)
+}
+
+// TestQueryFailurePreservesDiagnosticStreams proves nonzero queries keep their exit status and stdout/stderr diagnostics through RunWithHost and fake Podman processes.
+func TestQueryFailurePreservesDiagnosticStreams(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		value    response
+		messages []string
+	}{
+		{"stderr-only", response{Stderr: " stderr diagnostic \n", Exit: 125}, []string{"stderr diagnostic"}},
+		{"both-streams", response{Output: "stdout diagnostic\n", Stderr: " stderr diagnostic \n", Exit: 125}, []string{"stdout diagnostic", "stderr diagnostic"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := linuxHost(t)
+			f.responses["info --format json"] = tc.value
+			status, output, calls := f.run(t, "check")
+			if status != 1 || !strings.Contains(output, "podman info --format json: exit status 125:") {
+				t.Fatalf("status=%d output=%q", status, output)
+			}
+			for _, message := range tc.messages {
+				if !strings.Contains(output, message) {
+					t.Fatalf("missing %q from failure: %s", message, output)
+				}
+			}
+			noMutation(t, calls)
+		})
+	}
 }
 
 func linuxHost(t *testing.T) *fixture {
