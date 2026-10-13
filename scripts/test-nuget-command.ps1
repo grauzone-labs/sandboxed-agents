@@ -19,6 +19,7 @@ class TestUserEnvironment {
     [string] $Value
     [Microsoft.Win32.RegistryValueKind] $Kind
     [bool] $Present = $true
+    [bool] $FailNextWrite = $false
     [int] $Writes = 0
     [object] CreateSubKey([string] $Name) {
         if ($Name -cne 'Environment') { throw 'Installer opened an unrelated registry key' }
@@ -36,6 +37,10 @@ class TestUserEnvironment {
     [Microsoft.Win32.RegistryValueKind] GetValueKind([string] $Name) { return $this.Kind }
     [void] SetValue([string] $Name, [object] $Value, [Microsoft.Win32.RegistryValueKind] $Kind) {
         if ($Name -ine 'Path') { throw 'Installer changed an unrelated registry value' }
+        if ($this.FailNextWrite) {
+            $this.FailNextWrite = $false
+            throw 'Simulated user PATH write failure'
+        }
         $this.Value = $Value
         $this.Kind = $Kind
         $this.Present = $true
@@ -78,6 +83,31 @@ $installer = Join-Path $tools 'install-command.ps1'
 $remover = Join-Path $tools 'remove-command.ps1'
 
 switch ($Scenario) {
+    'path-write-failure' {
+        Use-TestUserEnvironment
+        $global:testUserEnvironment.Kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+        $global:testUserEnvironment.Value = 'C:\existing-command'
+        $global:testUserEnvironment.FailNextWrite = $true
+        $failure = $null
+        try { & $installer -InstallDirectory $install } catch { $failure = $_ }
+        if (-not $failure -or $failure.ToString() -notmatch 'Simulated user PATH write failure') { throw 'Installer did not propagate user PATH write failure' }
+        if (Test-Path -LiteralPath (Join-Path $install '.sandboxed-agents-path-state')) { throw 'Failed user PATH write left an ownership record behind' }
+        $global:testUserEnvironment.Value = $install
+        & $remover -InstallDirectory $install
+        Assert-Equal $global:testUserEnvironment.Value $install 'Removal preserves a later user-added install PATH entry after the failed write'
+
+        $global:testUserEnvironment.Value = 'C:\existing-command'
+        & $installer -InstallDirectory $install
+        $global:testUserEnvironment.Value = 'C:\updated-command'
+        $global:testUserEnvironment.FailNextWrite = $true
+        $failure = $null
+        try { & $installer -InstallDirectory $install } catch { $failure = $_ }
+        if (-not $failure -or $failure.ToString() -notmatch 'Simulated user PATH write failure') { throw 'Upgrade did not propagate user PATH write failure' }
+        if (-not (Test-Path -LiteralPath (Join-Path $install '.sandboxed-agents-path-state'))) { throw 'Failed upgrade PATH write removed the existing ownership record' }
+        $global:testUserEnvironment.Value += ';' + $install
+        & $remover -InstallDirectory $install
+        Assert-Equal $global:testUserEnvironment.Value 'C:\updated-command' 'Removal still removes the installer-owned entry after a failed upgrade PATH write'
+    }
     'path-registry-kind' {
         $env:LOCALAPPDATA = Join-Path $TestDirectory 'local app data'
         $install = Join-Path $env:LOCALAPPDATA 'Programs/sandboxed-agents'
