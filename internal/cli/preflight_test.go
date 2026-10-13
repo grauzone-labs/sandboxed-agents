@@ -238,3 +238,20 @@ func TestLinuxHostRootControllersAreNotDelegation(t *testing.T) {
 	}
 	noMutation(t, calls)
 }
+
+// TestCheckNamedSandboxSkipsPreflight proves check NAME reaches its deferred sandbox diagnostic without querying a broken host through RunWithHost and the fake process seam.
+func TestCheckNamedSandboxSkipsPreflight(t *testing.T) {
+	f := linuxHost(t)
+	f.responses["--version"] = response{Output: "unusable Podman", Exit: 125}
+	f.responses["info --format json"] = response{Output: "unusable Podman", Exit: 125}
+	status, output, calls := f.run(t, "check", "demo")
+	if status != 1 || output != "check NAME: sandbox checks are not implemented\n" {
+		t.Fatalf("status=%d output=%q", status, output)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("named sandbox check ran preflight: %v", calls)
+	}
+	if calls := testutil.Invocations(t, f.fakes.SSHLog); len(calls) != 0 {
+		t.Fatalf("unexpected SSH calls: %v", calls)
+	}
+}

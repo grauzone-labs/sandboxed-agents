@@ -15,7 +15,14 @@ import (
 // The caller supplies a Podman runner bound to the target checked by its preflight.
 // A nil source uses Context. Rebuild flags and image labels belong to the caller's runner.
 // It returns the image tag only when the build and cleanup both succeed.
-func Build(ctx context.Context, source fs.FS, podman func(context.Context, ...string) error) (tag string, err error) {
+func Build(ctx context.Context, source fs.FS, podman func(context.Context, ...string) error) (string, error) {
+	return BuildWithToolchains(ctx, source, nil, podman)
+}
+
+// BuildWithToolchains uses the caller's validated toolchain set for image identity.
+// The supplied build context determines the installed contents. Like Build,
+// it returns a tag only when the Podman build and context cleanup both succeed.
+func BuildWithToolchains(ctx context.Context, source fs.FS, toolchains []string, podman func(context.Context, ...string) error) (tag string, err error) {
 	if podman == nil {
 		return "", fmt.Errorf("image build requires a checked Podman runner")
 	}
@@ -55,7 +62,7 @@ func Build(ctx context.Context, source fs.FS, podman func(context.Context, ...st
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	imageTag := Tag(hash, nil)
+	imageTag := Tag(hash, toolchains)
 	if err := podman(ctx, "build", "--file", filepath.Join(directory, filepath.FromSlash(containerfile)), "--tag", imageTag, filepath.Join(directory, "base")); err != nil {
 		return "", fmt.Errorf("build image %s: %w", imageTag, err)
 	}

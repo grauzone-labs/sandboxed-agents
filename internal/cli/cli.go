@@ -37,7 +37,15 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		fmt.Fprintln(stderr, "usage: sandboxed-agents COMMAND [ARG...]")
 		return 2
 	}
-	if request.Command == "version" {
+	checkedTarget := func() (podmanTarget, error) {
+		target, err := preflight(host.defaults())
+		if err != nil {
+			fmt.Fprintln(stderr, "step 2:", err)
+		}
+		return target, err
+	}
+	switch request.Command {
+	case "version":
 		hash, err := image.Hash(image.Context())
 		if err != nil {
 			fmt.Fprintln(stderr, err)
@@ -46,34 +54,33 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		fmt.Fprintln(stdout, "sandboxed-agents", version)
 		fmt.Fprintln(stdout, "asset-sha256", hash)
 		return 0
-	}
-	var target podmanTarget
-	if request.Command == "check" || request.Command == "build" || request.Command == "up" {
-		target, err = preflight(host.defaults())
-		if err != nil {
-			fmt.Fprintln(stderr, "step 2:", err)
+	case "check":
+		if request.Name != "" {
+			fmt.Fprintln(stderr, "check NAME: sandbox checks are not implemented")
 			return 1
 		}
-		if request.Command == "check" {
-			if request.Name != "" {
-				fmt.Fprintln(stderr, "check NAME: sandbox checks are not implemented")
-				return 1
-			}
-			fmt.Fprintln(stdout, "host prerequisites satisfied")
-			return 0
+		if _, err := checkedTarget(); err != nil {
+			return 1
 		}
-
-	}
-	if request.Command == "build" {
-		tag, err := buildImage(target, stdout)
+		fmt.Fprintln(stdout, "host prerequisites satisfied")
+		return 0
+	case "build":
+		target, err := checkedTarget()
+		if err != nil {
+			return 1
+		}
+		tag, err := buildImage(target, request.Toolchains, stdout)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		fmt.Fprintln(stdout, "built image", tag)
 		return 0
-	}
-	if request.Command == "up" {
+	case "up":
+		target, err := checkedTarget()
+		if err != nil {
+			return 1
+		}
 		if err := prepareUp(request, target, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1

@@ -71,7 +71,6 @@ type machine struct {
 	Name    string
 	Default bool
 	VMType  string
-	Running bool
 }
 
 func selectWindowsTarget(p podmanTarget) (podmanTarget, error) {
