@@ -17,7 +17,7 @@ func windowsHost(t *testing.T) *fixture {
 	f.responses = map[string]response{
 		"--connection chosen " + portInventory:      {Output: "[]"},
 		"--version":                                 {Output: "podman version 4.7.0"},
-		"machine list --format json":                {Output: `[{"Name":"chosen","Default":true,"VMType":"wsl","Running":true}]`},
+		"machine list --format json":                {Output: `[{"Name":"chosen","Default":true,"VMType":"wsl"}]`},
 		"machine inspect chosen":                    {Output: `[{"Name":"chosen","State":"running","Rootful":false}]`},
 		"--connection chosen version --format json": {Output: `{"Client":{"Version":"4.7.0"},"Server":{"Version":"4.7.0"}}`},
 		"--connection chosen info --format json":    {Output: `{"host":{"security":{"rootless":true},"cgroupVersion":"v2"}}`},
@@ -167,9 +167,6 @@ func TestWindowsQueriesFailClosed(t *testing.T) {
 // TestWindowsControllerQueriesUseSimpleMachineCommands proves delegation discovery uses simple machine-named read-only argv through RunWithHost and fake Podman.
 func TestWindowsControllerQueriesUseSimpleMachineCommands(t *testing.T) {
 	f := windowsHost(t)
-	f.responses["machine ssh chosen id -u"] = response{Output: "1000\n"}
-	f.responses["machine ssh chosen cat /proc/self/cgroup"] = response{Output: "0::/user.slice/user-1000.slice/session-1.scope\n"}
-	f.responses["machine ssh chosen cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers"] = response{Output: "cpu memory pids"}
 	status, output, calls := f.run(t, "check")
 	if status != 0 {
 		t.Fatalf("status=%d output=%q", status, output)
@@ -192,7 +189,6 @@ func TestWindowsControllerQueriesUseSimpleMachineCommands(t *testing.T) {
 // TestWindowsPreflightReportsMissingPodmanDependencies proves a missing client reports every dependent Windows prerequisite as unverifiable without querying or starting a machine through RunWithHost.
 func TestWindowsPreflightReportsMissingPodmanDependencies(t *testing.T) {
 	f := windowsHost(t)
-	f.responses["machine inspect chosen"] = response{Output: `[{"Name":"chosen","State":"stopped","Rootful":false}]`}
 	if err := os.Remove(fakePath(f, "podman")); err != nil {
 		t.Fatal(err)
 	}
