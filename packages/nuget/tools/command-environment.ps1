@@ -32,13 +32,44 @@ function Read-CommandUserPath($Key) {
     return [pscustomobject] @{ Key = $Key; Present = $present; Kind = $kind; Raw = $raw }
 }
 
-function Write-CommandNuGet32Debug([string] $Message) {
-    # Temporary probes are enabled only by the two fake-registry harness scenarios.
-    $scenario = Get-Variable -Name nuget32DiagnosticScenario -Scope Global -ValueOnly -ErrorAction SilentlyContinue
-    $fakeRegistry = Get-Variable -Name testUserEnvironment -Scope Global -ValueOnly -ErrorAction SilentlyContinue
-    if ($scenario -cin @('path', 'path-aliases') -and $null -ne $fakeRegistry -and $fakeRegistry.GetType().Name -ceq 'TestUserEnvironment') {
-        Write-Host "[DEBUG-nuget32] scenario=$scenario $Message"
+function Resolve-CommandPathForComparison([string] $Path) {
+    $Path = [System.IO.Path]::GetFullPath($Path)
+    if (-not $IsWindows) { return $Path }
+    # Windows PATH entries may use 8.3 names even when the install directory uses long names.
+    if (-not ('SandboxedAgents.PathCanonicalization' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+namespace SandboxedAgents {
+    public static class PathCanonicalization {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern uint GetLongPathName(string shortPath, StringBuilder longPath, uint bufferLength);
     }
+}
+'@
+    }
+    $suffix = [System.Collections.Generic.List[string]]::new()
+    $existing = $Path
+    while (-not [System.IO.Directory]::Exists($existing)) {
+        $parent = [System.IO.Path]::GetDirectoryName($existing)
+        if (-not $parent -or $parent -ceq $existing) { return $Path }
+        $suffix.Insert(0, [System.IO.Path]::GetFileName($existing))
+        $existing = $parent
+    }
+    $capacity = 260
+    while ($capacity -le 32768) {
+        $buffer = [System.Text.StringBuilder]::new($capacity)
+        $length = [SandboxedAgents.PathCanonicalization]::GetLongPathName($existing, $buffer, [uint32] $capacity)
+        if ($length -eq 0) { break }
+        if ($length -lt $capacity) {
+            $canonical = $buffer.ToString()
+            foreach ($segment in $suffix) { $canonical = Join-Path $canonical $segment }
+            return $canonical
+        }
+        $capacity = [int] $length + 1
+    }
+    return $Path
 }
 
 function Test-CommandPathEntry([string] $Entry, [string] $Directory, [Microsoft.Win32.RegistryValueKind] $Kind = [Microsoft.Win32.RegistryValueKind]::String) {
@@ -48,21 +79,14 @@ function Test-CommandPathEntry([string] $Entry, [string] $Directory, [Microsoft.
     if ($Kind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) {
         $expanded = [System.Environment]::ExpandEnvironmentVariables($expanded)
     }
-    $qualified = [System.IO.Path]::IsPathFullyQualified($expanded)
-    Write-CommandNuGet32Debug "IsPathFullyQualified=$qualified"
-    if (-not $qualified) { return $false }
+    if (-not [System.IO.Path]::IsPathFullyQualified($expanded)) { return $false }
     try {
-        $expanded = [System.IO.Path]::GetFullPath($expanded)
+        $expanded = Resolve-CommandPathForComparison $expanded
+        $Directory = Resolve-CommandPathForComparison $Directory
     } catch {
-        $exceptionType = $_.Exception.GetType().FullName
-        $innerExceptionType = if ($null -eq $_.Exception.InnerException) { '<none>' } else { $_.Exception.InnerException.GetType().FullName }
-        Write-CommandNuGet32Debug "GetFullPath exceptionType=$exceptionType innerExceptionType=$innerExceptionType"
         return $false
     }
-    Write-CommandNuGet32Debug 'GetFullPath exceptionType=<none>'
-    $equal = [string]::Equals($expanded.TrimEnd('\', '/'), $Directory.TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)
-    Write-CommandNuGet32Debug "normalizedEquality=$equal normalizedPath=<$expanded> directory=<$Directory>"
-    return $equal
+    return [string]::Equals($expanded.TrimEnd('\', '/'), $Directory.TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function Get-CommandPathRecord([string] $Directory) {
@@ -71,9 +95,6 @@ function Get-CommandPathRecord([string] $Directory) {
     if (Test-Path -LiteralPath $file) {
         try {
             $saved = [System.IO.File]::ReadAllText($file) | ConvertFrom-Json
-            $entryType = if ($null -eq $saved.Entry) { '<null>' } else { $saved.Entry.GetType().FullName }
-            $wasEmptyType = if ($null -eq $saved.WasEmpty) { '<null>' } else { $saved.WasEmpty.GetType().FullName }
-            Write-CommandNuGet32Debug "JSON EntryType=$entryType WasEmptyType=$wasEmptyType"
             if ($saved.Entry -isnot [string] -or $saved.WasEmpty -isnot [bool] -or -not (Test-CommandPathEntry $saved.Entry $Directory)) {
                 throw 'Invalid PATH ownership record'
             }
