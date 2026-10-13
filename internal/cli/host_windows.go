@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"syscall"
 	"unsafe"
 
@@ -16,30 +17,22 @@ func windowsWorkstation() (bool, error) {
 	return windows.RtlGetVersion().ProductType == workstationProductType, nil
 }
 
-// nativeSystemInfo matches SYSTEM_INFO, including its initial WORD union fields
-// and pointer-sized address and affinity fields on both 32-bit and 64-bit hosts.
-type nativeSystemInfo struct {
-	ProcessorArchitecture     uint16
-	Reserved                  uint16
-	PageSize                  uint32
-	MinimumApplicationAddress uintptr
-	MaximumApplicationAddress uintptr
-	ActiveProcessorMask       uintptr
-	NumberOfProcessors        uint32
-	ProcessorType             uint32
-	AllocationGranularity     uint32
-	ProcessorLevel            uint16
-	ProcessorRevision         uint16
-}
-
+// windowsNativeArchitecture uses IsWow64Process2 to report the true native
+// machine even when an AMD64 process runs under ARM64 emulation.
 func windowsNativeArchitecture() (uint16, error) {
-	procedure := syscall.NewLazyDLL("kernel32.dll").NewProc("GetNativeSystemInfo")
+	procedure := syscall.NewLazyDLL("kernel32.dll").NewProc("IsWow64Process2")
 	if err := procedure.Find(); err != nil {
 		return 0, err
 	}
-	var info nativeSystemInfo
-	// GetNativeSystemInfo reports the OS architecture even under emulation.
-	// It returns void, so Call's last-error value can be stale and is ignored.
-	procedure.Call(uintptr(unsafe.Pointer(&info)))
-	return info.ProcessorArchitecture, nil
+	var processMachine, nativeMachine uint16
+	// The process identifier can be AMD64 under ARM64 emulation; the native PE
+	// identifier is authoritative. GetNativeSystemInfo can report the emulated ISA.
+	result, _, callErr := procedure.Call(uintptr(windows.CurrentProcess()), uintptr(unsafe.Pointer(&processMachine)), uintptr(unsafe.Pointer(&nativeMachine)))
+	if result == 0 {
+		if callErr != nil && callErr != syscall.Errno(0) {
+			return 0, callErr
+		}
+		return 0, fmt.Errorf("IsWow64Process2 query failed")
+	}
+	return nativeMachine, nil
 }

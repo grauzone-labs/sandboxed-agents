@@ -11,7 +11,15 @@ import (
 )
 
 const minimumWindowsPodmanVersion = "4.7.0"
-const nativeAMD64Architecture = 9
+
+// IsWow64Process2 returns PE machine identifiers, identifying the native host
+// even when an AMD64 process is emulated on ARM64. Only PE AMD64 is supported.
+const (
+	// imageFileMachineAMD64 is the accepted native PE IMAGE_FILE_MACHINE_AMD64.
+	imageFileMachineAMD64 = 0x8664
+	// imageFileMachineARM64 is the unsupported native PE IMAGE_FILE_MACHINE_ARM64.
+	imageFileMachineARM64 = 0xAA64
+)
 
 // minimumWindows11Build is the first Windows 11 release's build number.
 const minimumWindows11Build = 22000
@@ -32,7 +40,7 @@ func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 	nativeArchitecture, architectureErr := p.host.WindowsNativeArchitecture()
 	if architectureErr != nil {
 		failures = append(failures, fmt.Errorf("Windows 11 x64 is required (native architecture query: %w)", architectureErr))
-	} else if nativeArchitecture != nativeAMD64Architecture {
+	} else if nativeArchitecture != imageFileMachineAMD64 {
 		failures = append(failures, fmt.Errorf("Windows 11 x64 is required (native architecture: %d)", nativeArchitecture))
 	}
 	for _, name := range []string{"ssh", "ssh-keygen"} {
@@ -174,10 +182,14 @@ func unverifiedMachineSelection(cause error) error {
 }
 
 func unverifiedMachinePrerequisites(cause error) []error {
-	return unverifiedPrerequisites(cause,
+	requirements := []string{
 		fmt.Sprintf("Podman machine >= %s is required", minimumWindowsPodmanVersion),
 		"rootless Podman is required", "cgroups v2 is required",
-		"delegated cgroup cpu controller is required", "delegated cgroup memory controller is required", "delegated cgroup pids controller is required")
+	}
+	for _, name := range requiredCgroupControllers {
+		requirements = append(requirements, controllerRequirement(name))
+	}
+	return unverifiedPrerequisites(cause, requirements...)
 }
 
 type machine struct {
@@ -260,7 +272,7 @@ func machineControllers(local podmanTarget, name string) (string, error) {
 	if err != nil || number == 0 {
 		return "", fmt.Errorf("read delegated cgroup controllers: invalid rootless machine UID %q", uid)
 	}
-	remote := Host{ReadFile: func(path string) ([]byte, error) {
+	readFile := func(path string) ([]byte, error) {
 		// Some machine transports join argv for a remote shell. Refuse a path
 		// requiring quoting rather than allow shell metacharacters from cgroup names.
 		if !machineReadPath.MatchString(path) {
@@ -268,8 +280,8 @@ func machineControllers(local podmanTarget, name string) (string, error) {
 		}
 		output, err := local.query("machine", "ssh", name, "cat", path)
 		return []byte(output), err
-	}}
-	return delegatedControllers(remote, uid)
+	}
+	return delegatedControllers(readFile, uid)
 }
 
 var machineReadPath = regexp.MustCompile(`^/[A-Za-z0-9_./:@-]+$`)

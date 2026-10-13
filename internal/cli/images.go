@@ -10,8 +10,15 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/image"
 )
 
-func (p podmanTarget) exists(kind, name string) (bool, error) {
-	_, err := p.query(kind, "exists", name)
+type resourceKind string
+
+const (
+	containerResource resourceKind = "container"
+	imageResource     resourceKind = "image"
+)
+
+func (p podmanTarget) exists(kind resourceKind, name string) (bool, error) {
+	_, err := p.query(string(kind), "exists", name)
 	if err == nil {
 		return true, nil
 	}
@@ -36,7 +43,7 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 	// Look up the container, validate/allocate its port from inventory, build a
 	// missing image, then report preparation. Container and volume creation
 	// belong to #14; ADR-0007's lifecycle lock belongs to #16.
-	exists, err := p.exists("container", DerivedNames(request.Group, request.Name).Container)
+	exists, err := p.exists(containerResource, DerivedNames(request.Group, request.Name).Container)
 	if err != nil {
 		return err
 	}
@@ -52,7 +59,7 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		return err
 	}
 	tag := image.Tag(hash, request.Toolchains)
-	exists, err = p.exists("image", tag)
+	exists, err = p.exists(imageResource, tag)
 	if err != nil {
 		return err
 	}

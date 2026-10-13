@@ -17,7 +17,7 @@ func windowsHost(t *testing.T) *fixture {
 	f.host.Platform = "windows"
 	f.host.WindowsBuild = func() (uint32, error) { return 22621, nil }
 	f.host.WindowsWorkstation = func() (bool, error) { return true, nil }
-	f.host.WindowsNativeArchitecture = func() (uint16, error) { return 9, nil }
+	f.host.WindowsNativeArchitecture = func() (uint16, error) { return 0x8664, nil }
 	f.responses = map[string]response{
 		"--connection chosen " + portInventory:      {Output: "[]"},
 		"--version":                                 {Output: "podman version 4.7.0"},
@@ -84,7 +84,7 @@ func TestWindowsAutomountExistenceFailureStopsWork(t *testing.T) {
 	}
 }
 
-// TestWindowsPreflightUsesNativeArchitecture proves native AMD64 is accepted independently of process architecture while ARM64 and lookup errors refuse work through RunWithHost and fake Podman processes.
+// TestWindowsPreflightUsesNativeArchitecture proves native PE AMD64 is accepted independently of process architecture while emulated ARM64, other architectures, and query errors refuse work through RunWithHost and fake Podman processes.
 func TestWindowsPreflightUsesNativeArchitecture(t *testing.T) {
 	for _, tc := range []struct {
 		name, process, message string
@@ -92,9 +92,11 @@ func TestWindowsPreflightUsesNativeArchitecture(t *testing.T) {
 		lookupErr              error
 		status                 int
 	}{
-		{"native-amd64", "386", "host prerequisites satisfied", 9, nil, 0},
-		{"native-arm64", "amd64", "Windows 11 x64 is required", 12, nil, 1},
+		{"native-amd64", "386", "host prerequisites satisfied", 0x8664, nil, 0},
+		{"emulated-arm64", "amd64", "Windows 11 x64 is required", 0xAA64, nil, 1},
+		{"native-i386", "amd64", "Windows 11 x64 is required", 0x014c, nil, 1},
 		{"lookup-failure", "amd64", "native architecture query: lookup unavailable", 0, errors.New("lookup unavailable"), 1},
+		{"query-failure", "amd64", "native architecture query: query unavailable", 0, errors.New("query unavailable"), 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := windowsHost(t)
@@ -166,7 +168,7 @@ func TestWindowsPreflightMissingPrerequisites(t *testing.T) {
 		{"ssh", "ssh is required on PATH", func(t *testing.T, f *fixture) { os.Remove(fakePath(f, "ssh")) }},
 		{"ssh-keygen", "ssh-keygen is required on PATH", func(t *testing.T, f *fixture) { os.Remove(fakePath(f, "ssh-keygen")) }},
 		{"architecture", "Windows 11 x64 is required", func(t *testing.T, f *fixture) {
-			f.host.WindowsNativeArchitecture = func() (uint16, error) { return 12, nil }
+			f.host.WindowsNativeArchitecture = func() (uint16, error) { return 0xAA64, nil }
 		}},
 		{"machine-rootful-unknown", "a rootless Podman machine is required", func(t *testing.T, f *fixture) {
 			f.responses["machine inspect chosen"] = response{Output: `[{"Name":"chosen","State":"running"}]`}
