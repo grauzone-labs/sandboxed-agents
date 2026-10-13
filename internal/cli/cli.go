@@ -100,6 +100,10 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		if err != nil {
 			return 1
 		}
+		if err := checkWorkspaceAutomount(request, target); err != nil {
+			fmt.Fprintln(stderr, "step 2:", err)
+			return 1
+		}
 		lock, err := acquireLifecycleLock(stateRoot, request)
 		if err != nil {
 			fmt.Fprintln(stderr, "step 3:", err)

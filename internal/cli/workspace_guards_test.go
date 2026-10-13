@@ -67,7 +67,7 @@ func TestWindowsWorkspaceRefusesCustomAutomountAfterPreflight(t *testing.T) {
 		return `C:\workspace`, nil
 	}
 	status, output, calls := f.run(t, "up", "agent01", directory)
-	if status != 1 || !strings.Contains(output, "custom WSL automount root") || !strings.Contains(output, "/custom/drives/") {
+	if status != 1 || !strings.HasPrefix(output, "step 2:") || !strings.Contains(output, "custom WSL automount root") || !strings.Contains(output, "/custom/drives/") {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
 	expectedLast := strings.Fields(windowsAutomountRead)
@@ -269,5 +269,19 @@ func TestWindowsNonDriveWorkspaceFailsBeforePreflight(t *testing.T) {
 				t.Fatalf("unsupported workspace reached host SSH: %v", calls)
 			}
 		})
+	}
+}
+
+// TestWindowsWorkspaceMissingStateUsesHostStateDiagnostic proves a missing Windows state root reports the shared host-state requirement before external queries through RunWithHost.
+func TestWindowsWorkspaceMissingStateUsesHostStateDiagnostic(t *testing.T) {
+	f := windowsHost(t)
+	t.Setenv("LOCALAPPDATA", "")
+	status, output, calls := f.run(t, "up", "agent01", t.TempDir())
+	want := "step 1: LOCALAPPDATA is required for host state\nusage: sandboxed-agents COMMAND [ARG...]\n"
+	if status != 2 || output != want || len(calls) != 0 {
+		t.Fatalf("status=%d output=%q calls=%v; want shared host-state diagnostic=%q", status, output, calls, want)
+	}
+	if calls := testutil.Invocations(t, f.fakes.SSHLog); len(calls) != 0 {
+		t.Fatalf("missing state reached host SSH: %v", calls)
 	}
 }

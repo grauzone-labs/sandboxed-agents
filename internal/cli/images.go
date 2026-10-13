@@ -48,9 +48,6 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 	if len(request.Args) == 2 {
 		workspace = request.Args[1]
 	}
-	if len(request.Args) == 2 && p.host.Platform == "windows" && p.automountRoot != "/mnt/" && p.automountRoot != "/mnt" {
-		return fmt.Errorf("workspace binds are unsupported with custom WSL automount root %q on machine %q", p.automountRoot, p.connection)
-	}
 	if workspace != "" && p.host.Platform == "windows" {
 		var err error
 		workspace, err = windowsWorkspacePath(workspace)

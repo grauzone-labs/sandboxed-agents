@@ -87,8 +87,8 @@ func parseSSHPort(value string) (uint16, error) {
 }
 
 func loopbackPortAvailable(port uint16) error {
-	// This is an availability probe, not a reservation. #14 must still treat a
-	// failed Podman publication as failure; another process can bind after close.
+	// This is an availability probe, not a reservation. The command must fail
+	// if Podman cannot publish the port; another process can bind after close.
 	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))))
 	if err != nil {
 		return err
