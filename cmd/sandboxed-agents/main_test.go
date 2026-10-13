@@ -191,7 +191,7 @@ func TestLiveOptInFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
 }
 
 // TestCommandGrammar proves command forms produce their expected success, preflight-failure, not-implemented, or usage status through the built CLI binary.
-// Before a deferred stub, only --version, info --format json, or machine list --format json may reach Podman; SSH never runs.
+// Deferred commands permit only preflight queries; lifecycle forms may read container existence and reject incomplete inspect answers. SSH never runs.
 func TestCommandGrammar(t *testing.T) {
 	cases := []struct {
 		args   []string
@@ -777,6 +777,7 @@ func ownedLifecycleResponses(running bool) map[string]lifecycleResponse {
 		"start sandboxed-agents.default.demo":                                                            {},
 		"stop sandboxed-agents.default.demo":                                                             {},
 		"restart sandboxed-agents.default.demo":                                                          {},
+		"rm sandboxed-agents.default.demo":                                                               {},
 	}
 }
 
@@ -952,7 +953,7 @@ func TestLifecyclePodmanFailuresDoNotReportSuccessOrRetry(t *testing.T) {
 
 // TestLifecycleWindowsSelectsOneTargetWithoutPreflight proves machine queries alone select and bind lifecycle operations while stripping ambient targets through RunWithHost.
 func TestLifecycleWindowsSelectsOneTargetWithoutPreflight(t *testing.T) {
-	for _, verb := range []string{"start", "stop", "restart"} {
+	for _, verb := range []string{"start", "stop", "restart", "remove"} {
 		t.Run(verb, func(t *testing.T) {
 			responses := map[string]lifecycleResponse{
 				"machine list --format json": {Output: `[{"Name":"chosen","Default":true,"VMType":"wsl"}]`},
@@ -1213,5 +1214,211 @@ func TestLifecycleLockCoversSessionGuardAndMutation(t *testing.T) {
 				t.Fatalf("lock not released: status=%d output=%s", status, output)
 			}
 		})
+	}
+}
+
+// TestLifecycleRemoveRetainsVolumesAndBindWorkspace proves removal keeps all named volumes and bound data, reports retained names and SSH authorization, and skips stop/query for stopped sandboxes through RunWithHost.
+func TestLifecycleRemoveRetainsVolumesAndBindWorkspace(t *testing.T) {
+	for _, running := range []bool{false, true} {
+		t.Run(strconv.FormatBool(running), func(t *testing.T) {
+			responses := ownedLifecycleResponses(running)
+			workspace := filepath.Join(t.TempDir(), "workspace.txt")
+			if err := os.WriteFile(workspace, []byte("project data"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			responses["container inspect sandboxed-agents.default.demo"] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default"}},"State":{"Running":` + strconv.FormatBool(running) + `},"Mounts":[{"Type":"bind","Source":` + strconv.Quote(filepath.Dir(workspace)) + `,"Destination":"/workspace"}]}]`}
+			volumes := []string{"sandboxed-agents.default.demo.workspace", "sandboxed-agents.default.demo.home", "sandboxed-agents.default.demo.ssh"}
+			for _, name := range volumes {
+				responses["volume exists "+name] = lifecycleResponse{}
+				responses["volume inspect "+name] = lifecycleResponse{Output: `[{"Labels":{"io.sandboxed-agents.owner":"default"}}]`}
+			}
+			responses["rm sandboxed-agents.default.demo"] = lifecycleResponse{}
+			fakes := lifecycleHarness(t, responses)
+			var output bytes.Buffer
+			status := cli.RunWithHost([]string{"remove", "demo"}, &output, &output, cli.Host{Platform: "linux"})
+			if status != 0 {
+				t.Fatalf("status=%d output=%s", status, output.String())
+			}
+			for _, name := range volumes {
+				if !strings.Contains(output.String(), "kept volume "+name) {
+					t.Fatalf("retained volume not reported: %s", output.String())
+				}
+			}
+			if !strings.Contains(output.String(), "authorization remains") || !strings.Contains(output.String(), "ssh-config demo --install") {
+				t.Fatalf("SSH authorization not reported: %s", output.String())
+			}
+			data, err := os.ReadFile(workspace)
+			if err != nil || string(data) != "project data" {
+				t.Fatalf("workspace=%s error=%v", data, err)
+			}
+			calls := testutil.Invocations(t, fakes.PodmanLog)
+			want := [][]string{{"rm", "sandboxed-agents.default.demo"}}
+			if running {
+				want = append([][]string{{"stop", "sandboxed-agents.default.demo"}}, want...)
+			}
+			if !reflect.DeepEqual(lifecycleMutations(calls), want) {
+				t.Fatalf("mutations=%v want=%v", calls, want)
+			}
+			for _, call := range calls {
+				if call[0] == "volume" && call[1] != "exists" && call[1] != "inspect" {
+					t.Fatalf("volume mutation=%v", calls)
+				}
+				if !running && call[0] == "exec" {
+					t.Fatalf("query for stopped sandbox=%v", calls)
+				}
+			}
+			if calls := testutil.Invocations(t, fakes.SSHLog); len(calls) != 0 {
+				t.Fatalf("SSH calls=%v", calls)
+			}
+		})
+	}
+}
+
+// TestLifecycleRemoveFailureAndDeferredVolumesChangeNothingFurther proves stop failures prevent deletion and remove --volumes remains deferred before session query or mutation through RunWithHost.
+func TestLifecycleRemoveFailureAndDeferredVolumesChangeNothingFurther(t *testing.T) {
+	for _, kind := range []string{"stop-failure", "volumes-deferred"} {
+		t.Run(kind, func(t *testing.T) {
+			responses := ownedLifecycleResponses(true)
+			responses["stop sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 23}
+			fakes := lifecycleHarness(t, responses)
+			args := []string{"remove", "demo", "--force"}
+			wantMessage := "exit status 23"
+			want := [][]string{{"stop", "sandboxed-agents.default.demo"}}
+			if kind == "volumes-deferred" {
+				args = append(args, "--volumes")
+				wantMessage = "remove --volumes: not implemented"
+				want = nil
+			}
+			status, output := lifecycleRun(args...)
+			if status == 0 || !strings.Contains(output, wantMessage) || strings.Contains(output, "removed sandbox") || strings.Contains(output, "were ended") {
+				t.Fatalf("status=%d output=%s", status, output)
+			}
+			calls := testutil.Invocations(t, fakes.PodmanLog)
+			if !reflect.DeepEqual(lifecycleMutations(calls), want) {
+				t.Fatalf("mutations=%v want=%v", calls, want)
+			}
+			if kind == "volumes-deferred" {
+				for _, call := range calls {
+					if call[0] == "exec" {
+						t.Fatalf("session query before unavailable precondition: %v", calls)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestLifecycleWindowsRejectsUnacceptableTargetBeforeLockOrLookup proves unavailable, ambiguous, unreadable, stopped, non-WSL2, and rootful machines block all lifecycle commands through RunWithHost.
+func TestLifecycleWindowsRejectsUnacceptableTargetBeforeLockOrLookup(t *testing.T) {
+	for _, kind := range []string{"no-machine", "ambiguous", "malformed", "invalid-name", "stopped", "provider", "rootful", "unknown-rootful", "inspect-failure"} {
+		for _, verb := range []string{"start", "stop", "restart", "remove"} {
+			t.Run(kind+"/"+verb, func(t *testing.T) {
+				list := lifecycleResponse{Output: `[{"Name":"chosen","VMType":"wsl"}]`}
+				inspect := lifecycleResponse{Output: `[{"Name":"chosen","State":"running","Rootful":false}]`}
+				switch kind {
+				case "no-machine":
+					list.Output = "[]"
+				case "ambiguous":
+					list.Output = `[{"Name":"a","VMType":"wsl"},{"Name":"b","VMType":"wsl"}]`
+				case "malformed":
+					list.Output = "{"
+				case "invalid-name":
+					list.Output = `[{"Name":"-bad","VMType":"wsl"}]`
+				case "stopped":
+					inspect.Output = `[{"Name":"chosen","State":"stopped","Rootful":false}]`
+				case "provider":
+					list.Output = `[{"Name":"chosen","VMType":"qemu"}]`
+				case "rootful":
+					inspect.Output = `[{"Name":"chosen","State":"running","Rootful":true}]`
+				case "unknown-rootful":
+					inspect.Output = `[{"Name":"chosen","State":"running"}]`
+				case "inspect-failure":
+					inspect.Exit = 125
+				}
+				fakes := lifecycleHarness(t, map[string]lifecycleResponse{"machine list --format json": list, "machine inspect chosen": inspect})
+				var output bytes.Buffer
+				status := cli.RunWithHost([]string{verb, "demo"}, &output, &output, cli.Host{Platform: "windows"})
+				if status == 0 {
+					t.Fatalf("status=%d output=%s", status, output.String())
+				}
+				for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
+					if call[0] != "machine" || (call[1] != "list" && call[1] != "inspect") {
+						t.Fatalf("sandbox/preflight call=%v", call)
+					}
+				}
+				if _, err := os.Stat(filepath.Join(os.Getenv("LOCALAPPDATA"), "sandboxed-agents")); !os.IsNotExist(err) {
+					t.Fatalf("host state created before target selection: %v", err)
+				}
+			})
+		}
+	}
+}
+
+// TestLifecycleLocksAllowOtherSandboxesAndControllerGroups proves contention applies only to one name in one controller group through RunWithHost.
+func TestLifecycleLocksAllowOtherSandboxesAndControllerGroups(t *testing.T) {
+	dir := t.TempDir()
+	ready, release := filepath.Join(dir, "ready"), filepath.Join(dir, "release")
+	responses := ownedLifecycleResponses(true)
+	responses["container exists sandboxed-agents.default.demo"] = lifecycleResponse{ReadyFile: ready, WaitFor: release}
+	for _, identity := range []struct{ group, name string }{{"default", "Demo"}, {"team", "demo"}} {
+		for key, response := range ownedLifecycleResponses(true) {
+			key = strings.ReplaceAll(key, ".default.demo", "."+identity.group+"."+identity.name)
+			response.Output = strings.ReplaceAll(response.Output, `"default"`, `"`+identity.group+`"`)
+			responses[key] = response
+		}
+	}
+	lifecycleHarness(t, responses)
+	done := make(chan struct{})
+	go func() { defer close(done); lifecycleRun("start", "demo") }()
+	defer func() { os.WriteFile(release, nil, 0600); <-done }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("first command did not reach lookup")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	status, output := lifecycleRun("start", "Demo")
+	if status != 0 {
+		t.Fatalf("different name: status=%d output=%s", status, output)
+	}
+	t.Setenv("SANDBOXED_AGENTS_GROUP", "team")
+	status, output = lifecycleRun("start", "demo")
+	if status != 0 {
+		t.Fatalf("different group: status=%d output=%s", status, output)
+	}
+}
+
+// TestLifecycleVolumesOnlyRefusesContainerCommandsBeforeChanges proves kept volumes remain known, owner conflicts win, and container commands name up through RunWithHost.
+func TestLifecycleVolumesOnlyRefusesContainerCommandsBeforeChanges(t *testing.T) {
+	for _, verb := range []string{"start", "stop", "restart"} {
+		for _, foreign := range []bool{false, true} {
+			t.Run(verb+strconv.FormatBool(foreign), func(t *testing.T) {
+				responses := ownedLifecycleResponses(false)
+				responses["container exists sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 1}
+				name := "sandboxed-agents.default.demo.home"
+				responses["volume exists "+name] = lifecycleResponse{}
+				owner := "default"
+				if foreign {
+					owner = "foreign"
+				}
+				responses["volume inspect "+name] = lifecycleResponse{Output: `[{"Labels":{"io.sandboxed-agents.owner":"` + owner + `"}}]`}
+				fakes := lifecycleHarness(t, responses)
+				status, output := lifecycleRun(verb, "demo")
+				want := "up demo"
+				if foreign {
+					want = "owner conflict"
+				}
+				if status == 0 || !strings.Contains(output, want) {
+					t.Fatalf("status=%d output=%s", status, output)
+				}
+				if calls := testutil.Invocations(t, fakes.PodmanLog); len(lifecycleMutations(calls)) != 0 {
+					t.Fatalf("mutations=%v", calls)
+				}
+			})
+		}
 	}
 }
