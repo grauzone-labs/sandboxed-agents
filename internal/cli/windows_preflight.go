@@ -13,11 +13,20 @@ import (
 const minimumWindowsPodmanVersion = "4.7.0"
 const nativeAMD64Architecture = 9
 
+// minimumWindows11Build is the first Windows 11 release's build number.
+const minimumWindows11Build = 22000
+
+const (
+	runningMachineRequirement  = "a running Podman machine is required"
+	wslMachineRequirement      = "a WSL2 Podman machine is required"
+	rootlessMachineRequirement = "a rootless Podman machine is required"
+)
+
 func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 	var failures []error
 	build, err := p.host.WindowsBuild()
 	workstation, productErr := p.host.WindowsWorkstation()
-	if err != nil || productErr != nil || !workstation || build < 22000 {
+	if err != nil || productErr != nil || !workstation || build < minimumWindows11Build {
 		failures = append(failures, fmt.Errorf("Windows 11 x64 is required (build query: %v; product query: %v)", err, productErr))
 	}
 	nativeArchitecture, architectureErr := p.host.WindowsNativeArchitecture()
@@ -36,7 +45,7 @@ func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 		failures = append(failures, cause)
 		failures = append(failures, unverifiedPrerequisites(cause,
 			fmt.Sprintf("Podman >= %s is required", minimumWindowsPodmanVersion),
-			"a running Podman machine is required", "a WSL2 Podman machine is required", "a rootless Podman machine is required")...)
+			runningMachineRequirement, wslMachineRequirement, rootlessMachineRequirement)...)
 		failures = append(failures, unverifiedMachinePrerequisites(cause)...)
 		return p, errors.Join(failures...)
 	}
@@ -74,24 +83,33 @@ func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 		local.connection = ""
 		controllers, controllerErr := machineControllers(local, p.connection)
 		failures = append(failures, controllerFailures(controllers, controllerErr)...)
-		config, automountErr := local.query("machine", "ssh", p.connection, "sh", "-c", automountRootQuery)
+		root, automountErr := machineAutomountRoot(local, p.connection)
 		if automountErr != nil {
 			failures = append(failures, fmt.Errorf("read automount root for machine %q: %w", p.connection, automountErr))
 		} else {
-			root, parseErr := parseAutomountRoot(config)
-			if parseErr != nil {
-				failures = append(failures, fmt.Errorf("read automount root for machine %q: %w", p.connection, parseErr))
-			} else {
-				p.automountRoot = root
-			}
+			p.automountRoot = root
 		}
 	}
 	return p, errors.Join(failures...)
 }
 
-// automountRootQuery is read-only and treats an absent wsl.conf as defaults.
-// Its shell-argument transport still needs confirmation on a live Windows host.
-const automountRootQuery = "cat /etc/wsl.conf 2>/dev/null; true"
+// machineAutomountRoot checks existence before reading so an absent file uses
+// defaults while an unreadable existing file fails. Plain argv remain safe when
+// the transport joins arguments; live Windows confirmation is still pending.
+func machineAutomountRoot(local podmanTarget, name string) (string, error) {
+	if output, err := local.query("machine", "ssh", name, "test", "-e", "/etc/wsl.conf"); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 && strings.TrimSpace(output) == "" {
+			return "/mnt/", nil
+		}
+		return "", err
+	}
+	config, err := local.query("machine", "ssh", name, "cat", "/etc/wsl.conf")
+	if err != nil {
+		return "", err
+	}
+	return parseAutomountRoot(config)
+}
 
 func parseAutomountRoot(config string) (string, error) {
 	if strings.ContainsRune(config, '\x00') {
@@ -151,7 +169,7 @@ func unverifiedPrerequisites(cause error, requirements ...string) []error {
 }
 
 func unverifiedMachineSelection(cause error) error {
-	failures := append([]error{cause}, unverifiedPrerequisites(cause, "a running Podman machine is required", "a WSL2 Podman machine is required", "a rootless Podman machine is required")...)
+	failures := append([]error{cause}, unverifiedPrerequisites(cause, runningMachineRequirement, wslMachineRequirement, rootlessMachineRequirement)...)
 	return errors.Join(failures...)
 }
 
@@ -198,12 +216,12 @@ func selectWindowsTarget(p podmanTarget) (podmanTarget, error) {
 	}
 	var failures []error
 	if chosen.VMType != "wsl" {
-		failures = append(failures, fmt.Errorf("a WSL2 Podman machine is required"))
+		failures = append(failures, errors.New(wslMachineRequirement))
 	}
 	output, err = p.query("machine", "inspect", chosen.Name)
 	if err != nil {
 		failures = append(failures, err)
-		failures = append(failures, unverifiedPrerequisites(err, "a running Podman machine is required", "a rootless Podman machine is required")...)
+		failures = append(failures, unverifiedPrerequisites(err, runningMachineRequirement, rootlessMachineRequirement)...)
 		return p, errors.Join(failures...)
 	}
 	var inspected []struct {
@@ -213,14 +231,14 @@ func selectWindowsTarget(p podmanTarget) (podmanTarget, error) {
 	if err := json.Unmarshal([]byte(output), &inspected); err != nil || len(inspected) != 1 || inspected[0].Name != chosen.Name {
 		cause := fmt.Errorf("read Podman machine inspect: invalid answer")
 		failures = append(failures, cause)
-		failures = append(failures, unverifiedPrerequisites(cause, "a running Podman machine is required", "a rootless Podman machine is required")...)
+		failures = append(failures, unverifiedPrerequisites(cause, runningMachineRequirement, rootlessMachineRequirement)...)
 		return p, errors.Join(failures...)
 	}
 	if inspected[0].State != "running" {
-		failures = append(failures, fmt.Errorf("a running Podman machine is required"))
+		failures = append(failures, errors.New(runningMachineRequirement))
 	}
 	if inspected[0].Rootful == nil || *inspected[0].Rootful {
-		failures = append(failures, fmt.Errorf("a rootless Podman machine is required (Rootful must be reported)"))
+		failures = append(failures, fmt.Errorf("%s (Rootful must be reported)", rootlessMachineRequirement))
 	}
 	if err := errors.Join(failures...); err != nil {
 		return p, err
