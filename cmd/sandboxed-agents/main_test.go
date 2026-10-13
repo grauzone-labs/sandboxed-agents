@@ -920,6 +920,60 @@ func TestLifecycleChecksUnknownAndInterruptedSandboxBeforeChanges(t *testing.T) 
 	}
 }
 
+// TestLifecycleBackupWithVolumesRefusesInterruptedUpdateBeforeChanges proves lifecycle commands name update for an owned backup beside kept volumes, after owner checks and before mutation or session queries through RunWithHost.
+func TestLifecycleBackupWithVolumesRefusesInterruptedUpdateBeforeChanges(t *testing.T) {
+	for _, verb := range []string{"start", "stop", "restart", "remove"} {
+		for _, kind := range []string{"owned", "foreign-volume", "foreign-backup"} {
+			t.Run(verb+"/"+kind, func(t *testing.T) {
+				responses := ownedLifecycleResponses(false)
+				responses["container exists sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 1}
+				for _, name := range []string{"sandboxed-agents.default.demo.workspace", "sandboxed-agents.default.demo.home", "sandboxed-agents.default.demo.ssh"} {
+					responses["volume exists "+name] = lifecycleResponse{}
+					owner := "default"
+					if kind == "foreign-volume" && strings.HasSuffix(name, ".home") {
+						owner = "foreign"
+					}
+					responses["volume inspect "+name] = lifecycleResponse{Output: `[{"Labels":{"io.sandboxed-agents.owner":"` + owner + `"}}]`}
+				}
+				backup := "sandboxed-agents-backup.default.demo"
+				responses["container exists "+backup] = lifecycleResponse{}
+				owner := "default"
+				if kind == "foreign-backup" {
+					owner = "foreign"
+				}
+				responses["container inspect "+backup] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"` + owner + `"}}}]`}
+				fakes := lifecycleHarness(t, responses)
+				status, output := lifecycleRun(verb, "demo")
+				if status == 0 || strings.Contains(output, "up demo") {
+					t.Errorf("status=%d output=%s; want refusal without up guidance", status, output)
+				}
+				if kind == "owned" {
+					if !strings.Contains(output, "interrupted update") || !strings.Contains(output, "update demo") {
+						t.Errorf("output=%s; want interrupted update and update demo", output)
+					}
+				} else {
+					conflict := "sandboxed-agents.default.demo.home"
+					if kind == "foreign-backup" {
+						conflict = backup
+					}
+					if !strings.Contains(output, "owner conflict") || !strings.Contains(output, conflict) || !strings.Contains(output, "Podman") || strings.Contains(output, "update demo") {
+						t.Errorf("output=%s; want owner conflict naming %s before interruption", output, conflict)
+					}
+				}
+				calls := testutil.Invocations(t, fakes.PodmanLog)
+				if len(lifecycleMutations(calls)) != 0 {
+					t.Fatalf("mutations=%v", calls)
+				}
+				for _, call := range calls {
+					if call[0] == "exec" {
+						t.Fatalf("session query before sandbox refusal: %v", calls)
+					}
+				}
+			})
+		}
+	}
+}
+
 // TestLifecyclePodmanFailuresDoNotReportSuccessOrRetry proves malformed inspections and failed mutations stop without success or automatic retries through RunWithHost.
 func TestLifecyclePodmanFailuresDoNotReportSuccessOrRetry(t *testing.T) {
 	for _, tc := range []struct {

@@ -89,7 +89,7 @@ func inspectSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 	if len(conflicts) > 0 {
 		return objects, fmt.Errorf("owner conflict: %s; use Podman to remove or rename the objects", strings.Join(conflicts, ", "))
 	}
-	if !objects.exists && len(objects.volumes) > 0 {
+	if !objects.exists && len(objects.volumes) > 0 && !objects.backup {
 		return objects, fmt.Errorf("sandbox %q has only volumes; use up %s to adopt them", request.Name, request.Name)
 	}
 	if objects.backup {
