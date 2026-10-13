@@ -82,7 +82,7 @@ func TestUpExistingSandboxDoesNotRebuild(t *testing.T) {
 	f := linuxHost(t)
 	f.responses["container exists sandboxed-agents.default.demo"] = response{}
 	status, output, calls := f.run(t, "up", "demo")
-	if status != 1 || !strings.Contains(output, "existing sandbox lifecycle is not implemented (#14)") {
+	if status != 1 || !strings.Contains(output, "existing sandbox lifecycle is not implemented; option conflicts belong to a later story") {
 		t.Fatalf("status=%d output=%q", status, output)
 	}
 	if len(calls) != 3 || !reflect.DeepEqual(calls[2], []string{"container", "exists", "sandboxed-agents.default.demo"}) {

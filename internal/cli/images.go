@@ -64,7 +64,7 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		return err
 	}
 	if exists {
-		return fmt.Errorf("up: existing sandbox lifecycle is not implemented (#14)")
+		return fmt.Errorf("up: existing sandbox lifecycle is not implemented; option conflicts belong to a later story")
 	}
 	port, err := allocatePort(p, request.Options["port"])
 	if err != nil {
