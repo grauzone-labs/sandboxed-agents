@@ -62,6 +62,29 @@ func TestWindowsAbsentAutomountFileUsesDefaultWithoutRead(t *testing.T) {
 	noMutation(t, calls)
 }
 
+// TestWindowsAbsentAutomountFileIgnoresStderrWarning proves exit status 1 with empty stdout still defaults without reading despite stderr warnings through RunWithHost and fake Podman processes.
+func TestWindowsAbsentAutomountFileIgnoresStderrWarning(t *testing.T) {
+	f := windowsHost(t)
+	f.responses[windowsAutomountExists] = response{Stderr: "logrus warning\n", Exit: 1}
+	status, output, calls := f.run(t, "check")
+	if status != 0 || !strings.Contains(output, "machine chosen automount root /mnt/") {
+		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+	}
+	existenceQueries := 0
+	for _, call := range calls {
+		if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "test", "-e", "/etc/wsl.conf"}) {
+			existenceQueries++
+		}
+		if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "cat", "/etc/wsl.conf"}) {
+			t.Fatalf("absent configuration was read: %v", calls)
+		}
+	}
+	if existenceQueries != 1 {
+		t.Fatalf("existence queries=%d calls=%v", existenceQueries, calls)
+	}
+	noMutation(t, calls)
+}
+
 // TestWindowsAutomountExistenceFailureStopsWork proves existence-query transport diagnostics are not mistaken for absence and stop mutations through RunWithHost and fake Podman.
 func TestWindowsAutomountExistenceFailureStopsWork(t *testing.T) {
 	for _, code := range []int{1, 125} {

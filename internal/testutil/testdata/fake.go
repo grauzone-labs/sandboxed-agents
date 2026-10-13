@@ -32,6 +32,7 @@ func main() {
 	if script := os.Getenv(prefix + "_RESPONSES"); script != "" {
 		var responses map[string]struct {
 			Output string
+			Stderr string
 			Exit   int
 		}
 		if err := json.Unmarshal([]byte(script), &responses); err != nil {
@@ -55,6 +56,7 @@ func main() {
 		}
 		if ok {
 			fmt.Fprint(os.Stdout, response.Output)
+			fmt.Fprint(os.Stderr, response.Stderr)
 			code = response.Exit
 		} else {
 			fmt.Fprintln(os.Stderr, "unscripted fake call", os.Args[1:])
