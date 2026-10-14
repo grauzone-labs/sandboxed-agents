@@ -72,17 +72,8 @@ func checkAccessBefore(t *testing.T, fakes testutil.Fakes) checkAccessEvidence {
 func checkAccessQueriesOnly(t *testing.T, fakes testutil.Fakes, before checkAccessEvidence) {
 	t.Helper()
 	for _, invocation := range testutil.Invocations(t, fakes.PodmanLog)[before.podmanCalls:] {
-		call := invocation
-		if len(call) >= 2 && call[0] == "--connection" {
-			call = call[2:]
-		}
-		if len(call) >= 2 {
-			if (call[0] == "container" || call[0] == "volume") && (call[1] == "exists" || call[1] == "inspect") {
-				continue
-			}
-			if call[0] == "machine" && (call[1] == "list" || call[1] == "inspect") {
-				continue
-			}
+		if sandboxObjectQuery(invocation) {
+			continue
 		}
 		t.Errorf("access safeguard issued more than an object or target query: %v", invocation)
 	}
@@ -92,6 +83,19 @@ func checkAccessQueriesOnly(t *testing.T, fakes testutil.Fakes, before checkAcce
 	if after := len(testutil.Invocations(t, os.Getenv("TEST_SSH_KEYGEN_LOG"))); after != before.keys {
 		t.Errorf("access safeguard generated a key: calls before=%d after=%d", before.keys, after)
 	}
+}
+
+// sandboxObjectQuery is the shared allowlist for read-only sandbox and target inspection.
+// Access refusals permit only these queries; check additionally permits manager version.
+func sandboxObjectQuery(call []string) bool {
+	if len(call) >= 2 && call[0] == "--connection" {
+		call = call[2:]
+	}
+	if len(call) < 2 {
+		return false
+	}
+	return (len(call) == 3 && (call[0] == "container" || call[0] == "volume") && (call[1] == "exists" || call[1] == "inspect")) ||
+		(call[0] == "machine" && (call[1] == "list" || call[1] == "inspect"))
 }
 
 func checkAccessUnchanged(t *testing.T, fakes testutil.Fakes, before checkAccessEvidence) {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -24,12 +25,7 @@ func checkSandbox(request Request, p podmanTarget, output io.Writer) error {
 		problems = append(problems, err)
 	}
 	names := DerivedNames(request.Group, request.Name)
-	boundWorkspace := false
-	for _, mount := range objects.container.Mounts {
-		if mount.Type == "bind" && mount.Destination == "/workspace" {
-			boundWorkspace = true
-		}
-	}
+	_, boundWorkspace := objects.container.workspaceBind()
 	if !objects.exists {
 		if len(objects.volumes) > 0 {
 			fmt.Fprintf(output, "sandbox %s: volumes only; no container\n", request.Name)
@@ -100,21 +96,19 @@ func checkSandbox(request Request, p podmanTarget, output io.Writer) error {
 func reportResources(container sandboxContainer, output io.Writer) error {
 	var problems []error
 	fmt.Fprintln(output, "resource limits (sizes in bytes):")
-	for _, limit := range []struct {
-		name  string
-		value *int64
-	}{{"memory", container.HostConfig.Memory}, {"pids-limit", container.HostConfig.PidsLimit}, {"shm-size", container.HostConfig.ShmSize}} {
-		if limit.value == nil {
-			problems = append(problems, fmt.Errorf("recorded --%s is missing", limit.name))
+	for _, limit := range container.integerLimits() {
+		value, err := limit.read()
+		if err != nil {
+			problems = append(problems, err)
 			continue
 		}
-		fmt.Fprintf(output, "%s %d\n", limit.name, *limit.value)
+		fmt.Fprintf(output, "%s %d\n", limit.option, value)
 	}
 	cpus, err := recordedCPUs(container)
 	if err != nil {
 		problems = append(problems, err)
 	} else {
-		fmt.Fprintf(output, "cpus %g\n", cpus)
+		fmt.Fprintf(output, "cpus %s\n", strconv.FormatFloat(cpus, 'f', -1, 64))
 	}
 	return errors.Join(problems...)
 }
