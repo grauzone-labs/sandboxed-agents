@@ -10,6 +10,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
+// healthyCheckResponses scripts an owned sandbox with all volumes and explicit resource limits.
 func healthyCheckResponses(running bool) map[string]lifecycleResponse {
 	responses := setupResponses(running)
 	record := responses["container inspect sandboxed-agents.default.demo"]
@@ -252,6 +253,7 @@ func TestCheckInstalledSSHSetupReportsAccessProblemsWithoutChanges(t *testing.T)
 	}
 }
 
+// assertCheckQueriesOnly permits sandbox inspection and the manager's read-only version query.
 func assertCheckQueriesOnly(t *testing.T, fakes testutil.Fakes, after int) {
 	t.Helper()
 	for _, call := range testutil.Invocations(t, fakes.PodmanLog)[after:] {

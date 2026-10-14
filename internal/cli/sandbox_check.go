@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// checkSandbox reports read-only sandbox diagnostics and returns all detected problems.
 func checkSandbox(request Request, p podmanTarget, output io.Writer) error {
 	objects, err := readSandbox(request, p)
 	if err != nil {
@@ -93,6 +94,7 @@ func checkSandbox(request Request, p podmanTarget, output io.Writer) error {
 	return errors.Join(problems...)
 }
 
+// reportResources prints recorded limits and reports any missing resource fields.
 func reportResources(container sandboxContainer, output io.Writer) error {
 	var problems []error
 	fmt.Fprintln(output, "resource limits (sizes in bytes):")
@@ -113,6 +115,7 @@ func reportResources(container sandboxContainer, output io.Writer) error {
 	return errors.Join(problems...)
 }
 
+// reportSSHSetup reports installation state and probes eligible running sandboxes without SSH file updates.
 func reportSSHSetup(request Request, p podmanTarget, objects sandboxObjects, output io.Writer) error {
 	s, err := sshSetupPaths(request, p.host.Platform)
 	if err != nil {

@@ -148,6 +148,7 @@ func requireRunning(request Request, objects sandboxObjects) (ObjectNames, error
 	return names, nil
 }
 
+// changeSandboxState checks ownership and interrupted updates before applying a lifecycle command.
 func changeSandboxState(request Request, p podmanTarget, output io.Writer) error {
 	objects, err := requireSandbox(request, p)
 	if err != nil {
@@ -156,6 +157,7 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 	return applySandboxState(request, p, objects, output)
 }
 
+// applySandboxState applies a lifecycle command to objects already checked under the lifecycle lock.
 func applySandboxState(request Request, p podmanTarget, objects sandboxObjects, output io.Writer) error {
 	name := DerivedNames(request.Group, request.Name).Container
 	if !objects.exists {
