@@ -40,14 +40,15 @@ func newEffects(calls systemCalls) Effects {
 		command.Env = agentEnvironment(calls.Environment())
 		return calls.Start(command)
 	}
-	return Effects{Identity: calls.Identity, Groups: os.Getgroups, UIDs: unix.Getresuid, GIDs: unix.Getresgid, Start: run, Reexec: func(process Process) error {
-		path, err := calls.Executable()
-		if err != nil {
-			return err
-		}
-		process.Program = path
-		return run(process)
-	}}
+	return Effects{Identity: calls.Identity, Groups: os.Getgroups, UIDs: unix.Getresuid, GIDs: unix.Getresgid, Start: run,
+		ReadFile: os.ReadFile, ReplaceAuthorizedKey: func(data []byte) error { return replaceAuthorizedKey("/etc/ssh", data) }, RemoveAuthorizedKey: func() error { return removeAuthorizedKey("/etc/ssh") }, Reexec: func(process Process) error {
+			path, err := calls.Executable()
+			if err != nil {
+				return err
+			}
+			process.Program = path
+			return run(process)
+		}}
 }
 
 func agentEnvironment(environment []string) []string {

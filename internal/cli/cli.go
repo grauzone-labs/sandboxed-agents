@@ -152,6 +152,16 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			return 1
 		}
 		return 0
+	case "ssh-config":
+		target, err := selectedTarget()
+		if err != nil {
+			return 1
+		}
+		if err := configureSSH(request, target, stdout, stderr); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 
 	}
 	fmt.Fprintf(stderr, "%s: not implemented\n", request.Command)

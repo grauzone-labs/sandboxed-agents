@@ -61,6 +61,9 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		return err
 	}
 	if exists {
+		if request.Options["ssh-config"] != "" {
+			return changeSandboxState(request, p, output)
+		}
 		return fmt.Errorf("up: existing sandbox lifecycle is not implemented; option conflicts belong to a later story")
 	}
 	port, err := allocatePort(p, request.Options["port"])
@@ -142,6 +145,9 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		return fail(fmt.Errorf("sandbox %s is not running", names.Container))
 	}
 	fmt.Fprintf(output, "sandbox %s running; image %s; --publish 127.0.0.1:%d:22/tcp\n", request.Name, tag, port)
+	if request.Options["ssh-config"] != "" {
+		return installLifecycleSSHSetup(request, p, sandboxObjects{container: container, exists: true}, output)
+	}
 	return nil
 }
 

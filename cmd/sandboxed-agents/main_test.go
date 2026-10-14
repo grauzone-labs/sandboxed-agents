@@ -233,7 +233,7 @@ func TestCommandGrammar(t *testing.T) {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			caseFakes := fakes
 			lifecycle := len(tc.args) > 0 && (tc.args[0] == "start" || tc.args[0] == "stop" || tc.args[0] == "restart" || tc.args[0] == "remove")
-			existingSandbox := len(tc.args) > 0 && (tc.args[0] == "shell" || tc.args[0] == "fingerprint")
+			existingSandbox := len(tc.args) > 0 && (tc.args[0] == "shell" || tc.args[0] == "fingerprint" || tc.args[0] == "ssh-config")
 			if tc.status == 2 || lifecycle || existingSandbox {
 				caseFakes = testutil.Install(t, fakeExecutable)
 			}
@@ -247,7 +247,7 @@ func TestCommandGrammar(t *testing.T) {
 			if (tc.status == 2) != strings.Contains(string(output), "usage:") {
 				t.Fatalf("unexpected diagnostic: %s", output)
 			}
-			if existingSandbox || (lifecycle && tc.status != 2) {
+			if (existingSandbox || lifecycle) && tc.status != 2 {
 				want := [][]string{
 					{"container", "exists", "sandboxed-agents.default.demo"},
 					{"container", "inspect", "sandboxed-agents.default.demo"},
@@ -1093,14 +1093,14 @@ func TestLifecycleWindowsSelectsOneTargetWithoutPreflight(t *testing.T) {
 	}
 }
 
-// TestLifecycleDeferredSSHSetupDoesNotClaimSuccess proves start --ssh-config refuses its unavailable setup before starting a sandbox through RunWithHost.
-func TestLifecycleDeferredSSHSetupDoesNotClaimSuccess(t *testing.T) {
+// TestLifecycleSSHSetupFailureKeepsStartedSandbox proves start --ssh-config reports manager failure after starting and names the retry through RunWithHost.
+func TestLifecycleSSHSetupFailureKeepsStartedSandbox(t *testing.T) {
 	fakes := lifecycleHarness(t, ownedLifecycleResponses(false))
 	status, output := lifecycleRun("start", "demo", "--ssh-config")
-	if status == 0 || !strings.Contains(output, "SSH setup is not implemented") {
+	if status == 0 || !strings.Contains(output, "SSH setup failed") || !strings.Contains(output, "ssh-config demo --install") {
 		t.Fatalf("status=%d output=%s", status, output)
 	}
-	if calls := testutil.Invocations(t, fakes.PodmanLog); len(lifecycleMutations(calls)) != 0 {
+	if calls := testutil.Invocations(t, fakes.PodmanLog); !reflect.DeepEqual(lifecycleMutations(calls), [][]string{{"start", "sandboxed-agents.default.demo"}}) {
 		t.Fatalf("mutations=%v", calls)
 	}
 }
@@ -1367,9 +1367,9 @@ func TestLifecycleRemoveRetainsVolumesAndBindWorkspace(t *testing.T) {
 	}
 }
 
-// TestLifecycleRemoveFailureAndDeferredVolumesChangeNothingFurther proves stop failures prevent deletion and remove --volumes remains deferred before session query or mutation through RunWithHost.
-func TestLifecycleRemoveFailureAndDeferredVolumesChangeNothingFurther(t *testing.T) {
-	for _, kind := range []string{"stop-failure", "volumes-deferred"} {
+// TestLifecycleRemoveStopFailurePreventsDeletion proves stop failures prevent container or volume deletion for both remove forms through RunWithHost.
+func TestLifecycleRemoveStopFailurePreventsDeletion(t *testing.T) {
+	for _, kind := range []string{"stop-failure", "with-volumes"} {
 		t.Run(kind, func(t *testing.T) {
 			responses := ownedLifecycleResponses(true)
 			responses["stop sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 23}
@@ -1377,10 +1377,8 @@ func TestLifecycleRemoveFailureAndDeferredVolumesChangeNothingFurther(t *testing
 			args := []string{"remove", "demo", "--force"}
 			wantMessage := "exit status 23"
 			want := [][]string{{"stop", "sandboxed-agents.default.demo"}}
-			if kind == "volumes-deferred" {
+			if kind == "with-volumes" {
 				args = append(args, "--volumes")
-				wantMessage = "remove --volumes: not implemented"
-				want = nil
 			}
 			status, output := lifecycleRun(args...)
 			if status == 0 || !strings.Contains(output, wantMessage) || strings.Contains(output, "removed sandbox") || strings.Contains(output, "were ended") {
@@ -1389,13 +1387,6 @@ func TestLifecycleRemoveFailureAndDeferredVolumesChangeNothingFurther(t *testing
 			calls := testutil.Invocations(t, fakes.PodmanLog)
 			if !reflect.DeepEqual(lifecycleMutations(calls), want) {
 				t.Fatalf("mutations=%v want=%v", calls, want)
-			}
-			if kind == "volumes-deferred" {
-				for _, call := range calls {
-					if call[0] == "exec" {
-						t.Fatalf("session query before unavailable precondition: %v", calls)
-					}
-				}
 			}
 		})
 	}

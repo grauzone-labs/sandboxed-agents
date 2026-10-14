@@ -28,7 +28,7 @@ func main() {
 		return
 	}
 
-	prefix := "TEST_" + strings.ToUpper(strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe"))
+	prefix := "TEST_" + strings.ReplaceAll(strings.ToUpper(strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe")), "-", "_")
 	file, err := os.OpenFile(os.Getenv(prefix+"_LOG"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -127,6 +127,19 @@ func main() {
 	if path := os.Getenv(prefix + "_ENV_LOG"); path != "" {
 		data, _ := json.Marshal(os.Environ())
 		_ = os.WriteFile(path, data, 0600)
+	}
+	if prefix == "TEST_SSH_KEYGEN" && code == 0 && os.Getenv("TEST_SSH_KEYGEN_PUBLIC_KEY") != "" {
+		for index, arg := range os.Args[1:] {
+			if arg == "-f" && index+2 < len(os.Args) {
+				path := os.Args[index+2]
+				if err := os.WriteFile(path, []byte("test-owned dedicated private key\n"), 0600); err != nil {
+					panic(err)
+				}
+				if err := os.WriteFile(path+".pub", []byte(os.Getenv("TEST_SSH_KEYGEN_PUBLIC_KEY")+"\n"), 0644); err != nil {
+					panic(err)
+				}
+			}
+		}
 	}
 	os.Exit(code)
 }

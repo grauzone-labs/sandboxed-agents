@@ -1,4 +1,4 @@
-// Package manager owns version and agent session queries inside a sandbox.
+// Package manager owns administrative SSH requests and agent session queries inside a sandbox.
 package manager
 
 import (
@@ -27,13 +27,17 @@ type Process struct {
 
 // Effects supplies only operating-system operations; command behavior runs real.
 // Reexec starts this same trusted manager executable, ignoring Program.
+// ReplaceAuthorizedKey atomically stores a root-owned mode-0644 authorization file.
 type Effects struct {
-	Identity func() Identity
-	Groups   func() ([]int, error)
-	UIDs     func() (real, effective, saved int)
-	GIDs     func() (real, effective, saved int)
-	Start    func(Process) error
-	Reexec   func(Process) error
+	Identity             func() Identity
+	Groups               func() ([]int, error)
+	UIDs                 func() (real, effective, saved int)
+	GIDs                 func() (real, effective, saved int)
+	Start                func(Process) error
+	Reexec               func(Process) error
+	ReadFile             func(string) ([]byte, error)
+	ReplaceAuthorizedKey func([]byte) error
+	RemoveAuthorizedKey  func() error
 }
 
 // RunWithEffects returns the manager command's exit status at injected OS seams.
@@ -44,6 +48,22 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 		fmt.Fprintln(stdout, "sandboxed-agents-manager development")
 		return 0
 	}
+	if len(args) == 2 && args[0] == "ssh-authorize" {
+		return sshAuthorize(args[1], stderr, effects)
+	}
+	if len(args) == 1 && args[0] == "ssh-host-key" {
+		return sshHostKey(stdout, stderr, effects)
+	}
+	if len(args) == 1 && args[0] == "ssh-deauthorize" {
+		if effects.Identity == nil || effects.Identity() != rootIdentity {
+			fmt.Fprintln(stderr, "SSH administration requires container root")
+			return 1
+		}
+		if effects.RemoveAuthorizedKey == nil {
+			return exitStatus(fmt.Errorf("SSH authorization storage is unavailable"), stderr)
+		}
+		return exitStatus(effects.RemoveAuthorizedKey(), stderr)
+	}
 	if len(args) == 1 && args[0] == "sessions" {
 		if effects.Identity() == rootIdentity {
 			return reexecWorker([]string{"__worker", "sessions"}, stdout, stderr, effects)
@@ -53,7 +73,7 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 	if len(args) == 2 && args[0] == "__worker" && args[1] == "sessions" {
 		return sessions(stdout, stderr, effects)
 	}
-	fmt.Fprintln(stderr, "usage: sandboxed-agents-manager version | sessions")
+	fmt.Fprintln(stderr, "usage: sandboxed-agents-manager version | sessions | ssh-host-key | ssh-authorize KEY | ssh-deauthorize")
 	return 2
 }
 
