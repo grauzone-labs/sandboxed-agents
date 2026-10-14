@@ -72,6 +72,7 @@ func TestUpSSHOptInChecksExplicitResourceLimitsBeforeStarting(t *testing.T) {
 			fakes := sshSetupHarness(t, map[string]lifecycleResponse{})
 			scriptSetupResponses(t, responses, "linux")
 			host := lifecycleLinuxHost(t, fakes)
+			host.PortAvailable = func(uint16) error { return nil }
 			var stdout, stderr strings.Builder
 			status := cli.RunWithHost(append([]string{"up", "demo", "--ssh-config"}, options...), &stdout, &stderr, host)
 			matching := len(options) > 2
@@ -201,7 +202,7 @@ func TestUpSSHOptInRefusesChangedRecordedPortBeforeStarting(t *testing.T) {
 	}
 }
 
-// TestSSHSetupRealOpenSSHResolvesIncludesAndPreservesConfigAlias proves quoted paths, configuration aliases, existing modes, and actual OpenSSH conflict resolution through the built CLI with real Linux ssh -G and fake Podman.
+// TestSSHSetupRealOpenSSHResolvesIncludesAndPreservesConfigAlias proves quoted paths, configuration aliases, wildcard defaults, existing modes, and actual configured-host conflicts through the built CLI with real Linux ssh -G and fake Podman.
 func TestSSHSetupRealOpenSSHResolvesIncludesAndPreservesConfigAlias(t *testing.T) {
 	if os.Getenv(nestedGuardEnv) == strconv.Itoa(os.Getppid()) {
 		t.Skip("nested offline guard isolates PATH to fake programs; the outer suite runs this real OpenSSH configuration check")
@@ -217,7 +218,7 @@ func TestSSHSetupRealOpenSSHResolvesIncludesAndPreservesConfigAlias(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []string{"alias-path-spaces", "manual", "wildcard", "other-group"} {
+	for _, kind := range []string{"alias-path-spaces", "manual", "wildcard-keepalive", "wildcard-identity-agent", "wildcard-hostname", "other-group"} {
 		t.Run(kind, func(t *testing.T) {
 			fakes := sshSetupHarness(t, installResponses())
 			if err := os.WriteFile(filepath.Join(fakes.Dir, "ssh"), binary, 0700); err != nil {
@@ -236,8 +237,14 @@ func TestSSHSetupRealOpenSSHResolvesIncludesAndPreservesConfigAlias(t *testing.T
 			if kind == "manual" {
 				original = []byte("Host demo\n HostName example.com\n")
 			}
-			if kind == "wildcard" {
+			if kind == "wildcard-keepalive" {
 				original = []byte("Host *\n ServerAliveInterval 60\n")
+			}
+			if kind == "wildcard-identity-agent" {
+				original = []byte("Host *\n IdentityAgent none\n")
+			}
+			if kind == "wildcard-hostname" {
+				original = []byte("Host *\n HostName example.com\n")
 			}
 			target := filepath.Join(t.TempDir(), "config alias target")
 			if err := os.WriteFile(target, original, 0640); err != nil {
@@ -259,7 +266,7 @@ func TestSSHSetupRealOpenSSHResolvesIncludesAndPreservesConfigAlias(t *testing.T
 				name = "demo.live"
 			}
 			status, stdout, stderr := sshSetupRun(t, "ssh-config", name, "--install")
-			if kind != "alias-path-spaces" {
+			if kind == "manual" || kind == "wildcard-hostname" || kind == "other-group" {
 				if status == 0 || !strings.Contains(stderr, "conflict") || !strings.Contains(stderr, name) {
 					t.Fatalf("conflict=%d %q %q", status, stdout, stderr)
 				}
@@ -573,7 +580,7 @@ func TestSSHSetupRepeatIsUnchangedAndHostKeyChangeRefusesRepin(t *testing.T) {
 	}
 }
 
-// TestSSHSetupConflictsAndQueryFailuresWriteNothing proves resolved-host conflicts, query errors, and manager failures refuse before host writes through the built CLI and fake SSH seam.
+// TestSSHSetupConflictsAndQueryFailuresWriteNothing proves resolved-host conflicts, query errors, and manager failures refuse before SSH file writes through the built CLI and fake SSH seam.
 func TestSSHSetupConflictsAndQueryFailuresWriteNothing(t *testing.T) {
 	for _, kind := range []string{"configured-host", "query-failure", "manager-unavailable"} {
 		t.Run(kind, func(t *testing.T) {
@@ -620,8 +627,8 @@ func TestSSHSetupConflictsAndQueryFailuresWriteNothing(t *testing.T) {
 			if data, err := os.ReadFile(config); err != nil || string(data) != string(original) {
 				t.Fatalf("config=%q error=%v", data, err)
 			}
-			if _, err := os.Stat(filepath.Join(os.Getenv("XDG_STATE_HOME"), "sandboxed-agents")); !os.IsNotExist(err) {
-				t.Fatalf("state changed: %v", err)
+			if _, err := os.Stat(filepath.Join(os.Getenv("XDG_STATE_HOME"), "sandboxed-agents", "group-default", "ssh")); !os.IsNotExist(err) {
+				t.Fatalf("SSH setup state changed: %v", err)
 			}
 			if calls := testutil.Invocations(t, filepath.Join(fakes.Dir, "keygen.jsonl")); len(calls) != 0 {
 				t.Fatalf("key generated=%v", calls)

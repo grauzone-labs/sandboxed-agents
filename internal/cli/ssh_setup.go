@@ -244,7 +244,15 @@ func (s sshSetup) checkConflict(host string) error {
 		if err != nil {
 			return "", fmt.Errorf("SSH configuration query for %s: %w: %s%s", host, err, output, stderr.String())
 		}
-		return string(output), nil
+		// Only a configured HostName claims this host entry. Wildcard defaults
+		// for unrelated options may differ without resolving it to another host.
+		for _, line := range strings.Split(string(output), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 2 && fields[0] == "hostname" {
+				return fields[1], nil
+			}
+		}
+		return "", nil
 	}
 	configured, err := query(config)
 	if err != nil {

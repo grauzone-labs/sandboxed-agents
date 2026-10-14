@@ -709,13 +709,13 @@ func TestLifecycleLockRefusesBeforeSandboxLookup(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	host := lifecycleLinuxHost(t, fakes)
-	for _, verb := range []string{"start", "stop", "restart", "remove", "up"} {
+	for _, args := range [][]string{{"start", "demo"}, {"stop", "demo"}, {"restart", "demo"}, {"remove", "demo"}, {"up", "demo"}, {"ssh-config", "demo", "--install"}, {"ssh-config", "demo", "--remove"}} {
 		start := time.Now()
 		var out bytes.Buffer
-		status := cli.RunWithHost([]string{verb, "demo"}, &out, &out, host)
+		status := cli.RunWithHost(args, &out, &out, host)
 		output := out.String()
 		if status == 0 || !strings.Contains(output, "demo") || !strings.Contains(output, "another lifecycle command is in progress") || !strings.Contains(output, "retry") || time.Since(start) > time.Second {
-			t.Errorf("%s: status=%d output=%s", verb, status, output)
+			t.Errorf("%v: status=%d output=%s", args, status, output)
 		}
 	}
 	calls := testutil.Invocations(t, fakes.PodmanLog)

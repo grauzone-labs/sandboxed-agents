@@ -175,7 +175,7 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 			return err
 		}
 	}
-	if !running && (request.Command == "start" || request.Command == "restart") {
+	if !running && (request.Command == "up" || request.Command == "start" || request.Command == "restart") {
 		if err := checkRecordedPort(p, container); err != nil {
 			return err
 		}
