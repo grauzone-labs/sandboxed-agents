@@ -1,10 +1,14 @@
 # Install from npm
 
-This page describes the `sandboxed-agents` npm package: what it contains, how to install, upgrade, and remove it, and what its checks do and do not prove.
+This page describes npm tarballs built from `grauzone-labs/sandboxed-agents`: what they contain, how to install, upgrade, and remove them, and what their checks prove.
 
 ## Publication
 
-Publishing the package, including trusted publishing, belongs to the release workflow (#36). This page covers the package itself, not where it is published.
+The [registry metadata for `sandboxed-agents@0.2.0`](https://registry.npmjs.org/sandboxed-agents/0.2.0) points to the prior repository, `grauzone-git/sandboxed-ai-agents`. The shared package and command name alone does not identify a release of `grauzone-labs/sandboxed-agents`.
+
+Publishing this repository's packages, including trusted publishing, belongs to the release workflow (#36). Before recommending registry installs or upgrades from the earlier implementation, maintainers need to confirm publishing rights to the existing name, identify the versions and repository metadata belonging to this implementation, and document the migration steps.
+
+The examples below select an explicit tarball from this repository; they make no claim about registry availability or compatibility with the earlier implementation.
 
 ## Requirements
 
@@ -24,30 +28,21 @@ The launcher selects the executable for the current platform, checks it against 
 
 ## Install
 
+When a release tarball from `grauzone-labs/sandboxed-agents` is available, download `sandboxed-agents-X.Y.Z.tgz` and install that file. Replace `X.Y.Z` with its version. If the shared command is already installed, identify its source before replacing it; a transition from the earlier implementation needs migration steps documented under #36.
+
 ```sh
-npm install -g sandboxed-agents
+npm install --offline --no-audit --no-fund -g ./sandboxed-agents-X.Y.Z.tgz
 sandboxed-agents version
 ```
 
-`version` prints the version and the hash of the embedded build assets.
-
-### Install from a downloaded tarball
-
-The tarball `sandboxed-agents-X.Y.Z.tgz` is a release artifact. To install without the registry, download it and install the file:
-
-```sh
-npm install -g ./sandboxed-agents-X.Y.Z.tgz
-sandboxed-agents version
-```
-
-This needs no network access once the file is on the machine.
+`version` prints the version and the hash of the embedded build assets. This install needs no network access once the file is on the machine.
 
 ## Upgrade
 
-Install the newer version over the old one, from the registry or from a downloaded release tarball:
+For an installation from this repository, download its newer release tarball and install that explicit file over the old version:
 
 ```sh
-npm install -g sandboxed-agents@X.Y.Z
+npm install --offline --no-audit --no-fund -g ./sandboxed-agents-X.Y.Z.tgz
 ```
 
 ## Remove
