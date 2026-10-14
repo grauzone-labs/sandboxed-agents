@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ManagerQueryArgs builds the host's administrative manager query arguments.
@@ -18,4 +20,26 @@ func ManagerQueryArgs(container, managerPath, subcommand string) ([]string, erro
 		return nil, fmt.Errorf("unknown manager query %q", subcommand)
 	}
 	return []string{"exec", "--user=0:0", container, managerPath, subcommand}, nil
+}
+
+// queryManager bounds both the administrative process and any inherited pipes.
+func queryManager(p podmanTarget, container, subcommand string) (string, error) {
+	args, err := ManagerQueryArgs(container, "/usr/local/bin/sandboxed-agents-manager", subcommand)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return p.queryContext(ctx, time.Second, args...)
+}
+
+func checkManager(p podmanTarget, container string) error {
+	answer, err := queryManager(p, container, "version")
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(strings.TrimSpace(answer), "sandboxed-agents-manager ") {
+		return fmt.Errorf("manager did not answer its version query")
+	}
+	return nil
 }

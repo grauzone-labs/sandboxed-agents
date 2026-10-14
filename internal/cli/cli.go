@@ -161,7 +161,7 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 				return 1
 			}
 			defer lock.Close()
-			if _, err := inspectSandbox(request, target); err != nil {
+			if _, err := requireSandbox(request, target); err != nil {
 				fmt.Fprintln(stderr, err)
 				return 1
 			}
@@ -196,7 +196,7 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		if err != nil {
 			return 1
 		}
-		objects, err := inspectSandbox(request, target)
+		objects, err := requireSandbox(request, target)
 		if err == nil && (strings.HasPrefix(request.Command, "agents ") || strings.HasPrefix(request.Command, "integrations ") || (request.Command == "ssh-config" && request.Options["install"] != "")) {
 			_, err = requireRunning(request, objects)
 		}

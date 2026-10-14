@@ -23,7 +23,7 @@ var hostKeys = [...]hostKey{
 }
 
 func printFingerprints(request Request, p podmanTarget, stdout io.Writer) error {
-	objects, err := inspectSandbox(request, p)
+	objects, err := requireSandbox(request, p)
 	if err != nil {
 		return err
 	}

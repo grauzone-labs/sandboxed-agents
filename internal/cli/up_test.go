@@ -257,7 +257,7 @@ func TestUpResourceOverridesKeepIsolation(t *testing.T) {
 	assertNewSandbox(t, calls, "", "team-2", "agent01", baseTag(t), "", "2300", "17179869184", "1.5", "4096", "2147483648")
 }
 
-// TestUpCreationFailuresDoNotReportRunning proves failed volume/create/publication/start calls propagate failure and never start after a failed create through RunWithHost and fake Podman.
+// TestUpCreationFailuresDoNotReportRunning proves owner conflicts and failed volume/create/publication/start calls propagate failure without claiming running through RunWithHost and fake Podman.
 func TestUpCreationFailuresDoNotReportRunning(t *testing.T) {
 	prefix := "sandboxed-agents.default.agent01"
 	for _, tc := range []struct {

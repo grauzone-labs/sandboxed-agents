@@ -52,5 +52,15 @@ func checkSandbox(request Request, p podmanTarget, output io.Writer) error {
 		}
 		problems = append(problems, problem)
 	}
+	if objects.exists && len(objects.conflicts) == 0 && !objects.backup {
+		if objects.container.State.Running != nil && *objects.container.State.Running {
+			if err := checkManager(p, names.Container); err != nil {
+				problems = append(problems, fmt.Errorf("container %s: manager does not answer: %w", names.Container, err))
+			}
+		}
+		// This story supplies ownership and interrupted-update diagnostics.
+		// Do not claim health before the full check NAME story verifies the rest.
+		problems = append(problems, fmt.Errorf("check NAME: resource-limit and SSH diagnostics are not implemented"))
+	}
 	return errors.Join(problems...)
 }

@@ -1,12 +1,10 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
-	"time"
 )
 
 type sandboxContainer struct {
@@ -103,7 +101,7 @@ func (objects sandboxObjects) ownerError() error {
 	return nil
 }
 
-func inspectSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
+func requireSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 	objects, err := readSandbox(request, p)
 	if err != nil {
 		return objects, err
@@ -143,7 +141,7 @@ func requireRunning(request Request, objects sandboxObjects) (ObjectNames, error
 
 func changeSandboxState(request Request, p podmanTarget, output io.Writer) error {
 	name := DerivedNames(request.Group, request.Name).Container
-	objects, err := inspectSandbox(request, p)
+	objects, err := requireSandbox(request, p)
 	if err != nil {
 		return err
 	}
@@ -235,15 +233,7 @@ func (r sessionReport) write(output io.Writer, name string) {
 }
 
 func guardSessions(request Request, p podmanTarget) (sessionReport, error) {
-	args, err := ManagerQueryArgs(DerivedNames(request.Group, request.Name).Container, "/usr/local/bin/sandboxed-agents-manager", "sessions")
-	if err != nil {
-		return sessionReport{}, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	// Bound inherited output pipes too: killing or reaping Podman does not
-	// close pipes that its descendants still hold. Other queries keep no delay.
-	output, err := p.queryContext(ctx, time.Second, args...)
+	output, err := queryManager(p, DerivedNames(request.Group, request.Name).Container, "sessions")
 	if err != nil {
 		if request.Options["force"] != "" {
 			return sessionReport{unavailable: true}, nil
