@@ -175,6 +175,7 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 			}
 			return exitStatus(err, stderr)
 		}
+		cleanupRecoveredInstallation(root, previous, current, selection)
 		if enabled {
 			if err := os.RemoveAll(filepath.Join(root, current.Prefix)); err != nil {
 				return exitStatus(err, stderr)
@@ -337,10 +338,29 @@ func publishInstallation(home, root string, r agentRequest, installed installati
 	}
 	// The selection and command now point at the new installation. Cleanup
 	// must never make a committed installation look like an install failure.
+	cleanupRecoveredInstallation(root, previous, old, selection)
 	if existed {
 		os.RemoveAll(filepath.Join(root, old.Prefix))
 	}
 	return nil
+}
+
+// cleanupRecoveredInstallation best-effort removes a validated command link's
+// prefix after commit when it differs from the old selection and is unreferenced.
+func cleanupRecoveredInstallation(root, previous string, old installation, selection map[string]installation) {
+	if previous == "" {
+		return
+	}
+	prefix := filepath.Base(filepath.Dir(filepath.Dir(previous)))
+	if prefix == old.Prefix || !strings.HasPrefix(prefix, "installation-") {
+		return
+	}
+	for _, installed := range selection {
+		if installed.Prefix == prefix {
+			return
+		}
+	}
+	os.RemoveAll(filepath.Join(root, prefix))
 }
 
 // replaceLink atomically swaps a symlink through a temporary sibling in the same directory.
