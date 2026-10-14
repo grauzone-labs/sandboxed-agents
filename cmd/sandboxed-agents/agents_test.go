@@ -54,10 +54,10 @@ func agentManagerCalls(t *testing.T, f testutil.Fakes) [][]string {
 func TestAgentEnableExecutable(t *testing.T) {
 	responses := ownedLifecycleResponses(true)
 	responses[agentManagerPrefix+"version"] = lifecycleResponse{Output: "sandboxed-agents-manager development\n"}
-	responses[agentManagerPrefix+"agents enable codex --version 1.2.3 --force"] = lifecycleResponse{Output: "codex enabled; version 1.2.3; pin 1.2.3\n"}
+	responses[agentManagerPrefix+"agents enable codex --version 1.2.3 --force"] = lifecycleResponse{Output: "codex enabled: version 1.2.3 (pin 1.2.3)\n"}
 	f := agentExecutableHarness(t, responses)
 	status, output := runAgentExecutable(t, "agents", "enable", "demo", "codex", "--version", "1.2.3", "--force")
-	if status != 0 || !strings.Contains(output, "codex enabled; version 1.2.3; pin 1.2.3") {
+	if status != 0 || !strings.Contains(output, "codex enabled: version 1.2.3 (pin 1.2.3)") {
 		t.Fatalf("status=%d output=%s", status, output)
 	}
 	want := [][]string{
@@ -80,7 +80,7 @@ func TestAgentAdministrationExecutable(t *testing.T) {
 		message    string
 	}{
 		{"disable", []string{"--force"}, "codex disabled; removed pin 1.2.3\n", 0, 0, "removed pin 1.2.3"},
-		{"update", []string{"--unpin", "--force"}, "codex enabled; version 2.0.0; pin none\n", 0, 0, "version 2.0.0"},
+		{"update", []string{"--unpin", "--force"}, "codex enabled: version 2.0.0 (pin none)\n", 0, 0, "version 2.0.0"},
 		{"status", nil, `{"name":"codex","enabled":true,"installed_version":"1.2.3","pin":"1.2.3","signed_in":"unknown","session":false}`, 0, 0, "version 1.2.3; pin 1.2.3"},
 		{"status", nil, `{"name":"codex","enabled":false}`, 0, 0, "codex: not enabled"},
 		{"status", nil, `not-json`, 0, 1, "manager does not answer"},
@@ -163,9 +163,9 @@ func TestUpEnablesAgentsAfterCreation(t *testing.T) {
 					responses["container exists sandboxed-agents.default.demo"] = lifecycleResponse{}
 				}
 				responses[agentManagerPrefix+"version"] = lifecycleResponse{Output: "sandboxed-agents-manager development\n"}
-				responses[agentManagerPrefix+"agents enable claude"] = lifecycleResponse{Output: "claude enabled; version 1.2.3; pin none\n"}
-				responses[agentManagerPrefix+"agents enable codex"] = lifecycleResponse{Output: "codex enabled; version 1.2.3; pin none\n"}
-				responses[agentManagerPrefix+"agents enable copilot"] = lifecycleResponse{Output: "copilot enabled; version 1.2.3; pin none\n"}
+				responses[agentManagerPrefix+"agents enable claude"] = lifecycleResponse{Output: "claude enabled: version 1.2.3 (pin none)\n"}
+				responses[agentManagerPrefix+"agents enable codex"] = lifecycleResponse{Output: "codex enabled: version 1.2.3 (pin none)\n"}
+				responses[agentManagerPrefix+"agents enable copilot"] = lifecycleResponse{Output: "copilot enabled: version 1.2.3 (pin none)\n"}
 				if failure == "install" {
 					responses[agentManagerPrefix+"agents enable codex"] = lifecycleResponse{Exit: 1}
 				}
@@ -185,7 +185,7 @@ func TestUpEnablesAgentsAfterCreation(t *testing.T) {
 					t.Fatalf("status=%d output=%s want=%d", status, output, want)
 				}
 				if strings.HasPrefix(failure, "manager") {
-					if strings.Count(output, "manager does not answer") != 1 || strings.Contains(output, "enabled;") || !strings.Contains(output, "check demo") {
+					if strings.Count(output, "manager does not answer") != 1 || strings.Contains(output, " enabled:") || !strings.Contains(output, "check demo") {
 						t.Fatalf("manager diagnosis=%s", output)
 					}
 					for _, name := range []string{"claude", "codex", "copilot"} {

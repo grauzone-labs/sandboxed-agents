@@ -98,8 +98,14 @@ func TestFourAgentsLifecyclePreservesHome(t *testing.T) {
 				}
 			}
 			e := agentEffects(t, home, &version, &installs)
-			runAgents(t, e, 0, "enable", name)
-			runAgents(t, e, 0, "enable", name, "--force")
+			for _, args := range [][]string{{"enable", name}, {"enable", name, "--force"}} {
+				if out := runAgents(t, e, 0, args...); !strings.Contains(out, "version 2.3.4 (pin none)") {
+					t.Fatalf("enable omitted installed version or absent pin: %s", out)
+				}
+			}
+			if status := readAgentStatus(t, e, name); !status.Enabled || status.InstalledVersion != "2.3.4" || status.Pin != "" {
+				t.Fatalf("enabled status=%+v", status)
+			}
 			if installs != 1 {
 				t.Fatalf("idempotent enable installed %d times", installs)
 			}
