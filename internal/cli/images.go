@@ -90,17 +90,30 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		volumes = volumes[1:]
 		workspaceMount = bindWorkspaceMount(workspace)
 	}
+	// A failed up removes only what this call created, so a retry is not refused as an existing sandbox.
+	var created []string
+	containerCreated := false
+	fail := func(err error) error {
+		if containerCreated {
+			_, _ = p.query("container", "rm", "--force", names.Container)
+		}
+		for _, volume := range created {
+			_, _ = p.query("volume", "rm", volume)
+		}
+		return err
+	}
 	for _, volume := range volumes {
 		exists, err := p.exists(volumeResource, volume)
 		if err != nil {
-			return err
+			return fail(err)
 		}
 		if exists {
-			return fmt.Errorf("up: volume %s already exists; volume adoption is not implemented", volume)
+			return fail(fmt.Errorf("up: volume %s already exists; volume adoption is not implemented", volume))
 		}
 		if _, err := p.query(append(append([]string{"volume", "create"}, labels...), volume)...); err != nil {
-			return err
+			return fail(err)
 		}
+		created = append(created, volume)
 	}
 	args := append([]string{"create", "--name", names.Container}, labels...)
 	args = append(args, "--label", SSHPortLabel+"="+strconv.Itoa(int(port)),
@@ -112,20 +125,21 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		"--mount", "type=volume,source="+names.Home+",destination=/home/agent",
 		"--mount", "type=volume,source="+names.SSH+",destination=/etc/ssh", tag)
 	if _, err := p.query(args...); err != nil {
-		return err
+		return fail(err)
 	}
+	containerCreated = true
 	if _, err := p.query("start", names.Container); err != nil {
-		return err
+		return fail(err)
 	}
 	container, err := inspectContainer(p, names.Container)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 	if container.State.Running == nil {
-		return fmt.Errorf("read container %s: running state is missing", names.Container)
+		return fail(fmt.Errorf("read container %s: running state is missing", names.Container))
 	}
 	if !*container.State.Running {
-		return fmt.Errorf("sandbox %s is not running", names.Container)
+		return fail(fmt.Errorf("sandbox %s is not running", names.Container))
 	}
 	fmt.Fprintf(output, "sandbox %s running; image %s; --publish 127.0.0.1:%d:22/tcp\n", request.Name, tag, port)
 	return nil

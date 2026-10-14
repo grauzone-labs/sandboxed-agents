@@ -21,4 +21,4 @@ RUN set -eu; \
     rm -rf /var/lib/apt/lists/*
 
 # Keep the sandbox running until sshd becomes its main process (#49).
-ENTRYPOINT ["sleep", "infinity"]
+ENTRYPOINT ["sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait"]

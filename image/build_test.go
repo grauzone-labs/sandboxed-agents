@@ -306,7 +306,7 @@ func TestImageBuildDeclaresKeepalive(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		const want = `ENTRYPOINT ["sleep", "infinity"]`
+		const want = `ENTRYPOINT ["sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait"]`
 		found := false
 		for _, line := range strings.Split(string(containerfile), "\n") {
 			if strings.HasPrefix(line, "ENTRYPOINT ") {

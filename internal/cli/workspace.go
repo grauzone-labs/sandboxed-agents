@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -64,7 +66,7 @@ func workspacePathForHost(path, hostOS string) (string, error) {
 		return "", fmt.Errorf("workspace overlaps protected host path %q (temporary build root)", buildRoot)
 	}
 	entries, err := os.ReadDir(buildRoot)
-	if err != nil {
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("read protected temporary build inputs in %q: %w", buildRoot, err)
 	}
 	for _, entry := range entries {

@@ -303,6 +303,46 @@ func TestUpCreationFailuresDoNotReportRunning(t *testing.T) {
 	}
 }
 
+// TestUpRollsBackCreatedResources proves a failed up removes only the container and volumes this call created, container first, through RunWithHost and fake Podman argv.
+func TestUpRollsBackCreatedResources(t *testing.T) {
+	prefix := "sandboxed-agents.default.agent01"
+	workspace, home, ssh := prefix+".workspace", prefix+".home", prefix+".ssh"
+	labels := "--label io.sandboxed-agents.owner=default --label io.sandboxed-agents.name=agent01 "
+	for _, tc := range []struct {
+		name, key string
+		removed   [][]string
+	}{
+		{"start", "start " + prefix, [][]string{{"container", "rm", "--force", prefix}, {"volume", "rm", workspace}, {"volume", "rm", home}, {"volume", "rm", ssh}}},
+		{"second volume", "volume create " + labels + home, [][]string{{"volume", "rm", workspace}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := linuxHost(t)
+			scriptNewSandbox(t, f, "default", "agent01")
+			f.responses[tc.key] = response{Stderr: "rollback failure", Exit: 125}
+			status, output, calls := f.run(t, "up", "agent01")
+			if status != 1 || !strings.Contains(output, "rollback failure") {
+				t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+			}
+			if len(calls) < len(tc.removed) || !reflect.DeepEqual(calls[len(calls)-len(tc.removed):], tc.removed) {
+				t.Fatalf("rollback=%v; want %v", calls, tc.removed)
+			}
+		})
+	}
+}
+
+// TestUpBindsWorkspaceWhenTempRootIsMissing proves a workspace bind succeeds when the temporary build root does not exist, because no build inputs can sit there, through the executable and fake Podman argv.
+func TestUpBindsWorkspaceWhenTempRootIsMissing(t *testing.T) {
+	f := linuxHost(t)
+	scriptNewSandbox(t, f, "default", "agent01")
+	directory := t.TempDir()
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	status, output, calls := runUpExecutable(t, f, "up", "agent01", directory)
+	if status != 0 || !strings.Contains(output, "sandbox agent01 running") {
+		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+	}
+	assertNewSandbox(t, calls, "", "default", "agent01", baseTag(t), directory, "2222", "8589934592", "4", "2048", "1073741824")
+}
+
 // TestWindowsUnboundUpAcceptsCustomAutomount proves a volume-only sandbox keeps the preflight-selected connection even with a custom WSL automount root through RunWithHost and all fake Podman argv.
 func TestWindowsUnboundUpAcceptsCustomAutomount(t *testing.T) {
 	f := windowsHost(t)
@@ -335,7 +375,13 @@ func TestUpInspectsCreatedSandboxRunning(t *testing.T) {
 			} else if status != 1 || !strings.Contains(output, name) || !strings.Contains(output, "not running") || strings.Contains(output, "sandbox agent01 running") {
 				t.Fatalf("status=%d output=%q calls=%v; want stopped sandbox refusal", status, output, calls)
 			}
-			if len(calls) < 2 || strings.Join(calls[len(calls)-1], " ") != "container inspect "+name || strings.Join(calls[len(calls)-2], " ") != "start "+name {
+			start := -1
+			for i, call := range calls {
+				if strings.Join(call, " ") == "start "+name {
+					start = i
+				}
+			}
+			if start < 0 || start+1 >= len(calls) || strings.Join(calls[start+1], " ") != "container inspect "+name {
 				t.Fatalf("missing running inspection immediately after start: %v", calls)
 			}
 		})
@@ -368,11 +414,13 @@ func TestUpVerifiesRunningStateAfterStart(t *testing.T) {
 				} else if status != 1 || !strings.Contains(output, name) || !strings.Contains(output, "not running") || strings.Contains(output, "sandbox agent01 running") {
 					t.Fatalf("status=%d output=%q calls=%v; want stopped sandbox error", status, output, calls)
 				}
-				wantLast := connection + "container inspect " + name
-				if len(calls) == 0 || strings.Join(calls[len(calls)-1], " ") != wantLast {
-					t.Fatalf("missing running-state inspection after start: %v", calls)
+				start := -1
+				for i, call := range calls {
+					if strings.Join(call, " ") == connection+"start "+name {
+						start = i
+					}
 				}
-				if len(calls) < 2 || strings.Join(calls[len(calls)-2], " ") != connection+"start "+name {
+				if start < 0 || start+1 >= len(calls) || strings.Join(calls[start+1], " ") != connection+"container inspect "+name {
 					t.Fatalf("running inspection did not follow start: %v", calls)
 				}
 				if err := mountBoundaryError(calls, name, ""); err != nil {
