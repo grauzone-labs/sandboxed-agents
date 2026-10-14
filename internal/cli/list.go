@@ -1,14 +1,12 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"slices"
 	"strings"
 	"text/tabwriter"
-	"time"
 )
 
 // sandboxInventory uses Podman names alone to discover a group's sandboxes.
@@ -109,7 +107,7 @@ func listSandboxes(request Request, p podmanTarget, output io.Writer) error {
 			state = "owner conflict"
 			problem = objects.ownerError().Error()
 		}
-		if state == "running" && managerAvailable(p, DerivedNames(request.Group, name).Container) == nil {
+		if state == "running" && checkManager(p, DerivedNames(request.Group, name).Container) == nil {
 			// No agents are delivered yet; the manager has no agent selection to query.
 			agents = "none"
 		}
@@ -132,21 +130,4 @@ func imageToolchains(image string) string {
 		return "-"
 	}
 	return set[:index]
-}
-
-func managerAvailable(p podmanTarget, container string) error {
-	args, err := ManagerQueryArgs(container, "/usr/local/bin/sandboxed-agents-manager", "version")
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	answer, err := p.queryContext(ctx, time.Second, args...)
-	if err != nil {
-		return err
-	}
-	if !strings.HasPrefix(strings.TrimSpace(answer), "sandboxed-agents-manager ") {
-		return fmt.Errorf("manager did not answer its version query")
-	}
-	return nil
 }

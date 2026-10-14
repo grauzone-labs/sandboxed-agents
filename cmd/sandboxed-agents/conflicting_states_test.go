@@ -169,7 +169,7 @@ func TestCheckReportsOwnerAndBackupProblems(t *testing.T) {
 	assertStateQueriesOnly(t, fakes)
 }
 
-// TestCheckNamesKeptAndUnusedWorkspaceVolumes proves owned partial volumes are a healthy state and a bound sandbox names its unused workspace volume through the CLI boundary.
+// TestCheckNamesKeptAndUnusedWorkspaceVolumes proves partial owned volumes exit zero and binds name unused workspace volumes while broader diagnostics remain pending through the CLI boundary.
 func TestCheckNamesKeptAndUnusedWorkspaceVolumes(t *testing.T) {
 	for _, bound := range []bool{false, true} {
 		t.Run(map[bool]string{false: "partial volumes", true: "workspace bind"}[bound], func(t *testing.T) {
@@ -187,7 +187,11 @@ func TestCheckNamesKeptAndUnusedWorkspaceVolumes(t *testing.T) {
 			if bound {
 				want = "unused workspace volume"
 			}
-			if status != 0 || !strings.Contains(output, want) || !strings.Contains(output, "sandboxed-agents.default.demo.workspace; owner default") {
+			wantStatus := 0
+			if bound {
+				wantStatus = 1 // Full container diagnostics remain a separate story.
+			}
+			if status != wantStatus || !strings.Contains(output, want) || !strings.Contains(output, "sandboxed-agents.default.demo.workspace; owner default") {
 				t.Fatalf("status=%d output=%s", status, output)
 			}
 			assertStateQueriesOnly(t, fakes)
@@ -340,7 +344,7 @@ func TestNamedCommandsRefuseInterruptedUpdates(t *testing.T) {
 // TestLifecycleLockPrecedesEverySandboxState proves a taken lock hides unknown, volumes-only, owner-conflict, and interrupted-update states after preflight through the CLI boundary.
 func TestLifecycleLockPrecedesEverySandboxState(t *testing.T) {
 	for _, state := range []string{"unknown", "volumes only", "owner conflict", "interrupted update"} {
-		for _, verb := range []string{"up", "start", "stop", "restart", "remove"} {
+		for _, verb := range []string{"up", "start", "stop", "restart", "remove", "update"} {
 			t.Run(verb+"/"+state, func(t *testing.T) {
 				responses := newSandboxResponses()
 				if state == "volumes only" || state == "owner conflict" {
@@ -546,6 +550,68 @@ func TestUpdateAndCheckPermitOwnedBackupState(t *testing.T) {
 				}
 			} else if status != 1 || !strings.Contains(output, "sandboxed-agents-backup.default.demo") || !strings.Contains(output, "update demo") {
 				t.Fatalf("status=%d output=%s", status, output)
+			}
+			assertStateQueriesOnly(t, fakes)
+		})
+	}
+}
+
+// TestFailedUpNeverDeletesAdoptedVolumes proves create and start failures roll back only newly created objects and preserve adopted home data through the CLI boundary.
+func TestFailedUpNeverDeletesAdoptedVolumes(t *testing.T) {
+	for _, failure := range []string{"create", "start"} {
+		t.Run(failure, func(t *testing.T) {
+			responses := newSandboxResponses()
+			responses["volume exists sandboxed-agents.default.demo.home"] = lifecycleResponse{}
+			responses["volume inspect sandboxed-agents.default.demo.home"] = lifecycleResponse{Output: `[{"Labels":{"io.sandboxed-agents.owner":"default"}}]`}
+			responses["volume rm *"] = lifecycleResponse{}
+			responses["container rm --force sandboxed-agents.default.demo"] = lifecycleResponse{}
+			key := "create *"
+			if failure == "start" {
+				key = "start sandboxed-agents.default.demo"
+			}
+			responses[key] = lifecycleResponse{Exit: 125}
+			fakes := lifecycleHarness(t, responses)
+			status, output := runWithHost(lifecycleLinuxHost(t, fakes), "up", "demo")
+			if status != 1 || !strings.Contains(output, "adopted volume sandboxed-agents.default.demo.home") || strings.Contains(output, "sandbox demo running") {
+				t.Fatalf("status=%d output=%s", status, output)
+			}
+			var removed []string
+			for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
+				if len(call) > 1 && call[0] == "volume" && (call[1] == "create" || call[1] == "rm") && call[len(call)-1] == "sandboxed-agents.default.demo.home" {
+					t.Fatalf("changed adopted home data: %v", call)
+				}
+				if len(call) > 1 && call[0] == "volume" && call[1] == "rm" {
+					removed = append(removed, call[len(call)-1])
+				}
+			}
+			if strings.Join(removed, ",") != "sandboxed-agents.default.demo.workspace,sandboxed-agents.default.demo.ssh" {
+				t.Fatalf("new volume rollback=%v", removed)
+			}
+		})
+	}
+}
+
+// TestCheckRunningSandboxCannotClaimUnverifiedHealth proves check queries an owned running manager and fails while broader container diagnostics remain incomplete through the CLI boundary.
+func TestCheckRunningSandboxCannotClaimUnverifiedHealth(t *testing.T) {
+	for _, available := range []bool{false, true} {
+		t.Run("manager="+strconv.FormatBool(available), func(t *testing.T) {
+			responses := ownedLifecycleResponses(true)
+			key := "exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager version"
+			responses[key] = lifecycleResponse{Exit: 125}
+			if available {
+				responses[key] = lifecycleResponse{Output: "sandboxed-agents-manager development\n"}
+			}
+			fakes := lifecycleHarness(t, responses)
+			status, output := lifecycleRun("check", "demo")
+			if status != 1 || !strings.Contains(output, "diagnostics are not implemented") || (!available && !strings.Contains(output, "manager does not answer")) {
+				t.Fatalf("status=%d output=%s", status, output)
+			}
+			queried := false
+			for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
+				queried = queried || strings.Join(call, " ") == key
+			}
+			if !queried {
+				t.Fatal("owned running manager was not checked")
 			}
 			assertStateQueriesOnly(t, fakes)
 		})

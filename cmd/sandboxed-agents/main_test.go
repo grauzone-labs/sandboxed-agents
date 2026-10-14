@@ -193,7 +193,7 @@ func TestLiveOptInFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
 }
 
 // TestCommandGrammar proves command forms produce their expected success, preflight-failure, not-implemented, or usage status through the built CLI binary.
-// Lifecycle, shell and fingerprint forms reject incomplete container inspect answers after existence queries on Linux, or malformed machine query answers on Windows. Deferred commands permit only preflight queries, and SSH never runs.
+// Named sandbox commands reject incomplete container inspections on Linux or malformed machine queries on Windows; list rejects an invalid inventory, and build/up/update stop at preflight. SSH never runs.
 func TestCommandGrammar(t *testing.T) {
 	cases := []struct {
 		args   []string
@@ -684,9 +684,7 @@ func lifecycleHarness(t *testing.T, responses map[string]lifecycleResponse) test
 }
 
 func lifecycleRun(args ...string) (int, string) {
-	var output bytes.Buffer
-	status := cli.RunWithHost(args, &output, &output, cli.Host{Platform: "linux", PortAvailable: func(uint16) error { return nil }})
-	return status, output.String()
+	return runWithHost(cli.Host{Platform: "linux", PortAvailable: func(uint16) error { return nil }}, args...)
 }
 
 // TestLifecycleLockRefusesBeforeSandboxLookup proves a competing command refuses immediately before any sandbox lookup through RunWithHost and fake Podman.
