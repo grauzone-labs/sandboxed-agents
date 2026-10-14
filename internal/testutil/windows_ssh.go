@@ -105,7 +105,8 @@ func AssertWindowsSSHOwnerIsProcessUser(t *testing.T, path string) {
 	}
 }
 
-func AssertWindowsSSHPathAccess(t *testing.T, path string, protected bool, aceFlags uint8) {
+// AssertWindowsSSHPathAccess checks effective access and any directory inheritance ACE separately.
+func AssertWindowsSSHPathAccess(t *testing.T, path string, protected bool, inheritance uint8) {
 	t.Helper()
 	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
@@ -138,8 +139,8 @@ func AssertWindowsSSHPathAccess(t *testing.T, path string, protected bool, aceFl
 	}
 	effectiveEntries := 0
 	inheritOnlyEntries := 0
-	inheritanceFlags := aceFlags & (windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE)
-	effectiveFlags := aceFlags & windows.INHERITED_ACE
+	inheritanceFlags := inheritance & (windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE)
+	effectiveFlags := inheritance & windows.INHERITED_ACE
 	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(dacl, index, &ace); err != nil {
