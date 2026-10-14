@@ -11,8 +11,8 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
-// TestNpmLauncherOutsidePathIsProtected proves launcher paths supplied by npm are refused as workspace binds before Podman or SSH through the built CLI executable.
-func TestNpmLauncherOutsidePathIsProtected(t *testing.T) {
+// TestNpmLaunchersAbsentFromPATHAreProtected proves npm launchers and shims absent from PATH are refused as workspace binds before Podman or SSH through the built CLI executable.
+func TestNpmLaunchersAbsentFromPATHAreProtected(t *testing.T) {
 	for _, kind := range []string{"launcher.cjs", "sandboxed-agents.cmd", "sandboxed-agents.ps1", "launch link", "workspace alias"} {
 		t.Run(kind, func(t *testing.T) {
 			assertNpmLauncherProtected(t, kind)
