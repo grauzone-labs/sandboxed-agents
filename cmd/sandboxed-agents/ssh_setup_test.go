@@ -660,7 +660,7 @@ func TestSSHConfigPreviewPrintsHardenedEntryWithoutWriting(t *testing.T) {
 
 func sshSetupHarness(t *testing.T, responses map[string]lifecycleResponse) testutil.Fakes {
 	t.Helper()
-	responses = setupPlatformResponses(responses)
+	responses = setupResponsesForPlatform(responses, runtime.GOOS)
 
 	fakes := lifecycleHarness(t, responses)
 	home := t.TempDir()
@@ -680,10 +680,6 @@ func sshSetupHarness(t *testing.T, responses map[string]lifecycleResponse) testu
 	t.Setenv("TEST_SSH_KEYGEN_LOG", filepath.Join(fakes.Dir, "keygen.jsonl"))
 	t.Setenv("TEST_SSH_KEYGEN_PUBLIC_KEY", setupPublicKey)
 	return fakes
-}
-
-func setupPlatformResponses(responses map[string]lifecycleResponse) map[string]lifecycleResponse {
-	return setupResponsesForPlatform(responses, runtime.GOOS)
 }
 
 func setupResponsesForPlatform(responses map[string]lifecycleResponse, platform string) map[string]lifecycleResponse {

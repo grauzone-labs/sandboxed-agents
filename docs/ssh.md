@@ -135,7 +135,7 @@ Find the line with the key type that the UI shows and compare the `SHA256:` dige
 The SSH setup needs no administrator rights.
 
 - **Linux:** the installation creates the directories and files of the controller group's host state with private permissions. If it creates `~/.ssh` or `~/.ssh/config`, they are private too. An existing `~/.ssh` keeps its mode, and a rewritten `~/.ssh/config` keeps the mode of the file it replaces.
-- **Windows:** the key files and the managed configuration get permissions that OpenSSH for Windows accepts, under a standard account. A `.ssh` directory or SSH configuration file that `--install` creates gets them as well; an existing file keeps its permissions.
+- **Windows:** the key files and the managed configuration get permissions that OpenSSH for Windows accepts, under a standard account. A `.ssh` directory or SSH configuration file that `--install` creates gets them as well; rewriting an existing SSH configuration keeps its DACL and inheritance settings. The replacement file is owned by the account running the CLI, so installing does not need permission to reassign an owner such as SYSTEM or Administrators.
 
 ## When a command refuses
 

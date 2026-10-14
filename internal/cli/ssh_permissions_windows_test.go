@@ -1,16 +1,13 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-	"unsafe"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 	"golang.org/x/sys/windows"
 )
 
@@ -32,7 +29,7 @@ func TestSecureSSHPathWindowsRestrictsManagedFiles(t *testing.T) {
 			if err := secureSSHPath(path, mode); err != nil {
 				t.Fatal(err)
 			}
-			assertSSHPathAccess(t, path, true, 0)
+			testutil.AssertWindowsSSHPathAccess(t, path, true, 0)
 			got, err := os.ReadFile(path)
 			if err != nil || string(got) != contents {
 				t.Fatalf("secured file contents = %q, %v; want %q", got, err, contents)
@@ -56,27 +53,27 @@ func TestSecureSSHPathWindowsDirectoriesRestrictChildren(t *testing.T) {
 	if err := secureSSHPath(directory, os.ModeDir|0700); err != nil {
 		t.Fatal(err)
 	}
-	assertSSHPathAccess(t, directory, true, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE)
+	testutil.AssertWindowsSSHPathAccess(t, directory, true, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE)
 	config := filepath.Join(directory, "config")
 	if err := os.WriteFile(config, []byte("Host agent01\n"), 0600); err != nil {
 		t.Fatalf("process user cannot create a file in secured directory: %v", err)
 	}
-	assertSSHPathAccess(t, config, false, windows.INHERITED_ACE)
+	testutil.AssertWindowsSSHPathAccess(t, config, false, windows.INHERITED_ACE)
 	nested := filepath.Join(directory, "nested")
 	if err := os.Mkdir(nested, 0700); err != nil {
 		t.Fatalf("process user cannot create a child directory: %v", err)
 	}
-	assertSSHPathAccess(t, nested, false, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE|windows.INHERITED_ACE)
+	testutil.AssertWindowsSSHPathAccess(t, nested, false, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE|windows.INHERITED_ACE)
 	key := filepath.Join(nested, "id_ed25519")
 	if err := os.WriteFile(key, []byte("key\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	assertSSHPathAccess(t, key, false, windows.INHERITED_ACE)
+	testutil.AssertWindowsSSHPathAccess(t, key, false, windows.INHERITED_ACE)
 }
 
 // TestSecureSSHReplacementWindowsPreservesConfigPermissions proves through
-// secureSSHReplacement that an atomic replacement retains the prior owner's
-// identity, custom DACL, and parent inheritance protection on Windows.
+// secureSSHReplacement that an atomic replacement retains a user's custom DACL
+// and parent inheritance protection on Windows.
 func TestSecureSSHReplacementWindowsPreservesConfigPermissions(t *testing.T) {
 	for _, protected := range []bool{true, false} {
 		t.Run(fmt.Sprintf("protected-%v", protected), func(t *testing.T) {
@@ -107,13 +104,13 @@ func TestSecureSSHReplacementWindowsPreservesConfigPermissions(t *testing.T) {
 			if err := windows.SetNamedSecurityInfo(previous, windows.SE_FILE_OBJECT, information, user.User.Sid, nil, dacl, nil); err != nil {
 				t.Fatal(err)
 			}
-			before, beforeControl := sshPermissionSnapshot(t, previous)
+			before := testutil.SnapshotWindowsSSHPermissions(t, previous)
 			if err := secureSSHReplacement(replacement, 0600, previous); err != nil {
 				t.Fatal(err)
 			}
-			after, afterControl := sshPermissionSnapshot(t, replacement)
-			if before != after || beforeControl != afterControl {
-				t.Fatalf("replacement permissions = %q / %#x; want %q / %#x", after, afterControl, before, beforeControl)
+			after := testutil.SnapshotWindowsSSHPermissions(t, replacement)
+			if before.Descriptor != after.Descriptor || before.Control != after.Control {
+				t.Fatalf("replacement permissions = %+v; want %+v", after, before)
 			}
 			if data, err := os.ReadFile(previous); err != nil || string(data) != "user bytes\n" {
 				t.Fatalf("source changed = %q / %v", data, err)
@@ -122,25 +119,64 @@ func TestSecureSSHReplacementWindowsPreservesConfigPermissions(t *testing.T) {
 	}
 }
 
-func sshPermissionSnapshot(t *testing.T, path string) (string, windows.SECURITY_DESCRIPTOR_CONTROL) {
-	t.Helper()
-	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	if err != nil || descriptor == nil {
-		t.Fatalf("read security descriptor for %q: %v", path, err)
+// TestSecureSSHReplacementWindowsAcceptsUnassignableOwner proves through
+// secureSSHReplacement that replacing a config owned by Administrators does
+// not require the process to assign that owner on Windows.
+func TestSecureSSHReplacementWindowsAcceptsUnassignableOwner(t *testing.T) {
+	directory := t.TempDir()
+	previous := filepath.Join(directory, "config")
+	replacement := filepath.Join(directory, ".replacement")
+	for _, path := range []string{previous, replacement} {
+		if err := os.WriteFile(path, []byte("user bytes\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	control, _, err := descriptor.Control()
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return descriptor.String(), control
+	descriptor, err := windows.SecurityDescriptorFromString(fmt.Sprintf("O:BAD:P(A;;FA;;;%s)(A;;FR;;;BA)", user.User.Sid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(previous, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		owner, nil, dacl, nil); err != nil {
+		t.Skipf("process cannot assign the Administrators owner needed for this fixture: %v", err)
+	}
+	before := testutil.SnapshotWindowsSSHPermissions(t, previous)
+	if err := secureSSHReplacement(replacement, 0600, previous); err != nil {
+		t.Fatalf("replace config with Administrators owner: %v", err)
+	}
+	after := testutil.SnapshotWindowsSSHPermissions(t, replacement)
+	_, beforeDACL, _ := strings.Cut(before.Descriptor, "D:")
+	_, afterDACL, _ := strings.Cut(after.Descriptor, "D:")
+	if beforeDACL != afterDACL || before.Control != after.Control {
+		t.Fatalf("replacement DACL = %q / %#x; want %q / %#x", afterDACL, after.Control, beforeDACL, before.Control)
+	}
+	replacementDescriptor, err := windows.GetNamedSecurityInfo(replacement, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newOwner, _, err := replacementDescriptor.Owner()
+	if err != nil || newOwner == nil || !newOwner.Equals(user.User.Sid) {
+		t.Fatalf("replacement owner = %v, %v; want process user %v", newOwner, err, user.User.Sid)
+	}
 }
 
 // TestSecureSSHPathWindowsOpenSSHAcceptsSetup proves through secureSSHPath and
 // native Windows OpenSSH that secured private keys and included user and managed
 // configurations are accepted after the same files with broad access are refused.
 func TestSecureSSHPathWindowsOpenSSHAcceptsSetup(t *testing.T) {
-	ssh, keygen := nativeWindowsOpenSSH(t)
+	ssh, keygen := testutil.NativeWindowsOpenSSH(t)
 	t.Logf("process token elevated: %v", windows.GetCurrentProcessToken().IsElevated())
 	root := t.TempDir()
 	userDirectory := filepath.Join(root, ".ssh")
@@ -154,11 +190,11 @@ func TestSecureSSHPathWindowsOpenSSHAcceptsSetup(t *testing.T) {
 		}
 	}
 	key := filepath.Join(managedDirectory, "id_ed25519")
-	if output, err := runWindowsSSH(t, keygen, "-q", "-t", "ed25519", "-N", "", "-f", key); err != nil {
+	if output, err := testutil.RunWindowsSSH(t, keygen, "-q", "-t", "ed25519", "-N", "", "-f", key); err != nil {
 		t.Fatalf("generate temporary key: %v\n%s", err, output)
 	}
 	grantEveryoneSSHPath(t, key)
-	output, err := runWindowsSSH(t, keygen, "-y", "-P", "", "-f", key)
+	output, err := testutil.RunWindowsSSH(t, keygen, "-y", "-P", "", "-f", key)
 	if err == nil || !strings.Contains(strings.ToLower(string(output)), "permission") {
 		t.Fatalf("OpenSSH did not reject the broad private-key permissions: %v\n%s", err, output)
 	}
@@ -175,7 +211,7 @@ func TestSecureSSHPathWindowsOpenSSHAcceptsSetup(t *testing.T) {
 	if len(fields) < 2 {
 		t.Fatalf("generated public key is invalid: %q", publicKey)
 	}
-	output, err = runWindowsSSH(t, keygen, "-y", "-P", "", "-f", key)
+	output, err = testutil.RunWindowsSSH(t, keygen, "-y", "-P", "", "-f", key)
 	if err != nil || strings.TrimSpace(string(output)) != strings.Join(fields[:2], " ") {
 		t.Fatalf("OpenSSH did not load the secured private key: %v\n%s", err, output)
 	}
@@ -197,7 +233,7 @@ func TestSecureSSHPathWindowsOpenSSHAcceptsSetup(t *testing.T) {
 	grantEveryoneSSHPath(t, userConfig)
 	grantEveryoneSSHPath(t, managedConfig)
 	for _, path := range []string{userConfig, managedConfig} {
-		output, err = runWindowsSSH(t, ssh, "-G", "-F", wrapper, "permission-adapter")
+		output, err = testutil.RunWindowsSSH(t, ssh, "-G", "-F", wrapper, "permission-adapter")
 		if err == nil || !strings.Contains(strings.ToLower(string(output)), "permission") {
 			t.Fatalf("OpenSSH did not reject the broad configuration permissions before securing %q: %v\n%s", path, err, output)
 		}
@@ -205,7 +241,7 @@ func TestSecureSSHPathWindowsOpenSSHAcceptsSetup(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	output, err = runWindowsSSH(t, ssh, "-G", "-F", wrapper, "permission-adapter")
+	output, err = testutil.RunWindowsSSH(t, ssh, "-G", "-F", wrapper, "permission-adapter")
 	if err != nil {
 		t.Fatalf("OpenSSH refused secured configuration: %v\n%s", err, output)
 	}
@@ -215,41 +251,6 @@ func TestSecureSSHPathWindowsOpenSSHAcceptsSetup(t *testing.T) {
 			t.Fatalf("OpenSSH did not resolve %q from secured configuration:\n%s", option, resolved)
 		}
 	}
-}
-
-func nativeWindowsOpenSSH(t *testing.T) (ssh, keygen string) {
-	t.Helper()
-	var directories []string
-	if systemRoot := os.Getenv("SystemRoot"); systemRoot != "" {
-		directories = append(directories, filepath.Join(systemRoot, "System32", "OpenSSH"))
-	}
-	if keygen, err := exec.LookPath("ssh-keygen.exe"); err == nil {
-		directories = append(directories, filepath.Dir(keygen))
-	}
-	for _, directory := range directories {
-		ssh := filepath.Join(directory, "ssh.exe")
-		keygen := filepath.Join(directory, "ssh-keygen.exe")
-		if _, err := os.Stat(keygen); err != nil {
-			continue
-		}
-		output, err := runWindowsSSH(t, ssh, "-V")
-		if err == nil && strings.Contains(string(output), "OpenSSH_for_Windows") {
-			return ssh, keygen
-		}
-	}
-	t.Skip("native Windows OpenSSH executables are unavailable")
-	return "", ""
-}
-
-func runWindowsSSH(t *testing.T, executable string, arguments ...string) ([]byte, error) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, executable, arguments...).CombinedOutput()
-	if ctx.Err() != nil {
-		t.Fatalf("OpenSSH command timed out: %v", ctx.Err())
-	}
-	return output, err
 }
 
 func grantEveryoneSSHPath(t *testing.T, path string) {
@@ -267,56 +268,5 @@ func grantEveryoneSSHPath(t *testing.T, path string) {
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
 		nil, nil, dacl, nil); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func assertSSHPathAccess(t *testing.T, path string, protected bool, aceFlags uint8) {
-	t.Helper()
-	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if descriptor == nil {
-		t.Fatal("secured path has no security descriptor")
-	}
-	user, err := windows.GetCurrentProcessToken().GetTokenUser()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Directly secured paths must belong to the process user. Child creation
-	// selects a default owner from the token; inheritance promises only access.
-	if protected {
-		owner, _, err := descriptor.Owner()
-		if err != nil || owner == nil || !owner.Equals(user.User.Sid) {
-			t.Fatalf("owner = %v, %v; want process user %v", owner, err, user.User.Sid)
-		}
-	}
-	control, _, err := descriptor.Control()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := control&windows.SE_DACL_PROTECTED != 0; got != protected {
-		t.Fatalf("protected DACL = %v; want %v", got, protected)
-	}
-	dacl, _, err := descriptor.DACL()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dacl == nil || dacl.AceCount != 1 {
-		t.Fatalf("DACL must grant only the process user access: %s", descriptor)
-	}
-	var ace *windows.ACCESS_ALLOWED_ACE
-	if err := windows.GetAce(dacl, 0, &ace); err != nil {
-		t.Fatal(err)
-	}
-	sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || !sid.Equals(user.User.Sid) {
-		t.Fatalf("sole access entry = %s; want allow for process user %v", descriptor, user.User.Sid)
-	}
-	// FILE_ALL_ACCESS is defined by Win32 as 0x001f01ff, independently of
-	// how the adapter builds or maps the access entry.
-	if ace.Mask != 0x001f01ff || ace.Header.AceFlags != aceFlags {
-		t.Fatalf("access mask = %#x, flags = %#x; want full file access and flags %#x", ace.Mask, ace.Header.AceFlags, aceFlags)
 	}
 }

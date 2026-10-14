@@ -1,16 +1,12 @@
 package main_test
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
-	"unsafe"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 	"golang.org/x/sys/windows"
@@ -24,7 +20,7 @@ func TestSSHSetupWindowsInstallSecuresNewPathsAndPreservesExistingPermissions(t 
 	if os.Getenv(nestedGuardEnv) == strconv.Itoa(os.Getppid()) {
 		t.Skip("nested offline guard isolates PATH to fake programs; the outer suite checks native Windows OpenSSH")
 	}
-	ssh, keygen := setupWindowsOpenSSH(t)
+	ssh, keygen := testutil.NativeWindowsOpenSSH(t)
 	t.Logf("process token elevated: %v", windows.GetCurrentProcessToken().IsElevated())
 	for _, existing := range []bool{false, true} {
 		t.Run(fmt.Sprintf("existing-config-%v", existing), func(t *testing.T) {
@@ -38,7 +34,7 @@ func TestSSHSetupWindowsInstallSecuresNewPathsAndPreservesExistingPermissions(t 
 			userDirectory := filepath.Join(os.Getenv("USERPROFILE"), ".ssh")
 			userConfig := filepath.Join(userDirectory, "config")
 			original := []byte("# personal Windows settings\r\nHost personal\r\n    HostName example.com\r\n")
-			var beforeConfig, beforeDirectory windowsSSHPermissions
+			var beforeConfig, beforeDirectory testutil.WindowsSSHPermissions
 			if existing {
 				if err := os.Mkdir(userDirectory, 0700); err != nil {
 					t.Fatal(err)
@@ -48,8 +44,8 @@ func TestSSHSetupWindowsInstallSecuresNewPathsAndPreservesExistingPermissions(t 
 				}
 				setupCustomWindowsSSHPermissions(t, userDirectory)
 				setupCustomWindowsSSHPermissions(t, userConfig)
-				beforeConfig = snapshotWindowsSSHPermissions(t, userConfig)
-				beforeDirectory = snapshotWindowsSSHPermissions(t, userDirectory)
+				beforeConfig = testutil.SnapshotWindowsSSHPermissions(t, userConfig)
+				beforeDirectory = testutil.SnapshotWindowsSSHPermissions(t, userDirectory)
 			}
 			if status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo", "--install"); status != 0 {
 				t.Fatalf("install=%d %q %q", status, stdout, stderr)
@@ -63,17 +59,21 @@ func TestSSHSetupWindowsInstallSecuresNewPathsAndPreservesExistingPermissions(t 
 			managedDirectory := filepath.Dir(filepath.Dir(identity))
 			managedConfig := filepath.Join(managedDirectory, "config")
 			for _, path := range []string{identity, identity + ".pub", knownHosts, filepath.Join(filepath.Dir(identity), "entry"), managedConfig, managedDirectory, filepath.Dir(identity)} {
-				assertSetupWindowsSSHAccess(t, path)
+				flags := uint8(0)
+				if info, err := os.Stat(path); err == nil && info.IsDir() {
+					flags = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
+				}
+				testutil.AssertWindowsSSHPathAccess(t, path, true, flags)
 			}
 			if existing {
-				assertWindowsSSHPermissionsUnchanged(t, userConfig, beforeConfig)
-				assertWindowsSSHPermissionsUnchanged(t, userDirectory, beforeDirectory)
+				testutil.AssertWindowsSSHPermissionsUnchanged(t, userConfig, beforeConfig)
+				testutil.AssertWindowsSSHPermissionsUnchanged(t, userDirectory, beforeDirectory)
 			} else {
-				assertSetupWindowsSSHAccess(t, userConfig)
-				assertSetupWindowsSSHAccess(t, userDirectory)
+				testutil.AssertWindowsSSHPathAccess(t, userConfig, true, 0)
+				testutil.AssertWindowsSSHPathAccess(t, userDirectory, true, windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE)
 				original = nil
-				beforeConfig = snapshotWindowsSSHPermissions(t, userConfig)
-				beforeDirectory = snapshotWindowsSSHPermissions(t, userDirectory)
+				beforeConfig = testutil.SnapshotWindowsSSHPermissions(t, userConfig)
+				beforeDirectory = testutil.SnapshotWindowsSSHPermissions(t, userDirectory)
 			}
 			installed, err := os.ReadFile(userConfig)
 			if err != nil || strings.Count(string(installed), "Include ") != 1 || !strings.HasSuffix(string(installed), string(original)) {
@@ -95,7 +95,7 @@ func TestSSHSetupWindowsInstallSecuresNewPathsAndPreservesExistingPermissions(t 
 			if publicKey == setupPublicKey {
 				t.Fatal("key generation used the synthetic fake key instead of native OpenSSH")
 			}
-			output, err := setupWindowsSSHCommand(t, keygen, "-y", "-P", "", "-f", identity)
+			output, err := testutil.RunWindowsSSH(t, keygen, "-y", "-P", "", "-f", identity)
 			if err != nil || strings.TrimSpace(string(output)) != publicKey {
 				t.Fatalf("native OpenSSH refused generated private key: %v\n%s", err, output)
 			}
@@ -110,7 +110,7 @@ func TestSSHSetupWindowsInstallSecuresNewPathsAndPreservesExistingPermissions(t 
 			if err := os.WriteFile(wrapper, []byte(fmt.Sprintf("Include %q\n", filepath.ToSlash(userConfig))), 0600); err != nil {
 				t.Fatal(err)
 			}
-			output, err = setupWindowsSSHCommand(t, ssh, "-G", "-F", wrapper, "demo")
+			output, err = testutil.RunWindowsSSH(t, ssh, "-G", "-F", wrapper, "demo")
 			if err != nil {
 				t.Fatalf("native OpenSSH refused installed configuration: %v\n%s", err, output)
 			}
@@ -128,40 +128,14 @@ func TestSSHSetupWindowsInstallSecuresNewPathsAndPreservesExistingPermissions(t 
 			if err != nil || string(after) != string(original) {
 				t.Fatalf("removed user configuration=%q error=%v; want original %q", after, err, original)
 			}
-			assertWindowsSSHPermissionsUnchanged(t, userConfig, beforeConfig)
-			assertWindowsSSHPermissionsUnchanged(t, userDirectory, beforeDirectory)
+			testutil.AssertWindowsSSHPermissionsUnchanged(t, userConfig, beforeConfig)
+			testutil.AssertWindowsSSHPermissionsUnchanged(t, userDirectory, beforeDirectory)
 			for _, path := range []string{identity, identity + ".pub", knownHosts, managedConfig} {
 				if _, err := os.Stat(path); !os.IsNotExist(err) {
 					t.Fatalf("removed managed path %q still exists or cannot be checked: %v", path, err)
 				}
 			}
 		})
-	}
-}
-
-type windowsSSHPermissions struct {
-	descriptor string
-	control    windows.SECURITY_DESCRIPTOR_CONTROL
-}
-
-func snapshotWindowsSSHPermissions(t *testing.T, path string) windowsSSHPermissions {
-	t.Helper()
-	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	if err != nil || descriptor == nil {
-		t.Fatalf("read Windows permissions for %q: %v", path, err)
-	}
-	control, _, err := descriptor.Control()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return windowsSSHPermissions{descriptor.String(), control}
-}
-
-func assertWindowsSSHPermissionsUnchanged(t *testing.T, path string, before windowsSSHPermissions) {
-	t.Helper()
-	if after := snapshotWindowsSSHPermissions(t, path); after != before {
-		t.Fatalf("Windows permissions on %q changed: before=%+v after=%+v", path, before, after)
 	}
 }
 
@@ -185,50 +159,6 @@ func setupCustomWindowsSSHPermissions(t *testing.T, path string) {
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
 		user.User.Sid, nil, dacl, nil); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func assertSetupWindowsSSHAccess(t *testing.T, path string) {
-	t.Helper()
-	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	if err != nil || descriptor == nil {
-		t.Fatalf("read Windows permissions for managed path %q: %v", path, err)
-	}
-	user, err := windows.GetCurrentProcessToken().GetTokenUser()
-	if err != nil {
-		t.Fatal(err)
-	}
-	owner, _, err := descriptor.Owner()
-	if err != nil || owner == nil || !owner.Equals(user.User.Sid) {
-		t.Fatalf("managed path %q owner=%v error=%v; want process user %v", path, owner, err, user.User.Sid)
-	}
-	control, _, err := descriptor.Control()
-	if err != nil || control&windows.SE_DACL_PROTECTED == 0 {
-		t.Fatalf("managed path %q DACL is unprotected: control=%#x error=%v", path, control, err)
-	}
-	dacl, _, err := descriptor.DACL()
-	if err != nil || dacl == nil || dacl.AceCount != 1 {
-		t.Fatalf("managed path %q must allow only the process user: %s, error=%v", path, descriptor, err)
-	}
-	var ace *windows.ACCESS_ALLOWED_ACE
-	if err := windows.GetAce(dacl, 0, &ace); err != nil {
-		t.Fatal(err)
-	}
-	sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || !sid.Equals(user.User.Sid) || ace.Mask != 0x001f01ff {
-		t.Fatalf("managed path %q has unexpected access: %s", path, descriptor)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	flags := uint8(0)
-	if info.IsDir() {
-		flags = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
-	}
-	if ace.Header.AceFlags != flags {
-		t.Fatalf("managed path %q inheritance flags=%#x; want %#x", path, ace.Header.AceFlags, flags)
 	}
 }
 
@@ -256,39 +186,4 @@ func windowsSSHEntryPath(t *testing.T, entry, directive string) string {
 	}
 	t.Fatalf("installed entry has no %s path: %s", directive, entry)
 	return ""
-}
-
-func setupWindowsOpenSSH(t *testing.T) (ssh, keygen string) {
-	t.Helper()
-	var directories []string
-	if systemRoot := os.Getenv("SystemRoot"); systemRoot != "" {
-		directories = append(directories, filepath.Join(systemRoot, "System32", "OpenSSH"))
-	}
-	if path, err := exec.LookPath("ssh-keygen.exe"); err == nil {
-		directories = append(directories, filepath.Dir(path))
-	}
-	for _, directory := range directories {
-		ssh := filepath.Join(directory, "ssh.exe")
-		keygen := filepath.Join(directory, "ssh-keygen.exe")
-		if _, err := os.Stat(keygen); err != nil {
-			continue
-		}
-		output, err := setupWindowsSSHCommand(t, ssh, "-V")
-		if err == nil && strings.Contains(string(output), "OpenSSH_for_Windows") {
-			return ssh, keygen
-		}
-	}
-	t.Skip("native Windows OpenSSH executables are unavailable")
-	return "", ""
-}
-
-func setupWindowsSSHCommand(t *testing.T, executable string, arguments ...string) ([]byte, error) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, executable, arguments...).CombinedOutput()
-	if ctx.Err() != nil {
-		t.Fatalf("native Windows OpenSSH command timed out: %v", ctx.Err())
-	}
-	return output, err
 }
