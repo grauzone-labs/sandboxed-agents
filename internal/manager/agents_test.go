@@ -567,7 +567,7 @@ func TestForcedEnableRepairsInterruptedPublication(t *testing.T) {
 	runAgents(t, e, 0, "disable", "codex")
 }
 
-// TestForcedUpdateAndDisableRepairInterruptedPublication proves force repairs a mismatched npm publication while ordinary mutations refuse and unrelated selections survive at RunWithEffects.
+// TestForcedUpdateAndDisableRepairInterruptedPublication proves force repairs and cleans a mismatched npm publication while ordinary mutations refuse and unrelated selections survive at RunWithEffects.
 func TestForcedUpdateAndDisableRepairInterruptedPublication(t *testing.T) {
 	for _, operation := range []string{"update", "disable"} {
 		t.Run(operation, func(t *testing.T) {
@@ -593,6 +593,9 @@ func TestForcedUpdateAndDisableRepairInterruptedPublication(t *testing.T) {
 				t.Fatalf("ordinary mutation started npm: %d != %d", installs, before)
 			}
 			runAgents(t, e, 0, operation, "codex", "--force")
+			if _, err := os.Stat(filepath.Join(home, ".local", "share", "sandboxed-agents", "installation-interrupted")); !os.IsNotExist(err) {
+				t.Fatalf("recovered orphan installation survived: %v", err)
+			}
 			got := readAgentStatus(t, e, "codex")
 			if operation == "update" && (!got.Enabled || got.Pin != "1.0.0" || got.InstalledVersion != "1.0.0") {
 				t.Fatalf("forced update=%+v", got)
@@ -752,7 +755,7 @@ func TestForcedRecoveryRejectsEscapingOrWrongAgentLinks(t *testing.T) {
 	}
 }
 
-// TestForcedRecoveryHandlesInitialPublication proves force can enable or disable a validated orphan without a selection and unpinned recovery installs current npm at RunWithEffects.
+// TestForcedRecoveryHandlesInitialPublication proves force enables or disables and cleans a validated orphan without a selection while leaving unrelated prefixes alone at RunWithEffects.
 func TestForcedRecoveryHandlesInitialPublication(t *testing.T) {
 	for _, operation := range []string{"enable", "disable"} {
 		t.Run(operation, func(t *testing.T) {
@@ -761,6 +764,10 @@ func TestForcedRecoveryHandlesInitialPublication(t *testing.T) {
 			runAgents(t, e, 0, "enable", "codex")
 			runAgents(t, e, 0, "disable", "codex")
 			interruptedAgentLink(t, home, "codex", "2.0.0")
+			unrelated := filepath.Join(home, ".local", "share", "sandboxed-agents", "installation-unrelated")
+			if err := os.Mkdir(unrelated, 0700); err != nil {
+				t.Fatal(err)
+			}
 			if operation == "enable" {
 				runAgents(t, e, 1, "enable", "codex")
 			} else {
@@ -768,6 +775,12 @@ func TestForcedRecoveryHandlesInitialPublication(t *testing.T) {
 			}
 			version = "3.0.0"
 			runAgents(t, e, 0, operation, "codex", "--force")
+			if _, err := os.Stat(filepath.Join(home, ".local", "share", "sandboxed-agents", "installation-interrupted")); !os.IsNotExist(err) {
+				t.Fatalf("recovered orphan installation survived: %v", err)
+			}
+			if _, err := os.Stat(unrelated); err != nil {
+				t.Fatalf("unrelated prefix changed: %v", err)
+			}
 			got := readAgentStatus(t, e, "codex")
 			if operation == "enable" && (!got.Enabled || got.InstalledVersion != "3.0.0" || got.Pin != "" || installs != 2) {
 				t.Fatalf("initial force enable=%+v installs=%d", got, installs)
@@ -853,6 +866,94 @@ func TestOrdinaryMutationsHandleMissingCommand(t *testing.T) {
 				if data, err := os.ReadFile(filepath.Join(home, name)); err != nil || string(data) != "preserve "+name {
 					t.Fatalf("ordinary mutation changed %s=%q error=%v", name, data, err)
 				}
+			}
+		})
+	}
+}
+
+// TestRecoveredCleanupPreservesReferencedPrefixes proves forced changes retain a recovered prefix still referenced by another selection at RunWithEffects and the real home-state seam.
+func TestRecoveredCleanupPreservesReferencedPrefixes(t *testing.T) {
+	for _, operation := range []string{"enable", "update", "disable"} {
+		t.Run(operation, func(t *testing.T) {
+			home, version, installs := t.TempDir(), "1.0.0", 0
+			e := agentEffects(t, home, &version, &installs)
+			runAgents(t, e, 0, "enable", "claude")
+			runAgents(t, e, 0, "enable", "codex")
+			orphan := interruptedAgentLink(t, home, "codex", "2.0.0")
+			selectionPath := filepath.Join(home, ".local", "share", "sandboxed-agents", "selection.json")
+			data, err := os.ReadFile(selectionPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var selection map[string]map[string]string
+			if err := json.Unmarshal(data, &selection); err != nil {
+				t.Fatal(err)
+			}
+			selection["claude"]["prefix"] = "installation-interrupted"
+			data, err = json.Marshal(selection)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(selectionPath, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			runAgents(t, e, 0, operation, "codex", "--force")
+			if _, err := os.Stat(orphan); err != nil {
+				t.Fatalf("referenced installation removed: %v", err)
+			}
+			data, err = os.ReadFile(selectionPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selection = nil
+			if err := json.Unmarshal(data, &selection); err != nil {
+				t.Fatal(err)
+			}
+			if selection["claude"]["prefix"] != "installation-interrupted" {
+				t.Fatalf("other selection changed: %v", selection["claude"])
+			}
+		})
+	}
+}
+
+// TestFailedSelectionCommitPreservesRecoveredPrefix proves failed forced publication restores the prior link without deleting its recovered installation at RunWithEffects and the temporary-home filesystem seam.
+func TestFailedSelectionCommitPreservesRecoveredPrefix(t *testing.T) {
+	for _, operation := range []string{"enable", "update"} {
+		t.Run(operation, func(t *testing.T) {
+			home, version, installs := t.TempDir(), "1.0.0", 0
+			e := agentEffects(t, home, &version, &installs)
+			runAgents(t, e, 0, "enable", "codex", "--version", "1.0.0")
+			orphan := interruptedAgentLink(t, home, "codex", "2.0.0")
+			selectionPath := filepath.Join(home, ".local", "share", "sandboxed-agents", "selection.json")
+			start := e.Start
+			e.Start = func(p manager.Process) error {
+				if err := start(p); err != nil {
+					return err
+				}
+				if err := os.Rename(selectionPath, selectionPath+".saved"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(selectionPath, 0700); err != nil {
+					t.Fatal(err)
+				}
+				return nil
+			}
+			runAgents(t, e, 1, operation, "codex", "--force")
+			if _, err := os.Stat(orphan); err != nil {
+				t.Fatalf("uncommitted recovery removed prior installation: %v", err)
+			}
+			command := filepath.Join(home, ".local", "bin", "codex")
+			if target, err := os.Readlink(command); err != nil || target != orphan {
+				t.Fatalf("prior link not restored: target=%s error=%v", target, err)
+			}
+			if err := os.Remove(selectionPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(selectionPath+".saved", selectionPath); err != nil {
+				t.Fatal(err)
+			}
+			if got := readAgentStatus(t, e, "codex"); got.Pin != "1.0.0" || got.InstalledVersion != "1.0.0" {
+				t.Fatalf("failed publication changed selection: %+v", got)
 			}
 		})
 	}
