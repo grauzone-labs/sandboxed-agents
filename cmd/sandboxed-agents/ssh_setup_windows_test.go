@@ -66,12 +66,7 @@ func TestSSHSetupWindowsInstallSecuresNewPathsAndPreservesExistingPermissions(t 
 				testutil.AssertWindowsSSHPathAccess(t, path, true, flags)
 			}
 			if existing {
-				afterConfig := testutil.SnapshotWindowsSSHPermissions(t, userConfig)
-				_, beforeDACL, _ := strings.Cut(beforeConfig.Descriptor, "D:")
-				_, afterDACL, _ := strings.Cut(afterConfig.Descriptor, "D:")
-				if beforeDACL != afterDACL || beforeConfig.Control != afterConfig.Control {
-					t.Fatalf("user config ACL changed: before=%+v after=%+v", beforeConfig, afterConfig)
-				}
+				testutil.AssertWindowsSSHAccessControlUnchanged(t, userConfig, beforeConfig)
 				testutil.AssertWindowsSSHOwnerIsProcessUser(t, userConfig)
 				testutil.AssertWindowsSSHPermissionsUnchanged(t, userDirectory, beforeDirectory)
 			} else {
@@ -134,7 +129,8 @@ func TestSSHSetupWindowsInstallSecuresNewPathsAndPreservesExistingPermissions(t 
 			if err != nil || string(after) != string(original) {
 				t.Fatalf("removed user configuration=%q error=%v; want original %q", after, err, original)
 			}
-			testutil.AssertWindowsSSHPermissionsUnchanged(t, userConfig, beforeConfig)
+			testutil.AssertWindowsSSHAccessControlUnchanged(t, userConfig, beforeConfig)
+			testutil.AssertWindowsSSHOwnerIsProcessUser(t, userConfig)
 			testutil.AssertWindowsSSHPermissionsUnchanged(t, userDirectory, beforeDirectory)
 			for _, path := range []string{identity, identity + ".pub", knownHosts, managedConfig} {
 				if _, err := os.Stat(path); !os.IsNotExist(err) {

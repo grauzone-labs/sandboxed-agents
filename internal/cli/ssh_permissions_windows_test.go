@@ -156,12 +156,7 @@ func TestSecureSSHReplacementWindowsAcceptsUnassignableOwner(t *testing.T) {
 	if err := secureSSHReplacement(replacement, 0600, previous); err != nil {
 		t.Fatalf("replace config with Administrators owner: %v", err)
 	}
-	after := testutil.SnapshotWindowsSSHPermissions(t, replacement)
-	_, beforeDACL, _ := strings.Cut(before.Descriptor, "D:")
-	_, afterDACL, _ := strings.Cut(after.Descriptor, "D:")
-	if beforeDACL != afterDACL || before.Control != after.Control {
-		t.Fatalf("replacement DACL = %q / %#x; want %q / %#x", afterDACL, after.Control, beforeDACL, before.Control)
-	}
+	testutil.AssertWindowsSSHAccessControlUnchanged(t, replacement, before)
 	replacementDescriptor, err := windows.GetNamedSecurityInfo(replacement, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
 		t.Fatal(err)

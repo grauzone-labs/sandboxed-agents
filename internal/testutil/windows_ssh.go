@@ -76,6 +76,16 @@ func AssertWindowsSSHPermissionsUnchanged(t *testing.T, path string, before Wind
 	}
 }
 
+func AssertWindowsSSHAccessControlUnchanged(t *testing.T, path string, before WindowsSSHPermissions) {
+	t.Helper()
+	after := SnapshotWindowsSSHPermissions(t, path)
+	_, beforeDACL, hasBeforeDACL := strings.Cut(before.Descriptor, "D:")
+	_, afterDACL, hasAfterDACL := strings.Cut(after.Descriptor, "D:")
+	if !hasBeforeDACL || !hasAfterDACL || beforeDACL != afterDACL || before.Control != after.Control {
+		t.Fatalf("Windows ACL on %q changed: before=%+v after=%+v", path, before, after)
+	}
+}
+
 func AssertWindowsSSHOwnerIsProcessUser(t *testing.T, path string) {
 	t.Helper()
 	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
