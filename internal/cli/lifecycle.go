@@ -83,7 +83,7 @@ func readSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 		objects.volumeOwners[name] = records[0].Labels[OwnerLabel]
 		if records[0].Labels[OwnerLabel] != request.Group {
 			objects.foreignVolumes = append(objects.foreignVolumes, name)
-			if !(request.Command == "remove" && request.Options["volumes"] != "" && exists) {
+			if !(request.Command == "remove" && request.Options["volumes"] != "" && objects.exists) {
 				checkOwner(name, records[0].Labels)
 			}
 		}
