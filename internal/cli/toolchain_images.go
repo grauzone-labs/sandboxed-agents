@@ -28,6 +28,18 @@ func toolchainSet(set []string) string {
 	return strings.Join(set, ",")
 }
 
+func sandboxToolchains(container sandboxContainer) ([]string, error) {
+	value := container.Config.Labels[ToolchainsLabel]
+	if value == "" {
+		value = imageToolchains(container.Config.Image)
+		if value == "-" {
+			return nil, fmt.Errorf("recorded toolchain set is unavailable from image %q", container.Config.Image)
+		}
+		value = strings.ReplaceAll(value, "-", ",")
+	}
+	return recordedToolchains(value)
+}
+
 func recordedToolchains(value string) ([]string, error) {
 	if value == "none" {
 		return nil, nil
@@ -43,19 +55,19 @@ func recordedToolchains(value string) ([]string, error) {
 	return set, nil
 }
 
-type builtImage struct {
+type imageRecord struct {
 	ID     string `json:"Id"`
 	Labels map[string]string
 }
 
-func inspectImage(p podmanTarget, name string) (builtImage, error) {
+func inspectImage(p podmanTarget, name string) (imageRecord, error) {
 	output, err := p.query("image", "inspect", name)
 	if err != nil {
-		return builtImage{}, err
+		return imageRecord{}, err
 	}
-	var records []builtImage
+	var records []imageRecord
 	if err := json.Unmarshal([]byte(output), &records); err != nil || len(records) != 1 || records[0].ID == "" {
-		return builtImage{}, fmt.Errorf("read image %s: invalid inspect answer", name)
+		return imageRecord{}, fmt.Errorf("read image %s: invalid inspect answer", name)
 	}
 	return records[0], nil
 }
@@ -92,7 +104,7 @@ func rebuildImages(request Request, p podmanTarget, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	var records []builtImage
+	var records []imageRecord
 	if err := json.Unmarshal([]byte(inventory), &records); err != nil || records == nil {
 		return fmt.Errorf("read image inventory: invalid answer")
 	}
@@ -122,13 +134,14 @@ func rebuildImages(request Request, p podmanTarget, output io.Writer) error {
 	}
 	fmt.Fprintln(output, "built image", baseTag)
 	// Once the base changes, all pre-existing sandboxes retain their old images.
-	defer fmt.Fprintln(output, "existing sandboxes keep their image until update; list marks them as outdated")
+	const notice = "existing sandboxes keep their image until update; list marks them as outdated"
 	if len(sets) == 0 {
+		fmt.Fprintln(output, notice)
 		return nil
 	}
 	base, err := inspectImage(p, baseTag)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w; %s", err, notice)
 	}
 	var names []string
 	for name := range sets {
@@ -147,8 +160,9 @@ func rebuildImages(request Request, p podmanTarget, output io.Writer) error {
 		fmt.Fprintln(output, "built image", tag)
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("failed toolchain sets: %s: %w", strings.Join(failedSets, "; "), errors.Join(failures...))
+		return fmt.Errorf("failed toolchain sets: %s; %s: %w", strings.Join(failedSets, "; "), notice, errors.Join(failures...))
 	}
+	fmt.Fprintln(output, notice)
 	return nil
 }
 
@@ -192,12 +206,8 @@ func ensureImage(p podmanTarget, set []string, output io.Writer) (string, error)
 	return buildLabeledImage(p, set, hash, base.ID, false, output)
 }
 
-func sandboxImageOutdated(p podmanTarget, container sandboxContainer) (bool, error) {
-	set, err := recordedToolchains(container.Config.Labels[ToolchainsLabel])
-	if err != nil {
-		return false, err
-	}
-	hash, err := image.Hash(image.Context())
+func sandboxImageOutdated(p podmanTarget, container sandboxContainer, hash string) (bool, error) {
+	set, err := sandboxToolchains(container)
 	if err != nil {
 		return false, err
 	}

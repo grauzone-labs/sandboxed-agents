@@ -8,6 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/grauzone-labs/sandboxed-agents/image"
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
@@ -68,6 +69,10 @@ func listSandboxes(request Request, p podmanTarget, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	hash, err := image.Hash(image.Context())
+	if err != nil {
+		return err
+	}
 	var rows strings.Builder
 	table := tabwriter.NewWriter(&rows, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(table, "NAME\tSTATE\tSSH PORT\tWORKSPACE\tTOOLCHAINS\tAGENTS\tVOLUMES\tPROBLEM")
@@ -101,12 +106,14 @@ func listSandboxes(request Request, p podmanTarget, output io.Writer) error {
 			if port == "" {
 				port = "-"
 			}
-			toolchains = objects.container.Config.Labels[ToolchainsLabel]
-			if toolchains == "" {
-				toolchains = imageToolchains(objects.container.Config.Image)
+			set, setErr := sandboxToolchains(objects.container)
+			if setErr == nil {
+				toolchains = toolchainSet(set)
+			} else if objects.container.Config.Labels[ToolchainsLabel] != "" {
+				problem = setErr.Error()
 			}
-			if objects.container.Image != "" && objects.container.Config.Labels[ToolchainsLabel] != "" && len(objects.conflicts) == 0 && !objects.backup {
-				outdated, err := sandboxImageOutdated(p, objects.container)
+			if objects.container.Image != "" && setErr == nil && len(objects.conflicts) == 0 && !objects.backup {
+				outdated, err := sandboxImageOutdated(p, objects.container, hash)
 				if err != nil {
 					problem = err.Error()
 				} else if outdated {

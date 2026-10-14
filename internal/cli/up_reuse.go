@@ -77,10 +77,11 @@ func checkReusedResources(request Request, container sandboxContainer) error {
 
 func checkReusedToolchains(request Request, container sandboxContainer) error {
 	if _, supplied := request.Options["with"]; supplied {
-		recorded := container.Config.Labels[ToolchainsLabel]
-		if recorded == "" {
-			return fmt.Errorf("sandbox %s: recorded toolchain set is missing", request.Name)
+		set, err := sandboxToolchains(container)
+		if err != nil {
+			return fmt.Errorf("sandbox %s: recorded toolchain set is missing or invalid: %w", request.Name, err)
 		}
+		recorded := toolchainSet(set)
 		if recorded != toolchainSet(request.Toolchains) {
 			return fmt.Errorf("sandbox %s: requested toolchain set %s differs from recorded set %s; use update %s --with %s", request.Name, toolchainSet(request.Toolchains), recorded, request.Name, toolchainSet(request.Toolchains))
 		}
