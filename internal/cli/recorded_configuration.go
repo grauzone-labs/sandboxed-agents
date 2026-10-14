@@ -10,6 +10,7 @@ type recordedIntegerLimit struct {
 	value  *int64
 }
 
+// integerLimits returns the recorded memory, process, and shared-memory limit fields.
 func (container sandboxContainer) integerLimits() [3]recordedIntegerLimit {
 	return [3]recordedIntegerLimit{
 		{"memory", container.HostConfig.Memory},
@@ -18,6 +19,7 @@ func (container sandboxContainer) integerLimits() [3]recordedIntegerLimit {
 	}
 }
 
+// read returns a recorded limit or names the missing inspect field.
 func (limit recordedIntegerLimit) read() (int64, error) {
 	if limit.value == nil {
 		return 0, fmt.Errorf("recorded --%s is missing", limit.option)
@@ -25,6 +27,7 @@ func (limit recordedIntegerLimit) read() (int64, error) {
 	return *limit.value, nil
 }
 
+// workspaceBind returns the host source of a bind at /workspace, if one exists.
 func (container sandboxContainer) workspaceBind() (string, bool) {
 	for _, mount := range container.Mounts {
 		if mount.Type == "bind" && mount.Destination == "/workspace" {
@@ -38,6 +41,7 @@ type recordedCPULimit struct {
 	units, period int64
 }
 
+// cpuLimit reads the CPU quota and period, falling back to the NanoCpus representation.
 func (container sandboxContainer) cpuLimit() (recordedCPULimit, error) {
 	limits := container.HostConfig
 	if limits.CpuQuota != nil && limits.CpuPeriod != nil && *limits.CpuPeriod > 0 && *limits.CpuQuota > 0 {
@@ -49,10 +53,12 @@ func (container sandboxContainer) cpuLimit() (recordedCPULimit, error) {
 	return recordedCPULimit{}, fmt.Errorf("recorded --cpus is missing")
 }
 
+// cores returns the effective CPU count represented by the recorded integer units.
 func (limit recordedCPULimit) cores() float64 {
 	return float64(limit.units) / float64(limit.period)
 }
 
+// displayCores recovers a matching CLI override or preserves an externally configured ratio.
 func (limit recordedCPULimit) displayCores() float64 {
 	cores := limit.cores()
 	requested := math.Round(cores*1000) / 1000
@@ -64,6 +70,7 @@ func (limit recordedCPULimit) displayCores() float64 {
 	return cores
 }
 
+// matches compares requested cores in the integer units used by the recorded CPU limit.
 func (limit recordedCPULimit) matches(cpus float64) bool {
 	if limit.cores() == cpus {
 		return true

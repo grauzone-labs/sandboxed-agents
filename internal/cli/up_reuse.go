@@ -5,10 +5,12 @@ import (
 	"strconv"
 )
 
+// reusedUpConflict names a configuration difference and the commands needed to replace it.
 func reusedUpConflict(request Request, reason string) error {
 	return fmt.Errorf("sandbox %s: %s; use remove %s followed by up %s to change it", request.Name, reason, request.Name, request.Name)
 }
 
+// checkReusedUp checks supplied port, resource, and workspace options before an existing sandbox starts.
 func checkReusedUp(request Request, p podmanTarget, container sandboxContainer) error {
 	if request.Options["port"] != "" {
 		port, err := parseSSHPort(container.Config.Labels[SSHPortLabel])
@@ -48,6 +50,7 @@ func checkReusedUp(request Request, p podmanTarget, container sandboxContainer) 
 	return nil
 }
 
+// checkReusedResources compares explicitly supplied limits with Podman's recorded values.
 func checkReusedResources(request Request, container sandboxContainer) error {
 	requested := map[string]int64{"memory": request.Resources.Memory, "pids-limit": request.Resources.PIDsLimit, "shm-size": request.Resources.ShmSize}
 	for _, limit := range container.integerLimits() {

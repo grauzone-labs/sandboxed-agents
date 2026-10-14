@@ -44,6 +44,7 @@ func buildImage(p podmanTarget, toolchains []string, output io.Writer) (string, 
 	})
 }
 
+// prepareUp creates an owned sandbox or reuses its inspected configuration under the lifecycle lock.
 func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 	workspace := ""
 	if len(request.Args) == 2 {

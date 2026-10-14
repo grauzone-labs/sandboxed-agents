@@ -11,6 +11,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
+// checkAccessForms lists the shell, fingerprint, and SSH configuration command forms.
 func checkAccessForms() [][]string {
 	return [][]string{
 		{"shell", "demo"},
@@ -21,6 +22,7 @@ func checkAccessForms() [][]string {
 	}
 }
 
+// checkAccessInstalledSetup installs a managed SSH fixture beside personal SSH files.
 func checkAccessInstalledSetup(t *testing.T) testutil.Fakes {
 	t.Helper()
 	fakes := sshSetupHarness(t, installResponses())
@@ -59,6 +61,7 @@ type checkAccessEvidence struct {
 	podmanCalls, sshCalls, keys int
 }
 
+// checkAccessBefore snapshots SSH files and external call counts before a command.
 func checkAccessBefore(t *testing.T, fakes testutil.Fakes) checkAccessEvidence {
 	t.Helper()
 	return checkAccessEvidence{
@@ -69,6 +72,7 @@ func checkAccessBefore(t *testing.T, fakes testutil.Fakes) checkAccessEvidence {
 	}
 }
 
+// checkAccessQueriesOnly permits object inspection but rejects SSH calls and key generation.
 func checkAccessQueriesOnly(t *testing.T, fakes testutil.Fakes, before checkAccessEvidence) {
 	t.Helper()
 	for _, invocation := range testutil.Invocations(t, fakes.PodmanLog)[before.podmanCalls:] {
@@ -98,6 +102,7 @@ func sandboxObjectQuery(call []string) bool {
 		(call[0] == "machine" && (call[1] == "list" || call[1] == "inspect"))
 }
 
+// checkAccessUnchanged verifies an access refusal preserves SSH files and issues only queries.
 func checkAccessUnchanged(t *testing.T, fakes testutil.Fakes, before checkAccessEvidence) {
 	t.Helper()
 	checkAccessQueriesOnly(t, fakes, before)
@@ -190,6 +195,7 @@ func TestCheckAccessInterruptedUpdateRefusesStoppedAndRunning(t *testing.T) {
 	}
 }
 
+// checkAccessVolumeSets enumerates every nonempty combination of kept sandbox volumes.
 func checkAccessVolumeSets() [][]string {
 	return [][]string{
 		{"workspace"}, {"home"}, {"ssh"},
@@ -198,6 +204,7 @@ func checkAccessVolumeSets() [][]string {
 	}
 }
 
+// checkAccessVolumesOnlyResponses scripts owned kept volumes without a container.
 func checkAccessVolumesOnlyResponses(kinds []string) map[string]lifecycleResponse {
 	responses := setupResponses(false)
 	responses["container exists sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 1}
