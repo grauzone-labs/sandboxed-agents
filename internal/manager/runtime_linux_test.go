@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -205,6 +206,82 @@ func TestProductionGitConfigUsesOnlyAgentHome(t *testing.T) {
 	})
 	stubPassingAgentIDReads(&effects)
 	if status := RunWithEffects([]string{"integrations", "config", "git", "credentials"}, io.Discard, io.Discard, effects); status != 0 || starts != 1 {
+		t.Fatalf("status=%d starts=%d", status, starts)
+	}
+}
+
+// TestProductionAgentAdministrationDropsRootBeforeHome proves administrative agent calls request the trusted worker with UID/GID 1000 and cleared groups before home access through the production exec.Cmd seam.
+func TestProductionAgentAdministrationDropsRootBeforeHome(t *testing.T) {
+	for _, args := range [][]string{{"agents", "list"}, {"agents", "enable", "codex"}, {"agents", "status", "codex"}, {"agents", "disable", "codex"}, {"agents", "update", "codex"}} {
+		starts := 0
+		effects := newEffects(systemCalls{
+			Identity:    func() Identity { return rootIdentity },
+			Executable:  func() (string, error) { return "/trusted/manager", nil },
+			Environment: func() []string { return []string{"HOME=/root", "USER=root"} },
+			Start: func(command *exec.Cmd) error {
+				starts++
+				assertAgentCredentials(t, command, false)
+				want := append([]string{"/trusted/manager", "__worker"}, args...)
+				if command.Path != "/trusted/manager" || !reflect.DeepEqual(command.Args, want) {
+					t.Errorf("worker=%q want=%q", command.Args, want)
+				}
+				return nil
+			},
+		})
+		effects.HomeDirectory = func() (string, error) { t.Fatal("administrative root read home"); return "", nil }
+		if status := RunWithEffects(args, io.Discard, io.Discard, effects); status != 0 || starts != 1 {
+			t.Fatalf("args=%q status=%d starts=%d", args, status, starts)
+		}
+	}
+}
+
+// TestProductionNpmUsesAgentHomeAndCredentials proves npm gets the isolated prefix, explicit worker credentials, and home-confined npm config and cache through RunWithEffects and the production exec.Cmd seam.
+func TestProductionNpmUsesAgentHomeAndCredentials(t *testing.T) {
+	home, starts := t.TempDir(), 0
+	effects := newEffects(systemCalls{
+		Identity: func() Identity { return agentIdentity },
+		Environment: func() []string {
+			return []string{"HOME=/outside", "NPM_CONFIG_PREFIX=/outside/prefix", "npm_config_cache=/outside/cache", "NPM_CONFIG_USERCONFIG=/outside/npmrc", "PATH=/usr/bin"}
+		},
+		Start: func(command *exec.Cmd) error {
+			starts++
+			assertAgentCredentials(t, command, true)
+			values := map[string]string{}
+			for _, entry := range command.Env {
+				key, value, _ := strings.Cut(entry, "=")
+				values[key] = value
+			}
+			if values["HOME"] != "/home/agent" || values["NPM_CONFIG_CACHE"] != "/home/agent/.npm" || values["NPM_CONFIG_USERCONFIG"] != "/home/agent/.npmrc" {
+				t.Errorf("npm environment=%v", values)
+			}
+			for _, key := range []string{"npm_config_cache", "NPM_CONFIG_PREFIX"} {
+				if _, exists := values[key]; exists {
+					t.Errorf("inherited npm override %s", key)
+				}
+			}
+			if len(command.Args) != 7 || command.Args[1] != "install" || command.Args[2] != "--global" || command.Args[3] != "--prefix" || command.Args[5] != "--" || command.Args[6] != "@openai/codex" {
+				t.Fatalf("npm args=%q", command.Args)
+			}
+			prefix := command.Args[4]
+			if !strings.HasPrefix(prefix, home+"/") {
+				t.Fatalf("npm prefix outside temporary home=%s", prefix)
+			}
+			packagePath := filepath.Join(prefix, "lib", "node_modules", "@openai", "codex")
+			if err := os.MkdirAll(packagePath, 0700); err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(packagePath, "package.json"), []byte(`{"version":"1.2.3"}`), 0600); err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Join(prefix, "bin"), 0700); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(prefix, "bin", "codex"), []byte("command"), 0700)
+		},
+	})
+	effects.HomeDirectory = func() (string, error) { return home, nil }
+	stubPassingAgentIDReads(&effects)
+	if status := RunWithEffects([]string{"agents", "enable", "codex"}, io.Discard, io.Discard, effects); status != 0 || starts != 1 {
 		t.Fatalf("status=%d starts=%d", status, starts)
 	}
 }

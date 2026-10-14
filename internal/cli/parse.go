@@ -158,16 +158,24 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 	if request.Options["install"] != "" && request.Options["remove"] != "" {
 		return request, fmt.Errorf("--install and --remove conflict")
 	}
-	if strings.HasPrefix(request.Command, "agents ") && !slices.Contains(catalog.Default.Agents, request.Args[1]) {
-		if len(catalog.Default.Agents) == 0 {
-			return request, fmt.Errorf("unknown agent %q: no valid names are available yet", request.Args[1])
+	if strings.HasPrefix(request.Command, "agents ") {
+		if _, err := catalog.Default.ResolveAgent(request.Args[1]); err != nil {
+			return request, err
 		}
-		return request, fmt.Errorf("unknown agent %q: valid names: %s", request.Args[1], strings.Join(catalog.Default.Agents, ", "))
+		if version := request.Options["version"]; version != "" {
+			if err := catalog.ValidateVersion(version); err != nil {
+				return request, err
+			}
+		}
 	}
 	switch request.Command {
 	case "agents login":
 		if len(request.Args) == 3 {
-			validNames := catalog.Default.AgentLoginWorkflows[request.Args[1]]
+			var validNames []string
+			for name := range catalog.Default.Agents[request.Args[1]].LoginWorkflows {
+				validNames = append(validNames, name)
+			}
+			slices.Sort(validNames)
 			if !slices.Contains(validNames, request.Args[2]) {
 				if len(validNames) == 0 {
 					return request, fmt.Errorf("unknown workflow %q: no valid names are available yet", request.Args[2])
@@ -225,7 +233,7 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 			continue
 		}
 		names := strings.Split(value, ",")
-		validNames, kind := catalog.Default.Agents, "agent"
+		validNames, kind := catalog.Default.AgentNames(), "agent"
 		if option == "with" {
 			validNames, kind = catalog.Default.Toolchains, "toolchain"
 		}

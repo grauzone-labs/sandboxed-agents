@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
 // sandboxInventory uses Podman names alone to discover a group's sandboxes.
@@ -115,8 +117,22 @@ func listSandboxes(request Request, p podmanTarget, output io.Writer) error {
 			problem = objects.ownerError().Error()
 		}
 		if state == "running" && checkManager(p, DerivedNames(request.Group, name).Container) == nil {
-			// No agents are delivered yet; the manager has no agent selection to query.
-			agents = "none"
+			answer, err := requestManager(request, p, "agents", "list")
+			var selection []string
+			if err == nil && json.Unmarshal([]byte(answer), &selection) == nil && selection != nil {
+				valid := true
+				for _, agent := range selection {
+					if _, err := catalog.Default.ResolveAgent(agent); err != nil {
+						valid = false
+					}
+				}
+				if valid {
+					agents = "none"
+					if len(selection) > 0 {
+						agents = strings.Join(selection, ",")
+					}
+				}
+			}
 		}
 		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", name, state, port, workspace, toolchains, agents, strings.Join(objects.volumes, ", "), problem)
 	}
