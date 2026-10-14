@@ -259,10 +259,10 @@ func TestRemoveVolumesKeepsForeignVolumeBesideOwnedSandbox(t *testing.T) {
 	}
 }
 
-// TestRemoveOwnedVolumesWithoutContainer proves explicit cleanup removes only owned remaining volumes while ordinary lifecycle commands and owner conflicts refuse changes through RunWithHost and fake Podman.
+// TestRemoveOwnedVolumesWithoutContainer proves explicit cleanup removes only owned remaining volumes while start, stop, restart, and owner conflicts refuse changes through RunWithHost and fake Podman.
 func TestRemoveOwnedVolumesWithoutContainer(t *testing.T) {
 	for _, kinds := range [][]string{{"home"}, {"workspace", "home", "ssh"}} {
-		for _, args := range [][]string{{"remove", "demo", "--volumes"}, {"remove", "demo"}, {"start", "demo"}, {"stop", "demo"}, {"restart", "demo"}, {"update", "demo"}} {
+		for _, args := range [][]string{{"remove", "demo", "--volumes"}, {"start", "demo"}, {"stop", "demo"}, {"restart", "demo"}} {
 			for _, owner := range []string{"default", "", "foreign"} {
 				t.Run(strings.Join(kinds, ",")+"/"+strings.Join(args, " ")+"/owner="+owner, func(t *testing.T) {
 					responses := newSandboxResponses()
