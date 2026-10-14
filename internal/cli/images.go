@@ -67,7 +67,14 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		return fmt.Errorf("sandbox %q has an interrupted update; use update %s", request.Name, request.Name)
 	}
 	if objects.exists {
+		if request.Options["ssh-config"] != "" {
+			return changeSandboxState(request, p, output)
+		}
 		return reuseSandbox(request, p, objects.container, output)
+	}
+	workspace, err = podmanWorkspacePath(request, p)
+	if err != nil {
+		return err
 	}
 	port, err := allocatePort(p, request.Options["port"])
 	if err != nil {
@@ -149,6 +156,9 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		return fail(fmt.Errorf("sandbox %s is not running", names.Container))
 	}
 	fmt.Fprintf(output, "sandbox %s running; image %s; --publish 127.0.0.1:%d:22/tcp\n", request.Name, tag, port)
+	if request.Options["ssh-config"] != "" {
+		return installLifecycleSSHSetup(request, p, sandboxObjects{container: container, exists: true}, output)
+	}
 	return nil
 }
 

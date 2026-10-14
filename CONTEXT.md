@@ -82,10 +82,10 @@ The previous container of a sandbox, kept under its own name while `update` repl
 ### Host boundaries
 
 **Host state**:
-Mutable data the executable keeps in the operating system's state directory, in one `group-GROUP` directory per controller group. It holds the managed SSH keys and configuration of SSH setups and an empty lifecycle lock for each sandbox name a lifecycle command has run for. It records nothing about an update.
+Mutable data the executable keeps in the operating system's state directory, in one `group-GROUP` directory per controller group. It holds the managed SSH keys and configuration of SSH setups and an empty lifecycle lock for each sandbox name a lifecycle or SSH setup mutation has run for. It records nothing about an update.
 
 **Lifecycle lock**:
-The host-side lock with which the executable's lifecycle commands (`up`, `start`, `stop`, `restart`, `remove`, `update`) serialize on one sandbox: a second command refuses at once instead of waiting. That refusal is step 3 of the ten-step order of checks, after the preflight and before an unknown sandbox name. It is an empty file in host state, so it coordinates only commands that use the same host state root, and it does not hold back writers that use Podman directly. It is distinct from the manager lock inside the sandbox.
+The host-side lock with which the executable's lifecycle commands (`up`, `start`, `stop`, `restart`, `remove`, `update`) and SSH setup mutations (`ssh-config --install`, `ssh-config --remove`) serialize on one sandbox: a second command refuses at once instead of waiting. That refusal is step 3 of the ten-step order of checks, after the preflight or Podman target selection and before an unknown sandbox name. It is an empty file in host state, so it coordinates only commands that use the same host state root, and it does not hold back writers that use Podman directly. Previewing with `ssh-config NAME` does not take a lock or create host state. The lifecycle lock is distinct from the manager lock inside the sandbox.
 _Avoid_: Sandbox lock, update lock
 
 **Protected host paths**:

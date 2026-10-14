@@ -2,15 +2,15 @@
 status: accepted
 ---
 
-# Serialize the lifecycle commands on one sandbox
+# Serialize lifecycle and SSH setup mutations on one sandbox
 
-The lifecycle commands `up`, `start`, `stop`, `restart`, `remove`, and `update` never act on the same sandbox at the same time. A sandbox here means one sandbox name in one controller group, within the Podman authority of one host user. Each of these commands takes an exclusive, nonblocking OS advisory lock for its sandbox. A second command that finds the lock taken does not wait. It exits non-zero, names the sandbox, says that another lifecycle command is in progress for it, and tells the user to retry. `update --all` takes the same lock for each sandbox it acts on; a sandbox whose lock is taken is passed over and counted as failed, and the command continues with the others ([Name inventory of `update --all`](#name-inventory-of-update---all)).
+The lifecycle commands `up`, `start`, `stop`, `restart`, `remove`, and `update`, and the SSH setup mutations `ssh-config --install` and `ssh-config --remove`, never act on the same sandbox at the same time. A sandbox here means one sandbox name in one controller group, within the Podman authority of one host user. Each of these commands takes an exclusive, nonblocking OS advisory lock for its sandbox. A second command that finds the lock taken does not wait. It exits non-zero, names the sandbox, says that another lifecycle or SSH setup command is in progress for it, and tells the user to retry. `update --all` takes the same lock for each sandbox it acts on; a sandbox whose lock is taken is passed over and counted as failed, and the command continues with the others ([Name inventory of `update --all`](#name-inventory-of-update---all)). The read-only preview `ssh-config NAME` does not take a lock or create host state.
 
 `update` makes this necessary: it renames and replaces a container in several steps. Without a lock, a `start` or a second `update` could act on a sandbox between the rename and the creation, or between the stop of the old container and the start of the new one.
 
 ## When the lock is held
 
-A command takes the lock after its usage checks, the controller group and sandbox name checks, and, depending on the command, the preflight (`up`, `update`) or the selection of the Windows Podman target (`start`, `stop`, `restart`, `remove`, ADR-0006). It takes the lock before its first lookup of a sandbox object. The only exception is the name inventory of `update --all`, described below, which reads names and no sandbox's state; `update --all` takes one lock per found name after it. Every lifecycle command, `update NAME` and `update --all` alike, holds each lock it has taken through every later check, including the owner check and the session guard, and through every action, including image builds that the command runs and the installation or removal of the SSH setup. Each lock is released when the command exits, and the operating system releases it if the process dies.
+A command takes the lock after its usage checks, the controller group and sandbox name checks, and, depending on the command, the preflight (`up`, `update`) or the selection of the Windows Podman target (`start`, `stop`, `restart`, `remove`, `ssh-config --install`, `ssh-config --remove`, ADR-0006). It takes the lock before its first lookup of a sandbox object. The only exception is the name inventory of `update --all`, described below, which reads names and no sandbox's state; `update --all` takes one lock per found name after it. Every lifecycle command, `ssh-config --install`, `ssh-config --remove`, and `update NAME` or `update --all`, holds each lock it has taken through every later check, including the owner check and the session guard, and through every action, including image builds that the command runs and the installation or removal of the SSH setup. Each lock is released when the command exits, and the operating system releases it if the process dies.
 
 Because no command inspects a sandbox's objects before it holds that sandbox's lock, and the name inventory of `update --all` is used for names only, the next command starts from the current Podman facts, not from facts read while another command was still changing them.
 
@@ -20,7 +20,7 @@ The refusal of a taken lock is step 3 of the ten-step order of checks that the E
 
 1. usage, invalid names, unknown agent, integration, workflow, and toolchain names, and path errors, without calling Podman;
 2. the preflight, for the commands that run it (`build`, `up`, `update`);
-3. a taken lifecycle lock, for `up`, `start`, `stop`, `restart`, `remove`, and `update`;
+3. a taken lifecycle lock, for `up`, `start`, `stop`, `restart`, `remove`, `update`, `ssh-config --install`, and `ssh-config --remove`;
 4. an unknown sandbox name, or a sandbox of which only volumes remain when the command needs a container; when one of those volumes has a missing or different owner, that owner conflict is reported here instead (Feature #2);
 5. a missing or different owner of the container or of one of the sandbox's volumes;
 6. an interrupted update;
@@ -46,13 +46,13 @@ Every lock that `update --all` takes stays held from its acquisition until the c
 - Each sandbox has one lock file at a fixed path in the `locks` directory of the controller group's host state, `group-GROUP/locks/`.
 - The file name is derived from a SHA-256 hash of the sandbox's Podman container name `sandboxed-agents.GROUP.NAME` (ADR-0005), written as lowercase hexadecimal. Two sandbox names that differ only in case therefore get different files on case-insensitive file systems, and no file name equals a name that Windows reserves for devices.
 - The lock file is a regular file. A command fails without acting on the sandbox when something other than a regular file is at that path.
-- Lock files are never deleted. A process that opens a lock file which another process is removing at that moment would lock a file that no other command will open, and both would act on the same sandbox. A lock file is therefore left behind for every sandbox name that a lifecycle command has ever been run for.
+- Lock files are never deleted. A process that opens a lock file which another process is removing at that moment would lock a file that no other command will open, and both would act on the same sandbox. A lock file is therefore left behind for every sandbox name that a lifecycle command or SSH setup mutation has ever been run for.
 - A lock file stays empty. It records no update progress, no previous running state, and no configuration. The progress of an update and the running state before it remain only in Podman: in the label on the new container and in the backup container's name (ADR-0005, Update with rollback Feature).
 - On Linux the lock is `flock` with `LOCK_EX | LOCK_NB`. On Windows it is `LockFileEx` with `LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY`. The manager lock in the container uses the same primitives.
 
 ## What the contract covers
 
-Commands on different sandbox names, or on the same name in different controller groups, take different locks and run independently. The contract covers only the executable's own lifecycle commands run by the same host user. It does not cover:
+Commands on different sandbox names, or on the same name in different controller groups, take different locks and run independently. The contract covers only the executable's own lifecycle commands and SSH setup mutations run by the same host user. It does not cover:
 
 - commands run by other host users, which use their own Podman and host state;
 - commands that resolve a different host state root, for example with another `XDG_STATE_HOME` on Linux or another `LOCALAPPDATA` on Windows. They lock a different file, so commands are coordinated only when they share one host state root;
@@ -93,8 +93,8 @@ The readiness wait needs no host prerequisite beyond those the preflight already
 
 ## Consequences
 
-- Each lifecycle command opens and locks one file in host state before its first sandbox lookup, and `update --all` one file per found name after its name inventory, so host state and its `locks` directory are created when they are missing, also for commands that never install an SSH setup.
-- Two lifecycle commands on the same sandbox, for example from two terminals or from a script and a user, fail fast instead of interleaving. Scripts that run them in parallel must retry.
+- Each lifecycle command and SSH setup mutation opens and locks one file in host state before its first sandbox lookup, and `update --all` one file per found name after its name inventory, so host state and its `locks` directory are created when they are missing, also for commands that never install an SSH setup. The read-only SSH preview creates no host state.
+- Lifecycle commands and SSH setup mutations on the same sandbox, for example from two terminals or from a script and a user, fail fast instead of interleaving. Scripts that run them in parallel must retry.
 - While `update --all` runs, which can take minutes because of builds and readiness waits, every other lifecycle command on the sandboxes it holds is refused. A second `update --all` passes those sandboxes over and exits non-zero.
 - Lock files accumulate in `group-GROUP/locks/`, one per sandbox name ever used, including unknown names. Each is empty.
 - The user documentation states that writers that use Podman directly and commands with another host state root are outside the contract, and that the lock is coordination, not protection.

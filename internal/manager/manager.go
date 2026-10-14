@@ -1,4 +1,4 @@
-// Package manager owns administrative queries and integration workflows inside a sandbox.
+// Package manager owns administrative SSH requests, integration workflows, and agent session queries inside a sandbox.
 package manager
 
 import (
@@ -38,13 +38,17 @@ type Process struct {
 
 // Effects supplies only operating-system operations; command behavior runs real.
 // Reexec starts this same trusted manager executable, ignoring Program.
+// ReplaceAuthorizedKey atomically stores a root-owned mode-0644 authorization file.
 type Effects struct {
-	Identity func() Identity
-	Groups   func() ([]int, error)
-	UIDs     func() (real, effective, saved int)
-	GIDs     func() (real, effective, saved int)
-	Start    func(Process) error
-	Reexec   func(Process) error
+	Identity             func() Identity
+	Groups               func() ([]int, error)
+	UIDs                 func() (real, effective, saved int)
+	GIDs                 func() (real, effective, saved int)
+	Start                func(Process) error
+	Reexec               func(Process) error
+	ReadFile             func(string) ([]byte, error)
+	ReplaceAuthorizedKey func([]byte) error
+	RemoveAuthorizedKey  func() error
 }
 
 // RunWithEffects returns the manager command's exit status at injected OS seams.
@@ -54,6 +58,9 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 	if len(args) == 1 && args[0] == "version" {
 		fmt.Fprintln(stdout, "sandboxed-agents-manager development")
 		return 0
+	}
+	if status, handled := sshAdministration(args, stdout, stderr, effects); handled {
+		return status
 	}
 	if len(args) == 1 && args[0] == "sessions" {
 		if effects.Identity() == rootIdentity {
@@ -68,7 +75,7 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 		return configureGit(args[3:], stdout, stderr, effects)
 	}
 
-	forms := append([]string{"version", "sessions"}, catalog.Default.ConfigUsage()...)
+	forms := append([]string{"version", "sessions", "ssh-host-key", "ssh-authorize KEY", "ssh-deauthorize"}, catalog.Default.ConfigUsage()...)
 	fmt.Fprintln(stderr, "usage: sandboxed-agents-manager "+strings.Join(forms, " | "))
 	return 2
 }

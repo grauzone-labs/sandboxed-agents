@@ -415,7 +415,7 @@ func TestLifecycleLockPrecedesEverySandboxState(t *testing.T) {
 				fakes := lifecycleHarness(t, responses)
 				holdLifecycleLock(t, os.Getenv("XDG_STATE_HOME"), "sandboxed-agents.default.demo")
 				status, output := runWithHost(lifecycleLinuxHost(t, fakes), verb, "demo")
-				if status != 1 || !strings.HasPrefix(output, "step 3:") || !strings.Contains(output, "another lifecycle command is in progress") {
+				if status != 1 || !strings.HasPrefix(output, "step 3:") || !strings.Contains(output, "another lifecycle or SSH setup command is in progress") {
 					t.Fatalf("status=%d output=%s", status, output)
 				}
 				for _, call := range testutil.Invocations(t, fakes.PodmanLog) {

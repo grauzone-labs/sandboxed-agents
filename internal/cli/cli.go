@@ -37,6 +37,10 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			switch request.Command {
 			case "up", "start", "stop", "restart", "remove", "update":
 				stateRoot, err = hostStateRoot(host.Platform)
+			case "ssh-config":
+				if request.Options["install"] != "" || request.Options["remove"] != "" {
+					stateRoot, err = hostStateRoot(host.Platform)
+				}
 			}
 		}
 		return err
@@ -196,6 +200,24 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			return 1
 		}
 		if err := printFingerprints(request, target, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "ssh-config":
+		target, err := selectedTarget()
+		if err != nil {
+			return 1
+		}
+		if request.Options["install"] != "" || request.Options["remove"] != "" {
+			lock, err := acquireLifecycleLock(stateRoot, request)
+			if err != nil {
+				fmt.Fprintln(stderr, "step 3:", err)
+				return 1
+			}
+			defer lock.Close()
+		}
+		if err := configureSSH(request, target, stdout, stderr); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}

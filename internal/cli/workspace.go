@@ -11,6 +11,16 @@ import (
 	"strings"
 )
 
+func podmanWorkspacePath(request Request, p podmanTarget) (string, error) {
+	if len(request.Args) != 2 {
+		return "", nil
+	}
+	if p.host.Platform == "windows" {
+		return windowsWorkspacePath(request.Args[1])
+	}
+	return request.Args[1], nil
+}
+
 func checkWorkspaceAutomount(request Request, p podmanTarget) error {
 	if len(request.Args) == 2 && p.host.Platform == "windows" && p.automountRoot != "/mnt/" && p.automountRoot != "/mnt" {
 		return fmt.Errorf("workspace binds are unsupported with custom WSL automount root %q on machine %q", p.automountRoot, p.connection)

@@ -53,7 +53,7 @@ func acquireLifecycleLock(root string, request Request) (*os.File, error) {
 	if err := lockLifecycleFile(file); err != nil {
 		file.Close()
 		if lifecycleLockBusy(err) {
-			return nil, fmt.Errorf("sandbox %q: another lifecycle command is in progress; retry", request.Name)
+			return nil, fmt.Errorf("sandbox %q: another lifecycle or SSH setup command is in progress; retry", request.Name)
 		}
 		return nil, fmt.Errorf("lock sandbox %q: %w", request.Name, err)
 	}

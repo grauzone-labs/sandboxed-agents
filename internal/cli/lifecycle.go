@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -12,8 +13,9 @@ type sandboxContainer struct {
 		Labels map[string]string
 		Image  string
 	}
-	State  struct{ Running *bool }
-	Mounts []struct {
+	HostConfig struct{ Memory, PidsLimit, ShmSize, NanoCpus, CpuQuota, CpuPeriod *int64 }
+	State      struct{ Running *bool }
+	Mounts     []struct {
 		Type, Source, Destination string
 	}
 }
@@ -34,6 +36,7 @@ type sandboxObjects struct {
 	container      sandboxContainer
 	exists, backup bool
 	volumes        []string
+	foreignVolumes []string
 	volumeOwners   map[string]string
 	conflicts      []string
 }
@@ -77,8 +80,13 @@ func readSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 		if err := json.Unmarshal([]byte(output), &records); err != nil || len(records) != 1 {
 			return objects, fmt.Errorf("read volume %s: invalid inspect answer", name)
 		}
-		checkOwner(name, records[0].Labels)
 		objects.volumeOwners[name] = records[0].Labels[OwnerLabel]
+		if records[0].Labels[OwnerLabel] != request.Group {
+			objects.foreignVolumes = append(objects.foreignVolumes, name)
+			if !(request.Command == "remove" && request.Options["volumes"] != "" && objects.exists) {
+				checkOwner(name, records[0].Labels)
+			}
+		}
 	}
 	objects.backup, err = p.exists(containerResource, names.Backup)
 	if err != nil {
@@ -102,6 +110,7 @@ func (objects sandboxObjects) ownerError() error {
 }
 
 func requireSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
+	requiresContainer := request.Command != "remove" && !(request.Command == "ssh-config" && request.Options["remove"] != "")
 	objects, err := readSandbox(request, p)
 	if err != nil {
 		return objects, err
@@ -116,16 +125,13 @@ func requireSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 	if request.Command == "update" && objects.backup {
 		return objects, nil
 	}
-	if !objects.exists && len(objects.volumes) > 0 && !objects.backup {
-		if request.Command == "remove" && request.Options["volumes"] != "" {
-			return objects, nil
-		}
+	if !objects.exists && len(objects.volumes) > 0 && !objects.backup && requiresContainer {
 		return objects, fmt.Errorf("sandbox %q has only volumes; use up %s to adopt them", request.Name, request.Name)
 	}
 	if objects.backup {
 		return objects, fmt.Errorf("sandbox %q has an interrupted update; use update %s", request.Name, request.Name)
 	}
-	if !objects.exists {
+	if !objects.exists && requiresContainer {
 		return objects, fmt.Errorf("sandbox %q has no container", request.Name)
 	}
 	return objects, nil
@@ -149,44 +155,45 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 		return err
 	}
 	if !objects.exists {
+		if request.Command == "remove" {
+			return removeSandbox(request, p, objects, sessionReport{}, output)
+		}
 		return removeSandboxVolumes(request, p, objects, output)
 	}
 	container := objects.container
 	if container.State.Running == nil {
 		return fmt.Errorf("read container %s: running state is missing", name)
 	}
-	if request.Options["ssh-config"] != "" {
-		return fmt.Errorf("start: SSH setup is not implemented")
-	}
 	running := *container.State.Running
-	if !running && (request.Command == "start" || request.Command == "restart") {
+	if request.Command == "up" {
+		if running && request.Options["ssh-config"] != "" {
+			if err := requireSSHManager(request, p); err != nil {
+				return lifecycleSSHSetupFailure(request, err)
+			}
+		}
+		if err := checkReusedUp(request, p, container); err != nil {
+			return err
+		}
+	}
+	if !running && (request.Command == "up" || request.Command == "start" || request.Command == "restart") {
 		if err := checkRecordedPort(p, container); err != nil {
 			return err
 		}
 	}
 	var ended sessionReport
-	if running && request.Command != "start" {
+	if running && request.Command != "start" && request.Command != "up" {
 		ended, err = guardSessions(request, p)
 		if err != nil {
 			return err
 		}
 	}
 	if request.Command == "remove" {
-		if running {
-			if _, err := p.query("stop", name); err != nil {
-				return err
-			}
-			ended.write(output, request.Name)
-		}
-		if _, err := p.query("rm", name); err != nil {
-			return err
-		}
-		fmt.Fprintf(output, "removed sandbox %s\n", request.Name)
-		return removeSandboxVolumes(request, p, objects, output)
+		return removeSandbox(request, p, objects, ended, output)
 	}
 	action, state := request.Command, "running"
 	switch request.Command {
-	case "start":
+	case "start", "up":
+		action = "start"
 		if running {
 			action = ""
 		}
@@ -207,7 +214,53 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 	}
 	ended.write(output, request.Name)
 	fmt.Fprintf(output, "sandbox %s is %s\n", request.Name, state)
+	if request.Options["ssh-config"] != "" {
+		return installLifecycleSSHSetup(request, p, objects, output)
+	}
 	return nil
+}
+
+func removeSandbox(request Request, p podmanTarget, objects sandboxObjects, ended sessionReport, output io.Writer) error {
+	name := DerivedNames(request.Group, request.Name).Container
+	if objects.exists {
+		if *objects.container.State.Running {
+			if _, err := p.query("stop", name); err != nil {
+				return err
+			}
+			ended.write(output, request.Name)
+		}
+		if _, err := p.query("rm", name); err != nil {
+			return err
+		}
+		fmt.Fprintf(output, "removed sandbox %s\n", request.Name)
+	} else if request.Options["volumes"] == "" {
+		fmt.Fprintf(output, "sandbox %s has no container; use remove %s --volumes to delete its volumes\n", request.Name, request.Name)
+	}
+	var failures []error
+	s, err := sshSetupPaths(request, p.host.Platform)
+	if err != nil {
+		failures = append(failures, err)
+	} else if err := s.removeHostSetup(); err != nil {
+		failures = append(failures, err)
+	}
+	for _, volume := range objects.volumes {
+		if request.Options["volumes"] == "" || objects.volumeOwners[volume] != request.Group {
+			fmt.Fprintf(output, "kept volume %s\n", volume)
+			continue
+		}
+		if _, err := p.query("volume", "rm", volume); err != nil {
+			failures = append(failures, err)
+		} else {
+			fmt.Fprintf(output, "removed volume %s\n", volume)
+		}
+	}
+	if request.Options["volumes"] == "" && len(objects.volumes) > 0 {
+		fmt.Fprintf(output, "SSH authorization remains in the kept volumes and is replaced by the next ssh-config %s --install\n", request.Name)
+	}
+	if len(objects.foreignVolumes) > 0 {
+		failures = append(failures, fmt.Errorf("owner conflict: kept %s; use Podman to remove or rename the objects", strings.Join(objects.foreignVolumes, ", ")))
+	}
+	return errors.Join(failures...)
 }
 
 func removeSandboxVolumes(request Request, p podmanTarget, objects sandboxObjects, output io.Writer) error {

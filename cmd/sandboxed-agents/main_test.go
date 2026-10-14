@@ -709,13 +709,13 @@ func TestLifecycleLockRefusesBeforeSandboxLookup(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	host := lifecycleLinuxHost(t, fakes)
-	for _, verb := range []string{"start", "stop", "restart", "remove", "up"} {
+	for _, args := range [][]string{{"start", "demo"}, {"stop", "demo"}, {"restart", "demo"}, {"remove", "demo"}, {"up", "demo"}, {"ssh-config", "demo", "--install"}, {"ssh-config", "demo", "--remove"}} {
 		start := time.Now()
 		var out bytes.Buffer
-		status := cli.RunWithHost([]string{verb, "demo"}, &out, &out, host)
+		status := cli.RunWithHost(args, &out, &out, host)
 		output := out.String()
-		if status == 0 || !strings.Contains(output, "demo") || !strings.Contains(output, "another lifecycle command is in progress") || !strings.Contains(output, "retry") || time.Since(start) > time.Second {
-			t.Errorf("%s: status=%d output=%s", verb, status, output)
+		if status == 0 || !strings.Contains(output, "demo") || !strings.Contains(output, "another lifecycle or SSH setup command is in progress") || !strings.Contains(output, "retry") || time.Since(start) > time.Second {
+			t.Errorf("%v: status=%d output=%s", args, status, output)
 		}
 	}
 	calls := testutil.Invocations(t, fakes.PodmanLog)
@@ -1097,14 +1097,14 @@ func TestLifecycleWindowsSelectsOneTargetWithoutPreflight(t *testing.T) {
 	}
 }
 
-// TestLifecycleDeferredSSHSetupDoesNotClaimSuccess proves start --ssh-config refuses its unavailable setup before starting a sandbox through RunWithHost.
-func TestLifecycleDeferredSSHSetupDoesNotClaimSuccess(t *testing.T) {
+// TestLifecycleSSHSetupFailureKeepsStartedSandbox proves start --ssh-config reports manager failure after starting and names the retry through RunWithHost.
+func TestLifecycleSSHSetupFailureKeepsStartedSandbox(t *testing.T) {
 	fakes := lifecycleHarness(t, ownedLifecycleResponses(false))
 	status, output := lifecycleRun("start", "demo", "--ssh-config")
-	if status == 0 || !strings.Contains(output, "SSH setup is not implemented") {
+	if status == 0 || !strings.Contains(output, "SSH setup failed") || !strings.Contains(output, "ssh-config demo --install") {
 		t.Fatalf("status=%d output=%s", status, output)
 	}
-	if calls := testutil.Invocations(t, fakes.PodmanLog); len(lifecycleMutations(calls)) != 0 {
+	if calls := testutil.Invocations(t, fakes.PodmanLog); !reflect.DeepEqual(lifecycleMutations(calls), [][]string{{"start", "sandboxed-agents.default.demo"}}) {
 		t.Fatalf("mutations=%v", calls)
 	}
 }
@@ -1295,7 +1295,7 @@ func TestLifecycleLockCoversSessionGuardAndMutation(t *testing.T) {
 			}
 			before := testutil.Invocations(t, fakes.PodmanLog)
 			status, output := lifecycleRun("remove", "demo")
-			if status == 0 || !strings.Contains(output, "another lifecycle command is in progress") {
+			if status == 0 || !strings.Contains(output, "another lifecycle or SSH setup command is in progress") {
 				t.Fatalf("status=%d output=%s", status, output)
 			}
 			if after := testutil.Invocations(t, fakes.PodmanLog); !reflect.DeepEqual(before, after) {
@@ -1702,7 +1702,7 @@ func TestWindowsWorkspaceAutomountRefusalPrecedesHeldLifecycleLock(t *testing.T)
 				if status != 1 || !strings.HasPrefix(text, "step 2:") || !strings.Contains(text, "custom WSL automount root") || !strings.Contains(text, "/custom/drives/") || strings.Contains(text, "step 3:") {
 					t.Errorf("bound status=%d output=%q; want custom-root refusal before lock", status, text)
 				}
-			} else if status != 1 || !strings.HasPrefix(text, "step 3:") || !strings.Contains(text, "another lifecycle command is in progress") || strings.Contains(text, "step 2:") {
+			} else if status != 1 || !strings.HasPrefix(text, "step 3:") || !strings.Contains(text, "another lifecycle or SSH setup command is in progress") || strings.Contains(text, "step 2:") {
 				t.Errorf("unbound status=%d output=%q; want held lifecycle lock", status, text)
 			}
 		})
