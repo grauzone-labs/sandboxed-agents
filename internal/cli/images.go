@@ -72,7 +72,7 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		}
 		return reuseSandbox(request, p, objects.container, output)
 	}
-	workspace, err := podmanWorkspacePath(request, p)
+	workspace, err = podmanWorkspacePath(request, p)
 	if err != nil {
 		return err
 	}
