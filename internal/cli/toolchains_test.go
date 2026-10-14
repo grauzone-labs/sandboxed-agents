@@ -1,6 +1,8 @@
 package cli_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -271,4 +273,100 @@ func TestWindowsRebuildUsesOnlyTheCheckedTarget(t *testing.T) {
 	if builds != 2 {
 		t.Fatalf("missing builds: %v", calls)
 	}
+}
+
+// TestListMarksLegacySandboxImagesOutdated proves older sandboxes without a toolchain label still compare their image against the current executable through the CLI seam.
+func TestListMarksLegacySandboxImagesOutdated(t *testing.T) {
+	f := linuxHost(t)
+	f.responses["ps --all --format json"] = response{Output: `[{"Names":["sandboxed-agents.default.demo"]}]`}
+	f.responses["volume ls --format json"] = response{Output: `[]`}
+	f.responses["container exists sandboxed-agents.default.demo"] = response{}
+	f.responses["container inspect sandboxed-agents.default.demo"] = response{Output: `[{"Image":"old-base","Config":{"Image":"localhost/sandboxed-agents:none-oldhash","Labels":{"io.sandboxed-agents.owner":"default"}},"State":{"Running":false}}]`}
+	f.responses["volume exists *"] = response{Exit: 1}
+	f.responses["container exists sandboxed-agents-backup.default.demo"] = response{Exit: 1}
+	f.responses["image exists "+baseTag(t)] = response{Exit: 1}
+	status, output, calls := f.run(t, "list")
+	if status != 0 || !strings.Contains(output, "outdated") {
+		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+	}
+	noMutation(t, calls)
+}
+
+// TestUpRecoversLegacyToolchainSets proves matching tag-derived sets start, differing sets recommend update without starting, and omitted sets permit unparseable legacy tags through the CLI seam.
+func TestUpRecoversLegacyToolchainSets(t *testing.T) {
+	for _, selection := range []string{"native", "dotnet", ""} {
+		t.Run(selection, func(t *testing.T) {
+			f := linuxHost(t)
+			imageName := "localhost/sandboxed-agents:native-oldhash"
+			if selection == "" {
+				imageName = "custom-image"
+			}
+			f.responses["container exists sandboxed-agents.default.demo"] = response{}
+			f.responses["container inspect sandboxed-agents.default.demo"] = response{Output: `[{"Config":{"Image":"` + imageName + `","Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}},"State":{"Running":false}}]`}
+			f.responses["volume exists *"] = response{Exit: 1}
+			f.responses["container exists sandboxed-agents-backup.default.demo"] = response{Exit: 1}
+			f.responses["start sandboxed-agents.default.demo"] = response{}
+			args := []string{"up", "demo"}
+			if selection != "" {
+				args = append(args, "--with", selection)
+			}
+			status, output, calls := f.run(t, args...)
+			want := 0
+			if selection == "dotnet" {
+				want = 1
+			}
+			if status != want || (want == 1 && !strings.Contains(output, "update demo --with dotnet")) {
+				t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+			}
+			starts := 0
+			for _, call := range calls {
+				if call[0] == "start" {
+					starts++
+				}
+			}
+			if (want == 0 && starts != 1) || (want == 1 && starts != 0) {
+				t.Fatalf("wrong start count: %v", calls)
+			}
+		})
+	}
+}
+
+// TestBuildFailureIncludesGuidanceInTheFinalDiagnostic proves failed sets and the update/list notice are emitted together on stderr through the CLI stream seam.
+func TestBuildFailureIncludesGuidanceInTheFinalDiagnostic(t *testing.T) {
+	f := linuxHost(t)
+	f.responses["image ls *"] = response{Output: `[]`}
+	f.responses["image inspect "+baseTag(t)] = response{Output: `[{"Id":"base-new"}]`}
+	f.responses["build *"] = response{}
+	f.responses["build * --label io.sandboxed-agents.toolchains=native *"] = response{Exit: 125, Output: "native failed"}
+	data, err := json.Marshal(f.responses)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+	var stdout, stderr bytes.Buffer
+	status := cli.RunWithHost([]string{"build", "--with", "native"}, &stdout, &stderr, f.host)
+	if status != 1 || !strings.Contains(stderr.String(), "failed toolchain sets: native; existing sandboxes keep their image until update; list marks them as outdated") || strings.Contains(stdout.String(), "existing sandboxes") {
+		t.Fatalf("status=%d stdout=%q stderr=%q", status, stdout.String(), stderr.String())
+	}
+}
+
+// TestListDiagnosesInvalidRecordedToolchainSets proves a corrupt set label is reported without guessing an image or mutating anything through the CLI seam.
+func TestListDiagnosesInvalidRecordedToolchainSets(t *testing.T) {
+	f := linuxHost(t)
+	f.responses["ps --all --format json"] = response{Output: `[{"Names":["sandboxed-agents.default.demo"]}]`}
+	f.responses["volume ls --format json"] = response{Output: `[]`}
+	f.responses["container exists sandboxed-agents.default.demo"] = response{}
+	f.responses["container inspect sandboxed-agents.default.demo"] = response{Output: `[{"Image":"unknown","Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.toolchains":"bogus"}},"State":{"Running":false}}]`}
+	f.responses["volume exists *"] = response{Exit: 1}
+	f.responses["container exists sandboxed-agents-backup.default.demo"] = response{Exit: 1}
+	status, output, calls := f.run(t, "list")
+	if status != 0 || !strings.Contains(output, `invalid recorded toolchain set "bogus"`) {
+		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+	}
+	for _, call := range calls {
+		if call[0] == "image" {
+			t.Fatalf("guessed image from invalid set: %v", calls)
+		}
+	}
+	noMutation(t, calls)
 }

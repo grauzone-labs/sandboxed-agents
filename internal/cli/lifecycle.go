@@ -9,6 +9,7 @@ import (
 )
 
 type sandboxContainer struct {
+	// Image is the immutable image ID; Config.Image is the image name supplied at creation.
 	Image  string
 	Config struct {
 		Labels map[string]string
