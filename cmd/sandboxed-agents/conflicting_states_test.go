@@ -462,6 +462,7 @@ func listWithLaterHealthyResponses() map[string]lifecycleResponse {
 	for key, response := range ownedLifecycleResponses(true) {
 		responses[strings.ReplaceAll(key, ".demo", ".zhealthy")] = response
 	}
+	responses["exec --user=0:0 sandboxed-agents.default.zhealthy /usr/local/bin/sandboxed-agents-manager agents list"] = lifecycleResponse{Output: `[]`}
 	responses["container inspect sandboxed-agents.default.zhealthy"] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2300"},"Image":"localhost/sandboxed-agents:none-abc"},"State":{"Running":true}}]`}
 	responses["exec --user=0:0 sandboxed-agents.default.zhealthy /usr/local/bin/sandboxed-agents-manager version"] = lifecycleResponse{Output: "sandboxed-agents-manager development\n"}
 	return responses
@@ -680,6 +681,7 @@ func TestUpRefusesUnownedKeptVolumesIncludingUnusedWorkspace(t *testing.T) {
 // TestListResponsiveSandboxShowsContainerDetails proves list displays the recorded port, bind workspace and image toolchains when the running manager answers through the CLI boundary.
 func TestListResponsiveSandboxShowsContainerDetails(t *testing.T) {
 	responses := ownedLifecycleResponses(true)
+	responses["exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager agents list"] = lifecycleResponse{Output: `[]`}
 	responses["ps --all --format json"] = lifecycleResponse{Output: `[{"Names":["sandboxed-agents.default.demo"]}]`}
 	responses["volume ls --format json"] = lifecycleResponse{Output: `[]`}
 	responses["container inspect sandboxed-agents.default.demo"] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2300"},"Image":"localhost/sandboxed-agents:none-415c3113ed82008b40e2fe7cb30194620f516112597733bbcaed46dc030739e0"},"State":{"Running":true},"Mounts":[{"Type":"bind","Source":"/project","Destination":"/workspace"}]}]`}

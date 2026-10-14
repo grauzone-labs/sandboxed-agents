@@ -42,7 +42,7 @@ func checkReusedUp(request Request, p podmanTarget, container sandboxContainer) 
 			return reusedUpConflict(request, fmt.Sprintf("workspace differs: requested bind %q; recorded workspace %s", workspace, previous))
 		}
 	}
-	for _, option := range []string{"with", "agents"} {
+	for _, option := range []string{"with"} {
 		if _, supplied := request.Options[option]; supplied {
 			return fmt.Errorf("up: existing sandbox --%s reuse is not implemented", option)
 		}

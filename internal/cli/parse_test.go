@@ -20,7 +20,7 @@ func TestParsedUpKeepsDefaultsAndEmptyToolchainSet(t *testing.T) {
 // TestParsedRunPreservesEveryProgramArgument proves that the public cli.Parse function retains the sandbox name, controller group, and all agent run arguments, including flags and empty strings.
 func TestParsedRunPreservesEveryProgramArgument(t *testing.T) {
 	agents := catalog.Default.Agents
-	catalog.Default.Agents = []string{"codex"}
+	catalog.Default.Agents = map[string]catalog.Agent{"codex": {Delivered: true}}
 	t.Cleanup(func() { catalog.Default.Agents = agents })
 	request, err := cli.Parse([]string{"agents", "run", "demo", "codex", "--version", "two words", "", "--"}, "team")
 	want := []string{"demo", "codex", "--version", "two words", "", "--"}
@@ -32,7 +32,7 @@ func TestParsedRunPreservesEveryProgramArgument(t *testing.T) {
 // TestAgentLoginRejectsUnknownWorkflowForKnownAgent proves that the public cli.Parse function rejects an unknown login workflow for a delivered agent with the expected diagnostic.
 func TestAgentLoginRejectsUnknownWorkflowForKnownAgent(t *testing.T) {
 	agents := catalog.Default.Agents
-	catalog.Default.Agents = []string{"codex"}
+	catalog.Default.Agents = map[string]catalog.Agent{"codex": {Delivered: true}}
 	t.Cleanup(func() { catalog.Default.Agents = agents })
 	_, err := cli.Parse([]string{"agents", "login", "demo", "codex", "bogusflow"}, "default")
 	want := `unknown workflow "bogusflow": no valid names are available yet`

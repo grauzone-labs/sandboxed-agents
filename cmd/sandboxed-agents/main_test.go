@@ -207,10 +207,10 @@ func TestCommandGrammar(t *testing.T) {
 		{[]string{"shell", "demo"}, 1}, {[]string{"ssh-config", "demo", "--install"}, 1},
 		{[]string{"ssh-config", "demo", "--remove"}, 1}, {[]string{"fingerprint", "demo"}, 1}, {[]string{"check", "demo"}, 1},
 		{[]string{"agents", "enable", "demo", "codex", "--version", "1.2", "--force"}, 2},
-		{[]string{"agents", "disable", "demo", "codex", "--force"}, 2},
-		{[]string{"agents", "update", "demo", "codex", "--unpin", "--force"}, 2},
+		{[]string{"agents", "disable", "demo", "codex", "--force"}, 1},
+		{[]string{"agents", "update", "demo", "codex", "--unpin", "--force"}, 1},
 		{[]string{"agents", "login", "demo", "codex", "browser"}, 2},
-		{[]string{"agents", "status", "demo", "codex"}, 2},
+		{[]string{"agents", "status", "demo", "codex"}, 1},
 		{[]string{"agents", "run", "demo", "codex", "--unknown-to-host", "hello"}, 2},
 		{[]string{"agents", "session", "demo", "codex", "--stop"}, 2},
 		{[]string{"integrations", "login", "demo", "github", "browser"}, 2},
@@ -232,7 +232,7 @@ func TestCommandGrammar(t *testing.T) {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			caseFakes := fakes
 			lifecycle := len(tc.args) > 0 && (tc.args[0] == "start" || tc.args[0] == "stop" || tc.args[0] == "restart" || tc.args[0] == "remove")
-			existingSandbox := len(tc.args) > 0 && (tc.args[0] == "shell" || tc.args[0] == "fingerprint" || tc.args[0] == "ssh-config" || tc.args[0] == "integrations" || (tc.args[0] == "check" && len(tc.args) > 1))
+			existingSandbox := len(tc.args) > 0 && (tc.args[0] == "shell" || tc.args[0] == "fingerprint" || tc.args[0] == "ssh-config" || tc.args[0] == "integrations" || tc.args[0] == "agents" || (tc.args[0] == "check" && len(tc.args) > 1))
 			listing := len(tc.args) > 0 && tc.args[0] == "list"
 			if tc.status == 2 || lifecycle || existingSandbox || listing {
 				caseFakes = testutil.Install(t, fakeExecutable)
@@ -304,7 +304,7 @@ func TestAgentAndToolchainSelectionsUseDeliveredCatalogs(t *testing.T) {
 		status        int
 		diagnostic    string
 	}{
-		{"agents", "bogus", 2, `unknown agent "bogus": no valid names are available yet`},
+		{"agents", "bogus", 2, `unknown agent "bogus": valid names: claude, codex, copilot, opencode`},
 		{"with", "bogus", 2, `unknown toolchain "bogus": no valid names are available yet`},
 		{"with", "none", 1, "step 2:"},
 	}
@@ -334,7 +334,7 @@ func TestAgentCommandsRejectUnknownAgentsBeforeExternalCalls(t *testing.T) {
 			command := exec.Command(executable, "agents", verb, "demo", "bogus")
 			command.Env = fakes.Env(os.Environ())
 			output, err := command.CombinedOutput()
-			want := "step 1: unknown agent \"bogus\": no valid names are available yet\n"
+			want := "step 1: unknown agent \"bogus\": valid names: claude, codex, copilot, opencode\n"
 			if status := exitStatus(t, err); status != 2 || !strings.HasPrefix(string(output), want) {
 				t.Errorf("status=%d output=%q; want status=2 and first line=%q", status, output, want)
 			}

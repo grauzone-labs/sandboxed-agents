@@ -25,6 +25,7 @@ type EnvironmentPolicy uint8
 const (
 	AgentEnvironment EnvironmentPolicy = iota
 	GitConfigEnvironment
+	NPMEnvironment
 )
 
 // Process is a program start requested at the operating-system seam.
@@ -40,6 +41,9 @@ type Process struct {
 // Reexec starts this same trusted manager executable, ignoring Program.
 // ReplaceAuthorizedKey atomically stores a root-owned mode-0644 authorization file.
 type Effects struct {
+	// HomeDirectory is evaluated only by a verified agent worker. Tests use a
+	// temporary directory; production uses the sandbox's fixed home volume.
+	HomeDirectory        func() (string, error)
 	Identity             func() Identity
 	Groups               func() ([]int, error)
 	UIDs                 func() (real, effective, saved int)
@@ -61,6 +65,12 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 	}
 	if status, handled := sshAdministration(args, stdout, stderr, effects); handled {
 		return status
+	}
+	if len(args) > 0 && args[0] == "agents" {
+		return agents(args[1:], false, stdout, stderr, effects)
+	}
+	if len(args) > 1 && args[0] == "__worker" && args[1] == "agents" {
+		return agents(args[2:], true, stdout, stderr, effects)
 	}
 	if len(args) == 1 && args[0] == "sessions" {
 		if effects.Identity() == rootIdentity {

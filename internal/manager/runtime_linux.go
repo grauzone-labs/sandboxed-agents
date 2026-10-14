@@ -41,9 +41,12 @@ func newEffects(calls systemCalls) Effects {
 		if process.EnvironmentPolicy == GitConfigEnvironment {
 			command.Env = gitEnvironment(command.Env)
 		}
+		if process.EnvironmentPolicy == NPMEnvironment {
+			command.Env = npmEnvironment(command.Env)
+		}
 		return calls.Start(command)
 	}
-	return Effects{Identity: calls.Identity, Groups: os.Getgroups, UIDs: unix.Getresuid, GIDs: unix.Getresgid, Start: run,
+	return Effects{HomeDirectory: func() (string, error) { return "/home/agent", nil }, Identity: calls.Identity, Groups: os.Getgroups, UIDs: unix.Getresuid, GIDs: unix.Getresgid, Start: run,
 		ReadFile: os.ReadFile, ReplaceAuthorizedKey: func(data []byte) error { return replaceAuthorizedKey("/etc/ssh", data) }, RemoveAuthorizedKey: func() error { return removeAuthorizedKey("/etc/ssh") }, Reexec: func(process Process) error {
 			path, err := calls.Executable()
 			if err != nil {
@@ -79,4 +82,17 @@ func gitEnvironment(environment []string) []string {
 		result = append(result, entry)
 	}
 	return append(result, "GIT_CONFIG_GLOBAL=/home/agent/.gitconfig", "XDG_CONFIG_HOME=/home/agent/.config")
+}
+
+// npm's cache and config stay in agent's home even when ambient npm overrides exist.
+func npmEnvironment(environment []string) []string {
+	var result []string
+	for _, entry := range environment {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(strings.ToLower(key), "npm_config_") {
+			continue
+		}
+		result = append(result, entry)
+	}
+	return append(result, "NPM_CONFIG_CACHE=/home/agent/.npm", "NPM_CONFIG_USERCONFIG=/home/agent/.npmrc")
 }

@@ -33,6 +33,9 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		}
 		var err error
 		request, err = parseForHost(args, group, host)
+		if err == nil && (request.Command == "agents login" || request.Command == "agents run" || request.Command == "agents session") {
+			err = fmt.Errorf("%s: not delivered yet", request.Command)
+		}
 		if err == nil {
 			switch request.Command {
 			case "up", "start", "stop", "restart", "remove", "update":
@@ -136,6 +139,10 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
+		if err := enableUpAgents(request, target, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 		return 0
 	case "start", "stop", "restart", "remove":
 		target, err := selectedTarget()
@@ -189,6 +196,16 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			return 1
 		}
 		if err := configureIntegration(request, target, stdout, stderr); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "agents enable", "agents disable", "agents update", "agents status":
+		target, err := selectedTarget()
+		if err != nil {
+			return 1
+		}
+		if err := administerAgent(request, target, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
