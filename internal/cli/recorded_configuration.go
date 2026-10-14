@@ -53,6 +53,17 @@ func (limit recordedCPULimit) cores() float64 {
 	return float64(limit.units) / float64(limit.period)
 }
 
+func (limit recordedCPULimit) displayCores() float64 {
+	cores := limit.cores()
+	requested := math.Round(cores*1000) / 1000
+	// Recover a supported three-decimal override only when it yields this
+	// recorded quota. Keep the actual ratio for externally configured limits.
+	if limit.matches(requested) {
+		return requested
+	}
+	return cores
+}
+
 func (limit recordedCPULimit) matches(cpus float64) bool {
 	if limit.cores() == cpus {
 		return true

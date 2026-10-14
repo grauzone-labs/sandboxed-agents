@@ -104,11 +104,11 @@ func reportResources(container sandboxContainer, output io.Writer) error {
 		}
 		fmt.Fprintf(output, "%s %d\n", limit.option, value)
 	}
-	cpus, err := container.cpuLimit()
+	cpu, err := container.cpuLimit()
 	if err != nil {
 		problems = append(problems, err)
 	} else {
-		fmt.Fprintf(output, "cpus %s\n", strconv.FormatFloat(cpus.cores(), 'f', -1, 64))
+		fmt.Fprintf(output, "cpus %s\n", strconv.FormatFloat(cpu.displayCores(), 'f', -1, 64))
 	}
 	return errors.Join(problems...)
 }

@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -15,8 +16,12 @@ func TestUpExistingMatchesConfigurationBeforeStarting(t *testing.T) {
 	for _, options := range [][]string{nil, {"--memory", "9g", "--cpus", "2.5", "--pids-limit", "3000", "--shm-size", "2g"}, {"--memory", "8g"}, {"--cpus", "4"}, {"--pids-limit", "2048"}, {"--shm-size", "1g"}, {"WORKSPACE"}, {"OTHER_WORKSPACE"}, {"VOLUME_TO_BIND"}} {
 		t.Run(strings.Join(options, " "), func(t *testing.T) {
 			workspace := t.TempDir()
+			canonicalWorkspace, err := filepath.EvalSymlinks(workspace)
+			if err != nil {
+				t.Fatal(err)
+			}
 			responses := healthyCheckResponses(false)
-			mounts, err := json.Marshal([]map[string]string{{"Type": "bind", "Source": workspace, "Destination": "/workspace"}})
+			mounts, err := json.Marshal([]map[string]string{{"Type": "bind", "Source": canonicalWorkspace, "Destination": "/workspace"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -32,7 +37,7 @@ func TestUpExistingMatchesConfigurationBeforeStarting(t *testing.T) {
 			host := lifecycleLinuxHost(t, fakes)
 			host.PortAvailable = func(uint16) error { return nil }
 			args := []string{"up", "demo"}
-			recordedWorkspace := workspace
+			recordedWorkspace := canonicalWorkspace
 			matching := len(options) == 0 || len(options) > 2 || options[0] == "WORKSPACE"
 			if len(options) == 1 {
 				if options[0] == "OTHER_WORKSPACE" {
@@ -58,10 +63,14 @@ func TestUpExistingMatchesConfigurationBeforeStarting(t *testing.T) {
 					}
 				}
 				if len(options) == 1 {
+					requestedWorkspace, err := filepath.EvalSymlinks(workspace)
+					if err != nil {
+						t.Fatal(err)
+					}
 					if options[0] == "VOLUME_TO_BIND" {
 						recordedWorkspace = "sandboxed-agents.default.demo.workspace"
 					}
-					if !diagnosticNamesPath([]byte(output), recordedWorkspace) || !diagnosticNamesPath([]byte(output), workspace) {
+					if !diagnosticNamesPath([]byte(output), recordedWorkspace) || !diagnosticNamesPath([]byte(output), requestedWorkspace) {
 						t.Fatalf("workspace difference must name recorded and requested paths: %s", output)
 					}
 				}
