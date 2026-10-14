@@ -23,6 +23,7 @@ func scriptNewSandbox(t *testing.T, f *fixture, group, name string) {
 		connection = "--connection chosen "
 	}
 	f.responses[connection+"container exists "+prefix] = response{Exit: 1}
+	f.responses[connection+"container exists sandboxed-agents-backup."+group+"."+name] = response{Exit: 1}
 	f.responses[connection+"image exists "+baseTag(t)] = response{}
 	f.responses[connection+"volume exists *"] = response{Exit: 1}
 	f.responses[connection+"volume create *"] = response{}
@@ -58,7 +59,7 @@ func assertNewSandbox(t *testing.T, calls [][]string, connection, group, name, t
 	}
 	expected := [][]string{}
 	for _, volume := range volumeNames {
-		expected = append(expected, append(append([]string{}, target...), "volume", "exists", volume), append(append([]string{}, target...), "volume", "create", "--label", "io.sandboxed-agents.owner="+group, "--label", "io.sandboxed-agents.name="+name, volume))
+		expected = append(expected, append(append([]string{}, target...), "volume", "create", "--label", "io.sandboxed-agents.owner="+group, "--label", "io.sandboxed-agents.name="+name, volume))
 	}
 	workspaceMount := "type=volume,source=" + prefix + ".workspace,destination=/workspace"
 	if workspace != "" {
@@ -263,7 +264,7 @@ func TestUpCreationFailuresDoNotReportRunning(t *testing.T) {
 		key, message string
 		existing     bool
 	}{
-		{"volume exists " + prefix + ".workspace", "volume adoption is not implemented", true},
+		{"volume exists " + prefix + ".workspace", "owner conflict", true},
 		{"volume create *", "volume creation failed", false},
 		{"create *", "SSH publication failed", false},
 		{"start " + prefix, "start failed", false},
@@ -274,6 +275,7 @@ func TestUpCreationFailuresDoNotReportRunning(t *testing.T) {
 			failure := response{Stderr: tc.message, Exit: 125}
 			if tc.existing {
 				failure = response{}
+				f.responses["volume inspect "+prefix+".workspace"] = response{Output: `[{"Labels":{}}]`}
 			}
 			f.responses[tc.key] = failure
 			status, output, calls := f.run(t, "up", "agent01")
@@ -291,10 +293,7 @@ func TestUpCreationFailuresDoNotReportRunning(t *testing.T) {
 				}
 			}
 			if tc.existing {
-				noMutation(t, calls[:len(calls)-1])
-				if strings.Join(calls[len(calls)-1], " ") != tc.key {
-					t.Fatalf("changed existing volume: %v", calls)
-				}
+				noMutation(t, calls)
 			}
 			if calls := testutil.Invocations(t, f.fakes.SSHLog); len(calls) != 0 {
 				t.Fatalf("unexpected SSH calls: %v", calls)

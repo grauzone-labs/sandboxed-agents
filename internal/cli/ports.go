@@ -39,7 +39,7 @@ func allocatePort(p podmanTarget, requested string) (uint16, error) {
 	for _, record := range records {
 		_, managed := record.Labels[OwnerLabel]
 		for _, name := range record.Names {
-			managed = managed || strings.HasPrefix(name, containerPrefix)
+			managed = managed || strings.HasPrefix(name, containerPrefix) || strings.HasPrefix(name, backupPrefix)
 		}
 		if !managed {
 			continue
@@ -94,4 +94,16 @@ func loopbackPortAvailable(port uint16) error {
 		return err
 	}
 	return listener.Close()
+}
+
+func checkRecordedPort(p podmanTarget, container sandboxContainer) error {
+	value := container.Config.Labels[SSHPortLabel]
+	port, err := parseSSHPort(value)
+	if err != nil {
+		return fmt.Errorf("recorded SSH port %q is missing or invalid", value)
+	}
+	if err := p.host.PortAvailable(port); err != nil {
+		return fmt.Errorf("SSH port %d is unavailable on 127.0.0.1: %w", port, err)
+	}
+	return nil
 }

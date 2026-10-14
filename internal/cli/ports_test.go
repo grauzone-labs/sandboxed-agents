@@ -50,8 +50,8 @@ func TestUpAllocatesLoopbackPort(t *testing.T) {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
 	assertNewSandbox(t, calls, "", "default", "demo", baseTag(t), "", "2222", "8589934592", "4", "2048", "1073741824")
-	expected := [][]string{{"--version"}, {"info", "--format", "json"}, {"container", "exists", "sandboxed-agents.default.demo"}, strings.Fields(portInventory), {"image", "exists", baseTag(t)}}
-	if !reflect.DeepEqual(calls[:5], expected) {
+	expected := [][]string{strings.Fields(portInventory), {"image", "exists", baseTag(t)}}
+	if !reflect.DeepEqual(calls[7:9], expected) {
 		t.Fatalf("port/image query order=%v; want %v", calls, expected)
 	}
 }
@@ -196,7 +196,7 @@ func TestUpRefusesRecordedPortBeforeMissingImageBuild(t *testing.T) {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
 	noMutation(t, calls)
-	expected := [][]string{{"--version"}, {"info", "--format", "json"}, {"container", "exists", "sandboxed-agents.default.demo"}, strings.Fields(portInventory)}
+	expected := [][]string{{"--version"}, {"info", "--format", "json"}, {"container", "exists", "sandboxed-agents.default.demo"}, {"volume", "exists", "sandboxed-agents.default.demo.workspace"}, {"volume", "exists", "sandboxed-agents.default.demo.home"}, {"volume", "exists", "sandboxed-agents.default.demo.ssh"}, {"container", "exists", "sandboxed-agents-backup.default.demo"}, strings.Fields(portInventory)}
 	if !reflect.DeepEqual(calls, expected) {
 		t.Fatalf("taken port queries=%v; want %v", calls, expected)
 	}
