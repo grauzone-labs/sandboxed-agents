@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
@@ -40,6 +41,13 @@ func writeOverlay(directory string) error {
 	})
 	if err != nil {
 		return err
+	}
+	// Keep the generated manager out of the checkout. Both host platforms embed these exact Linux bytes.
+	manager := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-buildid=", "-o", filepath.Join(contextDirectory, "base", "manager.bin"), "./cmd/sandboxed-agents-manager")
+	manager.Dir = root
+	manager.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "GOAMD64=v1", "GOTOOLCHAIN=local", "GOFLAGS=", "GOEXPERIMENT=", "GOWORK=off", "GOENV=off", "GOFIPS140=off")
+	if output, err := manager.CombinedOutput(); err != nil {
+		return fmt.Errorf("build embedded Linux manager: %w\n%s", err, output)
 	}
 	data, err := json.Marshal(overlay)
 	if err != nil {

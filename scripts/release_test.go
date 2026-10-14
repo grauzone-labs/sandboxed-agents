@@ -357,7 +357,7 @@ func assertReleaseVersion(t *testing.T, directory string) {
 	}
 	command := exec.Command(filepath.Join(directory, artifact), "version")
 	output, err := command.CombinedOutput()
-	want := releasetest.ExpectedVersion(t, releasetest.ReleaseVersion)
+	want := releasetest.ExpectedPreparedVersion(t, releasetest.ReleaseVersion)
 	if err != nil || string(output) != want {
 		t.Fatalf("release version: error=%v output=%q; want %q", err, output, want)
 	}

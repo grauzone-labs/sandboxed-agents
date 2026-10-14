@@ -28,6 +28,8 @@ func TestNpmPackageLifecycle(t *testing.T) {
 	}
 	root := repositoryRoot(t)
 	releaseBash(t)
+	// Prepare the release expectation before this test redirects HOME to its installation fixture.
+	_ = releasetest.ExpectedPreparedVersion(t, releasetest.ReleaseVersion)
 	checkout := createReleaseRepository(t, root)
 	tagReleaseRepository(t, checkout)
 	output := t.TempDir()
@@ -113,7 +115,7 @@ func TestNpmPackageLifecycle(t *testing.T) {
 				runNpm(t, prefix, append(install, release.archive)...)
 				command := npmShimCommand(commandPath, "version")
 				result, err := command.CombinedOutput()
-				if want := releasetest.ExpectedVersion(t, release.version); err != nil || string(result) != want {
+				if want := releasetest.ExpectedPreparedVersion(t, release.version); err != nil || string(result) != want {
 					t.Fatalf("installed npm version: error=%v output=%q; want %q", err, result, want)
 				}
 				metadata, err := os.ReadFile(filepath.Join(packagePath, "package.json"))

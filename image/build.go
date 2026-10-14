@@ -19,8 +19,8 @@ func Build(ctx context.Context, source fs.FS, podman func(context.Context, ...st
 	return BuildWithToolchains(ctx, source, nil, podman)
 }
 
-// BuildWithToolchains uses the caller's validated toolchain set for image identity.
-// The supplied build context determines the installed contents. Like Build,
+// BuildWithToolchains generates a recipe for the caller's validated toolchain set.
+// Nonempty sets layer the selected fragments on the base image. Like Build,
 // it returns a tag only when the Podman build and context cleanup both succeed.
 func BuildWithToolchains(ctx context.Context, source fs.FS, toolchains []string, podman func(context.Context, ...string) error) (tag string, err error) {
 	if podman == nil {
@@ -51,7 +51,7 @@ func BuildWithToolchains(ctx context.Context, source fs.FS, toolchains []string,
 	if err != nil {
 		return "", fmt.Errorf("hash image build context: %w", err)
 	}
-	const containerfile = "base/Containerfile"
+	containerfile := "base/Containerfile"
 	info, err := fs.Stat(written, containerfile)
 	if err != nil {
 		return "", fmt.Errorf("image Containerfile %s: %w", containerfile, err)
@@ -63,10 +63,40 @@ func BuildWithToolchains(ctx context.Context, source fs.FS, toolchains []string,
 		return "", err
 	}
 	imageTag := Tag(hash, toolchains)
-	if err := podman(ctx, "build", "--file", filepath.Join(directory, filepath.FromSlash(containerfile)), "--tag", imageTag, filepath.Join(directory, "base")); err != nil {
+	buildDirectory := filepath.Join(directory, "base")
+	if len(toolchains) != 0 {
+		containerfile = "toolchains/Containerfile"
+		if err := writeToolchainRecipe(directory, hash, toolchains); err != nil {
+			return "", err
+		}
+		buildDirectory = directory
+	}
+	if err := podman(ctx, "build", "--file", filepath.Join(directory, filepath.FromSlash(containerfile)), "--tag", imageTag, buildDirectory); err != nil {
 		return "", fmt.Errorf("build image %s: %w", imageTag, err)
 	}
 	return imageTag, nil
+}
+
+// writeToolchainRecipe assembles canonical fragments after hashing the original assets.
+func writeToolchainRecipe(directory, hash string, toolchains []string) error {
+	set := slices.Clone(toolchains)
+	slices.Sort(set)
+	set = slices.Compact(set)
+	var recipe strings.Builder
+	fmt.Fprintf(&recipe, "ARG BASE_IMAGE=%s\nFROM ${BASE_IMAGE}\n", Tag(hash, nil))
+	for _, name := range set {
+		// Although callers validate names, keep recipe paths confined to their asset directory.
+		if name == "" || strings.ContainsAny(name, `/\\.`) {
+			return fmt.Errorf("invalid toolchain recipe %q", name)
+		}
+		fragment, err := os.ReadFile(filepath.Join(directory, "toolchains", name+".Containerfile"))
+		if err != nil {
+			return fmt.Errorf("read toolchain recipe %s: %w", name, err)
+		}
+		fmt.Fprintf(&recipe, "\n# Toolchain: %s\n%s\n", name, fragment)
+	}
+	recipe.WriteString("\nCOPY toolchains/record-versions.sh /tmp/record-versions.sh\nRUN sh /tmp/record-versions.sh && rm /tmp/record-versions.sh\n")
+	return os.WriteFile(filepath.Join(directory, "toolchains", "Containerfile"), []byte(recipe.String()), 0600)
 }
 
 // Tag identifies an asset hash and a validated toolchain set independently of controller groups.
