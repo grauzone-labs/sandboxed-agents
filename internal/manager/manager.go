@@ -1,4 +1,4 @@
-// Package manager owns version and agent session queries inside a sandbox.
+// Package manager owns administrative queries and integration workflows inside a sandbox.
 package manager
 
 import (
@@ -53,7 +53,11 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 	if len(args) == 2 && args[0] == "__worker" && args[1] == "sessions" {
 		return sessions(stdout, stderr, effects)
 	}
-	fmt.Fprintln(stderr, "usage: sandboxed-agents-manager version | sessions")
+	if len(args) >= 4 && args[0] == "integrations" && args[1] == "config" && args[2] == "git" {
+		return configureGit(args[3:], stdout, stderr, effects)
+	}
+
+	fmt.Fprintln(stderr, "usage: sandboxed-agents-manager version | sessions | integrations config git identity --name N --email E | integrations config git credentials")
 	return 2
 }
 
@@ -62,32 +66,11 @@ func reexecWorker(args []string, stdout, stderr io.Writer, effects Effects) int 
 }
 
 func sessions(stdout, stderr io.Writer, effects Effects) int {
-	if effects.UIDs == nil || effects.GIDs == nil {
-		fmt.Fprintln(stderr, "agent work requires verified real, effective, and saved UID and GID 1000")
-		return 1
-	}
-	ruid, euid, suid := effects.UIDs()
-	rgid, egid, sgid := effects.GIDs()
-	if ruid != agentIdentity.UID || euid != agentIdentity.UID || suid != agentIdentity.UID ||
-		rgid != agentIdentity.GID || egid != agentIdentity.GID || sgid != agentIdentity.GID {
-		fmt.Fprintln(stderr, "agent work requires real, effective, and saved UID and GID 1000")
-		return 1
-	}
-	if effects.Groups == nil {
-		fmt.Fprintln(stderr, "agent work requires verified supplementary groups")
-		return 1
-	}
-	groups, err := effects.Groups()
-	if err != nil {
-		fmt.Fprintf(stderr, "cannot verify agent supplementary groups: %v\n", err)
-		return 1
-	}
-	if len(groups) != 0 && !(len(groups) == 1 && groups[0] == agentIdentity.GID) {
-		fmt.Fprintln(stderr, "agent work requires empty supplementary groups or only GID 1000")
+	if !verifyAgent(effects, stderr) {
 		return 1
 	}
 	var tmuxStderr bytes.Buffer
-	err = effects.Start(Process{Program: "tmux", Args: []string{"list-sessions", "-F", "#{session_name}"}, Identity: agentIdentity, Stdout: stdout, Stderr: &tmuxStderr})
+	err := effects.Start(Process{Program: "tmux", Args: []string{"list-sessions", "-F", "#{session_name}"}, Identity: agentIdentity, Stdout: stdout, Stderr: &tmuxStderr})
 	_, connectionMessage, _ := strings.Cut(tmuxStderr.String(), "error connecting to")
 	var exit interface{ ExitCode() int }
 	if errors.As(err, &exit) && exit.ExitCode() == 1 &&
@@ -108,4 +91,32 @@ func exitStatus(err error, stderr io.Writer) int {
 		return exit.ExitCode()
 	}
 	return 1
+}
+
+func verifyAgent(effects Effects, stderr io.Writer) bool {
+	if effects.UIDs == nil || effects.GIDs == nil {
+		fmt.Fprintln(stderr, "agent work requires verified real, effective, and saved UID and GID 1000")
+		return false
+	}
+	ruid, euid, suid := effects.UIDs()
+	rgid, egid, sgid := effects.GIDs()
+	if ruid != agentIdentity.UID || euid != agentIdentity.UID || suid != agentIdentity.UID ||
+		rgid != agentIdentity.GID || egid != agentIdentity.GID || sgid != agentIdentity.GID {
+		fmt.Fprintln(stderr, "agent work requires real, effective, and saved UID and GID 1000")
+		return false
+	}
+	if effects.Groups == nil {
+		fmt.Fprintln(stderr, "agent work requires verified supplementary groups")
+		return false
+	}
+	groups, err := effects.Groups()
+	if err != nil {
+		fmt.Fprintf(stderr, "cannot verify agent supplementary groups: %v\n", err)
+		return false
+	}
+	if len(groups) != 0 && !(len(groups) == 1 && groups[0] == agentIdentity.GID) {
+		fmt.Fprintln(stderr, "agent work requires empty supplementary groups or only GID 1000")
+		return false
+	}
+	return true
 }
