@@ -141,12 +141,7 @@ func TestGitWorkflowsWriteGlobalConfigOnly(t *testing.T) {
 
 // TestGitConfigRejectsUndeliveredWorkflow proves the manager refuses workflows absent from the shared integration catalog before Git at its public command seam.
 func TestGitConfigRejectsUndeliveredWorkflow(t *testing.T) {
-	original := catalog.Default.Integrations["git"]
-	integration := original
-	integration.ConfigWorkflows = maps.Clone(original.ConfigWorkflows)
-	delete(integration.ConfigWorkflows, "credentials")
-	catalog.Default.Integrations["git"] = integration
-	t.Cleanup(func() { catalog.Default.Integrations["git"] = original })
+	withoutGitCredentials(t)
 	effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
 	var output bytes.Buffer
 	status := manager.RunWithEffects([]string{"integrations", "config", "git", "credentials"}, &output, &output, effects)
@@ -157,15 +152,20 @@ func TestGitConfigRejectsUndeliveredWorkflow(t *testing.T) {
 
 // TestManagerUsageListsDeliveredConfigWorkflows proves manager usage follows shared workflow names and options at its public command seam.
 func TestManagerUsageListsDeliveredConfigWorkflows(t *testing.T) {
+	withoutGitCredentials(t)
+	var output bytes.Buffer
+	status := manager.RunWithEffects([]string{"unknown"}, &output, &output, noProcesses(t, manager.Identity{UID: 1000, GID: 1000}))
+	if status != 2 || !strings.Contains(output.String(), "integrations config git identity --name NAME --email EMAIL") || strings.Contains(output.String(), "credentials") {
+		t.Fatalf("status=%d output=%s; want only delivered workflow usage", status, &output)
+	}
+}
+
+func withoutGitCredentials(t *testing.T) {
+	t.Helper()
 	original := catalog.Default.Integrations["git"]
 	integration := original
 	integration.ConfigWorkflows = maps.Clone(original.ConfigWorkflows)
 	delete(integration.ConfigWorkflows, "credentials")
 	catalog.Default.Integrations["git"] = integration
 	t.Cleanup(func() { catalog.Default.Integrations["git"] = original })
-	var output bytes.Buffer
-	status := manager.RunWithEffects([]string{"unknown"}, &output, &output, noProcesses(t, manager.Identity{UID: 1000, GID: 1000}))
-	if status != 2 || !strings.Contains(output.String(), "integrations config git identity --name NAME --email EMAIL") || strings.Contains(output.String(), "credentials") {
-		t.Fatalf("status=%d output=%s; want only delivered workflow usage", status, &output)
-	}
 }
