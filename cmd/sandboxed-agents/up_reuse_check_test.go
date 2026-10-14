@@ -12,7 +12,7 @@ import (
 
 // TestUpExistingMatchesConfigurationBeforeStarting proves absent and matching options start a sandbox while changed resources and workspace refuse through the CLI and fake Podman seams.
 func TestUpExistingMatchesConfigurationBeforeStarting(t *testing.T) {
-	for _, options := range [][]string{nil, {"--memory", "9g", "--cpus", "2.5", "--pids-limit", "3000", "--shm-size", "2g"}, {"--memory", "8g"}, {"--cpus", "4"}, {"--pids-limit", "2048"}, {"--shm-size", "1g"}, {"WORKSPACE"}, {"OTHER_WORKSPACE"}} {
+	for _, options := range [][]string{nil, {"--memory", "9g", "--cpus", "2.5", "--pids-limit", "3000", "--shm-size", "2g"}, {"--memory", "8g"}, {"--cpus", "4"}, {"--pids-limit", "2048"}, {"--shm-size", "1g"}, {"WORKSPACE"}, {"OTHER_WORKSPACE"}, {"VOLUME_TO_BIND"}} {
 		t.Run(strings.Join(options, " "), func(t *testing.T) {
 			workspace := t.TempDir()
 			responses := healthyCheckResponses(false)
@@ -21,7 +21,9 @@ func TestUpExistingMatchesConfigurationBeforeStarting(t *testing.T) {
 				t.Fatal(err)
 			}
 			record := responses["container inspect sandboxed-agents.default.demo"]
-			record.Output = strings.Replace(record.Output, `"State":`, `"Mounts":`+string(mounts)+`,"State":`, 1)
+			if len(options) != 1 || options[0] != "VOLUME_TO_BIND" {
+				record.Output = strings.Replace(record.Output, `"State":`, `"Mounts":`+string(mounts)+`,"State":`, 1)
+			}
 			responses["container inspect sandboxed-agents.default.demo"] = record
 			responses["--version"] = lifecycleResponse{Output: "podman version 4.4.0"}
 			responses["info --format json"] = lifecycleResponse{Output: `{"host":{"security":{"rootless":true},"cgroupVersion":"v2"}}`}
@@ -30,6 +32,7 @@ func TestUpExistingMatchesConfigurationBeforeStarting(t *testing.T) {
 			host := lifecycleLinuxHost(t, fakes)
 			host.PortAvailable = func(uint16) error { return nil }
 			args := []string{"up", "demo"}
+			recordedWorkspace := workspace
 			matching := len(options) == 0 || len(options) > 2 || options[0] == "WORKSPACE"
 			if len(options) == 1 {
 				if options[0] == "OTHER_WORKSPACE" {
@@ -52,6 +55,14 @@ func TestUpExistingMatchesConfigurationBeforeStarting(t *testing.T) {
 				for _, message := range []string{want, "differs", "remove demo", "up demo"} {
 					if !strings.Contains(output, message) {
 						t.Fatalf("missing %q: %s", message, output)
+					}
+				}
+				if len(options) == 1 {
+					if options[0] == "VOLUME_TO_BIND" {
+						recordedWorkspace = "sandboxed-agents.default.demo.workspace"
+					}
+					if !diagnosticNamesPath([]byte(output), recordedWorkspace) || !diagnosticNamesPath([]byte(output), workspace) {
+						t.Fatalf("workspace difference must name recorded and requested paths: %s", output)
 					}
 				}
 			}

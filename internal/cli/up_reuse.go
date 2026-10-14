@@ -1,6 +1,9 @@
 package cli
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 func reusedUpConflict(request Request, reason string) error {
 	return fmt.Errorf("sandbox %s: %s; use remove %s followed by up %s to change it", request.Name, reason, request.Name, request.Name)
@@ -28,14 +31,13 @@ func checkReusedUp(request Request, p podmanTarget, container sandboxContainer) 
 		if err != nil {
 			return err
 		}
-		matching := false
-		for _, mount := range container.Mounts {
-			if mount.Destination == "/workspace" && mount.Type == "bind" && mount.Source == workspace {
-				matching = true
+		recorded, bound := container.workspaceBind()
+		if !bound || recorded != workspace {
+			previous := "volume " + DerivedNames(request.Group, request.Name).Workspace
+			if bound {
+				previous = "bind " + strconv.Quote(recorded)
 			}
-		}
-		if !matching {
-			return reusedUpConflict(request, "workspace differs from the recorded workspace")
+			return reusedUpConflict(request, fmt.Sprintf("workspace differs: requested bind %q; recorded workspace %s", workspace, previous))
 		}
 	}
 	for _, option := range []string{"with", "agents"} {
@@ -47,19 +49,17 @@ func checkReusedUp(request Request, p podmanTarget, container sandboxContainer) 
 }
 
 func checkReusedResources(request Request, container sandboxContainer) error {
-	for _, limit := range []struct {
-		option    string
-		recorded  *int64
-		requested int64
-	}{{"memory", container.HostConfig.Memory, request.Resources.Memory}, {"pids-limit", container.HostConfig.PidsLimit, request.Resources.PIDsLimit}, {"shm-size", container.HostConfig.ShmSize, request.Resources.ShmSize}} {
+	requested := map[string]int64{"memory": request.Resources.Memory, "pids-limit": request.Resources.PIDsLimit, "shm-size": request.Resources.ShmSize}
+	for _, limit := range container.integerLimits() {
 		if request.Options[limit.option] == "" {
 			continue
 		}
-		if limit.recorded == nil {
-			return fmt.Errorf("sandbox %s: recorded --%s is missing", request.Name, limit.option)
+		recorded, err := limit.read()
+		if err != nil {
+			return fmt.Errorf("sandbox %s: %w", request.Name, err)
 		}
-		if *limit.recorded != limit.requested {
-			return reusedUpConflict(request, fmt.Sprintf("--%s differs from recorded limit %d", limit.option, *limit.recorded))
+		if recorded != requested[limit.option] {
+			return reusedUpConflict(request, fmt.Sprintf("--%s differs: requested %d; recorded limit %d", limit.option, requested[limit.option], recorded))
 		}
 	}
 	if request.Options["cpus"] != "" {
@@ -68,19 +68,8 @@ func checkReusedResources(request Request, container sandboxContainer) error {
 			return fmt.Errorf("sandbox %s: %w", request.Name, err)
 		}
 		if cpus != request.Resources.CPUs {
-			return reusedUpConflict(request, fmt.Sprintf("--cpus differs from recorded limit %g", cpus))
+			return reusedUpConflict(request, fmt.Sprintf("--cpus differs: requested %s; recorded limit %s", strconv.FormatFloat(request.Resources.CPUs, 'f', -1, 64), strconv.FormatFloat(cpus, 'f', -1, 64)))
 		}
 	}
 	return nil
-}
-
-func recordedCPUs(container sandboxContainer) (float64, error) {
-	limits := container.HostConfig
-	if limits.CpuQuota != nil && limits.CpuPeriod != nil && *limits.CpuPeriod > 0 && *limits.CpuQuota > 0 {
-		return float64(*limits.CpuQuota) / float64(*limits.CpuPeriod), nil
-	}
-	if limits.NanoCpus != nil && *limits.NanoCpus > 0 {
-		return float64(*limits.NanoCpus) / 1e9, nil
-	}
-	return 0, fmt.Errorf("recorded --cpus is missing")
 }

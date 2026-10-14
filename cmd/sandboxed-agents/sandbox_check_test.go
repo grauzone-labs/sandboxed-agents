@@ -126,6 +126,20 @@ func TestCheckReadsCPUQuotaAndNanoCPUFormats(t *testing.T) {
 	assertCheckQueriesOnly(t, fakes, 0)
 }
 
+// TestCheckLargeCPULimitUsesDecimalNotation proves the maximum supported CPU limit is reported in reusable decimal notation through the built CLI and fake Podman seam.
+func TestCheckLargeCPULimitUsesDecimalNotation(t *testing.T) {
+	responses := healthyCheckResponses(false)
+	record := responses["container inspect sandboxed-agents.default.demo"]
+	record.Output = strings.Replace(record.Output, `"CpuQuota":250000,"CpuPeriod":100000`, `"NanoCpus":9223372036854000000`, 1)
+	responses["container inspect sandboxed-agents.default.demo"] = record
+	fakes := sshSetupHarness(t, responses)
+	status, stdout, stderr := sshSetupRun(t, "check", "demo")
+	if status != 0 || !strings.Contains(stdout, "cpus 9223372036.854\n") {
+		t.Fatalf("decimal CPU limit=%d %q %q", status, stdout, stderr)
+	}
+	assertCheckQueriesOnly(t, fakes, 0)
+}
+
 // TestCheckInspectionFailuresCannotClaimHealth proves missing running state, unreadable inspect data, and absent resource facts cause failure through the built CLI and fake Podman seam.
 func TestCheckInspectionFailuresCannotClaimHealth(t *testing.T) {
 	for _, field := range []string{"State", "HostConfig", "inspect"} {
@@ -226,10 +240,8 @@ func assertCheckQueriesOnly(t *testing.T, fakes testutil.Fakes, after int) {
 		if len(call) > 1 && call[0] == "--connection" {
 			call = call[2:]
 		}
-		query := len(call) == 3 && (call[0] == "container" || call[0] == "volume") && (call[1] == "exists" || call[1] == "inspect")
 		manager := strings.Join(call, " ") == "exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager version"
-		machine := len(call) > 1 && call[0] == "machine" && (call[1] == "list" || call[1] == "inspect")
-		if !query && !manager && !machine {
+		if !sandboxObjectQuery(call) && !manager {
 			t.Fatalf("check issued a non-query Podman call: %v", call)
 		}
 	}
