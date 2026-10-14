@@ -63,7 +63,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Check out Go sources with Windows line endings and tag HEAD
+      - name: Verify LF Go sources with Windows checkout settings and tag HEAD
         shell: pwsh
         run: |
           git config core.autocrlf true
@@ -76,15 +76,18 @@ jobs:
           if ($sources.Count -eq 0) { throw 'No Go sources found' }
           foreach ($source in $sources) {
             $contents = [System.IO.File]::ReadAllText($source.FullName)
-            if (-not $contents.Contains("`r`n")) { throw "Go source lacks CRLF: $($source.FullName)" }
+            if ($contents.Contains("`r`n")) { throw "Go source contains CRLF: $($source.FullName)" }
           }
+          $unformatted = @(gofmt -l .)
+          if ($LASTEXITCODE -ne 0) { throw 'Go formatting check failed' }
+          if ($unformatted.Count -ne 0) { throw "Go sources need formatting: $($unformatted -join ', ')" }
           git tag "v$env:RELEASE_VERSION" HEAD
           if ($LASTEXITCODE -ne 0) { throw 'Local CI tag failed' }
-      - name: Run CLI tests
+      - name: Run CLI and stable gate tests
         shell: pwsh
         run: |
-          go test ./internal/cli -count=1
-          if ($LASTEXITCODE -ne 0) { throw 'Windows CLI tests failed' }
+          go test ./cmd/sandboxed-agents ./internal/cli ./internal/release/cmd/stable-gate -count=1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows CLI or stable gate tests failed' }
       - name: Run image and release tests with Git for Windows Bash
         shell: pwsh
         env:

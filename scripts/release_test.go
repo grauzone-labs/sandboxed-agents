@@ -370,7 +370,7 @@ func releaseBash(t *testing.T) string {
 	}
 	configured := os.Getenv("SANDBOXED_AGENTS_RELEASE_BASH")
 	if configured == "" {
-		t.Fatal("SANDBOXED_AGENTS_RELEASE_BASH must name Git for Windows Bash on Windows")
+		t.Skip(`Windows release integration requires Git for Windows Bash; set SANDBOXED_AGENTS_RELEASE_BASH to its bash.exe, for example C:\Program Files\Git\bin\bash.exe`)
 	}
 	if info, err := os.Stat(configured); err != nil || !info.Mode().IsRegular() {
 		t.Fatalf("SANDBOXED_AGENTS_RELEASE_BASH %q must be an existing Git for Windows Bash executable", configured)

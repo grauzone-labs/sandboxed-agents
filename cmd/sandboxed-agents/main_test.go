@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -246,7 +247,7 @@ func TestCommandGrammar(t *testing.T) {
 			if (tc.status == 2) != strings.Contains(string(output), "usage:") {
 				t.Fatalf("unexpected diagnostic: %s", output)
 			}
-			if existingSandbox {
+			if existingSandbox || (lifecycle && tc.status != 2) {
 				want := [][]string{
 					{"container", "exists", "sandboxed-agents.default.demo"},
 					{"container", "inspect", "sandboxed-agents.default.demo"},
@@ -266,14 +267,6 @@ func TestCommandGrammar(t *testing.T) {
 
 			if tc.status == 2 {
 				assertNoExternalCalls(t, caseFakes)
-			}
-			if lifecycle && tc.status != 2 {
-				calls := testutil.Invocations(t, caseFakes.PodmanLog)
-				for _, call := range calls {
-					if len(call) < 2 || call[0] != "container" || (call[1] != "exists" && call[1] != "inspect") {
-						t.Fatalf("unexpected lifecycle grammar call: %v", calls)
-					}
-				}
 			}
 		})
 	}
@@ -511,39 +504,51 @@ func TestWorkspacePathsReachPreflightOrFailBeforePodman(t *testing.T) {
 	if err := os.Mkdir(ssh, 0700); err != nil {
 		t.Fatal(err)
 	}
-	alias := filepath.Join(t.TempDir(), "ssh-alias")
-	if err := os.Symlink(ssh, alias); err != nil {
-		t.Fatal(err)
-	}
 	state := t.TempDir()
 	cases := []struct {
 		path   string
 		status int
 	}{
 		{workspace, 1}, {filepath.Join(workspace, "missing"), 2}, {file, 2},
-		{ssh, 2}, {home, 2}, {alias, 2}, {filepath.Dir(executable), 2},
+		{ssh, 2}, {home, 2}, {filepath.Dir(executable), 2},
 		{filepath.Join(state, "sandboxed-agents"), 2},
 	}
 	if err := os.Mkdir(filepath.Join(state, "sandboxed-agents"), 0700); err != nil {
 		t.Fatal(err)
 	}
+	checkPath := func(t *testing.T, path string, status int) {
+		t.Helper()
+		caseFakes := fakes
+		if status == 2 {
+			caseFakes = testutil.Install(t, fakeExecutable)
+		}
+		command := exec.Command(executable, "up", "demo", path, "--with", "none")
+		command.Env = testutil.Env(caseFakes.Env(os.Environ()), map[string]string{"HOME": home, "USERPROFILE": home, "XDG_STATE_HOME": state, "LOCALAPPDATA": state})
+		output, err := command.CombinedOutput()
+		if got := exitStatus(t, err); got != status {
+			t.Fatalf("status=%d want=%d output=%s", got, status, output)
+		}
+		if status == 2 {
+			assertNoExternalCalls(t, caseFakes)
+		}
+	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
-			caseFakes := fakes
-			if tc.status == 2 {
-				caseFakes = testutil.Install(t, fakeExecutable)
-			}
-			command := exec.Command(executable, "up", "demo", tc.path, "--with", "none")
-			command.Env = testutil.Env(caseFakes.Env(os.Environ()), map[string]string{"HOME": home, "USERPROFILE": home, "XDG_STATE_HOME": state, "LOCALAPPDATA": state})
-			output, err := command.CombinedOutput()
-			if status := exitStatus(t, err); status != tc.status {
-				t.Fatalf("status=%d want=%d output=%s", status, tc.status, output)
-			}
-			if tc.status == 2 {
-				assertNoExternalCalls(t, caseFakes)
-			}
+			checkPath(t, tc.path, tc.status)
 		})
 	}
+	t.Run("protected SSH symlink", func(t *testing.T) {
+		alias := filepath.Join(t.TempDir(), "ssh-alias")
+		if err := os.Symlink(ssh, alias); err != nil {
+			// Windows ERROR_PRIVILEGE_NOT_HELD: creating symlinks requires
+			// Developer Mode or an elevated process.
+			if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) {
+				t.Skipf("symlink coverage requires Windows Developer Mode or administrator privileges: %v", err)
+			}
+			t.Fatal(err)
+		}
+		checkPath(t, alias, 2)
+	})
 	assertOnlyPreflightQueries(t, fakes)
 }
 
