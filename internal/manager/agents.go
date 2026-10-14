@@ -150,14 +150,18 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 		}
 		return exitStatus(json.NewEncoder(stdout).Encode(status), stderr)
 	case "disable":
-		if !enabled {
+		if !enabled && !r.force {
 			fmt.Fprintf(stdout, "%s not enabled; nothing to disable\n", r.name)
 			return 0
 		}
 		command := commandPath(home, r.definition)
-		previous, err := managedCommandLink(command, installationCommand(root, current, r.definition))
+		previous, _, err := mutationCommandLink(command, root, current, r)
 		if err != nil {
 			return exitStatus(err, stderr)
+		}
+		if !enabled && previous == "" {
+			fmt.Fprintf(stdout, "%s not enabled; nothing to disable\n", r.name)
+			return 0
 		}
 		if previous != "" {
 			if err := os.Remove(command); err != nil {
@@ -171,8 +175,10 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 			}
 			return exitStatus(err, stderr)
 		}
-		if err := os.RemoveAll(filepath.Join(root, current.Prefix)); err != nil {
-			return exitStatus(err, stderr)
+		if enabled {
+			if err := os.RemoveAll(filepath.Join(root, current.Prefix)); err != nil {
+				return exitStatus(err, stderr)
+			}
 		}
 		fmt.Fprintf(stdout, "%s disabled\n", r.name)
 		if current.Pin != "" {
@@ -183,7 +189,14 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 		if r.operation == "update" && !enabled {
 			return exitStatus(fmt.Errorf("%s not enabled", r.name), stderr)
 		}
-		if r.operation == "enable" && enabled && (r.version == "" || r.version == current.Version) {
+		_, healthy, err := mutationCommandLink(commandPath(home, r.definition), root, current, r)
+		if err != nil {
+			return exitStatus(err, stderr)
+		}
+		if r.operation == "enable" && enabled && !healthy && !r.force {
+			return exitStatus(fmt.Errorf("%s command is missing; retry agents enable with --force to repair it", r.name), stderr)
+		}
+		if r.operation == "enable" && enabled && healthy && (r.version == "" || r.version == current.Version) {
 			if r.version != "" && current.Pin != r.version {
 				current.Pin = r.version
 				selection[r.name] = current
@@ -195,6 +208,9 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 			return 0
 		}
 		if r.operation == "update" && !r.unpin {
+			r.version = current.Pin
+		}
+		if r.operation == "enable" && enabled && r.version == "" {
 			r.version = current.Pin
 		}
 		installed, err := installAgent(root, r, effects, stderr)
@@ -302,11 +318,7 @@ func publishInstallation(home, root string, r agentRequest, installed installati
 	}
 	command := commandPath(home, r.definition)
 	old, existed := selection[r.name]
-	expected := ""
-	if existed {
-		expected = installationCommand(root, old, r.definition)
-	}
-	previous, err := managedCommandLink(command, expected)
+	previous, _, err := mutationCommandLink(command, root, old, r)
 	if err != nil {
 		return err
 	}
@@ -397,4 +409,95 @@ func managedCommandLink(command, expected string) (string, error) {
 		return "", fmt.Errorf("refusing unmanaged command %s", command)
 	}
 	return previous, nil
+}
+
+// mutationCommandLink accepts the selected command or, with explicit force,
+// a confined publication of the same catalog package left by an interruption.
+func mutationCommandLink(command, root string, current installation, r agentRequest) (string, bool, error) {
+	previous, err := os.Readlink(command)
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("refusing unmanaged command %s: %w", command, err)
+	}
+	expected := installationCommand(root, current, r.definition)
+	healthy := current.Prefix != "" && previous == expected
+	if err := validateManagedTarget(root, previous, r.definition, r.force || !healthy); err != nil {
+		return "", false, fmt.Errorf("refusing unmanaged command %s: %w", command, err)
+	}
+	if !healthy && !r.force {
+		return "", false, fmt.Errorf("%s command differs from its selection; retry with --force to repair a managed installation", r.name)
+	}
+	return previous, healthy, nil
+}
+
+// validateManagedTarget confines a recovery link and its resolved npm command
+// to one real installation directory and verifies orphan package identity.
+func validateManagedTarget(root, target string, definition catalog.Agent, metadataRequired bool) error {
+	if !filepath.IsAbs(target) || filepath.Clean(target) != target {
+		return errors.New("command target is not a canonical managed path")
+	}
+	relative, err := filepath.Rel(root, target)
+	if err != nil {
+		return err
+	}
+	parts := strings.Split(relative, string(filepath.Separator))
+	if len(parts) != 3 || !strings.HasPrefix(parts[0], "installation-") || parts[1] != "bin" || parts[2] != definition.Command {
+		return errors.New("command target is outside the requested managed installation")
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	prefix := filepath.Join(root, parts[0])
+	realPrefix, err := filepath.EvalSymlinks(prefix)
+	if err != nil {
+		return err
+	}
+	if realPrefix != filepath.Join(realRoot, parts[0]) {
+		return errors.New("installation prefix resolves outside its managed directory")
+	}
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return err
+	}
+	inside := func(path string) bool {
+		rel, err := filepath.Rel(realPrefix, path)
+		return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+	}
+	if !inside(resolved) {
+		return errors.New("managed command resolves outside its installation")
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("managed command is not a regular file")
+	}
+	if metadataRequired {
+		metadataPath, err := filepath.EvalSymlinks(filepath.Join(prefix, "lib", "node_modules", definition.Install.Package, "package.json"))
+		if err != nil {
+			return err
+		}
+		if !inside(metadataPath) {
+			return errors.New("package metadata resolves outside its installation")
+		}
+		data, err := os.ReadFile(metadataPath)
+		if err != nil {
+			return err
+		}
+		var metadata struct{ Name, Version string }
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			return err
+		}
+		if metadata.Name != definition.Install.Package {
+			return errors.New("installation belongs to another package")
+		}
+		if err := catalog.ValidateVersion(metadata.Version); err != nil {
+			return err
+		}
+	}
+	return nil
 }
