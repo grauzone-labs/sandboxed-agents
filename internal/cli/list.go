@@ -101,7 +101,18 @@ func listSandboxes(request Request, p podmanTarget, output io.Writer) error {
 			if port == "" {
 				port = "-"
 			}
-			toolchains = imageToolchains(objects.container.Config.Image)
+			toolchains = objects.container.Config.Labels[ToolchainsLabel]
+			if toolchains == "" {
+				toolchains = imageToolchains(objects.container.Config.Image)
+			}
+			if objects.container.Image != "" && objects.container.Config.Labels[ToolchainsLabel] != "" && len(objects.conflicts) == 0 && !objects.backup {
+				outdated, err := sandboxImageOutdated(p, objects.container)
+				if err != nil {
+					problem = err.Error()
+				} else if outdated {
+					problem = "outdated; use update " + name
+				}
+			}
 			agents = "unavailable"
 			for _, mount := range objects.container.Mounts {
 				if mount.Destination == "/workspace" {

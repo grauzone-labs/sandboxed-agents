@@ -9,6 +9,7 @@ import (
 )
 
 type sandboxContainer struct {
+	Image  string
 	Config struct {
 		Labels map[string]string
 		Image  string

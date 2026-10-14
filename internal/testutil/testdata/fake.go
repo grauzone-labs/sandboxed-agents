@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -77,9 +78,14 @@ func main() {
 			for candidate := range responses {
 				keys = append(keys, candidate)
 			}
-			slices.Sort(keys)
+			slices.SortFunc(keys, func(a, b string) int {
+				if len(a) != len(b) {
+					return len(b) - len(a)
+				}
+				return strings.Compare(a, b)
+			})
 			for _, candidate := range keys {
-				if strings.HasSuffix(candidate, " *") && strings.HasPrefix(key, strings.TrimSuffix(candidate, "*")) {
+				if strings.Contains(candidate, "*") && regexp.MustCompile("^"+strings.ReplaceAll(regexp.QuoteMeta(candidate), `\*`, ".*")+"$").MatchString(key) {
 					response, ok = responses[candidate], true
 					break
 				}

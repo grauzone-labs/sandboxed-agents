@@ -109,13 +109,14 @@ func TestOfflineSuiteDoesNotStartLiveTests(t *testing.T) {
 	child := exec.Command(testExecutable, "-test.v", "-test.run=.")
 	child.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{
 		"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable, "TEST_RELEASE_EXECUTABLE": releaseExecutable,
-		nestedGuardEnv: strconv.Itoa(os.Getpid()),
+		nestedGuardEnv:                       strconv.Itoa(os.Getpid()),
+		"SANDBOXED_AGENTS_LIVE_IMAGES_TESTS": "",
 	})
 	output, err := child.CombinedOutput()
 	if err != nil {
 		t.Fatalf("offline test run: %v\n%s", err, output)
 	}
-	if strings.Contains(string(output), "live test body selected") || !strings.Contains(string(output), "--- SKIP: TestLivePodmanVersion") {
+	if strings.Contains(string(output), "live test body selected") || (!strings.Contains(string(output), "--- SKIP: TestLivePodmanVersion") || !strings.Contains(string(output), "--- SKIP: TestLiveImages")) {
 		t.Fatalf("live test ran without opt-in: %s", output)
 	}
 	assertNoExternalCalls(t, fakes)
@@ -305,7 +306,7 @@ func TestAgentAndToolchainSelectionsUseDeliveredCatalogs(t *testing.T) {
 		diagnostic    string
 	}{
 		{"agents", "bogus", 2, `unknown agent "bogus": valid names: claude, codex, copilot, opencode`},
-		{"with", "bogus", 2, `unknown toolchain "bogus": no valid names are available yet`},
+		{"with", "bogus", 2, `unknown toolchain "bogus": valid names: dotnet, playwright, azure, native, none`},
 		{"with", "none", 1, "step 2:"},
 	}
 	for _, tc := range cases {

@@ -34,7 +34,7 @@ var Default = Catalog{
 		"codex":    {Delivered: true, Install: Install{Kind: NPM, Package: "@openai/codex"}, Command: "codex", Documentation: "https://developers.openai.com/codex/cli"},
 		"opencode": {Delivered: true, Install: Install{Kind: NPM, Package: "opencode-ai"}, Command: "opencode", Documentation: "https://opencode.ai/docs/"},
 	},
-	Toolchains: []string{},
+	Toolchains: []string{"dotnet", "playwright", "azure", "native"},
 	Integrations: map[string]Integration{
 		"github": {LoginWorkflows: []string{}, Login: &LoginWorkflow{
 			WorkflowOmittable: true, InvalidOptionsMessage: "--organization is only valid for azdo",
