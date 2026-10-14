@@ -3,6 +3,7 @@ package main_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"os/user"
@@ -709,10 +710,13 @@ func TestLifecycleLockRefusesBeforeSandboxLookup(t *testing.T) {
 			t.Fatalf("usage/path before lock: status=%d output=%s", status, output)
 		}
 	}
-	// A failing preflight must win over the lock refusal.
-	status, output := lifecycleRun("up", "demo")
-	if status != 1 || !strings.Contains(output, "step 2:") || strings.Contains(output, "step 3:") {
-		t.Fatalf("preflight before lock: status=%d output=%s", status, output)
+	// A failing preflight must win over the lock refusal. The current-user hook fails it on every host, so a healthy Podman host cannot pass it.
+	failing := lifecycleLinuxHost(t, fakes)
+	failing.CurrentUser = func() (*user.User, error) { return nil, errors.New("no current user") }
+	var output bytes.Buffer
+	status := cli.RunWithHost([]string{"up", "demo"}, &output, &output, failing)
+	if status != 1 || !strings.Contains(output.String(), "step 2:") || strings.Contains(output.String(), "step 3:") {
+		t.Fatalf("preflight before lock: status=%d output=%s", status, output.String())
 	}
 
 }
