@@ -10,7 +10,8 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
-var agentWorkRequests = [][]string{{"sessions"}, {"__worker", "sessions"}}
+var sessionRequests = [][]string{{"sessions"}, {"__worker", "sessions"}}
+var agentWorkRequests = append(append([][]string{}, sessionRequests...), []string{"integrations", "config", "git", "credentials"})
 
 func noProcesses(t *testing.T, identity manager.Identity) manager.Effects {
 	t.Helper()
@@ -203,7 +204,7 @@ func TestSessionsReportsNoTmuxServerAsEmptyList(t *testing.T) {
 		{"non-exit-error", "error connecting to socket\n", "", errors.New("cannot start tmux"), 1, "error connecting to socket\ncannot start tmux\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, args := range agentWorkRequests {
+			for _, args := range sessionRequests {
 				var stdout, stderr bytes.Buffer
 				starts := 0
 				effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
@@ -263,14 +264,14 @@ func TestMalformedManagerRequestsNeverStartPrograms(t *testing.T) {
 		for _, identity := range []manager.Identity{{UID: 0, GID: 0}, {UID: 1000, GID: 1000}} {
 			var stdout, stderr bytes.Buffer
 			status := manager.RunWithEffects(args, &stdout, &stderr, noProcesses(t, identity))
-			if status != 2 || stdout.Len() != 0 || stderr.String() != "usage: sandboxed-agents-manager version | sessions\n" {
+			if status != 2 || stdout.Len() != 0 || stderr.String() != "usage: sandboxed-agents-manager version | sessions | integrations config git identity --name N --email E | integrations config git credentials\n" {
 				t.Errorf("args=%q identity=%+v status=%d stdout=%q stderr=%q; want usage error", args, identity, status, stdout.String(), stderr.String())
 			}
 		}
 	}
 }
 
-// TestAgentSessionQueryRefusesOtherIdentities proves that session queries reject mismatched agent IDs and root workers before any program or re-exec through the manager command seam.
+// TestAgentSessionQueryRefusesOtherIdentities proves that session queries and Git workflows reject mismatched agent IDs and root workers before any program or re-exec through the manager command seam.
 func TestAgentSessionQueryRefusesOtherIdentities(t *testing.T) {
 	for _, identity := range []manager.Identity{
 		{UID: 0, GID: 0}, {UID: 0, GID: 1000}, {UID: 1000, GID: 0},

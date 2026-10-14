@@ -58,7 +58,7 @@ var commands = map[string]commandSpec{
 	"agents run":          spec(2, -1, true, "", ""),
 	"agents session":      spec(2, 2, true, "", "stop"),
 	"integrations login":  spec(2, 3, true, "organization", ""),
-	"integrations config": spec(3, 3, true, "name email", ""),
+	"integrations config": spec(2, 3, true, "name email", ""),
 }
 
 // Parse enforces command-first grammar and step 1 checks before any Podman call.
@@ -170,7 +170,10 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 	case "integrations login":
 		integration, known := catalog.Default.Integrations[request.Args[1]]
 		if !known || integration.Login == nil {
-			return request, fmt.Errorf("unknown integration %q", request.Args[1])
+			if known && len(integration.ConfigWorkflows) > 0 {
+				return request, fmt.Errorf("%s has no login workflow; use integrations config %s %s; config workflows: %s", request.Args[1], request.Name, request.Args[1], validChoices(configWorkflowNames(integration)))
+			}
+			return request, fmt.Errorf("unknown integration %q: %s", request.Args[1], validChoices(integrationNames(request.Command)))
 		}
 		if len(request.Args) == 3 && !slices.Contains(integration.LoginWorkflows, request.Args[2]) {
 			if len(integration.LoginWorkflows) == 0 {
@@ -195,11 +198,18 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 	case "integrations config":
 		integration, known := catalog.Default.Integrations[request.Args[1]]
 		if !known || len(integration.ConfigWorkflows) == 0 {
-			return request, fmt.Errorf("unknown integration %q", request.Args[1])
+			return request, fmt.Errorf("unknown integration %q: %s", request.Args[1], validChoices(integrationNames(request.Command)))
+		}
+		if len(request.Args) == 2 {
+			names := configWorkflowNames(integration)
+			if len(names) != 1 {
+				return request, fmt.Errorf("%s config requires a workflow: %s", request.Args[1], validChoices(names))
+			}
+			request.Args = append(request.Args, names[0])
 		}
 		workflow, known := integration.ConfigWorkflows[request.Args[2]]
 		if !known {
-			return request, fmt.Errorf("unknown %s config workflow %q", request.Args[1], request.Args[2])
+			return request, fmt.Errorf("unknown %s config workflow %q: %s", request.Args[1], request.Args[2], validChoices(configWorkflowNames(integration)))
 		}
 		for option := range request.Options {
 			if !slices.Contains(workflow.Options, option) {
@@ -256,4 +266,31 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 		request.Args[1] = workspace
 	}
 	return request, nil
+}
+
+func integrationNames(command string) []string {
+	var names []string
+	for name, integration := range catalog.Default.Integrations {
+		if (command == "integrations login" && integration.Login != nil) || (command == "integrations config" && len(integration.ConfigWorkflows) > 0) {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+func configWorkflowNames(integration catalog.Integration) []string {
+	var names []string
+	for name := range integration.ConfigWorkflows {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+func validChoices(names []string) string {
+	if len(names) == 0 {
+		return "no valid names are available yet"
+	}
+	return "valid names: " + strings.Join(names, ", ")
 }

@@ -175,3 +175,36 @@ func TestProductionSessionQueryKeepsAgentCredentials(t *testing.T) {
 		t.Fatalf("status=%d starts=%d; want one unprivileged tmux query", status, calls)
 	}
 }
+
+// TestProductionGitConfigUsesOnlyAgentHome proves sandbox Git overrides cannot redirect global config writes outside home and Git keeps explicit agent credentials through the production process seam.
+func TestProductionGitConfigUsesOnlyAgentHome(t *testing.T) {
+	starts := 0
+	effects := newEffects(systemCalls{
+		Identity: func() Identity { return Identity{UID: 1000, GID: 1000} },
+		Environment: func() []string {
+			return []string{"HOME=/outside", "GIT_CONFIG_GLOBAL=/outside/gitconfig", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0=bad", "XDG_CONFIG_HOME=/outside/xdg", "PATH=/usr/bin"}
+		},
+		Start: func(command *exec.Cmd) error {
+			starts++
+			assertAgentCredentials(t, command, true)
+			values := map[string]string{}
+			for _, entry := range command.Env {
+				key, value, _ := strings.Cut(entry, "=")
+				values[key] = value
+			}
+			if values["HOME"] != "/home/agent" || values["GIT_CONFIG_GLOBAL"] != "/home/agent/.gitconfig" || values["XDG_CONFIG_HOME"] != "/home/agent/.config" {
+				t.Errorf("environment=%q; want Git writes confined to home", command.Env)
+			}
+			for _, key := range []string{"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"} {
+				if _, exists := values[key]; exists {
+					t.Errorf("inherited config override %s", key)
+				}
+			}
+			return nil
+		},
+	})
+	stubPassingAgentIDReads(&effects)
+	if status := RunWithEffects([]string{"integrations", "config", "git", "credentials"}, io.Discard, io.Discard, effects); status != 0 || starts != 1 {
+		t.Fatalf("status=%d starts=%d", status, starts)
+	}
+}

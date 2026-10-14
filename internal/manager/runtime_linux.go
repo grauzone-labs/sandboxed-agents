@@ -38,6 +38,9 @@ func newEffects(calls systemCalls) Effects {
 			NoSetGroups: calls.Identity().UID != 0,
 		}}
 		command.Env = agentEnvironment(calls.Environment())
+		if process.Program == "git" {
+			command.Env = gitEnvironment(command.Env)
+		}
 		return calls.Start(command)
 	}
 	return Effects{Identity: calls.Identity, Groups: os.Getgroups, UIDs: unix.Getresuid, GIDs: unix.Getresgid, Start: run, Reexec: func(process Process) error {
@@ -61,4 +64,18 @@ func agentEnvironment(environment []string) []string {
 		result = append(result, entry)
 	}
 	return append(result, "HOME=/home/agent", "USER=agent", "LOGNAME=agent")
+}
+
+// Git config always belongs to agent's home, even when the sandbox has ambient
+// Git config overrides. No caller-supplied config file or injected config wins.
+func gitEnvironment(environment []string) []string {
+	var result []string
+	for _, entry := range environment {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "GIT_CONFIG") || key == "XDG_CONFIG_HOME" {
+			continue
+		}
+		result = append(result, entry)
+	}
+	return append(result, "GIT_CONFIG_GLOBAL=/home/agent/.gitconfig", "XDG_CONFIG_HOME=/home/agent/.config")
 }
