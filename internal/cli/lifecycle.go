@@ -10,8 +10,14 @@ import (
 )
 
 type sandboxContainer struct {
-	Config struct{ Labels map[string]string }
+	Config struct {
+		Labels map[string]string
+		Image  string
+	}
 	State  struct{ Running *bool }
+	Mounts []struct {
+		Type, Source, Destination string
+	}
 }
 
 func inspectContainer(p podmanTarget, name string) (sandboxContainer, error) {
@@ -30,20 +36,23 @@ type sandboxObjects struct {
 	container      sandboxContainer
 	exists, backup bool
 	volumes        []string
+	volumeOwners   map[string]string
+	conflicts      []string
 }
 
-func inspectSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
+// readSandbox collects Podman facts without deciding which states a command accepts.
+func readSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 	var objects sandboxObjects
+	objects.volumeOwners = make(map[string]string)
 	names := DerivedNames(request.Group, request.Name)
 	exists, err := p.exists(containerResource, names.Container)
 	if err != nil {
 		return objects, err
 	}
 	objects.exists = exists
-	var conflicts []string
 	checkOwner := func(name string, labels map[string]string) {
 		if labels[OwnerLabel] != request.Group {
-			conflicts = append(conflicts, name)
+			objects.conflicts = append(objects.conflicts, name)
 		}
 	}
 	if exists {
@@ -71,6 +80,7 @@ func inspectSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 			return objects, fmt.Errorf("read volume %s: invalid inspect answer", name)
 		}
 		checkOwner(name, records[0].Labels)
+		objects.volumeOwners[name] = records[0].Labels[OwnerLabel]
 	}
 	objects.backup, err = p.exists(containerResource, names.Backup)
 	if err != nil {
@@ -83,11 +93,30 @@ func inspectSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 		}
 		checkOwner(names.Backup, backup.Config.Labels)
 	}
+	return objects, nil
+}
+
+func (objects sandboxObjects) ownerError() error {
+	if len(objects.conflicts) > 0 {
+		return fmt.Errorf("owner conflict: %s; use Podman to remove or rename the objects", strings.Join(objects.conflicts, ", "))
+	}
+	return nil
+}
+
+func inspectSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
+	objects, err := readSandbox(request, p)
+	if err != nil {
+		return objects, err
+	}
 	if !objects.exists && len(objects.volumes) == 0 && !objects.backup {
 		return objects, fmt.Errorf("sandbox %q does not exist in this controller group", request.Name)
 	}
-	if len(conflicts) > 0 {
-		return objects, fmt.Errorf("owner conflict: %s; use Podman to remove or rename the objects", strings.Join(conflicts, ", "))
+	removeOwned := request.Command == "remove" && request.Options["volumes"] != "" && objects.exists && !objects.backup && objects.container.Config.Labels[OwnerLabel] == request.Group
+	if err := objects.ownerError(); err != nil && !removeOwned {
+		return objects, err
+	}
+	if request.Command == "update" && objects.backup {
+		return objects, nil
 	}
 	if !objects.exists && len(objects.volumes) > 0 && !objects.backup {
 		return objects, fmt.Errorf("sandbox %q has only volumes; use up %s to adopt them", request.Name, request.Name)
@@ -126,8 +155,10 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 		return fmt.Errorf("start: SSH setup is not implemented")
 	}
 	running := *container.State.Running
-	if request.Command == "remove" && request.Options["volumes"] != "" {
-		return fmt.Errorf("remove --volumes: not implemented (#20)")
+	if !running && (request.Command == "start" || request.Command == "restart") {
+		if err := checkRecordedPort(p, container); err != nil {
+			return err
+		}
 	}
 	var ended sessionReport
 	if running && request.Command != "start" {
@@ -148,14 +179,21 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 		}
 		fmt.Fprintf(output, "removed sandbox %s\n", request.Name)
 		for _, volume := range objects.volumes {
+			if request.Options["volumes"] != "" && objects.volumeOwners[volume] == request.Group {
+				if _, err := p.query("volume", "rm", volume); err != nil {
+					return err
+				}
+				fmt.Fprintf(output, "removed volume %s\n", volume)
+				continue
+			}
 			fmt.Fprintf(output, "kept volume %s\n", volume)
 		}
-		if len(objects.volumes) > 0 {
+		if len(objects.volumes) > 0 && request.Options["volumes"] == "" {
 			fmt.Fprintf(output, "SSH authorization remains in the kept volumes and is replaced by the next ssh-config %s --install\n", request.Name)
 		}
 		// Host SSH setup installation is deferred; there are no managed SSH files
 		// produced by this executable to clean up yet.
-		return nil
+		return objects.ownerError()
 	}
 	action, state := request.Command, "running"
 	switch request.Command {

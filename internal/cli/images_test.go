@@ -81,12 +81,17 @@ func TestUpUsesPresentImage(t *testing.T) {
 func TestUpExistingSandboxDoesNotRebuild(t *testing.T) {
 	f := linuxHost(t)
 	f.responses["container exists sandboxed-agents.default.demo"] = response{}
+	f.responses["container inspect sandboxed-agents.default.demo"] = response{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default"}},"State":{"Running":true}}]`}
+	f.responses["volume exists *"] = response{Exit: 1}
+	f.responses["container exists sandboxed-agents-backup.default.demo"] = response{Exit: 1}
 	status, output, calls := f.run(t, "up", "demo")
-	if status != 1 || !strings.Contains(output, "existing sandbox lifecycle is not implemented; option conflicts belong to a later story") {
+	if status != 0 || !strings.Contains(output, "sandbox demo is running") {
 		t.Fatalf("status=%d output=%q", status, output)
 	}
-	if len(calls) != 3 || !reflect.DeepEqual(calls[2], []string{"container", "exists", "sandboxed-agents.default.demo"}) {
-		t.Fatalf("image inspected or changed: %v", calls)
+	for _, call := range calls {
+		if call[0] == "image" || call[0] == "build" {
+			t.Fatalf("image inspected or changed: %v", calls)
+		}
 	}
 	noMutation(t, calls)
 }
@@ -96,6 +101,7 @@ func TestImageQueryFailuresDoNotBuild(t *testing.T) {
 	for _, kind := range []string{"container", "image"} {
 		t.Run(kind, func(t *testing.T) {
 			f := linuxHost(t)
+			scriptNewSandbox(t, f, "default", "demo")
 			f.responses["container exists sandboxed-agents.default.demo"] = response{Exit: 1}
 			key := "container exists sandboxed-agents.default.demo"
 			if kind == "image" {
@@ -114,6 +120,7 @@ func TestImageQueryFailuresDoNotBuild(t *testing.T) {
 // TestImageBuildFailureStopsUp proves a failed image build prevents new sandbox preparation through RunWithHost and fake Podman.
 func TestImageBuildFailureStopsUp(t *testing.T) {
 	f := linuxHost(t)
+	scriptNewSandbox(t, f, "default", "demo")
 	f.responses["container exists sandboxed-agents.default.demo"] = response{Exit: 1}
 	f.responses["image exists "+baseTag(t)] = response{Exit: 1}
 	f.responses["build *"] = response{Output: "build rejected", Exit: 125}

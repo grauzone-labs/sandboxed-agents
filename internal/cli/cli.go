@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
 	"github.com/grauzone-labs/sandboxed-agents/internal/checks"
@@ -34,7 +35,7 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		request, err = parseForHost(args, group, host)
 		if err == nil {
 			switch request.Command {
-			case "up", "start", "stop", "restart", "remove":
+			case "up", "start", "stop", "restart", "remove", "update":
 				stateRoot, err = hostStateRoot(host.Platform)
 			}
 		}
@@ -60,6 +61,16 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		return target, err
 	}
 	switch request.Command {
+	case "list":
+		target, err := selectedTarget()
+		if err != nil {
+			return 1
+		}
+		if err := listSandboxes(request, target, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "version":
 		hash, err := image.Hash(image.Context())
 		if err != nil {
@@ -71,8 +82,15 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		return 0
 	case "check":
 		if request.Name != "" {
-			fmt.Fprintln(stderr, "check NAME: sandbox checks are not implemented")
-			return 1
+			target, err := selectedTarget()
+			if err != nil {
+				return 1
+			}
+			if err := checkSandbox(request, target, stdout); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+			return 0
 		}
 		target, err := checkedTarget()
 		if err != nil {
@@ -131,6 +149,25 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			return 1
 		}
 		return 0
+	case "update":
+		target, err := checkedTarget()
+		if err != nil {
+			return 1
+		}
+		if request.Name != "" {
+			lock, err := acquireLifecycleLock(stateRoot, request)
+			if err != nil {
+				fmt.Fprintln(stderr, "step 3:", err)
+				return 1
+			}
+			defer lock.Close()
+			if _, err := inspectSandbox(request, target); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+		}
+		fmt.Fprintln(stderr, "update: not implemented")
+		return 1
 	case "shell":
 		target, err := selectedTarget()
 		if err != nil {
@@ -153,6 +190,20 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		}
 		return 0
 
+	}
+	if request.Name != "" {
+		target, err := selectedTarget()
+		if err != nil {
+			return 1
+		}
+		objects, err := inspectSandbox(request, target)
+		if err == nil && (strings.HasPrefix(request.Command, "agents ") || strings.HasPrefix(request.Command, "integrations ") || (request.Command == "ssh-config" && request.Options["install"] != "")) {
+			_, err = requireRunning(request, objects)
+		}
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
 	fmt.Fprintf(stderr, "%s: not implemented\n", request.Command)
 	return 1
