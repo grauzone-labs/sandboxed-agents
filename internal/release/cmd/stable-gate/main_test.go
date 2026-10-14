@@ -331,7 +331,7 @@ func stableGateWorkflow(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("read stable-release-gate.yml: %v", err)
 	}
-	return string(data)
+	return strings.ReplaceAll(string(data), "\r\n", "\n")
 }
 
 // TestStableGateCommandContinuesAfterTagLookupFailure proves a failed preview lookup yields to valid candidates and follows an invalid candidate's primary refusal through the real command with fake GitHub evidence.

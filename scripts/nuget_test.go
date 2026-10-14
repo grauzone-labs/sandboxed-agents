@@ -255,11 +255,12 @@ func TestNuGetCommandPackage(t *testing.T) {
 	}
 }
 
-// TestWindowsNuGetCommandPackageLifecycle proves a built NuGet command package installs, runs its real Windows executable's version command, and removes it through the extracted PowerShell scripts with a custom directory and no PATH update.
+// TestWindowsNuGetCommandPackageLifecycle proves a built NuGet command package installs, runs its real Windows executable's version command, and removes it through explicitly configured Git for Windows Bash and the extracted PowerShell scripts with a custom directory and no PATH update.
 func TestWindowsNuGetCommandPackageLifecycle(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("NuGet command package executable lifecycle requires Windows")
 	}
+	releaseBash(t)
 	pwsh, err := exec.LookPath("pwsh")
 	if err != nil {
 		t.Fatal("NuGet command package lifecycle requires PowerShell 7 (pwsh)")
