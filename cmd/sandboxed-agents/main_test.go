@@ -1635,15 +1635,9 @@ func TestInvalidWorkspaceNamesResolvedPathBeforePreflight(t *testing.T) {
 	}
 }
 
-// TestWindowsWorkspaceAutomountRefusalPrecedesHeldLifecycleLock proves a custom-root bind fails step 2 while unbound up retains step 3 contention through RunWithHost and a built CLI subprocess holding the Linux lifecycle lock.
+// TestWindowsWorkspaceAutomountRefusalPrecedesHeldLifecycleLock proves a custom-root bind fails step 2 while unbound up retains step 3 contention, with the lifecycle lock held by another handle, through RunWithHost and fake Podman on any host.
 func TestWindowsWorkspaceAutomountRefusalPrecedesHeldLifecycleLock(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("native Linux interprocess lifecycle-lock proof")
-	}
-	rendezvous := t.TempDir()
-	ready, release := filepath.Join(rendezvous, "ready"), filepath.Join(rendezvous, "release")
 	responses := map[string]lifecycleResponse{
-		"container exists sandboxed-agents.default.demo": {Output: "holder released", Exit: 125, ReadyFile: ready, WaitFor: release},
 		"--version":                                 {Output: "podman version 4.7.0"},
 		"machine list --format json":                {Output: `[{"Name":"chosen","Default":true,"VMType":"wsl"}]`},
 		"machine inspect chosen":                    {Output: `[{"Name":"chosen","State":"running","Rootful":false}]`},
@@ -1657,41 +1651,10 @@ func TestWindowsWorkspaceAutomountRefusalPrecedesHeldLifecycleLock(t *testing.T)
 		"machine ssh chosen cat /etc/wsl.conf":     {Output: "[automount]\nroot=/custom/drives/\n"},
 	}
 	fakes := lifecycleHarness(t, responses)
-	lifecycleLinuxHost(t, fakes) // Install the existing prerequisite fakes, including ssh-keygen.
-	var holderOutput bytes.Buffer
-	holder := exec.Command(executable, "start", "demo")
-	holder.Env = os.Environ()
-	holder.Stdout, holder.Stderr = &holderOutput, &holderOutput
-	if err := holder.Start(); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- holder.Wait() }()
-	defer func() {
-		if err := os.WriteFile(release, nil, 0600); err != nil {
-			t.Error(err)
-		}
-		select {
-		case err := <-done:
-			if exitStatus(t, err) != 1 {
-				t.Errorf("lock holder: error=%v output=%q", err, holderOutput.String())
-			}
-		case <-time.After(2 * time.Second):
-			holder.Process.Kill()
-			<-done
-			t.Error("lock holder did not exit after release")
-		}
-	}()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, err := os.Stat(ready); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("subprocess did not reach lookup while holding the lifecycle lock")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	lifecycleLinuxHost(t, fakes) // Install the prerequisite fakes that the preflight looks up on PATH.
+	stateRoot := t.TempDir()
+	t.Setenv("LOCALAPPDATA", stateRoot)
+	holdLifecycleLock(t, stateRoot, "sandboxed-agents.default.demo")
 	directory := t.TempDir()
 	host := cli.Host{Platform: "windows", Architecture: "amd64", WindowsBuild: func() (uint32, error) { return 22621, nil }, WindowsWorkstation: func() (bool, error) { return true, nil }, WindowsNativeArchitecture: func() (uint16, error) { return 0x8664, nil }, WorkspacePath: func(path string) (string, error) {
 		if path != directory {
@@ -1722,11 +1685,9 @@ func TestWindowsWorkspaceAutomountRefusalPrecedesHeldLifecycleLock(t *testing.T)
 		})
 	}
 	preflight := [][]string{{"--version"}, {"machine", "list", "--format", "json"}, {"machine", "inspect", "chosen"}, {"--connection", "chosen", "version", "--format", "json"}, {"--connection", "chosen", "info", "--format", "json"}, {"machine", "ssh", "chosen", "id", "-u"}, {"machine", "ssh", "chosen", "cat", "/proc/self/cgroup"}, {"machine", "ssh", "chosen", "cat", "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers"}, {"machine", "ssh", "chosen", "cat", "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.subtree_control"}, {"machine", "ssh", "chosen", "test", "-e", "/etc/wsl.conf"}, {"machine", "ssh", "chosen", "cat", "/etc/wsl.conf"}}
-	want := [][]string{{"container", "exists", "sandboxed-agents.default.demo"}}
-	want = append(want, preflight...)
-	want = append(want, preflight...)
+	want := append(append([][]string{}, preflight...), preflight...)
 	if calls := testutil.Invocations(t, fakes.PodmanLog); !reflect.DeepEqual(calls, want) {
-		t.Fatalf("Podman calls=%v; want only holder lookup and two read-only preflights=%v", calls, want)
+		t.Fatalf("Podman calls=%v; want only two read-only preflights=%v", calls, want)
 	}
 	if calls := testutil.Invocations(t, fakes.SSHLog); len(calls) != 0 {
 		t.Fatalf("unexpected host SSH calls: %v", calls)
