@@ -259,6 +259,60 @@ func TestRemoveVolumesKeepsForeignVolumeBesideOwnedSandbox(t *testing.T) {
 	}
 }
 
+// TestRemoveOwnedVolumesWithoutContainer proves explicit cleanup removes only owned remaining volumes while ordinary lifecycle commands and owner conflicts refuse changes through RunWithHost and fake Podman.
+func TestRemoveOwnedVolumesWithoutContainer(t *testing.T) {
+	for _, kinds := range [][]string{{"home"}, {"workspace", "home", "ssh"}} {
+		for _, args := range [][]string{{"remove", "demo", "--volumes"}, {"remove", "demo"}, {"start", "demo"}, {"stop", "demo"}, {"restart", "demo"}, {"update", "demo"}} {
+			for _, owner := range []string{"default", "", "foreign"} {
+				t.Run(strings.Join(kinds, ",")+"/"+strings.Join(args, " ")+"/owner="+owner, func(t *testing.T) {
+					responses := newSandboxResponses()
+					var wantRemoved []string
+					for _, kind := range kinds {
+						name := "sandboxed-agents.default.demo." + kind
+						responses["volume exists "+name] = lifecycleResponse{}
+						responses["volume inspect "+name] = lifecycleResponse{Output: `[{"Labels":{"io.sandboxed-agents.owner":"` + owner + `"}}]`}
+						responses["volume rm "+name] = lifecycleResponse{}
+						wantRemoved = append(wantRemoved, "volume rm "+name)
+					}
+					fakes := lifecycleHarness(t, responses)
+					status, output := runWithHost(lifecycleLinuxHost(t, fakes), args...)
+					if owner != "default" || len(args) == 2 {
+						want := "up demo"
+						if owner != "default" {
+							want = "owner conflict"
+						}
+						if status != 1 || !strings.Contains(output, want) {
+							t.Fatalf("status=%d output=%s; want %s", status, output, want)
+						}
+						assertStateQueriesOnly(t, fakes)
+						return
+					}
+					if status != 0 || strings.Contains(output, "removed sandbox") {
+						t.Fatalf("status=%d output=%s; want volume cleanup without container removal", status, output)
+					}
+					var removed []string
+					for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
+						if call[0] == "exec" || len(lifecycleMutations([][]string{call})) > 0 {
+							t.Fatalf("accessed absent container: %v", call)
+						}
+						if len(call) > 1 && call[0] == "volume" && call[1] == "rm" {
+							removed = append(removed, strings.Join(call, " "))
+						}
+					}
+					if strings.Join(removed, "|") != strings.Join(wantRemoved, "|") {
+						t.Fatalf("removed=%v; want %v", removed, wantRemoved)
+					}
+					for _, kind := range kinds {
+						if !strings.Contains(output, "removed volume sandboxed-agents.default.demo."+kind) {
+							t.Fatalf("missing volume removal report: %s", output)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
 // TestStartRefusesOccupiedRecordedPort proves start refuses a real listener on its recorded port without choosing a substitute or changing the sandbox through the CLI boundary.
 func TestStartRefusesOccupiedRecordedPort(t *testing.T) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -399,6 +453,111 @@ func TestUsageAndPreflightPrecedeTakenLifecycleLock(t *testing.T) {
 			}
 		})
 	}
+}
+
+func listWithLaterHealthyResponses() map[string]lifecycleResponse {
+	responses := newSandboxResponses()
+	responses["ps --all --format json"] = lifecycleResponse{Output: `[{"Names":["sandboxed-agents.default.zhealthy","sandboxed-agents.default.demo"]}]`}
+	responses["volume ls --format json"] = lifecycleResponse{Output: `[]`}
+	for key, response := range ownedLifecycleResponses(true) {
+		responses[strings.ReplaceAll(key, ".demo", ".zhealthy")] = response
+	}
+	responses["container inspect sandboxed-agents.default.zhealthy"] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2300"},"Image":"localhost/sandboxed-agents:none-abc"},"State":{"Running":true}}]`}
+	responses["exec --user=0:0 sandboxed-agents.default.zhealthy /usr/local/bin/sandboxed-agents-manager version"] = lifecycleResponse{Output: "sandboxed-agents-manager development\n"}
+	return responses
+}
+
+func listRow(t *testing.T, output, name string) []string {
+	t.Helper()
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == name {
+			return fields
+		}
+	}
+	t.Fatalf("missing row for %s: %s", name, output)
+	return nil
+}
+
+// TestListRetainsInspectionProblems proves failed or malformed inspections retain a problem row with placeholders, preserve known owner conflicts, and continue to a later healthy sandbox through RunWithHost and fake Podman.
+func TestListRetainsInspectionProblems(t *testing.T) {
+	for _, object := range []string{"container", "volume", "backup", "owner conflict"} {
+		for _, malformed := range []bool{false, true} {
+			t.Run(object+"/malformed="+strconv.FormatBool(malformed), func(t *testing.T) {
+				responses := listWithLaterHealthyResponses()
+				key := "container inspect sandboxed-agents.default.demo"
+				switch object {
+				case "container":
+					responses["container exists sandboxed-agents.default.demo"] = lifecycleResponse{}
+				case "owner conflict":
+					responses["container exists sandboxed-agents.default.demo"] = lifecycleResponse{}
+					responses[key] = lifecycleResponse{Output: `[{"Config":{"Labels":{}}}]`}
+					fallthrough
+				case "volume":
+					responses["volume exists sandboxed-agents.default.demo.home"] = lifecycleResponse{}
+					key = "volume inspect sandboxed-agents.default.demo.home"
+				case "backup":
+					responses["container exists sandboxed-agents-backup.default.demo"] = lifecycleResponse{}
+					key = "container inspect sandboxed-agents-backup.default.demo"
+				}
+				problem := "inspection failure sentinel"
+				responses[key] = lifecycleResponse{Exit: 125, Output: problem}
+				if malformed {
+					responses[key] = lifecycleResponse{Output: `not-json`}
+					problem = "invalid inspect answer"
+				}
+				fakes := lifecycleHarness(t, responses)
+				status, output := runWithHost(lifecycleLinuxHost(t, fakes), "list")
+				if status != 0 {
+					t.Fatalf("status=%d output=%s; want problem row and later healthy row", status, output)
+				}
+				row := listRow(t, output, "demo")
+				if object == "owner conflict" {
+					if !strings.Contains(strings.Join(row, " "), "owner conflict") || !strings.Contains(strings.Join(row, " "), "Podman") {
+						t.Fatalf("owner conflict lost priority: %v", row)
+					}
+				} else if len(row) < 8 || strings.Join(row[:7], " ") != "demo - - - - - -" || !strings.Contains(strings.Join(row[7:], " "), problem) {
+					t.Fatalf("problem/placeholders missing: %v; want %s", row, problem)
+				}
+				row = listRow(t, output, "zhealthy")
+				if len(row) < 7 || strings.Join(row[:6], " ") != "zhealthy running 2300 - none none" || strings.Index(output, "\ndemo ") > strings.Index(output, "\nzhealthy ") {
+					t.Fatalf("later healthy details missing or out of order: %s", output)
+				}
+				for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
+					if call[0] == "exec" && call[2] != "sandboxed-agents.default.zhealthy" {
+						t.Fatalf("queried unhealthy manager: %v", call)
+					}
+				}
+				assertStateQueriesOnly(t, fakes)
+			})
+		}
+	}
+}
+
+// TestListRetainsMissingRunningState proves an incomplete state retains container details, state and agent placeholders, and a problem while later healthy sandboxes are listed through RunWithHost and fake Podman.
+func TestListRetainsMissingRunningState(t *testing.T) {
+	responses := listWithLaterHealthyResponses()
+	responses["container exists sandboxed-agents.default.demo"] = lifecycleResponse{}
+	responses["container inspect sandboxed-agents.default.demo"] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2300"},"Image":"localhost/sandboxed-agents:none-abc"}}]`}
+	fakes := lifecycleHarness(t, responses)
+	status, output := runWithHost(lifecycleLinuxHost(t, fakes), "list")
+	if status != 0 {
+		t.Fatalf("status=%d output=%s; want incomplete and healthy rows", status, output)
+	}
+	row := listRow(t, output, "demo")
+	if len(row) < 7 || strings.Join(row[:6], " ") != "demo - 2300 - none unavailable" || !strings.Contains(strings.Join(row[6:], " "), "read container sandboxed-agents.default.demo: running state is missing") {
+		t.Fatalf("incomplete state row=%v", row)
+	}
+	row = listRow(t, output, "zhealthy")
+	if len(row) < 7 || strings.Join(row[:6], " ") != "zhealthy running 2300 - none none" {
+		t.Fatalf("later healthy row=%v", row)
+	}
+	for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
+		if call[0] == "exec" && call[2] != "sandboxed-agents.default.zhealthy" {
+			t.Fatalf("queried manager without running state: %v", call)
+		}
+	}
+	assertStateQueriesOnly(t, fakes)
 }
 
 // TestListOwnerConflictWinsOverMissingRunningState proves a foreign container is listed as an owner conflict with its Podman name even when its state is incomplete through the CLI boundary.
