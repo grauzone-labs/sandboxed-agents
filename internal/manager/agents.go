@@ -15,15 +15,8 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
-// AgentStatus is the manager's machine-readable view of an agent selection.
-type AgentStatus struct {
-	Name             string `json:"name"`
-	Enabled          bool   `json:"enabled"`
-	InstalledVersion string `json:"installed_version"`
-	Pin              string `json:"pin"`
-	Session          bool   `json:"session"`
-	SignedIn         string `json:"signed_in"`
-}
+// AgentStatus aliases the shared host and manager status contract.
+type AgentStatus = catalog.AgentStatus
 
 type installation struct {
 	Version string `json:"version"`
@@ -85,7 +78,7 @@ func parseAgents(args []string, stderr io.Writer) (agentRequest, bool) {
 		}
 	})
 	if versionSet {
-		if err := catalog.ValidateVersion(r.version); err != nil {
+		if err := catalog.ValidatePinVersion(r.version); err != nil {
 			fmt.Fprintln(stderr, err)
 			return r, false
 		}
@@ -112,19 +105,21 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 		return exitStatus(err, stderr)
 	}
 	root := filepath.Join(home, ".local", "share", "sandboxed-agents")
-	if err := os.MkdirAll(root, 0700); err != nil {
-		return exitStatus(err, stderr)
+	if r.operation != "list" && r.operation != "status" {
+		if err := os.MkdirAll(root, 0700); err != nil {
+			return exitStatus(err, stderr)
+		}
+		unlock, err := lockManager(filepath.Join(root, "manager.lock"))
+		if err != nil {
+			return exitStatus(err, stderr)
+		}
+		defer unlock()
 	}
-	unlock, err := lockManager(filepath.Join(root, "manager.lock"))
-	if err != nil {
-		return exitStatus(err, stderr)
-	}
-	defer unlock()
 	selection, err := readSelection(root)
 	if err != nil {
 		return exitStatus(err, stderr)
 	}
-	i, enabled := selection[r.name]
+	current, enabled := selection[r.name]
 	switch r.operation {
 	case "list":
 		names := make([]string, 0, len(selection))
@@ -134,11 +129,13 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 		slices.Sort(names)
 		return exitStatus(json.NewEncoder(stdout).Encode(names), stderr)
 	case "status":
-		status := AgentStatus{Name: r.name, Enabled: enabled, InstalledVersion: i.Version, Pin: i.Pin, SignedIn: "unknown"}
-		if enabled && r.definition.StatusProbe != nil {
+		status := AgentStatus{Name: r.name, Enabled: enabled, InstalledVersion: current.Version, Pin: current.Pin, SignedIn: "unknown"}
+		command := commandPath(home, r.definition)
+		previous, linkError := managedCommandLink(command, installationCommand(root, current, r.definition))
+		if enabled && r.definition.StatusProbe != nil && linkError == nil && previous != "" {
 			probe := r.definition.StatusProbe
 			var output bytes.Buffer
-			err := effects.Start(Process{Program: filepath.Join(home, ".local", "bin", r.definition.Command), Args: probe.Args, Identity: agentIdentity, Stdout: &output, Stderr: io.Discard})
+			err := effects.Start(Process{Program: command, Args: probe.Args, Identity: agentIdentity, Stdout: &output, Stderr: io.Discard})
 			var fields map[string]any
 			if err == nil && json.Unmarshal(output.Bytes(), &fields) == nil {
 				if signedIn, valid := fields[probe.BooleanField].(bool); valid {
@@ -155,13 +152,10 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 			fmt.Fprintf(stdout, "%s not enabled; nothing to disable\n", r.name)
 			return 0
 		}
-		command := filepath.Join(home, ".local", "bin", r.definition.Command)
-		previous, err := os.Readlink(command)
-		if err != nil && !os.IsNotExist(err) {
-			return exitStatus(fmt.Errorf("refusing to remove unmanaged command %s", command), stderr)
-		}
-		if err == nil && previous != filepath.Join(root, i.Prefix, "bin", r.definition.Command) {
-			return exitStatus(fmt.Errorf("refusing to remove unmanaged command %s", command), stderr)
+		command := commandPath(home, r.definition)
+		previous, err := managedCommandLink(command, installationCommand(root, current, r.definition))
+		if err != nil {
+			return exitStatus(err, stderr)
 		}
 		if previous != "" {
 			if err := os.Remove(command); err != nil {
@@ -175,31 +169,31 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 			}
 			return exitStatus(err, stderr)
 		}
-		if err := os.RemoveAll(filepath.Join(root, i.Prefix)); err != nil {
+		if err := os.RemoveAll(filepath.Join(root, current.Prefix)); err != nil {
 			return exitStatus(err, stderr)
 		}
 		fmt.Fprintf(stdout, "%s disabled\n", r.name)
-		if i.Pin != "" {
-			fmt.Fprintf(stdout, "removed pin %s\n", i.Pin)
+		if current.Pin != "" {
+			fmt.Fprintf(stdout, "removed pin %s\n", current.Pin)
 		}
 		return 0
 	case "enable", "update":
 		if r.operation == "update" && !enabled {
-			return exitStatus(fmt.Errorf("%s not enabled; run agents enable NAME %s", r.name, r.name), stderr)
+			return exitStatus(fmt.Errorf("%s not enabled", r.name), stderr)
 		}
-		if r.operation == "enable" && enabled && (r.version == "" || r.version == i.Version) {
-			if r.version != "" && i.Pin != r.version {
-				i.Pin = r.version
-				selection[r.name] = i
+		if r.operation == "enable" && enabled && (r.version == "" || r.version == current.Version) {
+			if r.version != "" && current.Pin != r.version {
+				current.Pin = r.version
+				selection[r.name] = current
 				if err := writeSelection(root, selection); err != nil {
 					return exitStatus(err, stderr)
 				}
 			}
-			reportInstallation(stdout, r.name, i)
+			reportInstallation(stdout, r.name, current)
 			return 0
 		}
 		if r.operation == "update" && !r.unpin {
-			r.version = i.Pin
+			r.version = current.Pin
 		}
 		installed, err := installAgent(root, r, effects, stderr)
 		if err != nil {
@@ -216,10 +210,10 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 	return 2
 }
 
-func reportInstallation(stdout io.Writer, name string, i installation) {
-	fmt.Fprintf(stdout, "%s enabled: version %s", name, i.Version)
-	if i.Pin != "" {
-		fmt.Fprintf(stdout, " (pin %s)", i.Pin)
+func reportInstallation(stdout io.Writer, name string, current installation) {
+	fmt.Fprintf(stdout, "%s enabled: version %s", name, current.Version)
+	if current.Pin != "" {
+		fmt.Fprintf(stdout, " (pin %s)", current.Pin)
 	}
 	fmt.Fprintln(stdout)
 }
@@ -297,16 +291,17 @@ func publishInstallation(home, root string, r agentRequest, installed installati
 	if err := os.MkdirAll(bin, 0700); err != nil {
 		return err
 	}
-	command := filepath.Join(bin, r.definition.Command)
+	command := commandPath(home, r.definition)
 	old, existed := selection[r.name]
-	previous, err := os.Readlink(command)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("refusing to replace existing command %s: %w", command, err)
+	expected := ""
+	if existed {
+		expected = installationCommand(root, old, r.definition)
 	}
-	if err == nil && (!existed || previous != filepath.Join(root, old.Prefix, "bin", r.definition.Command)) {
-		return fmt.Errorf("refusing to replace unmanaged command %s", command)
+	previous, err := managedCommandLink(command, expected)
+	if err != nil {
+		return err
 	}
-	target := filepath.Join(root, installed.Prefix, "bin", r.definition.Command)
+	target := installationCommand(root, installed, r.definition)
 	if err := replaceLink(command, target); err != nil {
 		return err
 	}
@@ -365,4 +360,28 @@ func writeSelection(root string, selection map[string]installation) error {
 		return err
 	}
 	return os.Rename(file.Name(), filepath.Join(root, "selection.json"))
+}
+
+func commandPath(home string, definition catalog.Agent) string {
+	return filepath.Join(home, ".local", "bin", definition.Command)
+}
+
+func installationCommand(root string, current installation, definition catalog.Agent) string {
+	return filepath.Join(root, current.Prefix, "bin", definition.Command)
+}
+
+// managedCommandLink permits a missing command or the exact managed symlink,
+// protecting unrelated commands during mutations and optional status probes.
+func managedCommandLink(command, expected string) (string, error) {
+	previous, err := os.Readlink(command)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("refusing unmanaged command %s: %w", command, err)
+	}
+	if expected == "" || previous != expected {
+		return "", fmt.Errorf("refusing unmanaged command %s", command)
+	}
+	return previous, nil
 }

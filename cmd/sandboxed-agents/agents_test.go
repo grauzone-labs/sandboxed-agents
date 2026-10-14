@@ -84,12 +84,13 @@ func TestAgentAdministrationExecutable(t *testing.T) {
 		{"status", nil, `{"name":"codex","enabled":true,"installed_version":"1.2.3","pin":"1.2.3","signed_in":"unknown","session":false}`, 0, 0, "version 1.2.3; pin 1.2.3"},
 		{"status", nil, `{"name":"codex","enabled":false}`, 0, 0, "codex: not enabled"},
 		{"status", nil, `not-json`, 0, 1, "manager does not answer"},
-		{"update", nil, "", 23, 1, "agents enable demo codex"},
+		{"update", nil, "", 23, 1, "agents update demo codex"},
 	} {
 		t.Run(tc.verb+tc.answer, func(t *testing.T) {
 			responses := ownedLifecycleResponses(true)
 			responses[agentManagerPrefix+"version"] = lifecycleResponse{Output: "sandboxed-agents-manager development\n"}
 			request := "agents " + tc.verb + " codex"
+			responses[agentManagerPrefix+"agents status codex"] = lifecycleResponse{Output: `{"name":"codex","enabled":true,"installed_version":"1.2.3","signed_in":"unknown"}`}
 			if len(tc.options) != 0 {
 				request += " " + strings.Join(tc.options, " ")
 			}
@@ -252,16 +253,49 @@ func TestListReadsAgentSelection(t *testing.T) {
 
 // TestAgentPinsRejectRangesBeforePodman proves only exact version pins reach host state checks at the executable CLI seam.
 func TestAgentPinsRejectRangesBeforePodman(t *testing.T) {
-	for _, version := range []string{"latest", "^1.2.3", "1.2.x", "file:/tmp/agent", "1.2.3;id", "1.2.3\n"} {
+	for _, version := range []string{"latest", "^1.2.3", "1.2.x", "file:/tmp/agent", "1.2.3;id", "1.2.3\n", "1.2.3+build.1"} {
 		t.Run(version, func(t *testing.T) {
 			f := testutil.Install(t, fakeExecutable)
 			command := exec.Command(executable, "agents", "enable", "demo", "codex", "--version", version)
 			command.Env = f.Env(os.Environ())
 			output, err := command.CombinedOutput()
-			if status := exitStatus(t, err); status != 2 || !strings.Contains(string(output), "exact version") {
+			if status := exitStatus(t, err); status != 2 || !strings.Contains(string(output), "requires an exact") {
 				t.Fatalf("status=%d output=%s", status, output)
 			}
 			assertNoExternalCalls(t, f)
+		})
+	}
+}
+
+// TestAgentUpdateRetryMatchesFailure proves missing selections name enable while failed installs on enabled agents name update through the executable CLI seam.
+func TestAgentUpdateRetryMatchesFailure(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "missing", true: "install failed"}[enabled], func(t *testing.T) {
+			responses := ownedLifecycleResponses(true)
+			responses[agentManagerPrefix+"version"] = lifecycleResponse{Output: "sandboxed-agents-manager development\n"}
+			answer := `{"name":"codex","enabled":false}`
+			message := "agents enable demo codex"
+			if enabled {
+				answer = `{"name":"codex","enabled":true,"installed_version":"1.2.3","signed_in":"unknown"}`
+				message = "agents update demo codex"
+			}
+			responses[agentManagerPrefix+"agents status codex"] = lifecycleResponse{Output: answer}
+			responses[agentManagerPrefix+"agents update codex"] = lifecycleResponse{Exit: 1, Stderr: "npm installation failed\n"}
+			f := agentExecutableHarness(t, responses)
+			status, output := runAgentExecutable(t, "agents", "update", "demo", "codex")
+			if status != 1 || !strings.Contains(output, message) {
+				t.Fatalf("status=%d output=%s want=%s", status, output, message)
+			}
+			if enabled && strings.Contains(output, "agents enable") {
+				t.Fatalf("incorrect enable guidance: %s", output)
+			}
+			if !enabled {
+				for _, call := range agentManagerCalls(t, f) {
+					if strings.Join(call[4:], " ") == "agents update codex" {
+						t.Fatalf("attempted update of missing agent: %v", call)
+					}
+				}
+			}
 		})
 	}
 }

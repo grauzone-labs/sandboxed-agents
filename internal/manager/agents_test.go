@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -185,7 +184,7 @@ func TestAgentPinsAndUpdates(t *testing.T) {
 	if got := readAgentStatus(t, e, "codex"); got.Pin != "" || got.InstalledVersion != "6.0.0" || installs != 7 {
 		t.Fatalf("reenable=%+v installs=%d", got, installs)
 	}
-	if out := runAgents(t, e, 1, "update", "claude"); !strings.Contains(out, "agents enable NAME claude") {
+	if out := runAgents(t, e, 1, "update", "claude"); !strings.Contains(out, "claude not enabled") || strings.Contains(out, "NAME") {
 		t.Fatalf("missing update guidance=%s", out)
 	}
 }
@@ -240,7 +239,7 @@ func TestAgentRequestsValidateBeforeHomeOrProcesses(t *testing.T) {
 				t.Fatalf("unknown names=%s", output)
 			}
 		}
-		for _, pin := range []string{"", "latest", "^1.2.3", "~1.2.3", "1", "1.2", "-x", "1.2.3;id", "file:/tmp/package", "1.2.3\n"} {
+		for _, pin := range []string{"", "latest", "^1.2.3", "~1.2.3", "1", "1.2", "-x", "1.2.3;id", "1.2.3+build.4", "1.2.3-rc.1+build.4", "file:/tmp/package", "1.2.3\n"} {
 			runAgents(t, e, 2, "enable", "codex", "--version", pin)
 		}
 		for _, args := range [][]string{{}, {"list", "extra"}, {"enable"}, {"enable", "codex", "extra"}, {"status", "codex", "--force"}, {"update", "codex", "--version", "1.2.3"}, {"disable", "codex", "--unpin"}, {"run", "codex"}} {
@@ -312,7 +311,7 @@ func TestAgentWorkerRefusesUnsafeIdentityBeforeHome(t *testing.T) {
 func TestCatalogEntryAloneDeliversNpmAgent(t *testing.T) {
 	catalog.Default.Agents["new-agent"] = catalog.Agent{Delivered: true, Install: catalog.Install{Kind: catalog.NPM, Package: "@example/new-agent"}, Command: "new-command"}
 	t.Cleanup(func() { delete(catalog.Default.Agents, "new-agent") })
-	home, version, installs := t.TempDir(), "1.0.0-beta.2+build.3", 0
+	home, version, installs := t.TempDir(), "1.0.0-beta.2", 0
 	e := agentEffects(t, home, &version, &installs)
 	runAgents(t, e, 0, "enable", "new-agent", "--version", version)
 	if got := readAgentStatus(t, e, "new-agent"); !got.Enabled || got.InstalledVersion != version || got.Pin != version {
@@ -328,26 +327,15 @@ func TestCatalogEntryAloneDeliversNpmAgent(t *testing.T) {
 	}
 }
 
-// TestConcurrentEnablesPreserveSelection proves a second enable and list wait for an in-flight install and retain both selections through RunWithEffects and a real manager lock in a temporary home.
+// TestConcurrentEnablesPreserveSelection proves competing enables refuse promptly, read-only queries observe atomic selection during npm, and an explicit retry preserves both agents at RunWithEffects with a real manager lock.
 func TestConcurrentEnablesPreserveSelection(t *testing.T) {
 	home, version := t.TempDir(), "1.0.0"
 	firstInstalls, secondInstalls := 0, 0
 	first := agentEffects(t, home, &version, &firstInstalls)
 	second := agentEffects(t, home, &version, &secondInstalls)
-	insideFirst, releaseFirst, insideSecondHome := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	defer func() {
-		select {
-		case <-releaseFirst:
-		default:
-			close(releaseFirst)
-		}
-	}()
+	insideFirst, releaseFirst := make(chan struct{}), make(chan struct{})
 	firstStart := first.Start
 	first.Start = func(p manager.Process) error { close(insideFirst); <-releaseFirst; return firstStart(p) }
-	second.HomeDirectory = func() (string, error) { close(insideSecondHome); return home, nil }
-	secondStart := second.Start
-	var secondStarted atomic.Bool
-	second.Start = func(p manager.Process) error { secondStarted.Store(true); return secondStart(p) }
 	type result struct {
 		status int
 		output string
@@ -357,34 +345,71 @@ func TestConcurrentEnablesPreserveSelection(t *testing.T) {
 		status := manager.RunWithEffects(args, &out, &out, e)
 		done <- result{status, out.String()}
 	}
-	firstDone, secondDone, listDone := make(chan result, 1), make(chan result, 1), make(chan result, 1)
+	firstDone, secondDone := make(chan result, 1), make(chan result, 1)
+	firstFinished, secondFinished := false, false
 	go invoke(first, []string{"agents", "enable", "codex"}, firstDone)
 	<-insideFirst
+	defer func() {
+		select {
+		case <-releaseFirst:
+		default:
+			close(releaseFirst)
+		}
+		if !firstFinished {
+			<-firstDone
+		}
+		if !secondFinished {
+			<-secondDone
+		}
+	}()
 	go invoke(second, []string{"agents", "enable", "claude"}, secondDone)
-	<-insideSecondHome
-	list := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
-	insideListHome := make(chan struct{})
-	list.HomeDirectory = func() (string, error) { close(insideListHome); return home, nil }
-	go invoke(list, []string{"agents", "list"}, listDone)
-	<-insideListHome
 	select {
-	case got := <-listDone:
-		t.Fatalf("list observed incomplete installation: %+v", got)
-	case <-time.After(30 * time.Millisecond):
+	case got := <-secondDone:
+		secondFinished = true
+		if got.status != 1 || !strings.Contains(got.output, "another agent change is in progress; retry") {
+			t.Fatalf("competing enable=%+v", got)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("competing enable waited for npm instead of refusing")
 	}
-	if secondStarted.Load() {
-		t.Fatal("second enable entered npm while first install held manager lock")
-	}
-	close(releaseFirst)
-	for _, done := range []<-chan result{firstDone, secondDone, listDone} {
-		got := <-done
-		if got.status != 0 {
-			t.Fatalf("concurrent command failed: %+v", got)
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"agents", "list"}, "[]\n"},
+		{[]string{"agents", "status", "codex"}, ""},
+	} {
+		done := make(chan result, 1)
+		go invoke(second, tc.args, done)
+		select {
+		case got := <-done:
+			if got.status != 0 {
+				t.Fatalf("read during npm=%+v", got)
+			}
+			if tc.want != "" && got.output != tc.want {
+				t.Fatalf("atomic selection=%q want=%q", got.output, tc.want)
+			}
+			if tc.want == "" {
+				var status manager.AgentStatus
+				if err := json.Unmarshal([]byte(got.output), &status); err != nil || status.Enabled {
+					t.Fatalf("in-flight install published status=%+v error=%v", status, err)
+				}
+			}
+		case <-time.After(200 * time.Millisecond):
+			t.Fatalf("read-only %v waited for npm", tc.args)
 		}
 	}
-	final := agentEffects(t, home, &version, &firstInstalls)
-	if output := runAgents(t, final, 0, "list"); output != "[\"claude\",\"codex\"]\n" {
-		t.Fatalf("concurrent enables lost selection: %s", output)
+	close(releaseFirst)
+	firstFinished = true
+	if got := <-firstDone; got.status != 0 {
+		t.Fatalf("first enable=%+v", got)
+	}
+	runAgents(t, second, 0, "enable", "claude")
+	if output := runAgents(t, second, 0, "list"); output != "[\"claude\",\"codex\"]\n" {
+		t.Fatalf("retry lost selection: %s", output)
+	}
+	if firstInstalls != 1 || secondInstalls != 1 {
+		t.Fatalf("installation counts first=%d second=%d", firstInstalls, secondInstalls)
 	}
 }
 
@@ -431,6 +456,28 @@ func TestAgentStatusUsesOnlyUsableWorkerProbe(t *testing.T) {
 		if got := readAgentStatus(t, root, "codex"); got.SignedIn != tc.want || calls != 1 {
 			t.Fatalf("probe output=%q status=%+v calls=%d", tc.output, got, calls)
 		}
+	}
+
+	command := filepath.Join(home, ".local", "bin", "codex")
+	previous, err := os.Readlink(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(command); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(command, []byte("unmanaged command"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	e.Start = func(manager.Process) error { t.Error("unmanaged probe started"); return nil }
+	if got := readAgentStatus(t, e, "codex"); got.SignedIn != "unknown" {
+		t.Fatalf("unmanaged sign-in=%+v", got)
+	}
+	if err := os.Remove(command); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(previous, command); err != nil {
+		t.Fatal(err)
 	}
 	e.Start = func(manager.Process) error { t.Error("disabled probe started"); return nil }
 	runAgents(t, e, 0, "disable", "codex")

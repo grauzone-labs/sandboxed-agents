@@ -163,7 +163,7 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 			return request, err
 		}
 		if version := request.Options["version"]; version != "" {
-			if err := catalog.ValidateVersion(version); err != nil {
+			if err := catalog.ValidatePinVersion(version); err != nil {
 				return request, err
 			}
 		}
