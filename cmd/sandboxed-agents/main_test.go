@@ -193,7 +193,7 @@ func TestLiveOptInFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
 }
 
 // TestCommandGrammar proves command forms produce their expected success, preflight-failure, not-implemented, or usage status through the built CLI binary.
-// Lifecycle, shell and fingerprint forms select the target, read container existence and reject incomplete inspect answers. Deferred commands permit only preflight queries, and SSH never runs.
+// Lifecycle, shell and fingerprint forms reject incomplete container inspect answers after existence queries on Linux, or malformed machine query answers on Windows. Deferred commands permit only preflight queries, and SSH never runs.
 func TestCommandGrammar(t *testing.T) {
 	cases := []struct {
 		args   []string
@@ -542,7 +542,8 @@ func TestWorkspacePathsReachPreflightOrFailBeforePodman(t *testing.T) {
 		if err := os.Symlink(ssh, alias); err != nil {
 			// Windows ERROR_PRIVILEGE_NOT_HELD: creating symlinks requires
 			// Developer Mode or an elevated process.
-			if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) {
+			const windowsPrivilegeNotHeld = syscall.Errno(1314)
+			if runtime.GOOS == "windows" && errors.Is(err, windowsPrivilegeNotHeld) {
 				t.Skipf("symlink coverage requires Windows Developer Mode or administrator privileges: %v", err)
 			}
 			t.Fatal(err)

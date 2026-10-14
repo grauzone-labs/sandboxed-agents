@@ -255,7 +255,7 @@ func TestNuGetCommandPackage(t *testing.T) {
 	}
 }
 
-// TestWindowsNuGetCommandPackageLifecycle proves a built NuGet command package installs, runs its real Windows executable's version command, and removes it through explicitly configured Git for Windows Bash and the extracted PowerShell scripts with a custom directory and no PATH update.
+// TestWindowsNuGetCommandPackageLifecycle proves a NuGet command package built with configured Git for Windows Bash installs and removes its command through the extracted PowerShell scripts, and reports its version through the real Windows executable, with a custom directory and no PATH update.
 func TestWindowsNuGetCommandPackageLifecycle(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("NuGet command package executable lifecycle requires Windows")
