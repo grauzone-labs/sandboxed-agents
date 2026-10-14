@@ -6,44 +6,40 @@ This page describes npm tarballs built from `grauzone-labs/sandboxed-agents`: wh
 
 The [registry metadata for `sandboxed-agents@0.2.0`](https://registry.npmjs.org/sandboxed-agents/0.2.0) points to the prior repository, `grauzone-git/sandboxed-ai-agents`. The shared package and command name alone does not identify a release of `grauzone-labs/sandboxed-agents`.
 
-Publishing this repository's packages, including trusted publishing, belongs to the release workflow (#36). Before recommending registry installs or upgrades from the earlier implementation, maintainers need to confirm publishing rights to the existing name, identify the versions and repository metadata belonging to this implementation, and document the migration steps.
+This repository has not published a release yet, so no `sandboxed-agents` tarball or registry version from it exists. Publication and migration from the earlier package are tracked in [#36](https://github.com/grauzone-labs/sandboxed-agents/issues/36).
 
-The examples below select an explicit tarball from this repository; they make no claim about registry availability or compatibility with the earlier implementation.
+The examples below install an explicit tarball from this repository once one is released. They make no claim about registry availability or compatibility with the earlier implementation.
 
 ## Requirements
 
-- Linux x64 or Windows x64. Other platforms are unsupported, ARM64 included. On an unsupported platform, installation fails with a message that names the platform.
+- Linux x64 or Windows 11 x64. Other platforms, including ARM64, are unsupported. On an unsupported platform, installation fails with a message that names the platform.
 - Node.js 18 or newer, the `engines` range of the package.
-- Podman and OpenSSH, as for every install method. The package does not install or configure them; see [host prerequisites](host-prerequisites.md).
+- Podman ([host prerequisites](host-prerequisites.md)) and OpenSSH, as for every install method. The package does not install or configure them.
 
 ## What the package contains
 
-The package is named `sandboxed-agents` and provides the command `sandboxed-agents`. The command is a small Node.js launcher. The release archive `sandboxed-agents-X.Y.Z.tgz` holds:
+The package is named `sandboxed-agents` and provides the command `sandboxed-agents`. The command is a small Node.js launcher. The package archive `sandboxed-agents-X.Y.Z.tgz` holds:
 
 - the Linux x64 and the Windows x64 executables;
 - `SHA256SUMS`, the checksums of both executables;
-- the launcher.
+- the launcher (`launcher.cjs`, `verify.cjs`) and `package.json`.
 
 The launcher selects the executable for the current platform, checks it against `SHA256SUMS`, and runs it. It passes on the arguments, the standard streams, and the exit status. The package has no dependencies.
 
 ## Install
 
-When a release tarball from `grauzone-labs/sandboxed-agents` is available, download `sandboxed-agents-X.Y.Z.tgz` and install that file. Replace `X.Y.Z` with its version. If the shared command is already installed, identify its source before replacing it; a transition from the earlier implementation needs migration steps documented under #36.
+Once this repository publishes a release tarball, download `sandboxed-agents-X.Y.Z.tgz` and install that file. Replace `X.Y.Z` with its version. If the shared command is already installed, identify its source before replacing it; migration from the earlier implementation is tracked in [#36](https://github.com/grauzone-labs/sandboxed-agents/issues/36).
 
 ```sh
 npm install --offline --no-audit --no-fund -g ./sandboxed-agents-X.Y.Z.tgz
 sandboxed-agents version
 ```
 
-`version` prints the version and the hash of the embedded build assets. This install needs no network access once the file is on the machine.
+`version` prints `sandboxed-agents X.Y.Z` and `asset-sha256 <hash>`, the hash of the embedded build assets. This install needs no network access once the file is on the machine.
 
 ## Upgrade
 
-For an installation from this repository, download its newer release tarball and install that explicit file over the old version:
-
-```sh
-npm install --offline --no-audit --no-fund -g ./sandboxed-agents-X.Y.Z.tgz
-```
+To upgrade an installation from this repository, run the same install command with the newer release tarball.
 
 ## Remove
 
