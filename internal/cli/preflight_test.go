@@ -187,6 +187,9 @@ func noMutation(t *testing.T, calls [][]string) {
 		if len(args) >= 2 && args[0] == "--connection" {
 			args = args[2:]
 		}
+		if len(args) == 4 && args[0] == "volume" && args[1] == "ls" && args[2] == "--format" && args[3] == "json" {
+			continue
+		}
 		if len(args) == 3 && args[0] == "volume" && args[1] == "exists" {
 			continue
 		}

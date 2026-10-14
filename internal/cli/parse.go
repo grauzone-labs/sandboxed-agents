@@ -237,6 +237,7 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 		validNames, kind := catalog.Default.AgentNames(), "agent"
 		if option == "with" {
 			validNames, kind = catalog.Default.Toolchains, "toolchain"
+			validNames = append(slices.Clone(validNames), "none")
 		}
 		for _, name := range names {
 			if name == "" || (option == "with" && name == "none" && len(names) > 1) {
@@ -253,6 +254,8 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 			}
 		}
 		if option == "with" && value != "none" {
+			slices.Sort(names)
+			names = slices.Compact(names)
 			request.Toolchains = names
 		}
 	}

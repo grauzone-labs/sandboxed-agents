@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -10,8 +9,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/grauzone-labs/sandboxed-agents/image"
 )
 
 type resourceKind string
@@ -32,16 +29,6 @@ func (p podmanTarget) exists(kind resourceKind, name string) (bool, error) {
 		return false, nil
 	}
 	return false, err
-}
-
-func buildImage(p podmanTarget, toolchains []string, output io.Writer) (string, error) {
-	return image.BuildWithToolchains(context.Background(), nil, toolchains, func(ctx context.Context, args ...string) error {
-		result, err := p.query(args...)
-		if result != "" {
-			fmt.Fprint(output, result)
-		}
-		return err
-	})
 }
 
 // prepareUp creates an owned sandbox or reuses its inspected configuration under the lifecycle lock.
@@ -78,20 +65,9 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	hash, err := image.Hash(image.Context())
+	tag, err := ensureImage(p, request.Toolchains, output)
 	if err != nil {
 		return err
-	}
-	tag := image.Tag(hash, request.Toolchains)
-	exists, err := p.exists(imageResource, tag)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		tag, err = buildImage(p, request.Toolchains, output)
-		if err != nil {
-			return err
-		}
 	}
 	names := DerivedNames(request.Group, request.Name)
 	labels := []string{"--label", OwnerLabel + "=" + request.Group, "--label", SandboxNameLabel + "=" + request.Name}
@@ -133,6 +109,7 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		"--memory", strconv.FormatInt(request.Resources.Memory, 10), "--cpus", strconv.FormatFloat(request.Resources.CPUs, 'f', -1, 64),
 		"--pids-limit", strconv.FormatInt(request.Resources.PIDsLimit, 10), "--shm-size", strconv.FormatInt(request.Resources.ShmSize, 10),
 		"--publish", fmt.Sprintf("127.0.0.1:%d:22/tcp", port),
+		"--label", ToolchainsLabel+"="+toolchainSet(request.Toolchains),
 		"--mount", workspaceMount,
 		"--mount", "type=volume,source="+names.Home+",destination=/home/agent",
 		"--mount", "type=volume,source="+names.SSH+",destination=/etc/ssh", tag)

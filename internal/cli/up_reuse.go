@@ -42,10 +42,8 @@ func checkReusedUp(request Request, p podmanTarget, container sandboxContainer) 
 			return reusedUpConflict(request, fmt.Sprintf("workspace differs: requested bind %q; recorded workspace %s", workspace, previous))
 		}
 	}
-	for _, option := range []string{"with"} {
-		if _, supplied := request.Options[option]; supplied {
-			return fmt.Errorf("up: existing sandbox --%s reuse is not implemented", option)
-		}
+	if err := checkReusedToolchains(request, container); err != nil {
+		return err
 	}
 	return nil
 }
@@ -72,6 +70,19 @@ func checkReusedResources(request Request, container sandboxContainer) error {
 		}
 		if !cpu.matches(request.Resources.CPUs) {
 			return reusedUpConflict(request, fmt.Sprintf("--cpus differs: requested %s; recorded limit %s", strconv.FormatFloat(request.Resources.CPUs, 'f', -1, 64), strconv.FormatFloat(cpu.displayCores(), 'f', -1, 64)))
+		}
+	}
+	return nil
+}
+
+func checkReusedToolchains(request Request, container sandboxContainer) error {
+	if _, supplied := request.Options["with"]; supplied {
+		recorded := container.Config.Labels[ToolchainsLabel]
+		if recorded == "" {
+			return fmt.Errorf("sandbox %s: recorded toolchain set is missing", request.Name)
+		}
+		if recorded != toolchainSet(request.Toolchains) {
+			return fmt.Errorf("sandbox %s: requested toolchain set %s differs from recorded set %s; use update %s --with %s", request.Name, toolchainSet(request.Toolchains), recorded, request.Name, toolchainSet(request.Toolchains))
 		}
 	}
 	return nil

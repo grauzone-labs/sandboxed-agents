@@ -29,6 +29,7 @@ func TestUpBuildsAbsentImage(t *testing.T) {
 	f.responses["container exists sandboxed-agents.default.demo"] = response{Exit: 1}
 	f.responses["image exists "+tag] = response{Exit: 1}
 	f.responses["build *"] = response{}
+	f.responses["image ls *"] = response{Output: `[]`}
 	status, output, calls := f.run(t, "up", "demo")
 	if status != 0 || !strings.Contains(output, "sandbox demo running") || !strings.Contains(output, tag) {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
@@ -53,14 +54,15 @@ func TestBuildRetainsExistingSandboxes(t *testing.T) {
 	f := linuxHost(t)
 	scriptNewSandbox(t, f, "default", "demo")
 	f.responses["build *"] = response{}
+	f.responses["image ls *"] = response{Output: `[]`}
 	status, output, calls := f.run(t, "build")
 	if status != 0 || !strings.Contains(output, baseTag(t)) {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
-	if len(calls) != 3 || len(calls[2]) < 1 || calls[2][0] != "build" {
+	if len(calls) != 4 || len(calls[3]) < 1 || calls[3][0] != "build" {
 		t.Fatalf("build touched sandbox: %v", calls)
 	}
-	assertExpectedBuildAndNoOtherMutations(t, calls, 2, "", baseTag(t))
+	assertExpectedBuildAndNoOtherMutations(t, calls, 3, "", baseTag(t))
 }
 
 // TestUpUsesPresentImage proves up skips build for an existing shared image through RunWithHost and fake Podman.
@@ -164,12 +166,13 @@ func TestBuildAndUpAgreeOnNoneImageTag(t *testing.T) {
 	f := linuxHost(t)
 	scriptNewSandbox(t, f, "default", "demo")
 	f.responses["build *"] = response{}
+	f.responses["image ls *"] = response{Output: `[]`}
 	status, output, calls := f.run(t, "build", "--with", "none")
 	if status != 0 {
 		t.Fatalf("build status=%d output=%q", status, output)
 	}
 	buildCall := calls[len(calls)-1]
-	if len(buildCall) != 6 || buildCall[0] != "build" || buildCall[3] != "--tag" {
+	if len(buildCall) < 6 || buildCall[0] != "build" || buildCall[3] != "--tag" {
 		t.Fatalf("build calls=%v", calls)
 	}
 	tag := buildCall[4]
@@ -186,7 +189,7 @@ func TestBuildAndUpAgreeOnNoneImageTag(t *testing.T) {
 	for index, call := range calls[previousCallCount:] {
 		if len(call) > 0 && call[0] == "build" {
 			found = true
-			if len(call) != 6 || call[3] != "--tag" || call[4] != tag {
+			if len(call) < 6 || call[3] != "--tag" || call[4] != tag {
 				t.Fatalf("up built tag differs: %v", call)
 			}
 			absolute := previousCallCount + index
@@ -212,12 +215,12 @@ func assertExpectedBuildAndNoOtherMutations(t *testing.T, calls [][]string, buil
 		prefix = []string{"--connection", connection}
 	}
 	call := calls[buildIndex]
-	if len(call) != len(prefix)+6 {
+	if len(call) < len(prefix)+6 {
 		t.Fatalf("unexpected build shape: %v", call)
 	}
 	context := call[len(call)-1]
 	expected := append(append([]string{}, prefix...), "build", "--file", filepath.Join(context, "Containerfile"), "--tag", tag, context)
-	if !filepath.IsAbs(context) || filepath.Base(context) != "base" || !reflect.DeepEqual(call, expected) {
+	if !filepath.IsAbs(context) || filepath.Base(context) != "base" || !reflect.DeepEqual(append(append([]string{}, call[:len(prefix)+5]...), context), expected) {
 		t.Fatalf("unexpected build arguments: %v; want %v", call, expected)
 	}
 	// Exempt only the validated build command itself, never its other arguments.

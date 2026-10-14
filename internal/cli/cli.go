@@ -113,12 +113,11 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		if err != nil {
 			return 1
 		}
-		tag, err := buildImage(target, request.Toolchains, stdout)
+		err = rebuildImages(request, target, stdout)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		fmt.Fprintln(stdout, "built image", tag)
 		return 0
 	case "up":
 		target, err := checkedTarget()
