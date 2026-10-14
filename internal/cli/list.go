@@ -72,7 +72,13 @@ func listSandboxes(request Request, p podmanTarget, output io.Writer) error {
 		request.Name = name
 		objects, err := readSandbox(request, p)
 		if err != nil {
-			return err
+			state, problem := "-", err.Error()
+			if ownerErr := objects.ownerError(); ownerErr != nil {
+				state = "owner conflict"
+				problem = ownerErr.Error() + "; " + problem
+			}
+			fmt.Fprintf(table, "%s\t%s\t-\t-\t-\t-\t-\t%s\n", name, state, problem)
+			continue
 		}
 		workspace := "-"
 		if slices.Contains(objects.volumes, DerivedNames(request.Group, name).Workspace) {
@@ -82,7 +88,8 @@ func listSandboxes(request Request, p podmanTarget, output io.Writer) error {
 		if objects.exists {
 			state = "stopped"
 			if objects.container.State.Running == nil && len(objects.conflicts) == 0 && !objects.backup {
-				return fmt.Errorf("read container %s: running state is missing", DerivedNames(request.Group, name).Container)
+				state = "-"
+				problem = fmt.Sprintf("read container %s: running state is missing", DerivedNames(request.Group, name).Container)
 			}
 			if objects.container.State.Running != nil && *objects.container.State.Running {
 				state = "running"

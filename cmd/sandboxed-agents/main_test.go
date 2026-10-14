@@ -192,8 +192,7 @@ func TestLiveOptInFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
 	}
 }
 
-// TestCommandGrammar proves command forms produce their expected success, preflight-failure, not-implemented, or usage status through the built CLI binary.
-// Named sandbox commands reject incomplete container inspections on Linux or malformed machine queries on Windows; list rejects an invalid inventory, and build/up/update stop at preflight. SSH never runs.
+// TestCommandGrammar proves accepted and invalid command forms return their expected success, preflight failure, unimplemented, or usage status through the built CLI binary harness without invoking SSH.
 func TestCommandGrammar(t *testing.T) {
 	cases := []struct {
 		args   []string

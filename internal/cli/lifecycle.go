@@ -117,6 +117,9 @@ func requireSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 		return objects, nil
 	}
 	if !objects.exists && len(objects.volumes) > 0 && !objects.backup {
+		if request.Command == "remove" && request.Options["volumes"] != "" {
+			return objects, nil
+		}
 		return objects, fmt.Errorf("sandbox %q has only volumes; use up %s to adopt them", request.Name, request.Name)
 	}
 	if objects.backup {
@@ -144,6 +147,9 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 	objects, err := requireSandbox(request, p)
 	if err != nil {
 		return err
+	}
+	if !objects.exists {
+		return removeSandboxVolumes(request, p, objects, output)
 	}
 	container := objects.container
 	if container.State.Running == nil {
@@ -176,22 +182,7 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 			return err
 		}
 		fmt.Fprintf(output, "removed sandbox %s\n", request.Name)
-		for _, volume := range objects.volumes {
-			if request.Options["volumes"] != "" && objects.volumeOwners[volume] == request.Group {
-				if _, err := p.query("volume", "rm", volume); err != nil {
-					return err
-				}
-				fmt.Fprintf(output, "removed volume %s\n", volume)
-				continue
-			}
-			fmt.Fprintf(output, "kept volume %s\n", volume)
-		}
-		if len(objects.volumes) > 0 && request.Options["volumes"] == "" {
-			fmt.Fprintf(output, "SSH authorization remains in the kept volumes and is replaced by the next ssh-config %s --install\n", request.Name)
-		}
-		// Host SSH setup installation is deferred; there are no managed SSH files
-		// produced by this executable to clean up yet.
-		return objects.ownerError()
+		return removeSandboxVolumes(request, p, objects, output)
 	}
 	action, state := request.Command, "running"
 	switch request.Command {
@@ -217,6 +208,25 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 	ended.write(output, request.Name)
 	fmt.Fprintf(output, "sandbox %s is %s\n", request.Name, state)
 	return nil
+}
+
+func removeSandboxVolumes(request Request, p podmanTarget, objects sandboxObjects, output io.Writer) error {
+	for _, volume := range objects.volumes {
+		if request.Options["volumes"] != "" && objects.volumeOwners[volume] == request.Group {
+			if _, err := p.query("volume", "rm", volume); err != nil {
+				return err
+			}
+			fmt.Fprintf(output, "removed volume %s\n", volume)
+			continue
+		}
+		fmt.Fprintf(output, "kept volume %s\n", volume)
+	}
+	if len(objects.volumes) > 0 && request.Options["volumes"] == "" {
+		fmt.Fprintf(output, "SSH authorization remains in the kept volumes and is replaced by the next ssh-config %s --install\n", request.Name)
+	}
+	// Host SSH setup installation is deferred; there are no managed SSH files
+	// produced by this executable to clean up yet.
+	return objects.ownerError()
 }
 
 type sessionReport struct {
