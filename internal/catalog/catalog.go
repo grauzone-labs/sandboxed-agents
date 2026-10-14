@@ -33,6 +33,16 @@ var Default = Catalog{
 	AgentLoginWorkflows: map[string][]string{},
 	Toolchains:          []string{},
 	Integrations: map[string]Integration{
+		"github": {LoginWorkflows: []string{}, Login: &LoginWorkflow{
+			WorkflowOmittable: true, InvalidOptionsMessage: "--organization is only valid for azdo",
+		}},
+		"azure": {LoginWorkflows: []string{}, Login: &LoginWorkflow{
+			WorkflowOmittable: true, InvalidOptionsMessage: "--organization is only valid for azdo",
+		}},
+		"azdo": {LoginWorkflows: []string{}, Login: &LoginWorkflow{
+			Options: []string{"organization"}, RequiredOptions: []string{"organization"},
+			InvalidArgumentsMessage: "azdo requires --organization URL and no workflow",
+		}},
 		GitIntegration: {ConfigWorkflows: map[string]ConfigWorkflow{
 			GitIdentityWorkflow: {
 				Options:     []string{GitNameOption, GitEmailOption},
