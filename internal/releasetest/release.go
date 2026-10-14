@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
@@ -28,6 +30,53 @@ func ExpectedVersion(t *testing.T, version string) string {
 		t.Fatal(err)
 	}
 	return fmt.Sprintf("sandboxed-agents %s\nasset-sha256 %s\n", version, assetHash)
+}
+
+var preparedHash struct {
+	sync.Once
+	hash string
+	err  error
+}
+
+// ExpectedPreparedVersion specifies the release version output using the context with its compiled manager.
+func ExpectedPreparedVersion(t *testing.T, version string) string {
+	t.Helper()
+	preparedHash.Do(func() {
+		root, err := os.Getwd()
+		if err != nil {
+			preparedHash.err = err
+			return
+		}
+		for {
+			if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+				break
+			}
+			parent := filepath.Dir(root)
+			if parent == root {
+				preparedHash.err = fmt.Errorf("cannot find repository root")
+				return
+			}
+			root = parent
+		}
+		directory, err := os.MkdirTemp("", "sandboxed-agents-expected-overlay-")
+		if err != nil {
+			preparedHash.err = err
+			return
+		}
+		defer os.RemoveAll(directory)
+		command := exec.Command("go", "run", "./image/cmd/overlay", directory)
+		command.Dir = root
+		command.Env = append(os.Environ(), "GOOS=", "GOARCH=", "GOTOOLCHAIN=local", "GOFLAGS=", "GOEXPERIMENT=", "GOWORK=off", "GOENV=off", "GOFIPS140=off")
+		if output, err := command.CombinedOutput(); err != nil {
+			preparedHash.err = fmt.Errorf("expected release context: %w\n%s", err, output)
+			return
+		}
+		preparedHash.hash, preparedHash.err = image.Hash(os.DirFS(filepath.Join(directory, "context")))
+	})
+	if preparedHash.err != nil {
+		t.Fatal(preparedHash.err)
+	}
+	return fmt.Sprintf("sandboxed-agents %s\nasset-sha256 %s\n", version, preparedHash.hash)
 }
 
 // CopyCRLFContext copies image build context text with Windows line endings and preserves binary assets.

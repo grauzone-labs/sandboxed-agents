@@ -1,10 +1,24 @@
 FROM debian:trixie-slim
+ARG DEBIAN_FRONTEND=noninteractive
 
 ENV PATH="${PATH}:/home/agent/.local/bin"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl gnupg git \
+        gh tmux openssh-server openssh-client \
+        bash coreutils findutils procps jq ripgrep less unzip zip xz-utils file \
+    && rm -f /etc/ssh/ssh_host_* \
     && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid 1000 agent \
+    && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash agent \
+    && mkdir -p /workspace /run/sshd \
+    && chown agent:agent /workspace
+
+COPY manager.bin /usr/local/bin/sandboxed-agents-manager
+RUN test -s /usr/local/bin/sandboxed-agents-manager \
+        || { echo 'Manager missing: build the host executable with image/cmd/overlay.' >&2; exit 1; }
+RUN chmod 0755 /usr/local/bin/sandboxed-agents-manager
 
 COPY check-nodesource-key.sh nodesource-signing-key.fingerprint /tmp/nodesource-check/
 
@@ -21,6 +35,15 @@ RUN set -eu; \
     apt-get update; \
     apt-get install -y --no-install-recommends nodejs; \
     rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /usr/local/share/sandboxed-agents \
+    && { cat /etc/os-release; \
+         dpkg-query -W -f='${Package}=${Version}\n'; \
+         node --version; npm --version; \
+         /usr/local/bin/sandboxed-agents-manager version; \
+       } > /usr/local/share/sandboxed-agents/versions.txt
+
+WORKDIR /workspace
 
 # Keep the sandbox running until sshd becomes its main process (#49).
 ENTRYPOINT ["sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait"]

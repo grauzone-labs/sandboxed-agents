@@ -304,7 +304,7 @@ func TestWindowsNuGetCommandPackageLifecycle(t *testing.T) {
 	}
 	command = exec.Command(filepath.Join(install, "sandboxed-agents.exe"), "version")
 	result, err := command.CombinedOutput()
-	want := releasetest.ExpectedVersion(t, releasetest.ReleaseVersion)
+	want := releasetest.ExpectedPreparedVersion(t, releasetest.ReleaseVersion)
 	if err != nil || string(result) != want {
 		t.Fatalf("installed command version: error=%v output=%q; want %q", err, result, want)
 	}
