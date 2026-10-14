@@ -18,8 +18,8 @@ const (
 // GitSetting is a global Git value, either fixed or supplied by a workflow option.
 type GitSetting struct{ Key, Value, Option string }
 
-// ConfigRequest names a resolved config workflow and its shared definition.
-type ConfigRequest struct {
+// ConfigSelection identifies a resolved config workflow and its shared definition.
+type ConfigSelection struct {
 	Integration, Workflow string
 	Definition            ConfigWorkflow
 }
@@ -42,25 +42,25 @@ func (c Catalog) ConfigIntegrationNames() []string {
 }
 
 // ResolveConfig validates delivered names and resolves an omitted single workflow.
-func (c Catalog) ResolveConfig(integrationName, workflowName string) (ConfigRequest, error) {
-	request := ConfigRequest{Integration: integrationName, Workflow: workflowName}
+func (c Catalog) ResolveConfig(integrationName, workflowName string) (ConfigSelection, error) {
+	selection := ConfigSelection{Integration: integrationName, Workflow: workflowName}
 	integration, known := c.Integrations[integrationName]
 	if !known || len(integration.ConfigWorkflows) == 0 {
-		return request, fmt.Errorf("unknown integration %q: %s", integrationName, ValidNames(c.ConfigIntegrationNames()))
+		return selection, fmt.Errorf("unknown integration %q: %s", integrationName, ValidNames(c.ConfigIntegrationNames()))
 	}
 	if workflowName == "" {
 		names := integration.ConfigWorkflowNames()
 		if len(names) != 1 {
-			return request, fmt.Errorf("%s config requires a workflow: %s", integrationName, ValidNames(names))
+			return selection, fmt.Errorf("%s config requires a workflow: %s", integrationName, ValidNames(names))
 		}
-		request.Workflow = names[0]
+		selection.Workflow = names[0]
 	}
-	definition, known := integration.ConfigWorkflows[request.Workflow]
+	definition, known := integration.ConfigWorkflows[selection.Workflow]
 	if !known {
-		return request, fmt.Errorf("unknown %s config workflow %q: %s", integrationName, request.Workflow, ValidNames(integration.ConfigWorkflowNames()))
+		return selection, fmt.Errorf("unknown %s config workflow %q: %s", integrationName, selection.Workflow, ValidNames(integration.ConfigWorkflowNames()))
 	}
-	request.Definition = definition
-	return request, nil
+	selection.Definition = definition
+	return selection, nil
 }
 
 // ConfigOptionNames returns the union of delivered config option names for parsing.

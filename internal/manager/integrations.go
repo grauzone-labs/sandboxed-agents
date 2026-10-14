@@ -13,15 +13,15 @@ func configureGit(args []string, stdout, stderr io.Writer, effects Effects) int 
 	if len(args) > 0 {
 		workflowName = args[0]
 	}
-	workflow, err := catalog.Default.ResolveConfig(catalog.GitIntegration, workflowName)
+	selection, err := catalog.Default.ResolveConfig(catalog.GitIntegration, workflowName)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
-	options := flag.NewFlagSet("git "+workflow.Workflow, flag.ContinueOnError)
+	options := flag.NewFlagSet("git "+selection.Workflow, flag.ContinueOnError)
 	options.SetOutput(stderr)
 	values := make(map[string]*string)
-	for _, option := range workflow.Definition.Options {
+	for _, option := range selection.Definition.Options {
 		values[option] = options.String(option, "", "value for "+option)
 	}
 	if len(args) > 0 {
@@ -30,16 +30,16 @@ func configureGit(args []string, stdout, stderr io.Writer, effects Effects) int 
 		}
 	}
 	if options.NArg() != 0 {
-		fmt.Fprintln(stderr, "unexpected arguments for git "+workflow.Workflow)
+		fmt.Fprintln(stderr, "unexpected arguments for git "+selection.Workflow)
 		return 2
 	}
 	var configurations [][]string
-	for _, setting := range workflow.Definition.GitSettings {
+	for _, setting := range selection.Definition.GitSettings {
 		value := setting.Value
 		if setting.Option != "" {
 			value = *values[setting.Option]
 			if value == "" {
-				fmt.Fprintf(stderr, "git %s requires --%s\n", workflow.Workflow, setting.Option)
+				fmt.Fprintf(stderr, "git %s requires --%s\n", selection.Workflow, setting.Option)
 				return 1
 			}
 		}

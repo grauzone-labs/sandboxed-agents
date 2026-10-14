@@ -13,7 +13,7 @@ type Request struct {
 	Command           string
 	Group             string
 	Name              string
-	IntegrationConfig catalog.ConfigRequest
+	IntegrationConfig catalog.ConfigSelection
 	Args              []string
 	Options           map[string]string
 	Toolchains        []string
@@ -89,7 +89,10 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 		return request, fmt.Errorf("unknown command %q", request.Command)
 	}
 	if request.Command == "integrations config" {
-		definition = spec(2, 3, true, strings.Join(catalog.Default.ConfigOptionNames(), " "), "")
+		definition.options = make(map[string]bool)
+		for _, option := range catalog.Default.ConfigOptionNames() {
+			definition.options[option] = true
+		}
 	}
 
 	if request.Command == "update" && len(rest) > 0 && strings.HasPrefix(rest[0], "--") && slices.Contains(rest, "--all") {
@@ -210,15 +213,11 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 			return request, err
 		}
 		request.IntegrationConfig = selection
-		if len(request.Args) == 2 {
-			request.Args = append(request.Args, selection.Workflow)
-		}
 		for option := range request.Options {
 			if !slices.Contains(selection.Definition.Options, option) {
 				return request, fmt.Errorf("%s %s takes no options", selection.Integration, selection.Workflow)
 			}
 		}
-
 	}
 	for _, option := range []string{"with", "agents"} {
 		value, exists := request.Options[option]
