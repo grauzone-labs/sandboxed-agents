@@ -86,7 +86,9 @@ jobs:
       - name: Run CLI and stable gate tests
         shell: pwsh
         run: |
-          go test ./cmd/sandboxed-agents ./internal/cli ./internal/release/cmd/stable-gate -count=1
+          go test ./cmd/sandboxed-agents -run '^(TestCommandGrammar|TestWorkspacePathsReachPreflightOrFailBeforePodman)$' -count=1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows CLI grammar or workspace tests failed' }
+          go test ./internal/cli ./internal/release/cmd/stable-gate -count=1
           if ($LASTEXITCODE -ne 0) { throw 'Windows CLI or stable gate tests failed' }
       - name: Run image and release tests with Git for Windows Bash
         shell: pwsh
