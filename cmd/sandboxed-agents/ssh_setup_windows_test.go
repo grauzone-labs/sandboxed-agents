@@ -97,7 +97,8 @@ func TestSSHSetupWindowsInstallSecuresNewPathsAndPreservesExistingPermissions(t 
 				t.Fatal("key generation used the synthetic fake key instead of native OpenSSH")
 			}
 			output, err := testutil.RunWindowsSSH(t, keygen, "-y", "-P", "", "-f", identity)
-			if err != nil || strings.TrimSpace(string(output)) != publicKey {
+			derivedFields := strings.Fields(string(output))
+			if err != nil || len(derivedFields) < 2 || strings.Join(derivedFields[:2], " ") != publicKey {
 				t.Fatalf("native OpenSSH refused generated private key: %v\n%s", err, output)
 			}
 			keygenCalls := testutil.Invocations(t, filepath.Join(fakes.Dir, "keygen.jsonl"))
