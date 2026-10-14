@@ -62,6 +62,10 @@ func secureSSHReplacement(path string, mode os.FileMode, previous string) error 
 	if descriptor == nil {
 		return fmt.Errorf("SSH config %q has no security descriptor", previous)
 	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return fmt.Errorf("read process user for SSH permissions: %w", err)
+	}
 	dacl, _, err := descriptor.DACL()
 	if err != nil {
 		return fmt.Errorf("read SSH DACL from %q: %w", previous, err)
@@ -70,15 +74,14 @@ func secureSSHReplacement(path string, mode os.FileMode, previous string) error 
 	if err != nil {
 		return fmt.Errorf("read SSH permission control from %q: %w", previous, err)
 	}
-	// The replacement is created by this process and already has an owner the
-	// process can assign. Copying an existing owner such as SYSTEM or
-	// Administrators can require privileges a standard account does not have.
-	// Keep the replacement owner and preserve the user's DACL and inheritance.
-	information := windows.SECURITY_INFORMATION(windows.DACL_SECURITY_INFORMATION | windows.UNPROTECTED_DACL_SECURITY_INFORMATION)
+	// Assign the process user as owner, which needs no administrator privilege.
+	// Copying an existing owner such as SYSTEM or Administrators may require
+	// privileges a standard account does not have.
+	information := windows.SECURITY_INFORMATION(windows.OWNER_SECURITY_INFORMATION | windows.DACL_SECURITY_INFORMATION | windows.UNPROTECTED_DACL_SECURITY_INFORMATION)
 	if control&windows.SE_DACL_PROTECTED != 0 {
-		information = windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION
+		information = windows.OWNER_SECURITY_INFORMATION | windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION
 	}
-	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, information, nil, nil, dacl, nil); err != nil {
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, information, user.User.Sid, nil, dacl, nil); err != nil {
 		return fmt.Errorf("preserve SSH permissions on %q: %w", path, err)
 	}
 	return nil
