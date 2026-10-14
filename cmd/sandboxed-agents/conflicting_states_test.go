@@ -455,6 +455,7 @@ func TestUsageAndPreflightPrecedeTakenLifecycleLock(t *testing.T) {
 	}
 }
 
+// listWithLaterHealthyResponses adds a healthy later inventory row so list tests can prove failures do not hide other sandboxes.
 func listWithLaterHealthyResponses() map[string]lifecycleResponse {
 	responses := newSandboxResponses()
 	responses["ps --all --format json"] = lifecycleResponse{Output: `[{"Names":["sandboxed-agents.default.zhealthy","sandboxed-agents.default.demo"]}]`}

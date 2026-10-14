@@ -13,12 +13,15 @@ import (
 
 type managerUnavailable struct{ cause error }
 
+// Error preserves the underlying manager transport failure for the sandbox diagnostic.
 func (e managerUnavailable) Error() string { return e.cause.Error() }
 
+// agentManagerError names the sandbox diagnosis and restart commands for an unusable manager answer.
 func agentManagerError(request Request, cause error) error {
 	return fmt.Errorf("sandbox %q: manager does not answer; use check %s for diagnosis and restart %s (%w)", request.Name, request.Name, request.Name, cause)
 }
 
+// administerAgent enforces ordered sandbox checks and dispatches a validated agent operation through the manager.
 func administerAgent(request Request, p podmanTarget, stdout io.Writer) error {
 	objects, err := requireSandbox(request, p)
 	if err != nil {
@@ -72,6 +75,7 @@ func administerAgent(request Request, p podmanTarget, stdout io.Writer) error {
 	return nil
 }
 
+// runAgentChange captures an administrative mutation result and separates transport failures from operation failures.
 func runAgentChange(request Request, p podmanTarget, stdout io.Writer, payload ...string) error {
 	args := append([]string{"exec", "--user=0:0", DerivedNames(request.Group, request.Name).Container, managerPath}, payload...)
 	var output, diagnostic bytes.Buffer
@@ -89,6 +93,7 @@ func runAgentChange(request Request, p podmanTarget, stdout io.Writer, payload .
 	return err
 }
 
+// readAgentStatus validates the shared manager response before callers use its selection state.
 func readAgentStatus(request Request, p podmanTarget) (catalog.AgentStatus, error) {
 	var status catalog.AgentStatus
 	answer, err := requestManager(request, p, "agents", "status", request.Args[1])
@@ -101,6 +106,7 @@ func readAgentStatus(request Request, p podmanTarget) (catalog.AgentStatus, erro
 	return status, nil
 }
 
+// printAgentStatus renders the recorded version, pin, session, and sign-in state, or an absent selection.
 func printAgentStatus(request Request, p podmanTarget, stdout io.Writer) error {
 	status, err := readAgentStatus(request, p)
 	if err != nil {
@@ -118,6 +124,7 @@ func printAgentStatus(request Request, p podmanTarget, stdout io.Writer) error {
 	return err
 }
 
+// enableUpAgents attempts every requested install after startup and reports retries while preserving the sandbox.
 func enableUpAgents(request Request, p podmanTarget, stdout io.Writer) error {
 	if request.Options["agents"] == "" {
 		return nil

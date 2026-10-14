@@ -67,6 +67,7 @@ func Parse(args []string, group string) (Request, error) {
 	return parseForHost(args, group, Host{}.defaults())
 }
 
+// parseForHost performs step-one grammar, catalog, name, and workspace checks using the supplied host facts.
 func parseForHost(args []string, group string, host Host) (Request, error) {
 	request := Request{Group: group, Options: make(map[string]string), Resources: DefaultResources()}
 	if len(args) == 0 {

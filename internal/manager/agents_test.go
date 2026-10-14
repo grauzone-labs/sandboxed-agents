@@ -14,6 +14,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
+// agentEffects fakes npm at the process seam while writing installation artifacts into the test home.
 func agentEffects(t *testing.T, home string, version *string, installs *int) manager.Effects {
 	t.Helper()
 	e := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
@@ -55,6 +56,7 @@ func agentEffects(t *testing.T, home string, version *string, installs *int) man
 	return e
 }
 
+// runAgents exercises the public manager boundary and checks its exit status before returning output.
 func runAgents(t *testing.T, e manager.Effects, want int, args ...string) string {
 	t.Helper()
 	var out, err bytes.Buffer
@@ -137,6 +139,7 @@ func TestFourAgentsLifecyclePreservesHome(t *testing.T) {
 	}
 }
 
+// readAgentStatus decodes the status returned by the public manager boundary.
 func readAgentStatus(t *testing.T, e manager.Effects, name string) manager.AgentStatus {
 	t.Helper()
 	var status manager.AgentStatus

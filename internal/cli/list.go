@@ -62,6 +62,7 @@ func sandboxInventory(group string, p podmanTarget) ([]string, error) {
 	return result, nil
 }
 
+// listSandboxes inspects controller-group objects and prints their state, configuration, and reachable agent selection.
 func listSandboxes(request Request, p podmanTarget, output io.Writer) error {
 	names, err := sandboxInventory(request.Group, p)
 	if err != nil {
