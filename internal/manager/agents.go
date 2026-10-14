@@ -30,6 +30,7 @@ type agentRequest struct {
 	definition               catalog.Agent
 }
 
+// parseAgents validates the manager operation, catalog entry, and operation-specific flags before home access.
 func parseAgents(args []string, stderr io.Writer) (agentRequest, bool) {
 	var r agentRequest
 	if len(args) == 1 && args[0] == "list" {
@@ -86,6 +87,7 @@ func parseAgents(args []string, stderr io.Writer) (agentRequest, bool) {
 	return r, true
 }
 
+// agents sends root requests to a verified agent worker and reads or mutates the selection at its lock boundary.
 func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effects) int {
 	r, valid := parseAgents(args, stderr)
 	if !valid {
@@ -210,6 +212,7 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 	return 2
 }
 
+// reportInstallation prints the selection version and pin for a completed enable or update.
 func reportInstallation(stdout io.Writer, name string, current installation) {
 	fmt.Fprintf(stdout, "%s enabled: version %s", name, current.Version)
 	if current.Pin != "" {
@@ -220,6 +223,7 @@ func reportInstallation(stdout io.Writer, name string, current installation) {
 	fmt.Fprintln(stdout)
 }
 
+// readSelection loads the current selection and rejects malformed JSON or unsafe installation prefix names.
 func readSelection(root string) (map[string]installation, error) {
 	selection := make(map[string]installation)
 	data, err := os.ReadFile(filepath.Join(root, "selection.json"))
@@ -243,6 +247,7 @@ func readSelection(root string) (map[string]installation, error) {
 	return selection, nil
 }
 
+// installAgent stages a catalog npm package and verifies its version and command before publication.
 func installAgent(root string, r agentRequest, effects Effects, stderr io.Writer) (installation, error) {
 	if r.definition.Install.Kind != catalog.NPM {
 		return installation{}, fmt.Errorf("unsupported installation kind %q", r.definition.Install.Kind)
@@ -288,6 +293,8 @@ func installAgent(root string, r agentRequest, effects Effects, stderr io.Writer
 	return installation{Version: metadata.Version, Pin: r.version, Prefix: filepath.Base(prefix)}, nil
 }
 
+// publishInstallation replaces a managed command link and commits its selection entry.
+// A selection-write error triggers a best-effort restoration of the preceding link.
 func publishInstallation(home, root string, r agentRequest, installed installation, selection map[string]installation) error {
 	bin := filepath.Join(home, ".local", "bin")
 	if err := os.MkdirAll(bin, 0700); err != nil {
@@ -324,6 +331,7 @@ func publishInstallation(home, root string, r agentRequest, installed installati
 	return nil
 }
 
+// replaceLink atomically swaps a symlink through a temporary sibling in the same directory.
 func replaceLink(path, target string) error {
 	file, err := os.CreateTemp(filepath.Dir(path), ".agent-command-")
 	if err != nil {
@@ -341,6 +349,7 @@ func replaceLink(path, target string) error {
 	return os.Rename(name, path)
 }
 
+// writeSelection syncs staged JSON before atomically replacing the selection file.
 func writeSelection(root string, selection map[string]installation) error {
 	data, err := json.Marshal(selection)
 	if err != nil {
@@ -364,10 +373,12 @@ func writeSelection(root string, selection map[string]installation) error {
 	return os.Rename(file.Name(), filepath.Join(root, "selection.json"))
 }
 
+// commandPath locates the managed command link in the agent home.
 func commandPath(home string, definition catalog.Agent) string {
 	return filepath.Join(home, ".local", "bin", definition.Command)
 }
 
+// installationCommand builds the command path beneath an installation prefix.
 func installationCommand(root string, current installation, definition catalog.Agent) string {
 	return filepath.Join(root, current.Prefix, "bin", definition.Command)
 }

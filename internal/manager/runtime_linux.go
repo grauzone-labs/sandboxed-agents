@@ -27,6 +27,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}))
 }
 
+// newEffects binds manager requests to OS adapters with explicit credentials and operation-specific environment policies.
 func newEffects(calls systemCalls) Effects {
 	run := func(process Process) error {
 		command := exec.Command(process.Program, process.Args...)

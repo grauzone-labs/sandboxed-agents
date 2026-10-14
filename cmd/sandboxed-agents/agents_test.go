@@ -13,6 +13,7 @@ import (
 
 const agentManagerPrefix = "exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager "
 
+// agentExecutableHarness scripts Podman responses for the native host target at the executable CLI seam.
 func agentExecutableHarness(t *testing.T, responses map[string]lifecycleResponse) testutil.Fakes {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -28,6 +29,7 @@ func agentExecutableHarness(t *testing.T, responses map[string]lifecycleResponse
 	return lifecycleHarness(t, responses)
 }
 
+// runAgentExecutable runs the built CLI with the scripted environment and captures its exit status and output.
 func runAgentExecutable(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 	command := exec.Command(executable, args...)
@@ -36,6 +38,7 @@ func runAgentExecutable(t *testing.T, args ...string) (int, string) {
 	return exitStatus(t, err), string(output)
 }
 
+// agentManagerCalls selects administrative exec requests after removing any Windows connection prefix.
 func agentManagerCalls(t *testing.T, f testutil.Fakes) [][]string {
 	t.Helper()
 	var result [][]string
