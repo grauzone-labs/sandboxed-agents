@@ -629,14 +629,23 @@ func assertOnlyPreflightQueries(t *testing.T, fakes testutil.Fakes) {
 // TestMissingWorkspaceFailsBeforeUnusablePreflight proves a missing workspace remains a path usage error without Podman or SSH calls through the built CLI binary and failing process fakes.
 func TestMissingWorkspaceFailsBeforeUnusablePreflight(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
-	missing := filepath.Join(t.TempDir(), "missing")
+	directory, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(directory, "missing")
 	command := exec.Command(executable, "up", "demo", missing)
 	command.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{"TEST_PODMAN_OUTPUT": "unexpected preflight sentinel", "TEST_PODMAN_EXIT": "125", "TEST_SSH_EXIT": "125"})
 	output, err := command.CombinedOutput()
-	if status := exitStatus(t, err); status != 2 || !strings.HasPrefix(string(output), "step 1: workspace ") || !strings.Contains(string(output), strconv.Quote(missing)) || strings.Contains(string(output), "unexpected preflight sentinel") {
+	if status := exitStatus(t, err); status != 2 || !strings.HasPrefix(string(output), "step 1: workspace ") || !diagnosticNamesPath(output, missing) || strings.Contains(string(output), "unexpected preflight sentinel") {
 		t.Fatalf("status=%d output=%q; want missing workspace usage error before preflight", status, output)
 	}
 	assertNoExternalCalls(t, fakes)
+}
+
+// diagnosticNamesPath accepts both raw filesystem errors and Go-quoted workspace paths.
+func diagnosticNamesPath(output []byte, path string) bool {
+	return strings.Contains(string(output), path) || strings.Contains(string(output), strconv.Quote(path))
 }
 
 // lifecycleResponse scripts only the external Podman boundary.
@@ -1622,7 +1631,10 @@ func TestInvalidWorkspaceNamesResolvedPathBeforePreflight(t *testing.T) {
 	for _, kind := range []string{"missing", "file"} {
 		t.Run(kind, func(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
-			directory := t.TempDir()
+			directory, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
 			path := filepath.Join(directory, kind)
 			if kind == "file" {
 				if err := os.WriteFile(path, []byte("data"), 0600); err != nil {
@@ -1633,7 +1645,7 @@ func TestInvalidWorkspaceNamesResolvedPathBeforePreflight(t *testing.T) {
 			command.Dir = directory
 			command.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{"TEST_PODMAN_OUTPUT": "broken preflight sentinel", "TEST_PODMAN_EXIT": "125"})
 			output, err := command.CombinedOutput()
-			if status := exitStatus(t, err); status != 2 || !strings.Contains(string(output), strconv.Quote(path)) || strings.Contains(string(output), "broken preflight sentinel") {
+			if status := exitStatus(t, err); status != 2 || !diagnosticNamesPath(output, path) || strings.Contains(string(output), "broken preflight sentinel") {
 				t.Fatalf("status=%d output=%q; want resolved workspace refusal", status, output)
 			}
 			assertNoExternalCalls(t, fakes)
