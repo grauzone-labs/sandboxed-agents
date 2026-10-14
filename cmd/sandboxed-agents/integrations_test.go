@@ -23,8 +23,7 @@ func TestGitIntegrationUsagePrecedesPodman(t *testing.T) {
 		{[]string{"config", "agent01", "git"}, []string{"identity", "credentials"}},
 		{[]string{"config", "agent01", "unknown"}, []string{"unknown integration", "valid names: git"}},
 		{[]string{"config", "agent01", "git", "unknown"}, []string{"unknown", "identity", "credentials"}},
-		{[]string{"login", "agent01", "unknown"}, []string{"unknown integration", "no valid names are available yet"}},
-		{[]string{"login", "agent01", "github"}, []string{"unknown integration", "no valid names are available yet"}},
+		{[]string{"login", "agent01", "unknown"}, []string{"unknown integration", "valid names: azdo, azure, github"}},
 		{[]string{"config", "agent01", "git", "credentials", "--name", "N"}, []string{"takes no options"}},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
