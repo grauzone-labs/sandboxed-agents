@@ -21,8 +21,8 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
-// TestNpmCommandPackage proves the release command produces an npm tarball that installs locally and globally, runs, protects launchers as workspace binds, updates, and uninstalls through npm without Podman, SSH, or host-data changes.
-func TestNpmCommandPackage(t *testing.T) {
+// TestNpmPackageLifecycle proves the release command produces an npm tarball that installs locally and globally, runs, protects launchers as workspace binds, updates, and uninstalls through npm without Podman, SSH, or host-data changes.
+func TestNpmPackageLifecycle(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
 		t.Skip("npm executable lifecycle requires Linux amd64 or Windows amd64")
 	}
