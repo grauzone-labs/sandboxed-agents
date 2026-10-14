@@ -66,7 +66,13 @@ func TestSSHSetupWindowsInstallSecuresNewPathsAndPreservesExistingPermissions(t 
 				testutil.AssertWindowsSSHPathAccess(t, path, true, flags)
 			}
 			if existing {
-				testutil.AssertWindowsSSHPermissionsUnchanged(t, userConfig, beforeConfig)
+				afterConfig := testutil.SnapshotWindowsSSHPermissions(t, userConfig)
+				_, beforeDACL, _ := strings.Cut(beforeConfig.Descriptor, "D:")
+				_, afterDACL, _ := strings.Cut(afterConfig.Descriptor, "D:")
+				if beforeDACL != afterDACL || beforeConfig.Control != afterConfig.Control {
+					t.Fatalf("user config ACL changed: before=%+v after=%+v", beforeConfig, afterConfig)
+				}
+				testutil.AssertWindowsSSHOwnerIsProcessUser(t, userConfig)
 				testutil.AssertWindowsSSHPermissionsUnchanged(t, userDirectory, beforeDirectory)
 			} else {
 				testutil.AssertWindowsSSHPathAccess(t, userConfig, true, 0)
@@ -156,9 +162,9 @@ func setupCustomWindowsSSHPermissions(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		user.User.Sid, nil, dacl, nil); err != nil {
-		t.Fatal(err)
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil); err != nil {
+		t.Fatalf("set custom SSH DACL on %q: %v", path, err)
 	}
 }
 

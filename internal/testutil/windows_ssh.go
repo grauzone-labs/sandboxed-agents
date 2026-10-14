@@ -76,6 +76,25 @@ func AssertWindowsSSHPermissionsUnchanged(t *testing.T, path string, before Wind
 	}
 }
 
+func AssertWindowsSSHOwnerIsProcessUser(t *testing.T, path string) {
+	t.Helper()
+	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil || descriptor == nil {
+		t.Fatalf("read Windows owner for %q: %v", path, err)
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner == nil || !owner.Equals(user.User.Sid) {
+		t.Fatalf("Windows owner for %q = %v; want process user %v", path, owner, user.User.Sid)
+	}
+}
+
 func AssertWindowsSSHPathAccess(t *testing.T, path string, protected bool, aceFlags uint8) {
 	t.Helper()
 	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
@@ -104,15 +123,31 @@ func AssertWindowsSSHPathAccess(t *testing.T, path string, protected bool, aceFl
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dacl == nil || dacl.AceCount != 1 {
+	if dacl == nil || dacl.AceCount == 0 {
 		t.Fatalf("DACL must grant only process user access: %s", descriptor)
 	}
-	var ace *windows.ACCESS_ALLOWED_ACE
-	if err := windows.GetAce(dacl, 0, &ace); err != nil {
-		t.Fatal(err)
+	effectiveEntries := 0
+	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, index, &ace); err != nil {
+			t.Fatal(err)
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || !sid.Equals(user.User.Sid) {
+			t.Fatalf("unexpected access principal on %q: %s", path, descriptor)
+		}
+		if ace.Header.AceFlags&windows.INHERIT_ONLY_ACE != 0 {
+			if ace.Header.AceFlags&(windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE) == 0 || (ace.Mask != 0x001f01ff && ace.Mask != windows.GENERIC_ALL) {
+				t.Fatalf("unexpected inherited-only access on %q: %s", path, descriptor)
+			}
+			continue
+		}
+		effectiveEntries++
+		if ace.Mask != 0x001f01ff || ace.Header.AceFlags != aceFlags {
+			t.Fatalf("unexpected effective access on %q: %s", path, descriptor)
+		}
 	}
-	sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || !sid.Equals(user.User.Sid) || ace.Mask != 0x001f01ff || ace.Header.AceFlags != aceFlags {
-		t.Fatalf("unexpected access on %q: %s", path, descriptor)
+	if effectiveEntries != 1 {
+		t.Fatalf("DACL has %d effective entries for %q; want one: %s", effectiveEntries, path, descriptor)
 	}
 }
