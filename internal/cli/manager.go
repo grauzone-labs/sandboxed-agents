@@ -49,3 +49,35 @@ func requestManager(request Request, p podmanTarget, subcommand string, payload 
 	// keep them open after their parent exits. Other Podman queries have no delay.
 	return p.queryContext(ctx, time.Second, args...)
 }
+
+const managerPath = "/usr/local/bin/sandboxed-agents-manager"
+
+// queryManager bounds both the administrative process and any inherited pipes.
+func queryManager(p podmanTarget, container, subcommand string) (string, error) {
+	args, err := ManagerQueryArgs(container, managerPath, subcommand)
+	if err != nil {
+		return "", err
+	}
+	return queryManagerArgs(p, args)
+}
+
+func queryManagerSessions(request Request, p podmanTarget) (string, error) {
+	return queryManager(p, DerivedNames(request.Group, request.Name).Container, "sessions")
+}
+
+func queryManagerArgs(p podmanTarget, args []string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return p.queryContext(ctx, time.Second, args...)
+}
+
+func checkManager(p podmanTarget, container string) error {
+	answer, err := queryManager(p, container, "version")
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(strings.TrimSpace(answer), "sandboxed-agents-manager ") {
+		return fmt.Errorf("manager did not answer its version query")
+	}
+	return nil
+}

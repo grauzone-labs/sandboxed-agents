@@ -24,7 +24,8 @@ type LoginWorkflow struct {
 }
 
 type ConfigWorkflow struct {
-	Options []string
+	Options     []string
+	GitSettings []GitSetting
 }
 
 var Default = Catalog{
@@ -42,9 +43,12 @@ var Default = Catalog{
 			Options: []string{"organization"}, RequiredOptions: []string{"organization"},
 			InvalidArgumentsMessage: "azdo requires --organization URL and no workflow",
 		}},
-		"git": {ConfigWorkflows: map[string]ConfigWorkflow{
-			"identity":    {Options: []string{"name", "email"}},
-			"credentials": {},
+		GitIntegration: {ConfigWorkflows: map[string]ConfigWorkflow{
+			GitIdentityWorkflow: {
+				Options:     []string{GitNameOption, GitEmailOption},
+				GitSettings: []GitSetting{{Key: "user.name", Option: GitNameOption}, {Key: "user.email", Option: GitEmailOption}},
+			},
+			GitCredentialsWorkflow: {GitSettings: []GitSetting{{Key: "credential.helper", Value: "store --file=/home/agent/.git-credentials"}}},
 		}},
 	},
 }

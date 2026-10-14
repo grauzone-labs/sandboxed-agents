@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -44,16 +45,32 @@ func buildImage(p podmanTarget, toolchains []string, output io.Writer) (string, 
 }
 
 func prepareUp(request Request, p podmanTarget, output io.Writer) error {
-	// The caller holds ADR-0007's lifecycle lock, including opt-in SSH setup on reuse.
-	exists, err := p.exists(containerResource, DerivedNames(request.Group, request.Name).Container)
+	workspace := ""
+	if len(request.Args) == 2 {
+		workspace = request.Args[1]
+	}
+	if workspace != "" && p.host.Platform == "windows" {
+		var err error
+		workspace, err = windowsWorkspacePath(workspace)
+		if err != nil {
+			return err
+		}
+	}
+	objects, err := readSandbox(request, p)
 	if err != nil {
 		return err
 	}
-	if exists {
+	if err := objects.ownerError(); err != nil {
+		return err
+	}
+	if objects.backup {
+		return fmt.Errorf("sandbox %q has an interrupted update; use update %s", request.Name, request.Name)
+	}
+	if objects.exists {
 		if request.Options["ssh-config"] != "" {
 			return changeSandboxState(request, p, output)
 		}
-		return fmt.Errorf("up: existing sandbox lifecycle is not implemented; option conflicts belong to a later story")
+		return reuseSandbox(request, p, objects.container, output)
 	}
 	workspace, err := podmanWorkspacePath(request, p)
 	if err != nil {
@@ -68,7 +85,7 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		return err
 	}
 	tag := image.Tag(hash, request.Toolchains)
-	exists, err = p.exists(imageResource, tag)
+	exists, err := p.exists(imageResource, tag)
 	if err != nil {
 		return err
 	}
@@ -85,6 +102,9 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 	if len(request.Args) == 2 {
 		volumes = volumes[1:]
 		workspaceMount = bindWorkspaceMount(workspace)
+		if slices.Contains(objects.volumes, names.Workspace) {
+			fmt.Fprintf(output, "unused kept workspace volume %s\n", names.Workspace)
+		}
 	}
 	// A failed up removes only what this call created, so a retry is not refused as an existing sandbox.
 	var created []string
@@ -99,17 +119,15 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		return err
 	}
 	for _, volume := range volumes {
-		exists, err := p.exists(volumeResource, volume)
-		if err != nil {
-			return fail(err)
-		}
-		if exists {
-			return fail(fmt.Errorf("up: volume %s already exists; volume adoption is not implemented", volume))
+		if slices.Contains(objects.volumes, volume) {
+			fmt.Fprintf(output, "adopted volume %s\n", volume)
+			continue
 		}
 		if _, err := p.query(append(append([]string{"volume", "create"}, labels...), volume)...); err != nil {
 			return fail(err)
 		}
 		created = append(created, volume)
+		fmt.Fprintf(output, "created volume %s\n", volume)
 	}
 	args := append([]string{"create", "--name", names.Container}, labels...)
 	args = append(args, "--label", SSHPortLabel+"="+strconv.Itoa(int(port)),
@@ -141,6 +159,43 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 	if request.Options["ssh-config"] != "" {
 		return installLifecycleSSHSetup(request, p, sandboxObjects{container: container, exists: true}, output)
 	}
+	return nil
+}
+
+func reuseSandbox(request Request, p podmanTarget, container sandboxContainer, output io.Writer) error {
+	if value := request.Options["port"]; value != "" {
+		requested, _ := parseSSHPort(value) // Usage validation has already checked it.
+		recorded, err := parseSSHPort(container.Config.Labels[SSHPortLabel])
+		if err != nil {
+			return fmt.Errorf("sandbox %s: recorded SSH port is missing or invalid", request.Name)
+		}
+		if requested != recorded {
+			return fmt.Errorf("requested SSH port %d differs from recorded SSH port %d; use remove %s and up %s", requested, recorded, request.Name, request.Name)
+		}
+	}
+	// Configuration reuse and SSH setup beyond the port check belong to their
+	// respective stories. Refuse those options before starting an existing sandbox.
+	if len(request.Args) == 2 {
+		return fmt.Errorf("up: existing sandbox WORKSPACE comparison is not implemented")
+	}
+	for _, option := range []string{"with", "memory", "cpus", "pids-limit", "shm-size", "ssh-config", "agents"} {
+		if _, supplied := request.Options[option]; supplied {
+			return fmt.Errorf("up: existing sandbox --%s reuse is not implemented", option)
+		}
+	}
+	name := DerivedNames(request.Group, request.Name).Container
+	if container.State.Running == nil {
+		return fmt.Errorf("read container %s: running state is missing", name)
+	}
+	if !*container.State.Running {
+		if err := checkRecordedPort(p, container); err != nil {
+			return err
+		}
+		if _, err := p.query("start", name); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(output, "sandbox %s is running\n", request.Name)
 	return nil
 }
 

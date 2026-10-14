@@ -1,0 +1,20 @@
+{
+  "name": "sandboxed-agents",
+  "version": "$version$",
+  "description": "Run coding agents in isolated rootless Podman sandboxes",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/grauzone-labs/sandboxed-agents.git"
+  },
+  "bin": {
+    "sandboxed-agents": "launcher.cjs"
+  },
+  "scripts": {
+    "install": "node verify.cjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": ["linux", "win32"],
+  "cpu": ["x64"]
+}

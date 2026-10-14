@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -318,6 +319,25 @@ func TestImageBuildDeclaresKeepalive(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("materialized Containerfile lacks keepalive entrypoint %q", want)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestImageBuildProvidesGit proves the embedded base image installs the Git required by integration workflows through the public image.Build context seam.
+func TestImageBuildProvidesGit(t *testing.T) {
+	_, err := image.Build(context.Background(), image.Context(), func(_ context.Context, args ...string) error {
+		containerfile, err := os.ReadFile(args[2])
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Match an executable apt-get installation, rather than a mention in a comment.
+		install := regexp.MustCompile(`(?m)^\s*(?:RUN |&& )apt-get install\b[^\n;]*\bgit(?:\s|$)`)
+		if !install.Match(containerfile) {
+			t.Fatal("materialized base Containerfile does not install Git for integration workflows")
 		}
 		return nil
 	})

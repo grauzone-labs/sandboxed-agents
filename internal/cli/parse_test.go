@@ -40,3 +40,16 @@ func TestAgentLoginRejectsUnknownWorkflowForKnownAgent(t *testing.T) {
 		t.Fatalf("error=%v; want %q", err, want)
 	}
 }
+
+// TestParsedConfigOptionsFollowSharedCatalog proves CLI config option validation reads the shared workflow definition through cli.Parse.
+func TestParsedConfigOptionsFollowSharedCatalog(t *testing.T) {
+	original := catalog.Default.Integrations["git"]
+	catalog.Default.Integrations["git"] = catalog.Integration{ConfigWorkflows: map[string]catalog.ConfigWorkflow{
+		"identity": {Options: []string{"commit-name", "email"}},
+	}}
+	t.Cleanup(func() { catalog.Default.Integrations["git"] = original })
+	request, err := cli.Parse([]string{"integrations", "config", "agent01", "git", "identity", "--commit-name", "A Person", "--email", "a@example.com"}, "default")
+	if err != nil || request.Options["commit-name"] != "A Person" {
+		t.Fatalf("request=%+v error=%v; want catalog-defined config option", request, err)
+	}
+}

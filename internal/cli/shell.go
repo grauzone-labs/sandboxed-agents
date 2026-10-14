@@ -3,7 +3,7 @@ package cli
 import "io"
 
 func openShell(request Request, p podmanTarget, interactive bool, stdout, stderr io.Writer) (int, error) {
-	objects, err := inspectSandbox(request, p)
+	objects, err := requireSandbox(request, p)
 	if err != nil {
 		return 1, err
 	}

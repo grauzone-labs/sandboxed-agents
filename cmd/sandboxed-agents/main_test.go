@@ -192,8 +192,7 @@ func TestLiveOptInFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
 	}
 }
 
-// TestCommandGrammar proves command forms produce their expected success, preflight-failure, not-implemented, or usage status through the built CLI binary.
-// Lifecycle, shell and fingerprint forms reject incomplete container inspect answers after existence queries on Linux, or malformed machine query answers on Windows. Deferred commands permit only preflight queries, and SSH never runs.
+// TestCommandGrammar proves accepted and invalid command forms return their expected success, preflight failure, unimplemented, or usage status through the built CLI binary harness without invoking SSH.
 func TestCommandGrammar(t *testing.T) {
 	cases := []struct {
 		args   []string
@@ -233,8 +232,9 @@ func TestCommandGrammar(t *testing.T) {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			caseFakes := fakes
 			lifecycle := len(tc.args) > 0 && (tc.args[0] == "start" || tc.args[0] == "stop" || tc.args[0] == "restart" || tc.args[0] == "remove")
-			existingSandbox := len(tc.args) > 0 && (tc.args[0] == "shell" || tc.args[0] == "fingerprint" || tc.args[0] == "ssh-config")
-			if tc.status == 2 || lifecycle || existingSandbox {
+			existingSandbox := len(tc.args) > 0 && (tc.args[0] == "shell" || tc.args[0] == "fingerprint" || tc.args[0] == "ssh-config" || tc.args[0] == "integrations" || (tc.args[0] == "check" && len(tc.args) > 1))
+			listing := len(tc.args) > 0 && tc.args[0] == "list"
+			if tc.status == 2 || lifecycle || existingSandbox || listing {
 				caseFakes = testutil.Install(t, fakeExecutable)
 			}
 			command := exec.Command(executable, tc.args...)
@@ -247,13 +247,15 @@ func TestCommandGrammar(t *testing.T) {
 			if (tc.status == 2) != strings.Contains(string(output), "usage:") {
 				t.Fatalf("unexpected diagnostic: %s", output)
 			}
-			if (existingSandbox || lifecycle) && tc.status != 2 {
+			if tc.status != 2 && (existingSandbox || lifecycle || listing) {
 				want := [][]string{
 					{"container", "exists", "sandboxed-agents.default.demo"},
 					{"container", "inspect", "sandboxed-agents.default.demo"},
 				}
 				if runtime.GOOS == "windows" {
 					want = [][]string{{"machine", "list", "--format", "json"}}
+				} else if listing {
+					want = [][]string{{"ps", "--all", "--format", "json"}}
 				} else if !strings.Contains(string(output), "read container sandboxed-agents.default.demo: invalid inspect answer") {
 					t.Fatalf("incomplete container inspection was not rejected: %s", output)
 				}
@@ -341,7 +343,7 @@ func TestAgentCommandsRejectUnknownAgentsBeforeExternalCalls(t *testing.T) {
 	}
 }
 
-// TestLoginWorkflowsAreValidatedBeforeExternalCalls proves that invalid login requests are usage errors and an omitted GitHub workflow reaches the stub through the built CLI binary without external calls.
+// TestLoginWorkflowsAreValidatedBeforeExternalCalls proves invalid workflows fail before external calls and an omitted workflow reaches sandbox inspection through the built CLI binary.
 func TestLoginWorkflowsAreValidatedBeforeExternalCalls(t *testing.T) {
 	cases := []struct {
 		args       []string
@@ -351,7 +353,7 @@ func TestLoginWorkflowsAreValidatedBeforeExternalCalls(t *testing.T) {
 		{[]string{"integrations", "login", "demo", "github", "bogusflow"}, 2, `unknown workflow "bogusflow": no valid names are available yet`},
 		{[]string{"integrations", "login", "demo", "azure", "bogusflow"}, 2, `unknown workflow "bogusflow": no valid names are available yet`},
 		{[]string{"integrations", "login", "demo", "azdo", "bogusflow", "--organization", "https://example.com/org"}, 2, `unknown workflow "bogusflow": no valid names are available yet`},
-		{[]string{"integrations", "login", "demo", "github"}, 1, "integrations login: not implemented\n"},
+		{[]string{"integrations", "login", "demo", "github"}, 1, ""},
 		{[]string{"agents", "login", "demo", "codex", "bogusflow"}, 2, ""},
 	}
 	for _, tc := range cases {
@@ -366,7 +368,11 @@ func TestLoginWorkflowsAreValidatedBeforeExternalCalls(t *testing.T) {
 			if tc.status == 1 && strings.Contains(string(output), "unknown") {
 				t.Errorf("omitted workflow rejected as unknown: %s", output)
 			}
-			assertNoExternalCalls(t, fakes)
+			if tc.status == 2 {
+				assertNoExternalCalls(t, fakes)
+			} else {
+				assertStateQueriesOnly(t, fakes)
+			}
 		})
 	}
 }
@@ -677,9 +683,7 @@ func lifecycleHarness(t *testing.T, responses map[string]lifecycleResponse) test
 }
 
 func lifecycleRun(args ...string) (int, string) {
-	var output bytes.Buffer
-	status := cli.RunWithHost(args, &output, &output, cli.Host{Platform: "linux"})
-	return status, output.String()
+	return runWithHost(cli.Host{Platform: "linux", PortAvailable: func(uint16) error { return nil }}, args...)
 }
 
 // TestLifecycleLockRefusesBeforeSandboxLookup proves a competing command refuses immediately before any sandbox lookup through RunWithHost and fake Podman.
@@ -807,7 +811,7 @@ func TestLifecycleLocksAreEmptyPersistentAndRejectNonregularPaths(t *testing.T) 
 func ownedLifecycleResponses(running bool) map[string]lifecycleResponse {
 	return map[string]lifecycleResponse{
 		"container exists sandboxed-agents.default.demo":                                                 {},
-		"container inspect sandboxed-agents.default.demo":                                                {Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default"}},"State":{"Running":` + strconv.FormatBool(running) + `}}]`},
+		"container inspect sandboxed-agents.default.demo":                                                {Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2300"}},"State":{"Running":` + strconv.FormatBool(running) + `}}]`},
 		"container exists sandboxed-agents-backup.default.demo":                                          {Exit: 1},
 		"volume exists sandboxed-agents.default.demo.workspace":                                          {Exit: 1},
 		"volume exists sandboxed-agents.default.demo.home":                                               {Exit: 1},
@@ -1367,17 +1371,22 @@ func TestLifecycleRemoveRetainsVolumesAndBindWorkspace(t *testing.T) {
 	}
 }
 
-// TestLifecycleRemoveStopFailurePreventsDeletion proves stop failures prevent container or volume deletion for both remove forms through RunWithHost.
-func TestLifecycleRemoveStopFailurePreventsDeletion(t *testing.T) {
-	for _, kind := range []string{"stop-failure", "with-volumes"} {
+// TestLifecycleRemoveFailurePreventsVolumeDeletion proves a failed stop prevents container and volume deletion with either removal mode through RunWithHost.
+func TestLifecycleRemoveFailurePreventsVolumeDeletion(t *testing.T) {
+	for _, kind := range []string{"keep-volumes", "remove-volumes"} {
 		t.Run(kind, func(t *testing.T) {
 			responses := ownedLifecycleResponses(true)
 			responses["stop sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 23}
+			for _, kind := range []string{"workspace", "home", "ssh"} {
+				name := "sandboxed-agents.default.demo." + kind
+				responses["volume exists "+name] = lifecycleResponse{}
+				responses["volume inspect "+name] = lifecycleResponse{Output: `[{"Labels":{"io.sandboxed-agents.owner":"default"}}]`}
+			}
 			fakes := lifecycleHarness(t, responses)
 			args := []string{"remove", "demo", "--force"}
 			wantMessage := "exit status 23"
 			want := [][]string{{"stop", "sandboxed-agents.default.demo"}}
-			if kind == "with-volumes" {
+			if kind == "remove-volumes" {
 				args = append(args, "--volumes")
 			}
 			status, output := lifecycleRun(args...)
@@ -1387,6 +1396,11 @@ func TestLifecycleRemoveStopFailurePreventsDeletion(t *testing.T) {
 			calls := testutil.Invocations(t, fakes.PodmanLog)
 			if !reflect.DeepEqual(lifecycleMutations(calls), want) {
 				t.Fatalf("mutations=%v want=%v", calls, want)
+			}
+			for _, call := range calls {
+				if len(call) > 1 && call[0] == "volume" && call[1] == "rm" {
+					t.Fatalf("deleted volume after failed stop: %v", call)
+				}
 			}
 		})
 	}

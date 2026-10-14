@@ -9,10 +9,15 @@ import (
 )
 
 type sandboxContainer struct {
-	Config     struct{ Labels map[string]string }
+	Config struct {
+		Labels map[string]string
+		Image  string
+	}
 	HostConfig struct{ Memory, PidsLimit, ShmSize, NanoCpus, CpuQuota, CpuPeriod *int64 }
-	Mounts     []struct{ Type, Source, Destination string }
-	State      struct{ Running *bool }
+	State  struct{ Running *bool }
+	Mounts []struct {
+		Type, Source, Destination string
+	}
 }
 
 func inspectContainer(p podmanTarget, name string) (sandboxContainer, error) {
@@ -32,22 +37,24 @@ type sandboxObjects struct {
 	exists, backup bool
 	volumes        []string
 	foreignVolumes []string
+	volumeOwners   map[string]string
+	conflicts      []string
 }
 
-func inspectSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
+// readSandbox collects Podman facts without deciding which states a command accepts.
+func readSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 	var objects sandboxObjects
 	requiresContainer := request.Command != "remove" && !(request.Command == "ssh-config" && request.Options["remove"] != "")
+	objects.volumeOwners = make(map[string]string)
 	names := DerivedNames(request.Group, request.Name)
 	exists, err := p.exists(containerResource, names.Container)
 	if err != nil {
 		return objects, err
 	}
 	objects.exists = exists
-	mayKeepForeignVolumes := request.Command == "remove" && request.Options["volumes"] != "" && exists
-	var conflicts []string
 	checkOwner := func(name string, labels map[string]string) {
 		if labels[OwnerLabel] != request.Group {
-			conflicts = append(conflicts, name)
+			objects.conflicts = append(objects.conflicts, name)
 		}
 	}
 	if exists {
@@ -74,9 +81,10 @@ func inspectSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 		if err := json.Unmarshal([]byte(output), &records); err != nil || len(records) != 1 {
 			return objects, fmt.Errorf("read volume %s: invalid inspect answer", name)
 		}
+		objects.volumeOwners[name] = records[0].Labels[OwnerLabel]
 		if records[0].Labels[OwnerLabel] != request.Group {
 			objects.foreignVolumes = append(objects.foreignVolumes, name)
-			if !mayKeepForeignVolumes {
+			if !(request.Command == "remove" && request.Options["volumes"] != "" && exists) {
 				checkOwner(name, records[0].Labels)
 			}
 		}
@@ -92,11 +100,30 @@ func inspectSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 		}
 		checkOwner(names.Backup, backup.Config.Labels)
 	}
+	return objects, nil
+}
+
+func (objects sandboxObjects) ownerError() error {
+	if len(objects.conflicts) > 0 {
+		return fmt.Errorf("owner conflict: %s; use Podman to remove or rename the objects", strings.Join(objects.conflicts, ", "))
+	}
+	return nil
+}
+
+func requireSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
+	objects, err := readSandbox(request, p)
+	if err != nil {
+		return objects, err
+	}
 	if !objects.exists && len(objects.volumes) == 0 && !objects.backup {
 		return objects, fmt.Errorf("sandbox %q does not exist in this controller group", request.Name)
 	}
-	if len(conflicts) > 0 {
-		return objects, fmt.Errorf("owner conflict: %s; use Podman to remove or rename the objects", strings.Join(conflicts, ", "))
+	removeOwned := request.Command == "remove" && request.Options["volumes"] != "" && objects.exists && !objects.backup && objects.container.Config.Labels[OwnerLabel] == request.Group
+	if err := objects.ownerError(); err != nil && !removeOwned {
+		return objects, err
+	}
+	if request.Command == "update" && objects.backup {
+		return objects, nil
 	}
 	if !objects.exists && len(objects.volumes) > 0 && !objects.backup && requiresContainer {
 		return objects, fmt.Errorf("sandbox %q has only volumes; use up %s to adopt them", request.Name, request.Name)
@@ -123,14 +150,17 @@ func requireRunning(request Request, objects sandboxObjects) (ObjectNames, error
 
 func changeSandboxState(request Request, p podmanTarget, output io.Writer) error {
 	name := DerivedNames(request.Group, request.Name).Container
-	objects, err := inspectSandbox(request, p)
+	objects, err := requireSandbox(request, p)
 	if err != nil {
 		return err
 	}
-	container := objects.container
-	if request.Command == "remove" && !objects.exists {
-		return removeSandbox(request, p, objects, sessionReport{}, output)
+	if !objects.exists {
+		if request.Command == "remove" {
+			return removeSandbox(request, p, objects, sessionReport{}, output)
+		}
+		return removeSandboxVolumes(request, p, objects, output)
 	}
+	container := objects.container
 	if container.State.Running == nil {
 		return fmt.Errorf("read container %s: running state is missing", name)
 	}
@@ -142,6 +172,11 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 			}
 		}
 		if err := checkReusedUp(request, p, container); err != nil {
+			return err
+		}
+	}
+	if !running && (request.Command == "start" || request.Command == "restart") {
+		if err := checkRecordedPort(p, container); err != nil {
 			return err
 		}
 	}
@@ -209,11 +244,7 @@ func removeSandbox(request Request, p podmanTarget, objects sandboxObjects, ende
 		failures = append(failures, err)
 	}
 	for _, volume := range objects.volumes {
-		foreign := false
-		for _, name := range objects.foreignVolumes {
-			foreign = foreign || name == volume
-		}
-		if request.Options["volumes"] == "" || foreign {
+		if request.Options["volumes"] == "" || objects.volumeOwners[volume] != request.Group {
 			fmt.Fprintf(output, "kept volume %s\n", volume)
 			continue
 		}
@@ -232,6 +263,25 @@ func removeSandbox(request Request, p podmanTarget, objects sandboxObjects, ende
 	return errors.Join(failures...)
 }
 
+func removeSandboxVolumes(request Request, p podmanTarget, objects sandboxObjects, output io.Writer) error {
+	for _, volume := range objects.volumes {
+		if request.Options["volumes"] != "" && objects.volumeOwners[volume] == request.Group {
+			if _, err := p.query("volume", "rm", volume); err != nil {
+				return err
+			}
+			fmt.Fprintf(output, "removed volume %s\n", volume)
+			continue
+		}
+		fmt.Fprintf(output, "kept volume %s\n", volume)
+	}
+	if len(objects.volumes) > 0 && request.Options["volumes"] == "" {
+		fmt.Fprintf(output, "SSH authorization remains in the kept volumes and is replaced by the next ssh-config %s --install\n", request.Name)
+	}
+	// Host SSH setup installation is deferred; there are no managed SSH files
+	// produced by this executable to clean up yet.
+	return objects.ownerError()
+}
+
 type sessionReport struct {
 	names       string
 	unavailable bool
@@ -246,7 +296,7 @@ func (r sessionReport) write(output io.Writer, name string) {
 }
 
 func guardSessions(request Request, p podmanTarget) (sessionReport, error) {
-	output, err := requestManager(request, p, "sessions")
+	output, err := queryManagerSessions(request, p)
 	if err != nil {
 		if request.Options["force"] != "" {
 			return sessionReport{unavailable: true}, nil

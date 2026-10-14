@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -106,6 +107,18 @@ func workspacePathForHost(path, hostOS string) (string, error) {
 func packageLaunchers(executable string) ([]string, error) {
 	directories := append([]string{filepath.Dir(executable)}, filepath.SplitList(os.Getenv("PATH"))...)
 	var paths []string
+	// The npm launcher knows its own location and the links/shims created by
+	// npm, even when invoked directly with their directories absent from PATH.
+	if encoded := os.Getenv("SANDBOXED_AGENTS_NPM_LAUNCHERS"); encoded != "" {
+		if err := json.Unmarshal([]byte(encoded), &paths); err != nil {
+			return nil, fmt.Errorf("protected npm launcher paths: %w", err)
+		}
+		for _, path := range paths {
+			if !filepath.IsAbs(path) {
+				return nil, fmt.Errorf("protected npm launcher path %q must be absolute", path)
+			}
+		}
+	}
 	for _, directory := range directories {
 		for _, name := range []string{"sandboxed-agents", "sandboxed-agents.exe", "sandboxed-agents.cmd", "sandboxed-agents.ps1"} {
 			path := filepath.Join(directory, name)

@@ -10,13 +10,14 @@ import (
 
 // Request is the parsed command, before any host prerequisite or Podman query.
 type Request struct {
-	Command    string
-	Group      string
-	Name       string
-	Args       []string
-	Options    map[string]string
-	Toolchains []string
-	Resources  Resources
+	Command         string
+	Group           string
+	Name            string
+	ConfigSelection catalog.ConfigSelection
+	Args            []string
+	Options         map[string]string
+	Toolchains      []string
+	Resources       Resources
 }
 
 type commandSpec struct {
@@ -58,7 +59,7 @@ var commands = map[string]commandSpec{
 	"agents run":          spec(2, -1, true, "", ""),
 	"agents session":      spec(2, 2, true, "", "stop"),
 	"integrations login":  spec(2, 3, true, "organization", ""),
-	"integrations config": spec(3, 3, true, "name email", ""),
+	"integrations config": spec(2, 3, true, "", ""),
 }
 
 // Parse enforces command-first grammar and step 1 checks before any Podman call.
@@ -87,6 +88,13 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 	if !known {
 		return request, fmt.Errorf("unknown command %q", request.Command)
 	}
+	if request.Command == "integrations config" {
+		definition.options = make(map[string]bool)
+		for _, option := range catalog.Default.ConfigOptionNames() {
+			definition.options[option] = true
+		}
+	}
+
 	if request.Command == "update" && len(rest) > 0 && strings.HasPrefix(rest[0], "--") && slices.Contains(rest, "--all") {
 		definition = spec(0, 0, false, "", "all force")
 	}
@@ -170,7 +178,10 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 	case "integrations login":
 		integration, known := catalog.Default.Integrations[request.Args[1]]
 		if !known || integration.Login == nil {
-			return request, fmt.Errorf("unknown integration %q", request.Args[1])
+			if known && len(integration.ConfigWorkflows) > 0 {
+				return request, fmt.Errorf("%s has no login workflow; use integrations config %s %s; config workflows: %s", request.Args[1], request.Name, request.Args[1], catalog.ValidNames(integration.ConfigWorkflowNames()))
+			}
+			return request, fmt.Errorf("unknown integration %q: no valid names are available yet", request.Args[1])
 		}
 		if len(request.Args) == 3 && !slices.Contains(integration.LoginWorkflows, request.Args[2]) {
 			if len(integration.LoginWorkflows) == 0 {
@@ -193,17 +204,18 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 			}
 		}
 	case "integrations config":
-		integration, known := catalog.Default.Integrations[request.Args[1]]
-		if !known || len(integration.ConfigWorkflows) == 0 {
-			return request, fmt.Errorf("unknown integration %q", request.Args[1])
+		workflowName := ""
+		if len(request.Args) == 3 {
+			workflowName = request.Args[2]
 		}
-		workflow, known := integration.ConfigWorkflows[request.Args[2]]
-		if !known {
-			return request, fmt.Errorf("unknown %s config workflow %q", request.Args[1], request.Args[2])
+		selection, err := catalog.Default.ResolveConfig(request.Args[1], workflowName)
+		if err != nil {
+			return request, err
 		}
+		request.ConfigSelection = selection
 		for option := range request.Options {
-			if !slices.Contains(workflow.Options, option) {
-				return request, fmt.Errorf("%s %s takes no options", request.Args[1], request.Args[2])
+			if !slices.Contains(selection.Definition.Options, option) {
+				return request, fmt.Errorf("%s %s takes no options", selection.Integration, selection.Workflow)
 			}
 		}
 	}
