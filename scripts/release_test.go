@@ -23,14 +23,14 @@ const (
 	windowsArtifact = "sandboxed-agents-windows-amd64.exe"
 )
 
-var releaseArtifacts = []string{linuxArtifact, windowsArtifact, "SHA256SUMS", "SandboxedAgents." + releasetest.ReleaseVersion + ".nupkg"}
+var releaseArtifacts = []string{linuxArtifact, windowsArtifact, "SHA256SUMS", "SandboxedAgents." + releasetest.ReleaseVersion + ".nupkg", "sandboxed-agents-" + releasetest.ReleaseVersion + ".tgz"}
 
-// TestReleaseBuildsAreReproducible proves the same tagged commit yields identical executables, checksums, and NuGet packages from LF and CRLF inputs through the release script on Linux.
+// TestReleaseBuildsAreReproducible proves the same tagged commit yields identical executables, checksums, NuGet packages, and npm tarballs from LF and CRLF inputs through the release script on Linux.
 func TestReleaseBuildsAreReproducible(t *testing.T) {
 	assertReproducibleRelease(t, releaseRepositoryOrSkip(t))
 }
 
-// TestWindowsReleaseBuildsAreReproducible proves the same tagged commit yields identical executable and NuGet package bytes and a working Windows version command through explicitly configured Git for Windows Bash.
+// TestWindowsReleaseBuildsAreReproducible proves the same tagged commit yields identical executable, NuGet package, and npm tarball bytes and a working Windows version command through explicitly configured Git for Windows Bash.
 func TestWindowsReleaseBuildsAreReproducible(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows release integration requires Windows and configured Git for Windows Bash")
@@ -394,7 +394,7 @@ func buildRelease(t *testing.T, root, output string) {
 	}
 }
 
-// assertReleaseArtifactsEqual proves executables, checksums, and the NuGet command package match the baseline byte for byte.
+// assertReleaseArtifactsEqual proves executables, checksums, and both command packages match the baseline byte for byte.
 func assertReleaseArtifactsEqual(t *testing.T, baseline string, directories ...string) {
 	t.Helper()
 	for _, name := range releaseArtifacts {

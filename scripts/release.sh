@@ -50,7 +50,7 @@ if [[ $inside_worktree == true ]]; then
     ignored_inputs=$(git ls-files --others --ignored --exclude-standard -- \
         ':(glob)image/context/**' 'go.mod' 'go.sum' 'go.work' '.gitattributes' ':(glob)**/*.go' \
         'scripts/release.sh' 'scripts/version-symbol.txt' 'packages/nuget/SandboxedAgents.nuspec' \
-        ':(glob)packages/nuget/tools/**')
+        ':(glob)packages/nuget/tools/**' ':(glob)packages/npm/**')
     if [[ -n $ignored_inputs ]]; then
         printf 'release refuses ignored release inputs:\n%s\n' "$ignored_inputs" >&2
         exit 1
@@ -82,3 +82,4 @@ for target in linux windows; do
 done
 
 GOOS=$host_os GOARCH=$host_arch go run ./internal/nuget/cmd/package "$version" "$root" "$output"
+GOOS=$host_os GOARCH=$host_arch go run ./internal/npm/cmd/package "$version" "$root" "$output"
