@@ -714,7 +714,7 @@ func TestLifecycleLockRefusesBeforeSandboxLookup(t *testing.T) {
 		var out bytes.Buffer
 		status := cli.RunWithHost(args, &out, &out, host)
 		output := out.String()
-		if status == 0 || !strings.Contains(output, "demo") || !strings.Contains(output, "another lifecycle command is in progress") || !strings.Contains(output, "retry") || time.Since(start) > time.Second {
+		if status == 0 || !strings.Contains(output, "demo") || !strings.Contains(output, "another lifecycle or SSH setup command is in progress") || !strings.Contains(output, "retry") || time.Since(start) > time.Second {
 			t.Errorf("%v: status=%d output=%s", args, status, output)
 		}
 	}
@@ -1295,7 +1295,7 @@ func TestLifecycleLockCoversSessionGuardAndMutation(t *testing.T) {
 			}
 			before := testutil.Invocations(t, fakes.PodmanLog)
 			status, output := lifecycleRun("remove", "demo")
-			if status == 0 || !strings.Contains(output, "another lifecycle command is in progress") {
+			if status == 0 || !strings.Contains(output, "another lifecycle or SSH setup command is in progress") {
 				t.Fatalf("status=%d output=%s", status, output)
 			}
 			if after := testutil.Invocations(t, fakes.PodmanLog); !reflect.DeepEqual(before, after) {
@@ -1702,7 +1702,7 @@ func TestWindowsWorkspaceAutomountRefusalPrecedesHeldLifecycleLock(t *testing.T)
 				if status != 1 || !strings.HasPrefix(text, "step 2:") || !strings.Contains(text, "custom WSL automount root") || !strings.Contains(text, "/custom/drives/") || strings.Contains(text, "step 3:") {
 					t.Errorf("bound status=%d output=%q; want custom-root refusal before lock", status, text)
 				}
-			} else if status != 1 || !strings.HasPrefix(text, "step 3:") || !strings.Contains(text, "another lifecycle command is in progress") || strings.Contains(text, "step 2:") {
+			} else if status != 1 || !strings.HasPrefix(text, "step 3:") || !strings.Contains(text, "another lifecycle or SSH setup command is in progress") || strings.Contains(text, "step 2:") {
 				t.Errorf("unbound status=%d output=%q; want held lifecycle lock", status, text)
 			}
 		})

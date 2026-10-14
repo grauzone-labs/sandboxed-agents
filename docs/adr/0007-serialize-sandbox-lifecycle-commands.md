@@ -46,13 +46,13 @@ Every lock that `update --all` takes stays held from its acquisition until the c
 - Each sandbox has one lock file at a fixed path in the `locks` directory of the controller group's host state, `group-GROUP/locks/`.
 - The file name is derived from a SHA-256 hash of the sandbox's Podman container name `sandboxed-agents.GROUP.NAME` (ADR-0005), written as lowercase hexadecimal. Two sandbox names that differ only in case therefore get different files on case-insensitive file systems, and no file name equals a name that Windows reserves for devices.
 - The lock file is a regular file. A command fails without acting on the sandbox when something other than a regular file is at that path.
-- Lock files are never deleted. A process that opens a lock file which another process is removing at that moment would lock a file that no other command will open, and both would act on the same sandbox. A lock file is therefore left behind for every sandbox name that a lifecycle command has ever been run for.
+- Lock files are never deleted. A process that opens a lock file which another process is removing at that moment would lock a file that no other command will open, and both would act on the same sandbox. A lock file is therefore left behind for every sandbox name that a lifecycle command or SSH setup mutation has ever been run for.
 - A lock file stays empty. It records no update progress, no previous running state, and no configuration. The progress of an update and the running state before it remain only in Podman: in the label on the new container and in the backup container's name (ADR-0005, Update with rollback Feature).
 - On Linux the lock is `flock` with `LOCK_EX | LOCK_NB`. On Windows it is `LockFileEx` with `LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY`. The manager lock in the container uses the same primitives.
 
 ## What the contract covers
 
-Commands on different sandbox names, or on the same name in different controller groups, take different locks and run independently. The contract covers only the executable's own lifecycle commands run by the same host user. It does not cover:
+Commands on different sandbox names, or on the same name in different controller groups, take different locks and run independently. The contract covers only the executable's own lifecycle commands and SSH setup mutations run by the same host user. It does not cover:
 
 - commands run by other host users, which use their own Podman and host state;
 - commands that resolve a different host state root, for example with another `XDG_STATE_HOME` on Linux or another `LOCALAPPDATA` on Windows. They lock a different file, so commands are coordinated only when they share one host state root;
@@ -94,7 +94,7 @@ The readiness wait needs no host prerequisite beyond those the preflight already
 ## Consequences
 
 - Each lifecycle command and SSH setup mutation opens and locks one file in host state before its first sandbox lookup, and `update --all` one file per found name after its name inventory, so host state and its `locks` directory are created when they are missing, also for commands that never install an SSH setup. The read-only SSH preview creates no host state.
-- Two lifecycle commands on the same sandbox, for example from two terminals or from a script and a user, fail fast instead of interleaving. Scripts that run them in parallel must retry.
+- Lifecycle commands and SSH setup mutations on the same sandbox, for example from two terminals or from a script and a user, fail fast instead of interleaving. Scripts that run them in parallel must retry.
 - While `update --all` runs, which can take minutes because of builds and readiness waits, every other lifecycle command on the sandboxes it holds is refused. A second `update --all` passes those sandboxes over and exits non-zero.
 - Lock files accumulate in `group-GROUP/locks/`, one per sandbox name ever used, including unknown names. Each is empty.
 - The user documentation states that writers that use Podman directly and commands with another host state root are outside the contract, and that the lock is coordination, not protection.
