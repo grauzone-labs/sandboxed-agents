@@ -55,6 +55,12 @@ func RunWindowsSSH(t *testing.T, executable string, arguments ...string) ([]byte
 	return output, err
 }
 
+// SSHKeyOutputMatches reports whether ssh-keygen output has the expected key type and key data.
+func SSHKeyOutputMatches(output []byte, publicKey string) bool {
+	fields := strings.Fields(string(output))
+	return len(fields) >= 2 && strings.Join(fields[:2], " ") == publicKey
+}
+
 func SnapshotWindowsSSHPermissions(t *testing.T, path string) WindowsSSHPermissions {
 	t.Helper()
 	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,

@@ -207,7 +207,7 @@ func TestSecureSSHPathWindowsOpenSSHAcceptsSetup(t *testing.T) {
 		t.Fatalf("generated public key is invalid: %q", publicKey)
 	}
 	output, err = testutil.RunWindowsSSH(t, keygen, "-y", "-P", "", "-f", key)
-	if err != nil || strings.TrimSpace(string(output)) != strings.Join(fields[:2], " ") {
+	if err != nil || !testutil.SSHKeyOutputMatches(output, strings.Join(fields[:2], " ")) {
 		t.Fatalf("OpenSSH did not load the secured private key: %v\n%s", err, output)
 	}
 	managedConfig := filepath.Join(managedDirectory, "config")
