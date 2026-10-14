@@ -1,6 +1,9 @@
 package cli
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 type recordedIntegerLimit struct {
 	option string
@@ -31,13 +34,32 @@ func (container sandboxContainer) workspaceBind() (string, bool) {
 	return "", false
 }
 
-func recordedCPUs(container sandboxContainer) (float64, error) {
+type recordedCPULimit struct {
+	units, period int64
+}
+
+func (container sandboxContainer) cpuLimit() (recordedCPULimit, error) {
 	limits := container.HostConfig
 	if limits.CpuQuota != nil && limits.CpuPeriod != nil && *limits.CpuPeriod > 0 && *limits.CpuQuota > 0 {
-		return float64(*limits.CpuQuota) / float64(*limits.CpuPeriod), nil
+		return recordedCPULimit{*limits.CpuQuota, *limits.CpuPeriod}, nil
 	}
 	if limits.NanoCpus != nil && *limits.NanoCpus > 0 {
-		return float64(*limits.NanoCpus) / 1e9, nil
+		return recordedCPULimit{*limits.NanoCpus, 1e9}, nil
 	}
-	return 0, fmt.Errorf("recorded --cpus is missing")
+	return recordedCPULimit{}, fmt.Errorf("recorded --cpus is missing")
+}
+
+func (limit recordedCPULimit) cores() float64 {
+	return float64(limit.units) / float64(limit.period)
+}
+
+func (limit recordedCPULimit) matches(cpus float64) bool {
+	if limit.cores() == cpus {
+		return true
+	}
+	// Podman truncates floating point cores to whole quota units. Compare in
+	// those units instead of requiring its rounded ratio to equal the input.
+	// https://github.com/containers/podman/blob/v4.4.0/pkg/util/utils.go
+	units := cpus * float64(limit.period)
+	return units < math.Exp2(63) && int64(units) == limit.units
 }

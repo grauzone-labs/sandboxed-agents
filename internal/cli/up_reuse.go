@@ -63,12 +63,12 @@ func checkReusedResources(request Request, container sandboxContainer) error {
 		}
 	}
 	if request.Options["cpus"] != "" {
-		cpus, err := recordedCPUs(container)
+		cpus, err := container.cpuLimit()
 		if err != nil {
 			return fmt.Errorf("sandbox %s: %w", request.Name, err)
 		}
-		if cpus != request.Resources.CPUs {
-			return reusedUpConflict(request, fmt.Sprintf("--cpus differs: requested %s; recorded limit %s", strconv.FormatFloat(request.Resources.CPUs, 'f', -1, 64), strconv.FormatFloat(cpus, 'f', -1, 64)))
+		if !cpus.matches(request.Resources.CPUs) {
+			return reusedUpConflict(request, fmt.Sprintf("--cpus differs: requested %s; recorded limit %s", strconv.FormatFloat(request.Resources.CPUs, 'f', -1, 64), strconv.FormatFloat(cpus.cores(), 'f', -1, 64)))
 		}
 	}
 	return nil

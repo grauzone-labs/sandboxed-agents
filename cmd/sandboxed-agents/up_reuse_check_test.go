@@ -77,6 +77,42 @@ func TestUpExistingMatchesConfigurationBeforeStarting(t *testing.T) {
 	}
 }
 
+// TestUpReusesFractionalCPUQuotaWithoutFalseConflict proves fractional CPU values match Podman's truncated quota and different values refuse before starting through the CLI and fake Podman seam.
+func TestUpReusesFractionalCPUQuotaWithoutFalseConflict(t *testing.T) {
+	for _, test := range []struct {
+		requested, recorded string
+		matching            bool
+	}{
+		{"0.009", `"CpuQuota":899,"CpuPeriod":100000`, true},
+		{"0.071", `"CpuQuota":7099,"CpuPeriod":100000`, true},
+		{"0.071", `"CpuQuota":7100,"CpuPeriod":100000`, true},
+		{"0.072", `"CpuQuota":7099,"CpuPeriod":100000`, false},
+		{"0.071", `"NanoCpus":71000000`, true},
+		{"0.072", `"NanoCpus":71000000`, false},
+	} {
+		t.Run(test.requested+"/"+test.recorded, func(t *testing.T) {
+			responses := healthyCheckResponses(false)
+			record := responses["container inspect sandboxed-agents.default.demo"]
+			record.Output = strings.Replace(record.Output, `"CpuQuota":250000,"CpuPeriod":100000`, test.recorded, 1)
+			responses["container inspect sandboxed-agents.default.demo"] = record
+			responses["--version"] = lifecycleResponse{Output: "podman version 4.4.0"}
+			responses["info --format json"] = lifecycleResponse{Output: `{"host":{"security":{"rootless":true},"cgroupVersion":"v2"}}`}
+			fakes := sshSetupHarness(t, map[string]lifecycleResponse{})
+			scriptSetupResponses(t, responses, "linux")
+			host := lifecycleLinuxHost(t, fakes)
+			host.PortAvailable = func(uint16) error { return nil }
+			status, output := runWithHost(host, "up", "demo", "--cpus", test.requested)
+			if (status == 0) != test.matching {
+				t.Fatalf("fractional reuse=%d %s", status, output)
+			}
+			mutations := lifecycleMutations(testutil.Invocations(t, fakes.PodmanLog))
+			if test.matching && !reflect.DeepEqual(mutations, [][]string{{"start", "sandboxed-agents.default.demo"}}) || !test.matching && len(mutations) != 0 {
+				t.Fatalf("fractional reuse mutations=%v", mutations)
+			}
+		})
+	}
+}
+
 // TestUpResourceOverridesAreReportedByCheck proves resource overrides reach container creation and later diagnostics through the CLI and fake Podman seams.
 func TestUpResourceOverridesAreReportedByCheck(t *testing.T) {
 	responses := newSandboxResponses()
