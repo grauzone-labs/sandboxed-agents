@@ -4,7 +4,7 @@ This document describes the base image recipe in `image/context/base/`, the four
 
 `image/assets.go` owns the `go:embed` directive. Its `Context` API supplies a read-only context with CRLF text line endings normalized to LF. At build time, `.bin` files and NUL-containing files preserve the bytes already present in the tree. `.gitattributes` marks `.bin` files as binary and forces other context files to text, so binary assets must use `.bin` to preserve exact bytes through Git. The asset hash includes sorted relative paths and normalized contents with length prefixes; it excludes file modes and timestamps. `sandboxed-agents version` prints the version followed by `asset-sha256 HASH`.
 
-Run `bash scripts/release.sh VERSION OUTPUT_DIRECTORY` with the Go version from `go.mod` on `PATH` to build static Linux and Windows AMD64 executables. The script runs `image/cmd/overlay` to prepare normalized files in a temporary directory and uses a Go build overlay, so the release executable embeds LF bytes even from a CRLF checkout. The checkout stays untouched and the temporary files are removed. A plain `go build` normalizes the context at runtime but embeds no manager, so its images cannot build; see [Development builds with the manager](#development-builds-with-the-manager). Use the release script for normalization before embedding and reproducible binary bytes. The script also emits `SHA256SUMS` and the `SandboxedAgents.VERSION.nupkg` [NuGet command package](nuget-package.md), which contains the Windows executable, its checksum manifest, and the PowerShell 7 install and remove scripts; npm packaging is not implemented. `VERSION` must be NuGet-compatible SemVer: `X.Y.Z` with optional prerelease and build metadata. The package filename omits any `+build` suffix while the nuspec keeps the full version, so `1.2.3+abc` produces `SandboxedAgents.1.2.3.nupkg` with version `1.2.3+abc` in its nuspec.
+Run `bash scripts/release.sh VERSION OUTPUT_DIRECTORY` with the Go version from `go.mod` on `PATH` to build static Linux and Windows AMD64 executables. The script runs `image/cmd/overlay` to prepare normalized files in a temporary directory and uses a Go build overlay, so the release executable embeds LF bytes even from a CRLF checkout. The checkout stays untouched and the temporary files are removed. A plain `go build` normalizes the context at runtime but embeds no manager, so its images cannot build; see [Development builds with the manager](#development-builds-with-the-manager). Use the release script for normalization before embedding and reproducible binary bytes. The script also emits `SHA256SUMS` and the `SandboxedAgents.VERSION.nupkg` [NuGet command package](nuget-package.md), which contains the Windows executable, its checksum manifest, and the PowerShell 7 install and remove scripts. It also emits the `sandboxed-agents-VERSION.tgz` [npm package](npm-package.md), which holds both executables, their checksum manifest, and a Node.js launcher. `VERSION` must be NuGet-compatible SemVer: `X.Y.Z` with optional prerelease and build metadata. The package filename omits any `+build` suffix while the nuspec keeps the full version, so `1.2.3+abc` produces `SandboxedAgents.1.2.3.nupkg` with version `1.2.3+abc` in its nuspec.
 
 `.gitattributes` keeps `go.mod`, `scripts/*.sh`, `scripts/version-symbol.txt`, `packages/nuget/**`, all `*.go` files, and `.github/workflows/*.yml` and `*.yaml` checkouts at LF, so `gofmt` stays clean under `core.autocrlf=true`. The release tests still rewrite their inputs to CRLF to prove reproducibility.
 
@@ -81,7 +81,7 @@ To update the expected fingerprint, the maintainer takes these steps:
 4. Replace the fixture `image/test/nodesource/nodesource-repo.gpg.key` with the new key.
 5. Update the source, date, and key details in the section above.
 6. Run the offline test. It reads the expected fingerprint from the fingerprint file, so the test needs no edit.
-7. Prepare the build context as in [Development builds with the manager](#development-builds-with-the-manager), build the base image with rootless Podman, `podman build -f TEMP/context/base/Containerfile TEMP/context/base`, and check that apt accepts the repository. The `manager.bin` in the source tree is an empty placeholder, so a build from the checkout itself stops at the manager guard.
+7. Prepare the build context (`<prepared-context>`) as in [Development builds with the manager](#development-builds-with-the-manager), build the base image with rootless Podman, `podman build -f <prepared-context>/context/base/Containerfile <prepared-context>/context/base`, and check that apt accepts the repository. The `manager.bin` in the source tree is an empty placeholder, so a build from the checkout itself stops at the manager guard.
 8. Commit.
 
 Changing the fingerprint file changes the asset hash, so the base image gets a new tag (see [Build and tags](#build-and-tags)).
@@ -155,9 +155,9 @@ Once the base image has been rebuilt, `build` prints that existing sandboxes kee
 
 ### Recorded set and outdated sandboxes
 
-`up` on an existing sandbox starts it when `--with` is absent or names the recorded set. A different set exits non-zero without starting the sandbox and names `update NAME --with SET`. A sandbox with no recorded set also fails.
+`up` on an existing sandbox starts it when `--with` is absent or names the recorded set. A different set exits non-zero without starting the sandbox and names `update NAME --with SET`. The recorded set is the container's `io.sandboxed-agents.toolchains` label. A sandbox created before that label existed falls back to the set in the tag of its `Config.Image` name. Only an explicit `--with` needs a recorded set: when neither source yields a valid set, `up --with` fails, while `up` without `--with` still starts the sandbox.
 
-`list` shows each sandbox's set. It marks a sandbox as outdated when its container was not created from the current image for that set, or when that toolchain image's `io.sandboxed-agents.base-image` label differs from the ID of the current base image. The second case arises when `build` rebuilt the base image and a toolchain build failed. A base rebuild therefore makes every older sandbox outdated, including its toolchain sets whose own rebuild failed.
+`list` shows each sandbox's set, read the same way. It marks a sandbox as outdated when the immutable image ID of its container differs from the ID of the current image for that set, or when that toolchain image's `io.sandboxed-agents.base-image` label differs from the ID of the current base image. The second case arises when `build` rebuilt the base image and a toolchain build failed. A base rebuild therefore makes every older sandbox outdated, including its toolchain sets whose own rebuild failed.
 
 ### No image removal
 
@@ -170,11 +170,13 @@ The base recipe copies `manager.bin` into the image. In the source tree that fil
 To build a host executable whose images work, run these from the repository root with the Go version from `go.mod` on `PATH`:
 
 ```sh
-go run ./image/cmd/overlay "$TEMP"
-go build -overlay "$TEMP/overlay.json" -o sandboxed-agents ./cmd/sandboxed-agents
+image_build_context=$(mktemp -d)
+trap 'rm -rf "$image_build_context"' EXIT
+go run ./image/cmd/overlay "$image_build_context"
+go build -overlay "$image_build_context/overlay.json" -o sandboxed-agents ./cmd/sandboxed-agents
 ```
 
-`TEMP` is an empty directory outside the checkout. The overlay command writes the normalized context into it, compiles `cmd/sandboxed-agents-manager` for Linux amd64 as `$TEMP/context/base/manager.bin`, and writes `overlay.json`. Keep the directory until the `go build` has finished. The checkout stays unchanged. `scripts/release.sh` does the same for release builds.
+`image_build_context` is an empty directory outside the checkout, removed when the shell exits. The overlay command writes the normalized context into it, compiles `cmd/sandboxed-agents-manager` for Linux amd64 as `$image_build_context/context/base/manager.bin`, and writes `overlay.json`. Keep the directory until the `go build` has finished. The checkout stays unchanged. `scripts/release.sh` does the same for release builds.
 
 ## Tests and limits
 
@@ -184,14 +186,12 @@ The offline test is run with `bash image/test/nodesource/test-check-nodesource-k
 
 ### Live image tests
 
-The live image coverage creates one sandbox per toolchain and one without, runs each smoke check inside its sandbox as `agent` with `shell NAME`, calls `build` once, and then checks the labels, the shared base layers, that existing sandboxes keep their image, and that `list` marks them outdated. It compiles its own prepared executable and uses a new controller group. Because `build` renews every image of the current executable on the Podman host, the coverage needs its own opt-in; the generic live opt-in does not select it:
+The live image coverage creates one sandbox per toolchain and one without, runs each smoke check inside its sandbox as `agent` with `shell NAME`, calls `build` once, and then checks the labels, the shared base layers, that existing sandboxes keep their image, and that `list` marks them outdated. It compiles its own prepared executable and uses a new controller group. Because `build` renews every image of the current executable on the Podman host, the coverage has its own opt-in, `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1`, and needs no other variable:
 
 ```sh
-SANDBOXED_AGENTS_LIVE_TESTS=1 SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1 \
+SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1 \
   go test ./cmd/sandboxed-agents -run '^TestLiveImages$' -timeout 90m -v
 ```
-
-`SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1` is the variable that selects it.
 
 ### Honest limits
 
