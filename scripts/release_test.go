@@ -394,7 +394,7 @@ func buildRelease(t *testing.T, root, output string) {
 	}
 }
 
-// assertReleaseArtifactsEqual proves executables, checksums, and both command packages match the baseline byte for byte.
+// assertReleaseArtifactsEqual proves executables, checksums, the npm package, and the NuGet command package match the baseline byte for byte.
 func assertReleaseArtifactsEqual(t *testing.T, baseline string, directories ...string) {
 	t.Helper()
 	for _, name := range releaseArtifacts {

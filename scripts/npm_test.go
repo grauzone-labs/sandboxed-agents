@@ -41,6 +41,7 @@ func TestNpmCommandPackage(t *testing.T) {
 	}
 	var manifest struct {
 		Name, Version string
+		OS, CPU       []string
 		Repository    struct {
 			URL string `json:"url"`
 		}
@@ -52,6 +53,18 @@ func TestNpmCommandPackage(t *testing.T) {
 	if manifest.Name != "sandboxed-agents" || manifest.Version != releasetest.ReleaseVersion || manifest.Repository.URL != "https://github.com/grauzone-labs/sandboxed-agents.git" || manifest.Bin["sandboxed-agents"] != "launcher.cjs" {
 		t.Fatalf("unexpected npm metadata: %+v", manifest)
 	}
+	if !reflect.DeepEqual(manifest.OS, []string{"linux", "win32"}) || !reflect.DeepEqual(manifest.CPU, []string{"x64"}) {
+		t.Fatalf("npm platform metadata: os=%q cpu=%q; want linux/win32 and x64", manifest.OS, manifest.CPU)
+	}
+	const upgradeVersion = "0.0.31-test"
+	runGit(t, checkout, "tag", "v"+upgradeVersion)
+	upgradeOutput := t.TempDir()
+	upgrade := exec.Command(releaseBash(t), filepath.ToSlash(filepath.Join(checkout, "scripts", "release.sh")), upgradeVersion, filepath.ToSlash(upgradeOutput))
+	setReleaseTestDirectoryAndEnvironment(upgrade, checkout)
+	if result, err := upgrade.CombinedOutput(); err != nil {
+		t.Fatalf("upgrade release build: %v\n%s", err, result)
+	}
+	upgradeArchive := filepath.Join(upgradeOutput, "sandboxed-agents-"+upgradeVersion+".tgz")
 	fake := filepath.Join(t.TempDir(), "fake")
 	if runtime.GOOS == "windows" {
 		fake += ".exe"
@@ -96,12 +109,23 @@ func TestNpmCommandPackage(t *testing.T) {
 				install, remove = append(install, "--global"), append(remove, "--global")
 				packagePath, commandPath = npmPackagePath(prefix), npmCommandPath(prefix)
 			}
-			for range 2 {
-				runNpm(t, prefix, append(install, archive)...)
+			for _, release := range []struct{ archive, version string }{{archive, releasetest.ReleaseVersion}, {upgradeArchive, upgradeVersion}} {
+				runNpm(t, prefix, append(install, release.archive)...)
 				command := npmShimCommand(commandPath, "version")
 				result, err := command.CombinedOutput()
-				if want := releasetest.ExpectedVersion(t, releasetest.ReleaseVersion); err != nil || string(result) != want {
+				if want := releasetest.ExpectedVersion(t, release.version); err != nil || string(result) != want {
 					t.Fatalf("installed npm version: error=%v output=%q; want %q", err, result, want)
+				}
+				metadata, err := os.ReadFile(filepath.Join(packagePath, "package.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var installed struct{ Version string }
+				if err := json.Unmarshal(metadata, &installed); err != nil {
+					t.Fatal(err)
+				}
+				if installed.Version != release.version {
+					t.Fatalf("installed npm package version=%q; want %q", installed.Version, release.version)
 				}
 			}
 			launcher := filepath.Join(packagePath, "launcher.cjs")
@@ -235,6 +259,36 @@ func TestNpmRejectsUnsupportedPlatforms(t *testing.T) {
 				if err == nil || !strings.Contains(string(result), unsupported) {
 					t.Fatalf("unsupported platform: error=%v output=%s; want %q", err, result, unsupported)
 				}
+			}
+		})
+	}
+}
+
+// TestNpmMetadataRejectsUnsupportedPlatformsWithoutScripts proves npm itself refuses ARM64 on either supported OS and macOS on Linux with lifecycle scripts disabled through packed-tarball installation on a simulated Node host.
+func TestNpmMetadataRejectsUnsupportedPlatformsWithoutScripts(t *testing.T) {
+	archive, _ := fixtureNpmArchive(t)
+	nodeOS := runtime.GOOS
+	if nodeOS == "windows" {
+		nodeOS = "win32"
+	}
+	platforms := []struct{ os, arch string }{{nodeOS, "arm64"}}
+	// Spoofing Unix as Windows (or Windows as Unix) changes npm path parsing before installation.
+	if runtime.GOOS == "linux" {
+		platforms = append(platforms, struct{ os, arch string }{"darwin", "x64"})
+	}
+	for _, platform := range platforms {
+		t.Run(platform.os+"-"+platform.arch, func(t *testing.T) {
+			preload := filepath.Join(t.TempDir(), "npm-platform.cjs")
+			// npm-install-checks reads these Node host values directly for non-optional packages.
+			script := fmt.Sprintf("Object.defineProperty(process, 'platform', {value:%q}); Object.defineProperty(process, 'arch', {value:%q});\n", platform.os, platform.arch)
+			if err := os.WriteFile(preload, []byte(script), 0600); err != nil {
+				t.Fatal(err)
+			}
+			command := npmCommand(t, t.TempDir(), "install", "--global", "--ignore-scripts", archive)
+			command.Env = testutil.Env(command.Env, map[string]string{"NODE_OPTIONS": "--require=" + strconv.Quote(preload)})
+			result, err := command.CombinedOutput()
+			if err == nil || !strings.Contains(string(result), "EBADPLATFORM") || !strings.Contains(string(result), "Unsupported platform") {
+				t.Fatalf("unsupported npm host with scripts disabled: error=%v output=%s; want EBADPLATFORM refusal", err, result)
 			}
 		})
 	}

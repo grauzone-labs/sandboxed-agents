@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 
-function verifiedBinary(all = false) {
+function verifiedBinary(verifyBothBinaries = false) {
   if (process.arch !== 'x64' || !['linux', 'win32'].includes(process.platform)) {
     throw new Error(`unsupported platform ${process.platform}-${process.arch}; supported platforms: linux-x64 and win32-x64`);
   }
@@ -12,7 +12,7 @@ function verifiedBinary(all = false) {
     ? 'sandboxed-agents-windows-amd64.exe'
     : 'sandboxed-agents-linux-amd64';
   const manifest = fs.readFileSync(path.join(__dirname, 'SHA256SUMS'), 'utf8');
-  const names = all ? ['sandboxed-agents-linux-amd64', 'sandboxed-agents-windows-amd64.exe'] : [name];
+  const names = verifyBothBinaries ? ['sandboxed-agents-linux-amd64', 'sandboxed-agents-windows-amd64.exe'] : [name];
   for (const candidate of names) {
     const entries = manifest.split(/\r?\n/).filter((line) => line.endsWith(`  ${candidate}`));
     if (entries.length !== 1 || !/^[0-9a-f]{64}  /.test(entries[0])) {
