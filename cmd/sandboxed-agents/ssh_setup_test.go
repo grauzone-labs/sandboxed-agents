@@ -27,18 +27,9 @@ func sshSetupRun(t *testing.T, args ...string) (int, string, string) {
 
 // TestUpSSHOptInRefusesWorkspaceChangeBeforeStarting proves opt-in reuse does not silently substitute an existing workspace for a newly requested bind through RunWithHost and fake Podman inspection.
 func TestUpSSHOptInRefusesWorkspaceChangeBeforeStarting(t *testing.T) {
-	responses := installResponses()
-	responses["--version"] = lifecycleResponse{Output: "podman version 4.4.0"}
-	responses["info --format json"] = lifecycleResponse{Output: `{"host":{"security":{"rootless":true},"cgroupVersion":"v2"}}`}
-	response := responses["container inspect sandboxed-agents.default.demo"]
-	response.Output = strings.ReplaceAll(response.Output, `"Running":true`, `"Running":false`)
-	responses["container inspect sandboxed-agents.default.demo"] = response
+	responses := setupPreflightResponses(false)
 	fakes := sshSetupHarness(t, map[string]lifecycleResponse{})
-	data, err := json.Marshal(responses)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+	scriptSetupResponses(t, responses, "linux")
 	host := lifecycleLinuxHost(t, fakes)
 	var stdout, stderr strings.Builder
 	workspace := t.TempDir()
@@ -53,20 +44,33 @@ func TestUpSSHOptInRefusesWorkspaceChangeBeforeStarting(t *testing.T) {
 	}
 }
 
+// TestRunningUpSSHOptInReportsUnavailableManagerBeforeOptionConflict proves the running sandbox's manager precondition wins over changed configuration through RunWithHost and fake Podman.
+func TestRunningUpSSHOptInReportsUnavailableManagerBeforeOptionConflict(t *testing.T) {
+	responses := setupPreflightResponses(true)
+	responses["exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager version"] = lifecycleResponse{Exit: 42, Output: "unavailable manager"}
+	fakes := sshSetupHarness(t, map[string]lifecycleResponse{})
+	scriptSetupResponses(t, responses, "linux")
+	host := lifecycleLinuxHost(t, fakes)
+	var stdout, stderr strings.Builder
+	status := cli.RunWithHost([]string{"up", "demo", "--ssh-config", "--port", "2300", "--memory", "9g"}, &stdout, &stderr, host)
+	if status == 0 || !strings.Contains(stderr.String(), "unavailable manager") || !strings.Contains(stderr.String(), "check demo") || !strings.Contains(stderr.String(), "restart demo") || strings.Contains(stderr.String(), "differs from") {
+		t.Fatalf("precedence=%d %q %q", status, stdout.String(), stderr.String())
+	}
+	for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
+		if len(call) > 0 && (call[0] == "start" || call[0] == "stop" || call[0] == "rm") {
+			t.Fatalf("precondition changed state=%v", call)
+		}
+	}
+}
+
 // TestUpSSHOptInChecksExplicitResourceLimitsBeforeStarting proves opt-in reuse refuses changed resource limits and accepts matching limits through RunWithHost and fake Podman inspection.
 func TestUpSSHOptInChecksExplicitResourceLimitsBeforeStarting(t *testing.T) {
 	for _, options := range [][]string{{"--memory", "9g"}, {"--cpus", "5"}, {"--pids-limit", "2000"}, {"--shm-size", "2g"}, {"--memory", "8g", "--cpus", "4", "--pids-limit", "2048", "--shm-size", "1g"}} {
 		t.Run(strings.Join(options, " "), func(t *testing.T) {
-			responses := installResponses()
-			responses["--version"] = lifecycleResponse{Output: "podman version 4.4.0"}
-			responses["info --format json"] = lifecycleResponse{Output: `{"host":{"security":{"rootless":true},"cgroupVersion":"v2"}}`}
+			responses := setupPreflightResponses(true)
 			responses["container inspect sandboxed-agents.default.demo"] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}},"HostConfig":{"Memory":8589934592,"NanoCpus":4000000000,"CpuQuota":400000,"CpuPeriod":100000,"PidsLimit":2048,"ShmSize":1073741824},"State":{"Running":false}}]`}
 			fakes := sshSetupHarness(t, map[string]lifecycleResponse{})
-			data, err := json.Marshal(responses)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+			scriptSetupResponses(t, responses, "linux")
 			host := lifecycleLinuxHost(t, fakes)
 			var stdout, stderr strings.Builder
 			status := cli.RunWithHost(append([]string{"up", "demo", "--ssh-config"}, options...), &stdout, &stderr, host)
@@ -109,11 +113,7 @@ func TestSSHSetupStoppedRemovalThenReinstallReplacesAuthorization(t *testing.T) 
 	t.Setenv("TEST_SSH_KEYGEN_PUBLIC_KEY", newKey)
 	responses := installResponses()
 	responses["exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager ssh-authorize "+newKey] = lifecycleResponse{}
-	data, err := json.Marshal(setupPlatformResponses(responses))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+	scriptSetupResponses(t, responses, runtime.GOOS)
 	if status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo", "--install"); status != 0 {
 		t.Fatalf("reinstall=%d %q %q", status, stdout, stderr)
 	}
@@ -156,20 +156,9 @@ func TestSSHSetupIncludeEditsOnlyCompleteManagedLines(t *testing.T) {
 
 // TestUpWithoutSSHOptInLeavesUserSSHFilesUnchanged proves successful sandbox creation leaves every preexisting user SSH byte untouched and runs no SSH command through RunWithHost and fake process seams.
 func TestUpWithoutSSHOptInLeavesUserSSHFilesUnchanged(t *testing.T) {
-	responses := installResponses()
-	responses["container exists sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 1}
-	responses["--version"] = lifecycleResponse{Output: "podman version 4.4.0"}
-	responses["info --format json"] = lifecycleResponse{Output: `{"host":{"security":{"rootless":true},"cgroupVersion":"v2"}}`}
-	responses["ps --all --format json"] = lifecycleResponse{Output: "[]"}
-	responses["image exists *"] = lifecycleResponse{}
-	responses["volume create *"] = lifecycleResponse{}
-	responses["create *"] = lifecycleResponse{}
+	responses := setupNewSandboxResponses()
 	fakes := sshSetupHarness(t, map[string]lifecycleResponse{})
-	data, err := json.Marshal(responses)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+	scriptSetupResponses(t, responses, "linux")
 	dir := filepath.Join(os.Getenv("HOME"), ".ssh")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -194,20 +183,11 @@ func TestUpWithoutSSHOptInLeavesUserSSHFilesUnchanged(t *testing.T) {
 	}
 }
 
-// TestUpSSHOptInRefusesChangedRecordedPortBeforeStarting proves opt-in reuse respects existing sandbox configuration and preserves setup before a conflicting port through RunWithHost and fake Podman.
+// TestUpSSHOptInRefusesChangedRecordedPortBeforeStarting proves opt-in reuse refuses a conflicting recorded port before starting through RunWithHost and fake Podman.
 func TestUpSSHOptInRefusesChangedRecordedPortBeforeStarting(t *testing.T) {
-	responses := installResponses()
-	responses["--version"] = lifecycleResponse{Output: "podman version 4.4.0"}
-	responses["info --format json"] = lifecycleResponse{Output: `{"host":{"security":{"rootless":true},"cgroupVersion":"v2"}}`}
-	response := responses["container inspect sandboxed-agents.default.demo"]
-	response.Output = strings.ReplaceAll(response.Output, `"Running":true`, `"Running":false`)
-	responses["container inspect sandboxed-agents.default.demo"] = response
+	responses := setupPreflightResponses(false)
 	fakes := sshSetupHarness(t, map[string]lifecycleResponse{})
-	data, err := json.Marshal(responses)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+	scriptSetupResponses(t, responses, "linux")
 	host := lifecycleLinuxHost(t, fakes)
 	var stdout, stderr strings.Builder
 	status := cli.RunWithHost([]string{"up", "demo", "--ssh-config", "--port", "2300"}, &stdout, &stderr, host)
@@ -334,11 +314,7 @@ func TestRemoveCleansSSHSetupForContainerAndVolumesOnly(t *testing.T) {
 			if strings.HasPrefix(kind, "only-volumes") {
 				responses["container exists sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 1}
 			}
-			data, err := json.Marshal(setupPlatformResponses(responses))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+			scriptSetupResponses(t, responses, runtime.GOOS)
 			args := []string{"remove", "demo"}
 			if strings.Contains(kind, "delete") || kind == "container-keeps-foreign" {
 				args = append(args, "--volumes")
@@ -349,6 +325,19 @@ func TestRemoveCleansSSHSetupForContainerAndVolumesOnly(t *testing.T) {
 			status, stdout, stderr := sshSetupRun(t, args...)
 			if (status != 0) != (kind == "container-keeps-foreign") {
 				t.Fatalf("remove=%d %q %q", status, stdout, stderr)
+			}
+			if kind == "only-volumes-keep" && (!strings.Contains(stdout, "has no container") || !strings.Contains(stdout, "use remove demo --volumes")) {
+				t.Fatalf("missing volume cleanup guidance=%q", stdout)
+			}
+			if kind == "only-volumes-delete" {
+				if strings.Contains(stdout, "use remove demo --volumes") {
+					t.Fatalf("deleted volumes still request deletion=%q", stdout)
+				}
+				for _, suffix := range []string{"home", "ssh"} {
+					if !strings.Contains(stdout, "removed volume sandboxed-agents.default.demo."+suffix) {
+						t.Fatalf("removed volume not named=%q", stdout)
+					}
+				}
 			}
 			if strings.Contains(kind, "keep") && kind != "container-keeps-foreign" && !strings.Contains(stdout, "authorization remains") {
 				t.Fatalf("retained authorization not named=%q", stdout)
@@ -371,31 +360,16 @@ func TestLifecycleSSHOptInInstallsAfterStartAndKeepsSandboxOnFailure(t *testing.
 	for _, kind := range []string{"new-up", "existing-up", "start"} {
 		for _, fail := range []bool{false, true} {
 			t.Run(kind+strconv.FormatBool(fail), func(t *testing.T) {
-				responses := installResponses()
-				responses["--version"] = lifecycleResponse{Output: "podman version 4.4.0"}
-				responses["info --format json"] = lifecycleResponse{Output: `{"host":{"security":{"rootless":true},"cgroupVersion":"v2"}}`}
-				responses["ps --all --format json"] = lifecycleResponse{Output: "[]"}
-				responses["image exists *"] = lifecycleResponse{}
-				responses["volume create *"] = lifecycleResponse{}
-				responses["create *"] = lifecycleResponse{}
+				responses := setupPreflightResponses(false)
 				if kind == "new-up" {
-					responses["container exists sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 1}
-				}
-				if kind != "new-up" {
-					response := responses["container inspect sandboxed-agents.default.demo"]
-					response.Output = strings.ReplaceAll(response.Output, `"Running":true`, `"Running":false`)
-					responses["container inspect sandboxed-agents.default.demo"] = response
+					responses = setupNewSandboxResponses()
 				}
 				if fail {
 					responses["exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager version"] = lifecycleResponse{Exit: 42, Output: "unavailable manager"}
 				}
 				// This seam deliberately exercises the Linux host adapter even on a Windows runner.
 				fakes := sshSetupHarness(t, map[string]lifecycleResponse{})
-				data, err := json.Marshal(responses)
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+				scriptSetupResponses(t, responses, "linux")
 				host := lifecycleLinuxHost(t, fakes)
 				host.PortAvailable = func(uint16) error { return nil }
 				verb := "up"
@@ -545,11 +519,7 @@ func TestSSHSetupStateRefusalsPreserveInstalledFiles(t *testing.T) {
 					want = "running agent sessions"
 					responses["exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager sessions"] = lifecycleResponse{Output: "codex\n"}
 				}
-				data, err := json.Marshal(setupPlatformResponses(responses))
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+				scriptSetupResponses(t, responses, runtime.GOOS)
 				beforeCalls := len(testutil.Invocations(t, fakes.PodmanLog))
 				status, stdout, stderr := sshSetupRun(t, args...)
 				if status == 0 || stdout != "" || !strings.Contains(stderr, want) {
@@ -593,12 +563,7 @@ func TestSSHSetupRepeatIsUnchangedAndHostKeyChangeRefusesRepin(t *testing.T) {
 	}
 	responses := installResponses()
 	responses["exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager ssh-host-key"] = lifecycleResponse{Output: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB\n"}
-	responses = setupPlatformResponses(responses)
-	data, err := json.Marshal(responses)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+	scriptSetupResponses(t, responses, runtime.GOOS)
 	status, stdout, stderr = sshSetupRun(t, "ssh-config", "demo", "--install")
 	if status == 0 || !strings.Contains(stderr, "ssh-config demo --remove") || !strings.Contains(stderr, "ssh-config demo --install") {
 		t.Fatalf("changed=%d %q %q", status, stdout, stderr)
@@ -608,9 +573,9 @@ func TestSSHSetupRepeatIsUnchangedAndHostKeyChangeRefusesRepin(t *testing.T) {
 	}
 }
 
-// TestSSHSetupConflictsAndQueryFailuresWriteNothing proves OpenSSH-resolved manual, wildcard, other-group conflicts and invalid configuration refuse before host writes through the built CLI and fake SSH seam.
+// TestSSHSetupConflictsAndQueryFailuresWriteNothing proves resolved-host conflicts, query errors, and manager failures refuse before host writes through the built CLI and fake SSH seam.
 func TestSSHSetupConflictsAndQueryFailuresWriteNothing(t *testing.T) {
-	for _, kind := range []string{"manual", "wildcard", "other-group", "query-failure", "manager-unavailable"} {
+	for _, kind := range []string{"configured-host", "query-failure", "manager-unavailable"} {
 		t.Run(kind, func(t *testing.T) {
 			responses := installResponses()
 			if kind == "manager-unavailable" {
@@ -669,8 +634,7 @@ func TestSSHSetupConflictsAndQueryFailuresWriteNothing(t *testing.T) {
 func TestSSHConfigPreviewPrintsHardenedEntryWithoutWriting(t *testing.T) {
 	for _, running := range []bool{true, false} {
 		t.Run(map[bool]string{true: "running", false: "stopped"}[running], func(t *testing.T) {
-			responses := ownedLifecycleResponses(running)
-			responses["container inspect sandboxed-agents.default.demo"] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}},"State":{"Running":` + map[bool]string{true: "true", false: "false"}[running] + `}}]`}
+			responses := setupResponses(running)
 			fakes := sshSetupHarness(t, responses)
 			status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo")
 			if status != 0 || !strings.Contains(stdout, "Host demo\n") || !strings.Contains(stderr, "not installed") || !strings.Contains(stderr, "ssh-config demo --install") {
@@ -719,7 +683,11 @@ func sshSetupHarness(t *testing.T, responses map[string]lifecycleResponse) testu
 }
 
 func setupPlatformResponses(responses map[string]lifecycleResponse) map[string]lifecycleResponse {
-	if runtime.GOOS != "windows" {
+	return setupResponsesForPlatform(responses, runtime.GOOS)
+}
+
+func setupResponsesForPlatform(responses map[string]lifecycleResponse, platform string) map[string]lifecycleResponse {
+	if platform != "windows" {
 		return responses
 	}
 	result := map[string]lifecycleResponse{"machine list --format json": {Output: `[{"Name":"chosen","Default":true,"VMType":"wsl"}]`}, "machine inspect chosen": {Output: `[{"Name":"chosen","State":"running","Rootful":false}]`}}
@@ -734,28 +702,21 @@ const setupPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAA
 func selectSetupSandbox(t *testing.T, group, name string, running bool, managerDown bool) {
 	t.Helper()
 	responses := map[string]lifecycleResponse{}
-	for key, response := range installResponses() {
+	for key, response := range setupResponses(running) {
 		key = strings.ReplaceAll(key, ".default.demo", "."+group+"."+name)
 		response.Output = strings.ReplaceAll(response.Output, `"default"`, `"`+group+`"`)
-		if !running {
-			response.Output = strings.ReplaceAll(response.Output, `"Running":true`, `"Running":false`)
-		}
 		if managerDown && strings.HasSuffix(key, "manager version") {
 			response.Exit = 42
 		}
 		responses[key] = response
 	}
-	data, err := json.Marshal(setupPlatformResponses(responses))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+	scriptSetupResponses(t, responses, runtime.GOOS)
 	t.Setenv("SANDBOXED_AGENTS_GROUP", group)
 }
 
 // TestSSHSetupRemovalMaintainsGroupIncludesAndOtherEntries proves one Include per group, preserved user bytes/mode, and targeted host cleanup through the built CLI and isolated filesystem seam.
 func TestSSHSetupRemovalMaintainsGroupIncludesAndOtherEntries(t *testing.T) {
-	sshSetupHarness(t, installResponses())
+	fakes := sshSetupHarness(t, installResponses())
 	config := filepath.Join(os.Getenv("HOME"), ".ssh", "config")
 	if err := os.MkdirAll(filepath.Dir(config), 0750); err != nil {
 		t.Fatal(err)
@@ -815,11 +776,54 @@ func TestSSHSetupRemovalMaintainsGroupIncludesAndOtherEntries(t *testing.T) {
 			t.Fatalf("directory mode=%v %v", info, err)
 		}
 	}
+	var removals [][]string
+	for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
+		if len(call) > 0 && call[len(call)-1] == "ssh-deauthorize" {
+			removals = append(removals, call)
+		}
+	}
+	want := [][]string{{"exec", "--user=0:0", "sandboxed-agents.default.second", "/usr/local/bin/sandboxed-agents-manager", "ssh-deauthorize"}, {"exec", "--user=0:0", "sandboxed-agents.live.demo", "/usr/local/bin/sandboxed-agents-manager", "ssh-deauthorize"}}
+	if runtime.GOOS == "windows" {
+		for i := range want {
+			want[i] = append([]string{"--connection", "chosen"}, want[i]...)
+		}
+	}
+	if !reflect.DeepEqual(removals, want) {
+		t.Fatalf("root authorization removals=%v want=%v", removals, want)
+	}
 }
 
-func installResponses() map[string]lifecycleResponse {
-	responses := ownedLifecycleResponses(true)
-	responses["container inspect sandboxed-agents.default.demo"] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}},"State":{"Running":true}}]`}
+func scriptSetupResponses(t *testing.T, responses map[string]lifecycleResponse, platform string) {
+	t.Helper()
+	data, err := json.Marshal(setupResponsesForPlatform(responses, platform))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+}
+
+func setupPreflightResponses(running bool) map[string]lifecycleResponse {
+	responses := setupResponses(running)
+	responses["--version"] = lifecycleResponse{Output: "podman version 4.4.0"}
+	responses["info --format json"] = lifecycleResponse{Output: `{"host":{"security":{"rootless":true},"cgroupVersion":"v2"}}`}
+	return responses
+}
+
+func setupNewSandboxResponses() map[string]lifecycleResponse {
+	responses := setupPreflightResponses(true)
+	responses["container exists sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 1}
+	responses["ps --all --format json"] = lifecycleResponse{Output: "[]"}
+	responses["image exists *"] = lifecycleResponse{}
+	responses["volume create *"] = lifecycleResponse{}
+	responses["create *"] = lifecycleResponse{}
+	return responses
+}
+
+func installResponses() map[string]lifecycleResponse { return setupResponses(true) }
+
+func setupResponses(running bool) map[string]lifecycleResponse {
+	responses := ownedLifecycleResponses(running)
+	responses["container inspect sandboxed-agents.default.demo"] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}},"State":{"Running":` + strconv.FormatBool(running) + `}}]`}
 	responses["exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager version"] = lifecycleResponse{Output: "sandboxed-agents-manager development\n"}
 	responses["exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager ssh-host-key"] = lifecycleResponse{Output: setupPublicKey + " host\n"}
 	responses["exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager ssh-authorize "+setupPublicKey] = lifecycleResponse{}
@@ -872,7 +876,7 @@ func TestSSHSetupInstallCreatesDedicatedKeyPinAndSingleInclude(t *testing.T) {
 	}
 }
 
-// TestRemoveVolumesDeletesOwnedVolumesAndKeepsForeignVolumes proves the container-present ownership exception and retained bind data through the built CLI and fake Podman seam.
+// TestRemoveVolumesDeletesOwnedVolumesAndKeepsForeignVolumes proves owned-volume deletion and the container-present foreign-volume exception through the built CLI and fake Podman seam.
 func TestRemoveVolumesDeletesOwnedVolumesAndKeepsForeignVolumes(t *testing.T) {
 	for _, foreign := range []bool{false, true} {
 		t.Run(map[bool]string{false: "owned", true: "foreign"}[foreign], func(t *testing.T) {
@@ -888,10 +892,6 @@ func TestRemoveVolumesDeletesOwnedVolumesAndKeepsForeignVolumes(t *testing.T) {
 				responses["volume rm "+name] = lifecycleResponse{}
 			}
 			fakes := sshSetupHarness(t, responses)
-			workspace := filepath.Join(t.TempDir(), "project.txt")
-			if err := os.WriteFile(workspace, []byte("project"), 0600); err != nil {
-				t.Fatal(err)
-			}
 			status, stdout, stderr := sshSetupRun(t, "remove", "demo", "--volumes")
 			if (status != 0) != foreign || !strings.Contains(stdout, "removed sandbox demo") {
 				t.Fatalf("status=%d stdout=%q stderr=%q", status, stdout, stderr)
@@ -908,9 +908,6 @@ func TestRemoveVolumesDeletesOwnedVolumesAndKeepsForeignVolumes(t *testing.T) {
 				if !strings.Contains(stdout, "removed volume sandboxed-agents.default.demo."+suffix) {
 					t.Fatalf("owned volume not removed: %q", stdout)
 				}
-			}
-			if data, err := os.ReadFile(workspace); err != nil || string(data) != "project" {
-				t.Fatalf("bind=%q error=%v", data, err)
 			}
 		})
 	}

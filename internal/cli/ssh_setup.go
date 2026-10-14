@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -10,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/sshkey"
 )
@@ -25,9 +23,13 @@ func installLifecycleSSHSetup(request Request, p podmanTarget, objects sandboxOb
 		err = installSSHSetup(request, p, objects, s, stdout)
 	}
 	if err != nil {
-		return fmt.Errorf("sandbox %s keeps running; SSH setup failed: %w; retry ssh-config %s --install", request.Name, err, request.Name)
+		return lifecycleSSHSetupFailure(request, err)
 	}
 	return nil
+}
+
+func lifecycleSSHSetupFailure(request Request, err error) error {
+	return fmt.Errorf("sandbox %s keeps running; SSH setup failed: %w; retry ssh-config %s --install", request.Name, err, request.Name)
 }
 
 func sshSetupPaths(request Request, platform string) (sshSetup, error) {
@@ -52,11 +54,14 @@ func sshHostName(request Request) string {
 	return request.Name + "." + request.Group
 }
 
-func sshPath(path string) string {
-	return quoteSSHPath(strings.ReplaceAll(path, "%", "%%"))
+// tokenExpandedSSHPath quotes paths for IdentityFile and UserKnownHostsFile,
+// where OpenSSH expands percent tokens and a literal percent is written as %%.
+func tokenExpandedSSHPath(path string) string {
+	return literalSSHPath(strings.ReplaceAll(path, "%", "%%"))
 }
 
-func quoteSSHPath(path string) string {
+// literalSSHPath quotes an Include path without percent-token escaping.
+func literalSSHPath(path string) string {
 	if filepath.Separator == '\\' {
 		path = filepath.ToSlash(path)
 	}
@@ -68,7 +73,7 @@ func (s sshSetup) hostEntry(request Request, objects sandboxObjects) (string, er
 	if err != nil {
 		return "", fmt.Errorf("sandbox %s: invalid recorded SSH port: %w", request.Name, err)
 	}
-	return fmt.Sprintf("Host %s\n    HostName 127.0.0.1\n    Port %d\n    User agent\n    IdentityFile %s\n    UserKnownHostsFile %s\n    GlobalKnownHostsFile none\n    IdentitiesOnly yes\n    IdentityAgent none\n    ForwardAgent no\n    StrictHostKeyChecking yes\n", sshHostName(request), port, sshPath(s.identity), sshPath(s.knownHosts)), nil
+	return fmt.Sprintf("Host %s\n    HostName 127.0.0.1\n    Port %d\n    User agent\n    IdentityFile %s\n    UserKnownHostsFile %s\n    GlobalKnownHostsFile none\n    IdentitiesOnly yes\n    IdentityAgent none\n    ForwardAgent no\n    StrictHostKeyChecking yes\n", sshHostName(request), port, tokenExpandedSSHPath(s.identity), tokenExpandedSSHPath(s.knownHosts)), nil
 }
 
 func configureSSH(request Request, p podmanTarget, stdout, stderr io.Writer) error {
@@ -94,7 +99,7 @@ func configureSSH(request Request, p podmanTarget, stdout, stderr io.Writer) err
 		if err := requireSSHManager(request, p); err != nil {
 			return fmt.Errorf("host SSH setup removed; authorization in sandbox %s could not be removed: %w", request.Name, err)
 		}
-		if _, err := sshManagerQuery(request, p, "ssh-deauthorize"); err != nil {
+		if _, err := requestManager(request, p, "ssh-deauthorize"); err != nil {
 			return fmt.Errorf("host SSH setup removed; authorization in sandbox %s could not be removed: %w", request.Name, err)
 		}
 		fmt.Fprintf(stdout, "removed SSH setup and sandbox authorization for %s\n", request.Name)
@@ -130,15 +135,8 @@ func (s sshSetup) removeHostSetup() error {
 	return s.updateConfiguration()
 }
 
-func sshManagerQuery(request Request, p podmanTarget, command string, args ...string) (string, error) {
-	argv := []string{"exec", "--user=0:0", DerivedNames(request.Group, request.Name).Container, "/usr/local/bin/sandboxed-agents-manager", command}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	return p.queryContext(ctx, time.Second, append(argv, args...)...)
-}
-
 func requireSSHManager(request Request, p podmanTarget) error {
-	if _, err := sshManagerQuery(request, p, "version"); err != nil {
+	if _, err := requestManager(request, p, "version"); err != nil {
 		return fmt.Errorf("sandbox %s: manager does not answer; use check %s and restart %s: %w", request.Name, request.Name, request.Name, err)
 	}
 	return nil
@@ -148,7 +146,7 @@ func installSSHSetup(request Request, p podmanTarget, objects sandboxObjects, s 
 	if err := requireSSHManager(request, p); err != nil {
 		return err
 	}
-	text, err := sshManagerQuery(request, p, "ssh-host-key")
+	text, err := requestManager(request, p, "ssh-host-key")
 	if err != nil {
 		return err
 	}
@@ -207,7 +205,7 @@ func installSSHSetup(request Request, p podmanTarget, objects sandboxObjects, s 
 	if err != nil {
 		return err
 	}
-	if _, err := sshManagerQuery(request, p, "ssh-authorize", publicKey); err != nil {
+	if _, err := requestManager(request, p, "ssh-authorize", publicKey); err != nil {
 		return err
 	}
 	entry, err := s.hostEntry(request, objects)

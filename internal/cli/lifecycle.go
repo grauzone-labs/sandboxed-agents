@@ -1,13 +1,11 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
-	"time"
 )
 
 type sandboxContainer struct {
@@ -38,12 +36,14 @@ type sandboxObjects struct {
 
 func inspectSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 	var objects sandboxObjects
+	requiresContainer := request.Command != "remove" && !(request.Command == "ssh-config" && request.Options["remove"] != "")
 	names := DerivedNames(request.Group, request.Name)
 	exists, err := p.exists(containerResource, names.Container)
 	if err != nil {
 		return objects, err
 	}
 	objects.exists = exists
+	mayKeepForeignVolumes := request.Command == "remove" && request.Options["volumes"] != "" && exists
 	var conflicts []string
 	checkOwner := func(name string, labels map[string]string) {
 		if labels[OwnerLabel] != request.Group {
@@ -76,7 +76,7 @@ func inspectSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 		}
 		if records[0].Labels[OwnerLabel] != request.Group {
 			objects.foreignVolumes = append(objects.foreignVolumes, name)
-			if request.Command != "remove" || request.Options["volumes"] == "" || !objects.exists {
+			if !mayKeepForeignVolumes {
 				checkOwner(name, records[0].Labels)
 			}
 		}
@@ -98,13 +98,13 @@ func inspectSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 	if len(conflicts) > 0 {
 		return objects, fmt.Errorf("owner conflict: %s; use Podman to remove or rename the objects", strings.Join(conflicts, ", "))
 	}
-	if !objects.exists && len(objects.volumes) > 0 && !objects.backup && request.Command != "remove" && !(request.Command == "ssh-config" && request.Options["remove"] != "") {
+	if !objects.exists && len(objects.volumes) > 0 && !objects.backup && requiresContainer {
 		return objects, fmt.Errorf("sandbox %q has only volumes; use up %s to adopt them", request.Name, request.Name)
 	}
 	if objects.backup {
 		return objects, fmt.Errorf("sandbox %q has an interrupted update; use update %s", request.Name, request.Name)
 	}
-	if !objects.exists && request.Command != "remove" && !(request.Command == "ssh-config" && request.Options["remove"] != "") {
+	if !objects.exists && requiresContainer {
 		return objects, fmt.Errorf("sandbox %q has no container", request.Name)
 	}
 	return objects, nil
@@ -134,43 +134,17 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 	if container.State.Running == nil {
 		return fmt.Errorf("read container %s: running state is missing", name)
 	}
-	if request.Command == "up" && request.Options["port"] != "" {
-		port, err := parseSSHPort(container.Config.Labels[SSHPortLabel])
-		if err != nil {
-			return err
-		}
-		requested, err := parseSSHPort(request.Options["port"])
-		if err != nil {
-			return err
-		}
-		if requested != port {
-			return fmt.Errorf("sandbox %s: --port differs from recorded port %d; use remove %s followed by up %s to change it", request.Name, port, request.Name, request.Name)
-		}
-	}
-	if request.Command == "up" {
-		if err := checkReusedResources(request, container); err != nil {
-			return err
-		}
-		if len(request.Args) == 2 {
-			workspace := request.Args[1]
-			if p.host.Platform == "windows" {
-				workspace, err = windowsWorkspacePath(workspace)
-				if err != nil {
-					return err
-				}
-			}
-			matching := false
-			for _, mount := range container.Mounts {
-				if mount.Destination == "/workspace" && mount.Type == "bind" && mount.Source == workspace {
-					matching = true
-				}
-			}
-			if !matching {
-				return fmt.Errorf("sandbox %s: workspace differs from the recorded workspace; use remove %s followed by up %s to change it", request.Name, request.Name, request.Name)
-			}
-		}
-	}
 	running := *container.State.Running
+	if request.Command == "up" {
+		if running && request.Options["ssh-config"] != "" {
+			if err := requireSSHManager(request, p); err != nil {
+				return lifecycleSSHSetupFailure(request, err)
+			}
+		}
+		if err := checkReusedUp(request, p, container); err != nil {
+			return err
+		}
+	}
 	var ended sessionReport
 	if running && request.Command != "start" && request.Command != "up" {
 		ended, err = guardSessions(request, p)
@@ -211,39 +185,6 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 	return nil
 }
 
-func checkReusedResources(request Request, container sandboxContainer) error {
-	for _, limit := range []struct {
-		option    string
-		recorded  *int64
-		requested int64
-	}{{"memory", container.HostConfig.Memory, request.Resources.Memory}, {"pids-limit", container.HostConfig.PidsLimit, request.Resources.PIDsLimit}, {"shm-size", container.HostConfig.ShmSize, request.Resources.ShmSize}} {
-		if request.Options[limit.option] == "" {
-			continue
-		}
-		if limit.recorded == nil {
-			return fmt.Errorf("sandbox %s: recorded --%s is missing", request.Name, limit.option)
-		}
-		if *limit.recorded != limit.requested {
-			return fmt.Errorf("sandbox %s: --%s differs from recorded limit %d; use remove %s followed by up %s to change it", request.Name, limit.option, *limit.recorded, request.Name, request.Name)
-		}
-	}
-	if request.Options["cpus"] != "" {
-		limits := container.HostConfig
-		var cpus float64
-		if limits.CpuQuota != nil && limits.CpuPeriod != nil && *limits.CpuPeriod > 0 && *limits.CpuQuota > 0 {
-			cpus = float64(*limits.CpuQuota) / float64(*limits.CpuPeriod)
-		} else if limits.NanoCpus != nil && *limits.NanoCpus > 0 {
-			cpus = float64(*limits.NanoCpus) / 1e9
-		} else {
-			return fmt.Errorf("sandbox %s: recorded --cpus is missing", request.Name)
-		}
-		if cpus != request.Resources.CPUs {
-			return fmt.Errorf("sandbox %s: --cpus differs from recorded limit %g; use remove %s followed by up %s to change it", request.Name, cpus, request.Name, request.Name)
-		}
-	}
-	return nil
-}
-
 func removeSandbox(request Request, p podmanTarget, objects sandboxObjects, ended sessionReport, output io.Writer) error {
 	name := DerivedNames(request.Group, request.Name).Container
 	if objects.exists {
@@ -257,7 +198,7 @@ func removeSandbox(request Request, p podmanTarget, objects sandboxObjects, ende
 			return err
 		}
 		fmt.Fprintf(output, "removed sandbox %s\n", request.Name)
-	} else {
+	} else if request.Options["volumes"] == "" {
 		fmt.Fprintf(output, "sandbox %s has no container; use remove %s --volumes to delete its volumes\n", request.Name, request.Name)
 	}
 	var failures []error
@@ -305,15 +246,7 @@ func (r sessionReport) write(output io.Writer, name string) {
 }
 
 func guardSessions(request Request, p podmanTarget) (sessionReport, error) {
-	args, err := ManagerQueryArgs(DerivedNames(request.Group, request.Name).Container, "/usr/local/bin/sandboxed-agents-manager", "sessions")
-	if err != nil {
-		return sessionReport{}, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	// Bound inherited output pipes too: killing or reaping Podman does not
-	// close pipes that its descendants still hold. Other queries keep no delay.
-	output, err := p.queryContext(ctx, time.Second, args...)
+	output, err := requestManager(request, p, "sessions")
 	if err != nil {
 		if request.Options["force"] != "" {
 			return sessionReport{unavailable: true}, nil

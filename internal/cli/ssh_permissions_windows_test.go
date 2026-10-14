@@ -74,6 +74,68 @@ func TestSecureSSHPathWindowsDirectoriesRestrictChildren(t *testing.T) {
 	assertSSHPathAccess(t, key, false, windows.INHERITED_ACE)
 }
 
+// TestSecureSSHReplacementWindowsPreservesConfigPermissions proves through
+// secureSSHReplacement that an atomic replacement retains the prior owner's
+// identity, custom DACL, and parent inheritance protection on Windows.
+func TestSecureSSHReplacementWindowsPreservesConfigPermissions(t *testing.T) {
+	for _, protected := range []bool{true, false} {
+		t.Run(fmt.Sprintf("protected-%v", protected), func(t *testing.T) {
+			directory := t.TempDir()
+			previous := filepath.Join(directory, "config")
+			replacement := filepath.Join(directory, ".replacement")
+			for _, path := range []string{previous, replacement} {
+				if err := os.WriteFile(path, []byte("user bytes\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			user, err := windows.GetCurrentProcessToken().GetTokenUser()
+			if err != nil {
+				t.Fatal(err)
+			}
+			descriptor, err := windows.SecurityDescriptorFromString(fmt.Sprintf("O:%sD:(A;;FA;;;%s)(A;;FR;;;BA)", user.User.Sid, user.User.Sid))
+			if err != nil {
+				t.Fatal(err)
+			}
+			dacl, _, err := descriptor.DACL()
+			if err != nil {
+				t.Fatal(err)
+			}
+			information := windows.SECURITY_INFORMATION(windows.OWNER_SECURITY_INFORMATION | windows.DACL_SECURITY_INFORMATION | windows.UNPROTECTED_DACL_SECURITY_INFORMATION)
+			if protected {
+				information = windows.OWNER_SECURITY_INFORMATION | windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION
+			}
+			if err := windows.SetNamedSecurityInfo(previous, windows.SE_FILE_OBJECT, information, user.User.Sid, nil, dacl, nil); err != nil {
+				t.Fatal(err)
+			}
+			before, beforeControl := sshPermissionSnapshot(t, previous)
+			if err := secureSSHReplacement(replacement, 0600, previous); err != nil {
+				t.Fatal(err)
+			}
+			after, afterControl := sshPermissionSnapshot(t, replacement)
+			if before != after || beforeControl != afterControl {
+				t.Fatalf("replacement permissions = %q / %#x; want %q / %#x", after, afterControl, before, beforeControl)
+			}
+			if data, err := os.ReadFile(previous); err != nil || string(data) != "user bytes\n" {
+				t.Fatalf("source changed = %q / %v", data, err)
+			}
+		})
+	}
+}
+
+func sshPermissionSnapshot(t *testing.T, path string) (string, windows.SECURITY_DESCRIPTOR_CONTROL) {
+	t.Helper()
+	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil || descriptor == nil {
+		t.Fatalf("read security descriptor for %q: %v", path, err)
+	}
+	control, _, err := descriptor.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return descriptor.String(), control
+}
+
 // TestSecureSSHPathWindowsOpenSSHAcceptsSetup proves through secureSSHPath and
 // native Windows OpenSSH that secured private keys and included user and managed
 // configurations are accepted after the same files with broad access are refused.

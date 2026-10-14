@@ -5,3 +5,7 @@ package cli
 import "os"
 
 func secureSSHPath(path string, mode os.FileMode) error { return os.Chmod(path, mode.Perm()) }
+
+func secureSSHReplacement(path string, mode os.FileMode, _ string) error {
+	return secureSSHPath(path, mode)
+}

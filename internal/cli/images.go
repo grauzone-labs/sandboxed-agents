@@ -44,18 +44,7 @@ func buildImage(p podmanTarget, toolchains []string, output io.Writer) (string, 
 }
 
 func prepareUp(request Request, p podmanTarget, output io.Writer) error {
-	workspace := ""
-	if len(request.Args) == 2 {
-		workspace = request.Args[1]
-	}
-	if workspace != "" && p.host.Platform == "windows" {
-		var err error
-		workspace, err = windowsWorkspacePath(workspace)
-		if err != nil {
-			return err
-		}
-	}
-	// The caller holds ADR-0007's lifecycle lock; existing sandbox reuse remains deferred.
+	// The caller holds ADR-0007's lifecycle lock, including opt-in SSH setup on reuse.
 	exists, err := p.exists(containerResource, DerivedNames(request.Group, request.Name).Container)
 	if err != nil {
 		return err
@@ -65,6 +54,10 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 			return changeSandboxState(request, p, output)
 		}
 		return fmt.Errorf("up: existing sandbox lifecycle is not implemented; option conflicts belong to a later story")
+	}
+	workspace, err := podmanWorkspacePath(request, p)
+	if err != nil {
+		return err
 	}
 	port, err := allocatePort(p, request.Options["port"])
 	if err != nil {

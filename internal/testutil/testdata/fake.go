@@ -40,6 +40,18 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(125)
 	}
+	if prefix == "TEST_SSH_KEYGEN" && os.Getenv("TEST_SSH_KEYGEN_REAL_EXECUTABLE") != "" {
+		command := exec.Command(os.Getenv("TEST_SSH_KEYGEN_REAL_EXECUTABLE"), os.Args[1:]...)
+		command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := command.Run(); err != nil {
+			if exit, ok := err.(*exec.ExitError); ok {
+				os.Exit(exit.ExitCode())
+			}
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(125)
+		}
+		return
+	}
 	fmt.Fprint(os.Stdout, os.Getenv(prefix+"_OUTPUT"))
 	code, err := strconv.Atoi(os.Getenv(prefix + "_EXIT"))
 	if err != nil {

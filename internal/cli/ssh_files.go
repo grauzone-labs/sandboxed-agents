@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -30,6 +29,7 @@ func createSSHDirectory(path string) error {
 }
 
 func writeSSHFile(path string, data []byte, mode os.FileMode, preserve bool) error {
+	previous := ""
 	if preserve {
 		info, err := os.Stat(path)
 		if err == nil {
@@ -37,9 +37,7 @@ func writeSSHFile(path string, data []byte, mode os.FileMode, preserve bool) err
 				return fmt.Errorf("SSH config is not a regular file: %s", path)
 			}
 			mode = info.Mode().Perm()
-			if runtime.GOOS == "windows" {
-				return os.WriteFile(path, data, mode)
-			}
+			previous = path
 		} else if !os.IsNotExist(err) {
 			return err
 		}
@@ -48,13 +46,16 @@ func writeSSHFile(path string, data []byte, mode os.FileMode, preserve bool) err
 	if err != nil {
 		return err
 	}
+	if previous != "" {
+		previous = resolved
+	}
 	file, err := os.CreateTemp(filepath.Dir(resolved), ".ssh-config-")
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 	defer os.Remove(file.Name())
-	if err := secureSSHPath(file.Name(), mode); err != nil {
+	if err := secureSSHReplacement(file.Name(), mode, previous); err != nil {
 		return err
 	}
 	if _, err := file.Write(data); err != nil {
@@ -69,7 +70,7 @@ func writeSSHFile(path string, data []byte, mode os.FileMode, preserve bool) err
 	return os.Rename(file.Name(), resolved)
 }
 
-func (s sshSetup) includeLine() string { return "Include " + quoteSSHPath(s.config) + "\n" }
+func (s sshSetup) includeLine() string { return "Include " + literalSSHPath(s.config) + "\n" }
 
 func (s sshSetup) updateConfiguration() error {
 	entries, err := os.ReadDir(s.groupDir)

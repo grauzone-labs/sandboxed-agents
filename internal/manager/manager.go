@@ -48,21 +48,8 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 		fmt.Fprintln(stdout, "sandboxed-agents-manager development")
 		return 0
 	}
-	if len(args) == 2 && args[0] == "ssh-authorize" {
-		return sshAuthorize(args[1], stderr, effects)
-	}
-	if len(args) == 1 && args[0] == "ssh-host-key" {
-		return sshHostKey(stdout, stderr, effects)
-	}
-	if len(args) == 1 && args[0] == "ssh-deauthorize" {
-		if effects.Identity == nil || effects.Identity() != rootIdentity {
-			fmt.Fprintln(stderr, "SSH administration requires container root")
-			return 1
-		}
-		if effects.RemoveAuthorizedKey == nil {
-			return exitStatus(fmt.Errorf("SSH authorization storage is unavailable"), stderr)
-		}
-		return exitStatus(effects.RemoveAuthorizedKey(), stderr)
+	if status, handled := sshAdministration(args, stdout, stderr, effects); handled {
+		return status
 	}
 	if len(args) == 1 && args[0] == "sessions" {
 		if effects.Identity() == rootIdentity {
