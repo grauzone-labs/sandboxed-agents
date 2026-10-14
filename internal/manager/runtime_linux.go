@@ -38,7 +38,7 @@ func newEffects(calls systemCalls) Effects {
 			NoSetGroups: calls.Identity().UID != 0,
 		}}
 		command.Env = agentEnvironment(calls.Environment())
-		if process.Program == "git" {
+		if process.EnvironmentPolicy == GitConfigEnvironment {
 			command.Env = gitEnvironment(command.Env)
 		}
 		return calls.Start(command)

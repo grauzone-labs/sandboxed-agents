@@ -22,12 +22,22 @@ func ManagerQueryArgs(container, managerPath, subcommand string) ([]string, erro
 	return []string{"exec", "--user=0:0", container, managerPath, subcommand}, nil
 }
 
+const managerPath = "/usr/local/bin/sandboxed-agents-manager"
+
 // queryManager bounds both the administrative process and any inherited pipes.
 func queryManager(p podmanTarget, container, subcommand string) (string, error) {
-	args, err := ManagerQueryArgs(container, "/usr/local/bin/sandboxed-agents-manager", subcommand)
+	args, err := ManagerQueryArgs(container, managerPath, subcommand)
 	if err != nil {
 		return "", err
 	}
+	return queryManagerArgs(p, args)
+}
+
+func queryManagerSessions(request Request, p podmanTarget) (string, error) {
+	return queryManager(p, DerivedNames(request.Group, request.Name).Container, "sessions")
+}
+
+func queryManagerArgs(p podmanTarget, args []string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	return p.queryContext(ctx, time.Second, args...)
