@@ -1,9 +1,14 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
 )
 
 func checkSandbox(request Request, p podmanTarget, output io.Writer) error {
@@ -11,16 +16,26 @@ func checkSandbox(request Request, p podmanTarget, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if !objects.exists && len(objects.volumes) == 0 && !objects.backup {
-		return fmt.Errorf("sandbox %q does not exist in this controller group", request.Name)
-	}
 	var problems []error
+	if !objects.exists && len(objects.volumes) == 0 && !objects.backup {
+		problems = append(problems, fmt.Errorf("sandbox %q does not exist in this controller group", request.Name))
+	}
 	if err := objects.ownerError(); err != nil {
 		problems = append(problems, err)
 	}
 	names := DerivedNames(request.Group, request.Name)
+	boundWorkspace := false
+	for _, mount := range objects.container.Mounts {
+		if mount.Type == "bind" && mount.Destination == "/workspace" {
+			boundWorkspace = true
+		}
+	}
 	if !objects.exists {
-		fmt.Fprintf(output, "sandbox %s: volumes only; no container\n", request.Name)
+		if len(objects.volumes) > 0 {
+			fmt.Fprintf(output, "sandbox %s: volumes only; no container\n", request.Name)
+		} else {
+			fmt.Fprintf(output, "sandbox %s: no container\n", request.Name)
+		}
 	} else if objects.container.State.Running == nil {
 		problems = append(problems, fmt.Errorf("read container %s: running state is missing", names.Container))
 	} else {
@@ -28,16 +43,29 @@ func checkSandbox(request Request, p podmanTarget, output io.Writer) error {
 		if *objects.container.State.Running {
 			state = "running"
 		}
-		fmt.Fprintf(output, "container %s: %s; owner %s\n", names.Container, state, objects.container.Config.Labels[OwnerLabel])
+		owner := objects.container.Config.Labels[OwnerLabel]
+		if owner == "" {
+			owner = "missing"
+		}
+		fmt.Fprintf(output, "container %s: %s; owner %s\n", names.Container, state, owner)
+	}
+	if objects.exists {
+		if err := reportResources(objects.container, output); err != nil {
+			problems = append(problems, fmt.Errorf("container %s: %w", names.Container, err))
+		}
+		for _, volume := range []string{names.Workspace, names.Home, names.SSH} {
+			if volume == names.Workspace && boundWorkspace {
+				continue
+			}
+			if _, exists := objects.volumeOwners[volume]; !exists {
+				problems = append(problems, fmt.Errorf("missing volume %s", volume))
+			}
+		}
 	}
 	for _, volume := range objects.volumes {
 		kind := "volume"
-		if volume == names.Workspace {
-			for _, mount := range objects.container.Mounts {
-				if mount.Type == "bind" && mount.Destination == "/workspace" {
-					kind = "unused workspace volume"
-				}
-			}
+		if volume == names.Workspace && boundWorkspace {
+			kind = "unused workspace volume"
 		}
 		owner := objects.volumeOwners[volume]
 		if owner == "" {
@@ -52,15 +80,78 @@ func checkSandbox(request Request, p podmanTarget, output io.Writer) error {
 		}
 		problems = append(problems, problem)
 	}
-	if objects.exists && len(objects.conflicts) == 0 && !objects.backup {
-		if objects.container.State.Running != nil && *objects.container.State.Running {
+	if objects.exists && len(objects.conflicts) == 0 && !objects.backup && objects.container.State.Running != nil {
+		if *objects.container.State.Running {
 			if err := checkManager(p, names.Container); err != nil {
 				problems = append(problems, fmt.Errorf("container %s: manager does not answer: %w", names.Container, err))
+			} else {
+				fmt.Fprintln(output, "manager: reachable")
 			}
+		} else {
+			fmt.Fprintln(output, "manager: not checked (sandbox stopped)")
 		}
-		// This story supplies ownership and interrupted-update diagnostics.
-		// Do not claim health before the full check NAME story verifies the rest.
-		problems = append(problems, fmt.Errorf("check NAME: resource-limit and SSH diagnostics are not implemented"))
+	}
+	if err := reportSSHSetup(request, p, objects, output); err != nil {
+		problems = append(problems, err)
 	}
 	return errors.Join(problems...)
+}
+
+func reportResources(container sandboxContainer, output io.Writer) error {
+	var problems []error
+	fmt.Fprintln(output, "resource limits (sizes in bytes):")
+	for _, limit := range []struct {
+		name  string
+		value *int64
+	}{{"memory", container.HostConfig.Memory}, {"pids-limit", container.HostConfig.PidsLimit}, {"shm-size", container.HostConfig.ShmSize}} {
+		if limit.value == nil {
+			problems = append(problems, fmt.Errorf("recorded --%s is missing", limit.name))
+			continue
+		}
+		fmt.Fprintf(output, "%s %d\n", limit.name, *limit.value)
+	}
+	cpus, err := recordedCPUs(container)
+	if err != nil {
+		problems = append(problems, err)
+	} else {
+		fmt.Fprintf(output, "cpus %g\n", cpus)
+	}
+	return errors.Join(problems...)
+}
+
+func reportSSHSetup(request Request, p podmanTarget, objects sandboxObjects, output io.Writer) error {
+	s, err := sshSetupPaths(request, p.host.Platform)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(s.entry); os.IsNotExist(err) {
+		fmt.Fprintln(output, "SSH setup: not installed")
+		return nil
+	} else if err != nil {
+		return err
+	}
+	fmt.Fprintln(output, "SSH setup: installed")
+	if !objects.exists {
+		return fmt.Errorf("sandbox %s: SSH setup is installed without a container; use ssh-config %s --remove", request.Name, request.Name)
+	}
+	if len(objects.conflicts) > 0 || objects.backup || objects.container.State.Running == nil {
+		return nil
+	}
+	if !*objects.container.State.Running {
+		fmt.Fprintln(output, "SSH connection: not checked (sandbox stopped)")
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "ssh", "-F", s.userConfig,
+		"-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o", "ConnectionAttempts=1",
+		"-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no",
+		"-o", "ControlMaster=no", "-o", "ControlPath=none",
+		"-o", "PermitLocalCommand=no", "-o", "ClearAllForwardings=yes", sshHostName(request), "true")
+	command.WaitDelay = time.Second
+	if answer, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("sandbox %s: SSH connection failed: %w: %s", request.Name, err, strings.TrimSpace(string(answer)))
+	}
+	fmt.Fprintln(output, "SSH connection: reachable")
+	return nil
 }

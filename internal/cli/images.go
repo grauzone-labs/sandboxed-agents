@@ -67,10 +67,7 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		return fmt.Errorf("sandbox %q has an interrupted update; use update %s", request.Name, request.Name)
 	}
 	if objects.exists {
-		if request.Options["ssh-config"] != "" {
-			return changeSandboxState(request, p, output)
-		}
-		return reuseSandbox(request, p, objects.container, output)
+		return applySandboxState(request, p, objects, output)
 	}
 	workspace, err = podmanWorkspacePath(request, p)
 	if err != nil {
@@ -159,43 +156,6 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 	if request.Options["ssh-config"] != "" {
 		return installLifecycleSSHSetup(request, p, sandboxObjects{container: container, exists: true}, output)
 	}
-	return nil
-}
-
-func reuseSandbox(request Request, p podmanTarget, container sandboxContainer, output io.Writer) error {
-	if value := request.Options["port"]; value != "" {
-		requested, _ := parseSSHPort(value) // Usage validation has already checked it.
-		recorded, err := parseSSHPort(container.Config.Labels[SSHPortLabel])
-		if err != nil {
-			return fmt.Errorf("sandbox %s: recorded SSH port is missing or invalid", request.Name)
-		}
-		if requested != recorded {
-			return fmt.Errorf("requested SSH port %d differs from recorded SSH port %d; use remove %s and up %s", requested, recorded, request.Name, request.Name)
-		}
-	}
-	// Configuration reuse and SSH setup beyond the port check belong to their
-	// respective stories. Refuse those options before starting an existing sandbox.
-	if len(request.Args) == 2 {
-		return fmt.Errorf("up: existing sandbox WORKSPACE comparison is not implemented")
-	}
-	for _, option := range []string{"with", "memory", "cpus", "pids-limit", "shm-size", "ssh-config", "agents"} {
-		if _, supplied := request.Options[option]; supplied {
-			return fmt.Errorf("up: existing sandbox --%s reuse is not implemented", option)
-		}
-	}
-	name := DerivedNames(request.Group, request.Name).Container
-	if container.State.Running == nil {
-		return fmt.Errorf("read container %s: running state is missing", name)
-	}
-	if !*container.State.Running {
-		if err := checkRecordedPort(p, container); err != nil {
-			return err
-		}
-		if _, err := p.query("start", name); err != nil {
-			return err
-		}
-	}
-	fmt.Fprintf(output, "sandbox %s is running\n", request.Name)
 	return nil
 }
 

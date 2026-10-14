@@ -149,11 +149,15 @@ func requireRunning(request Request, objects sandboxObjects) (ObjectNames, error
 }
 
 func changeSandboxState(request Request, p podmanTarget, output io.Writer) error {
-	name := DerivedNames(request.Group, request.Name).Container
 	objects, err := requireSandbox(request, p)
 	if err != nil {
 		return err
 	}
+	return applySandboxState(request, p, objects, output)
+}
+
+func applySandboxState(request Request, p podmanTarget, objects sandboxObjects, output io.Writer) error {
+	name := DerivedNames(request.Group, request.Name).Container
 	if !objects.exists {
 		if request.Command == "remove" {
 			return removeSandbox(request, p, objects, sessionReport{}, output)
@@ -182,6 +186,7 @@ func changeSandboxState(request Request, p podmanTarget, output io.Writer) error
 	}
 	var ended sessionReport
 	if running && request.Command != "start" && request.Command != "up" {
+		var err error
 		ended, err = guardSessions(request, p)
 		if err != nil {
 			return err

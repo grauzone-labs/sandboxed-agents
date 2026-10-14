@@ -169,15 +169,19 @@ func TestCheckReportsOwnerAndBackupProblems(t *testing.T) {
 	assertStateQueriesOnly(t, fakes)
 }
 
-// TestCheckNamesKeptAndUnusedWorkspaceVolumes proves partial owned volumes exit zero and binds name unused workspace volumes while broader diagnostics remain pending through the CLI boundary.
+// TestCheckNamesKeptAndUnusedWorkspaceVolumes proves partial owned volumes and unused workspace volumes are healthy states through the CLI boundary and fake Podman seam.
 func TestCheckNamesKeptAndUnusedWorkspaceVolumes(t *testing.T) {
 	for _, bound := range []bool{false, true} {
 		t.Run(map[bool]string{false: "partial volumes", true: "workspace bind"}[bound], func(t *testing.T) {
-			responses := ownedLifecycleResponses(false)
+			responses := healthyCheckResponses(false)
 			if !bound {
 				responses["container exists sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 1}
+				responses["volume exists sandboxed-agents.default.demo.home"] = lifecycleResponse{Exit: 1}
+				responses["volume exists sandboxed-agents.default.demo.ssh"] = lifecycleResponse{Exit: 1}
 			} else {
-				responses["container inspect sandboxed-agents.default.demo"] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default"}},"State":{"Running":false},"Mounts":[{"Type":"bind","Destination":"/workspace","Source":"/project"}]}]`}
+				record := responses["container inspect sandboxed-agents.default.demo"]
+				record.Output = strings.Replace(record.Output, `"State":`, `"Mounts":[{"Type":"bind","Destination":"/workspace","Source":"/project"}],"State":`, 1)
+				responses["container inspect sandboxed-agents.default.demo"] = record
 			}
 			responses["volume exists sandboxed-agents.default.demo.workspace"] = lifecycleResponse{}
 			responses["volume inspect sandboxed-agents.default.demo.workspace"] = lifecycleResponse{Output: `[{"Labels":{"io.sandboxed-agents.owner":"default"}}]`}
@@ -187,11 +191,7 @@ func TestCheckNamesKeptAndUnusedWorkspaceVolumes(t *testing.T) {
 			if bound {
 				want = "unused workspace volume"
 			}
-			wantStatus := 0
-			if bound {
-				wantStatus = 1 // Full container diagnostics remain a separate story.
-			}
-			if status != wantStatus || !strings.Contains(output, want) || !strings.Contains(output, "sandboxed-agents.default.demo.workspace; owner default") {
+			if status != 0 || !strings.Contains(output, want) || !strings.Contains(output, "sandboxed-agents.default.demo.workspace; owner default") {
 				t.Fatalf("status=%d output=%s", status, output)
 			}
 			assertStateQueriesOnly(t, fakes)
@@ -750,11 +750,11 @@ func TestFailedUpNeverDeletesAdoptedVolumes(t *testing.T) {
 	}
 }
 
-// TestCheckRunningSandboxCannotClaimUnverifiedHealth proves check queries an owned running manager and fails while broader container diagnostics remain incomplete through the CLI boundary.
-func TestCheckRunningSandboxCannotClaimUnverifiedHealth(t *testing.T) {
+// TestCheckRunningSandboxRequiresResponsiveManager proves a manager failure is a problem and an answer permits healthy diagnostics through the CLI boundary and fake Podman seam.
+func TestCheckRunningSandboxRequiresResponsiveManager(t *testing.T) {
 	for _, available := range []bool{false, true} {
 		t.Run("manager="+strconv.FormatBool(available), func(t *testing.T) {
-			responses := ownedLifecycleResponses(true)
+			responses := healthyCheckResponses(true)
 			key := "exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager version"
 			responses[key] = lifecycleResponse{Exit: 125}
 			if available {
@@ -762,7 +762,7 @@ func TestCheckRunningSandboxCannotClaimUnverifiedHealth(t *testing.T) {
 			}
 			fakes := lifecycleHarness(t, responses)
 			status, output := lifecycleRun("check", "demo")
-			if status != 1 || !strings.Contains(output, "diagnostics are not implemented") || (!available && !strings.Contains(output, "manager does not answer")) {
+			if (status == 0) != available || (!available && !strings.Contains(output, "manager does not answer")) {
 				t.Fatalf("status=%d output=%s", status, output)
 			}
 			queried := false
