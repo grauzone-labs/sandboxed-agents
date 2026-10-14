@@ -137,6 +137,9 @@ func AssertWindowsSSHPathAccess(t *testing.T, path string, protected bool, aceFl
 		t.Fatalf("DACL must grant only process user access: %s", descriptor)
 	}
 	effectiveEntries := 0
+	inheritOnlyEntries := 0
+	inheritanceFlags := aceFlags & (windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE)
+	effectiveFlags := aceFlags & windows.INHERITED_ACE
 	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(dacl, index, &ace); err != nil {
@@ -147,17 +150,23 @@ func AssertWindowsSSHPathAccess(t *testing.T, path string, protected bool, aceFl
 			t.Fatalf("unexpected access principal on %q: %s", path, descriptor)
 		}
 		if ace.Header.AceFlags&windows.INHERIT_ONLY_ACE != 0 {
-			if ace.Header.AceFlags&(windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE) == 0 || (ace.Mask != 0x001f01ff && ace.Mask != windows.GENERIC_ALL) {
+			inheritOnlyEntries++
+			wantFlags := inheritanceFlags | windows.INHERIT_ONLY_ACE | effectiveFlags
+			if inheritanceFlags == 0 || ace.Header.AceFlags != wantFlags || (ace.Mask != 0x001f01ff && ace.Mask != windows.GENERIC_ALL) {
 				t.Fatalf("unexpected inherited-only access on %q: %s", path, descriptor)
 			}
 			continue
 		}
 		effectiveEntries++
-		if ace.Mask != 0x001f01ff || ace.Header.AceFlags != aceFlags {
+		if ace.Mask != 0x001f01ff || ace.Header.AceFlags != effectiveFlags {
 			t.Fatalf("unexpected effective access on %q: %s", path, descriptor)
 		}
 	}
-	if effectiveEntries != 1 {
-		t.Fatalf("DACL has %d effective entries for %q; want one: %s", effectiveEntries, path, descriptor)
+	wantInheritOnlyEntries := 0
+	if inheritanceFlags != 0 {
+		wantInheritOnlyEntries = 1
+	}
+	if effectiveEntries != 1 || inheritOnlyEntries != wantInheritOnlyEntries {
+		t.Fatalf("DACL has %d effective and %d inherit-only entries for %q; want one effective and %d inherit-only: %s", effectiveEntries, inheritOnlyEntries, path, wantInheritOnlyEntries, descriptor)
 	}
 }
