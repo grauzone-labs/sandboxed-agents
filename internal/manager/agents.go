@@ -214,6 +214,8 @@ func reportInstallation(stdout io.Writer, name string, current installation) {
 	fmt.Fprintf(stdout, "%s enabled: version %s", name, current.Version)
 	if current.Pin != "" {
 		fmt.Fprintf(stdout, " (pin %s)", current.Pin)
+	} else {
+		fmt.Fprint(stdout, " (pin none)")
 	}
 	fmt.Fprintln(stdout)
 }
