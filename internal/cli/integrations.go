@@ -21,7 +21,7 @@ func configureIntegration(request Request, p podmanTarget, stdout, stderr io.Wri
 	if _, err := queryManagerSessions(request, p); err != nil {
 		return fmt.Errorf("sandbox %q: manager does not answer; use check %s for diagnosis and restart %s (%w)", request.Name, request.Name, request.Name, err)
 	}
-	selection := request.IntegrationConfig
+	selection := request.ConfigSelection
 
 	args := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent", names.Container, managerPath, "integrations", "config", selection.Integration, selection.Workflow}
 	if selection.Integration == catalog.GitIntegration && selection.Workflow == catalog.GitIdentityWorkflow {

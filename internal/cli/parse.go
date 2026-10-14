@@ -10,14 +10,14 @@ import (
 
 // Request is the parsed command, before any host prerequisite or Podman query.
 type Request struct {
-	Command           string
-	Group             string
-	Name              string
-	IntegrationConfig catalog.ConfigSelection
-	Args              []string
-	Options           map[string]string
-	Toolchains        []string
-	Resources         Resources
+	Command         string
+	Group           string
+	Name            string
+	ConfigSelection catalog.ConfigSelection
+	Args            []string
+	Options         map[string]string
+	Toolchains      []string
+	Resources       Resources
 }
 
 type commandSpec struct {
@@ -212,7 +212,7 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 		if err != nil {
 			return request, err
 		}
-		request.IntegrationConfig = selection
+		request.ConfigSelection = selection
 		for option := range request.Options {
 			if !slices.Contains(selection.Definition.Options, option) {
 				return request, fmt.Errorf("%s %s takes no options", selection.Integration, selection.Workflow)

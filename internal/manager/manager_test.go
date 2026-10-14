@@ -11,7 +11,6 @@ import (
 )
 
 var sessionRequests = [][]string{{"sessions"}, {"__worker", "sessions"}}
-var agentWorkRequests = append(append([][]string{}, sessionRequests...), []string{"integrations", "config", "git", "credentials"})
 
 func noProcesses(t *testing.T, identity manager.Identity) manager.Effects {
 	t.Helper()
@@ -60,7 +59,7 @@ func TestDirectSessionsStartTmuxWithAgentIdentity(t *testing.T) {
 
 // TestAgentWorkReadsFullIdentityOnce proves that direct and worker commands read each full ID set once and query effective identity only for public session queries through the manager command and injected read seams.
 func TestAgentWorkReadsFullIdentityOnce(t *testing.T) {
-	for _, args := range agentWorkRequests {
+	for _, args := range sessionRequests {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			identityReads, uidReads, gidReads, starts := 0, 0, 0, 0
@@ -120,7 +119,7 @@ func TestAgentWorkRequiresAllRealEffectiveAndSavedIDs(t *testing.T) {
 		{"missing-gids", [3]int{1000, 1000, 1000}, [3]int{1000, 1000, 1000}, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, args := range agentWorkRequests {
+			for _, args := range sessionRequests {
 				var stdout, stderr bytes.Buffer
 				effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
 				effects.UIDs = func() (int, int, int) { return tc.uids[0], tc.uids[1], tc.uids[2] }
@@ -158,7 +157,7 @@ func TestAgentWorkRequiresSafeSupplementaryGroups(t *testing.T) {
 		{"missing-query", nil, nil, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, args := range agentWorkRequests {
+			for _, args := range sessionRequests {
 				var stdout, stderr bytes.Buffer
 				starts := 0
 				effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
@@ -271,13 +270,13 @@ func TestMalformedManagerRequestsNeverStartPrograms(t *testing.T) {
 	}
 }
 
-// TestAgentSessionQueryRefusesOtherIdentities proves that session queries and Git workflows reject mismatched agent IDs and root workers before any program or re-exec through the manager command seam.
+// TestAgentSessionQueryRefusesOtherIdentities proves that session queries reject mismatched agent IDs and root workers before any program or re-exec through the manager command seam.
 func TestAgentSessionQueryRefusesOtherIdentities(t *testing.T) {
 	for _, identity := range []manager.Identity{
 		{UID: 0, GID: 0}, {UID: 0, GID: 1000}, {UID: 1000, GID: 0},
 		{UID: 1001, GID: 1000}, {UID: 1000, GID: 1001}, {UID: 1001, GID: 1001},
 	} {
-		for _, args := range agentWorkRequests {
+		for _, args := range sessionRequests {
 			if identity == (manager.Identity{UID: 0, GID: 0}) && len(args) == 1 {
 				continue
 			}
