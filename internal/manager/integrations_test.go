@@ -2,6 +2,7 @@ package manager_test
 
 import (
 	"bytes"
+	"errors"
 	"maps"
 	"os"
 	"os/exec"
@@ -168,4 +169,48 @@ func withoutGitCredentials(t *testing.T) {
 	delete(integration.ConfigWorkflows, "credentials")
 	catalog.Default.Integrations["git"] = integration
 	t.Cleanup(func() { catalog.Default.Integrations["git"] = original })
+}
+
+// TestGitConfigRejectsUnsafeIdentity proves complete Git workflows reject root, wrong IDs, missing identity reads, and unsafe groups before any process through manager.RunWithEffects.
+func TestGitConfigRejectsUnsafeIdentity(t *testing.T) {
+	for _, args := range [][]string{
+		{"integrations", "config", "git", "credentials"},
+		{"integrations", "config", "git", "identity", "--name", "N", "--email", "E"},
+	} {
+		t.Run(args[3], func(t *testing.T) {
+			for _, tc := range []struct {
+				name, message string
+				configure     func(*manager.Effects)
+			}{
+				{"root", "real, effective, and saved UID and GID 1000", func(e *manager.Effects) { *e = noProcesses(t, manager.Identity{UID: 0, GID: 0}) }},
+				{"wrong-user", "real, effective, and saved UID and GID 1000", func(e *manager.Effects) { *e = noProcesses(t, manager.Identity{UID: 1001, GID: 1000}) }},
+				{"wrong-group", "real, effective, and saved UID and GID 1000", func(e *manager.Effects) { *e = noProcesses(t, manager.Identity{UID: 1000, GID: 1001}) }},
+				{"real-uid", "real, effective, and saved UID and GID 1000", func(e *manager.Effects) { e.UIDs = func() (int, int, int) { return 0, 1000, 1000 } }},
+				{"effective-uid", "real, effective, and saved UID and GID 1000", func(e *manager.Effects) { e.UIDs = func() (int, int, int) { return 1000, 0, 1000 } }},
+				{"saved-uid", "real, effective, and saved UID and GID 1000", func(e *manager.Effects) { e.UIDs = func() (int, int, int) { return 1000, 1000, 0 } }},
+				{"real-gid", "real, effective, and saved UID and GID 1000", func(e *manager.Effects) { e.GIDs = func() (int, int, int) { return 0, 1000, 1000 } }},
+				{"effective-gid", "real, effective, and saved UID and GID 1000", func(e *manager.Effects) { e.GIDs = func() (int, int, int) { return 1000, 0, 1000 } }},
+				{"saved-gid", "real, effective, and saved UID and GID 1000", func(e *manager.Effects) { e.GIDs = func() (int, int, int) { return 1000, 1000, 0 } }},
+				{"missing-uids", "verified real, effective, and saved UID and GID 1000", func(e *manager.Effects) { e.UIDs = nil }},
+				{"missing-gids", "verified real, effective, and saved UID and GID 1000", func(e *manager.Effects) { e.GIDs = nil }},
+				{"root-supplementary-group", "supplementary groups", func(e *manager.Effects) { e.Groups = func() ([]int, error) { return []int{0}, nil } }},
+				{"agent-and-root-groups", "supplementary groups", func(e *manager.Effects) { e.Groups = func() ([]int, error) { return []int{1000, 0}, nil } }},
+				{"duplicate-group", "supplementary groups", func(e *manager.Effects) { e.Groups = func() ([]int, error) { return []int{1000, 1000}, nil } }},
+				{"missing-groups", "verified supplementary groups", func(e *manager.Effects) { e.Groups = nil }},
+				{"group-read-error", "cannot verify agent supplementary groups", func(e *manager.Effects) {
+					e.Groups = func() ([]int, error) { return nil, errors.New("group lookup failed") }
+				}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
+					tc.configure(&effects)
+					var stdout, stderr bytes.Buffer
+					status := manager.RunWithEffects(args, &stdout, &stderr, effects)
+					if status != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), tc.message) {
+						t.Fatalf("status=%d stdout=%q stderr=%q; want unsafe identity rejection", status, &stdout, &stderr)
+					}
+				})
+			}
+		})
+	}
 }
