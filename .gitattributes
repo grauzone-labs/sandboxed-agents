@@ -4,6 +4,7 @@ image/context/**/*.bin binary
 scripts/*.sh text eol=lf
 scripts/version-symbol.txt text eol=lf
 packages/nuget/** text eol=lf
+packages/npm/** text eol=lf
 go.mod text eol=lf
 *.go text eol=lf
 .github/workflows/*.yml text eol=lf

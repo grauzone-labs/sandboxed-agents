@@ -19,12 +19,17 @@ jobs:
       linux_asset_hash: ${{ steps.version.outputs.linux_asset_hash }}
       linux_sha256: ${{ steps.version.outputs.linux_sha256 }}
       windows_sha256: ${{ steps.version.outputs.windows_sha256 }}
+      npm_sha256: ${{ steps.version.outputs.npm_sha256 }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
       - name: Tag the runner checkout
         shell: bash
         run: git tag "v$RELEASE_VERSION" HEAD
@@ -48,6 +53,10 @@ jobs:
           [[ $windows_sha256 =~ ^[0-9a-f]{64}$ ]]
           printf 'Windows executable SHA256: %s\n' "$windows_sha256"
           printf 'windows_sha256=%s\n' "$windows_sha256" >> "$GITHUB_OUTPUT"
+          npm_sha256=$(sha256sum "$RUNNER_TEMP/release-output/sandboxed-agents-$RELEASE_VERSION.tgz" | awk '{ print $1 }')
+          [[ $npm_sha256 =~ ^[0-9a-f]{64}$ ]]
+          printf 'npm tarball SHA256: %s\n' "$npm_sha256"
+          printf 'npm_sha256=%s\n' "$npm_sha256" >> "$GITHUB_OUTPUT"
 
   windows:
     needs: linux
@@ -57,12 +66,17 @@ jobs:
       EXPECTED_ASSET_HASH: ${{ needs.linux.outputs.linux_asset_hash }}
       EXPECTED_LINUX_SHA256: ${{ needs.linux.outputs.linux_sha256 }}
       EXPECTED_WINDOWS_SHA256: ${{ needs.linux.outputs.windows_sha256 }}
+      EXPECTED_NPM_SHA256: ${{ needs.linux.outputs.npm_sha256 }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
       - name: Verify LF Go sources with Windows checkout settings and tag HEAD
         shell: pwsh
         run: |
@@ -115,3 +129,6 @@ jobs:
           $linuxSHA256 = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP/release-output/sandboxed-agents-linux-amd64").Hash.ToLowerInvariant()
           "Linux executable SHA256: $linuxSHA256"
           if ($linuxSHA256 -ne $env:EXPECTED_LINUX_SHA256) { throw 'Windows-cross-compiled and Linux-built Linux executables differ' }
+          $npmSHA256 = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP/release-output/sandboxed-agents-$env:RELEASE_VERSION.tgz").Hash.ToLowerInvariant()
+          "npm tarball SHA256: $npmSHA256"
+          if ($npmSHA256 -ne $env:EXPECTED_NPM_SHA256) { throw 'Windows-built and Linux-built npm tarballs differ' }
