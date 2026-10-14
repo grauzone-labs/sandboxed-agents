@@ -17,7 +17,7 @@ func checkReusedUp(request Request, p podmanTarget, container sandboxContainer) 
 			return err
 		}
 		if requested != port {
-			return reusedUpConflict(request, fmt.Sprintf("--port differs from recorded port %d", port))
+			return reusedUpConflict(request, fmt.Sprintf("--port: requested SSH port %d differs from recorded SSH port %d", requested, port))
 		}
 	}
 	if err := checkReusedResources(request, container); err != nil {
@@ -63,18 +63,24 @@ func checkReusedResources(request Request, container sandboxContainer) error {
 		}
 	}
 	if request.Options["cpus"] != "" {
-		limits := container.HostConfig
-		var cpus float64
-		if limits.CpuQuota != nil && limits.CpuPeriod != nil && *limits.CpuPeriod > 0 && *limits.CpuQuota > 0 {
-			cpus = float64(*limits.CpuQuota) / float64(*limits.CpuPeriod)
-		} else if limits.NanoCpus != nil && *limits.NanoCpus > 0 {
-			cpus = float64(*limits.NanoCpus) / 1e9
-		} else {
-			return fmt.Errorf("sandbox %s: recorded --cpus is missing", request.Name)
+		cpus, err := recordedCPUs(container)
+		if err != nil {
+			return fmt.Errorf("sandbox %s: %w", request.Name, err)
 		}
 		if cpus != request.Resources.CPUs {
 			return reusedUpConflict(request, fmt.Sprintf("--cpus differs from recorded limit %g", cpus))
 		}
 	}
 	return nil
+}
+
+func recordedCPUs(container sandboxContainer) (float64, error) {
+	limits := container.HostConfig
+	if limits.CpuQuota != nil && limits.CpuPeriod != nil && *limits.CpuPeriod > 0 && *limits.CpuQuota > 0 {
+		return float64(*limits.CpuQuota) / float64(*limits.CpuPeriod), nil
+	}
+	if limits.NanoCpus != nil && *limits.NanoCpus > 0 {
+		return float64(*limits.NanoCpus) / 1e9, nil
+	}
+	return 0, fmt.Errorf("recorded --cpus is missing")
 }
