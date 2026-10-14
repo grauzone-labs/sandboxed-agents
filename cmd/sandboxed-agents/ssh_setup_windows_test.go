@@ -14,8 +14,8 @@ import (
 
 // TestSSHSetupWindowsInstallSecuresNewPathsAndPreservesExistingPermissions proves
 // through the built CLI that opt-in installation creates Windows SSH
-// files accepted by native OpenSSH and that install/remove preserve a user's
-// existing configuration bytes, owner, custom DACL, and inheritance protection.
+// files accepted by native OpenSSH and that install/remove preserve an existing
+// configuration's bytes and ACL settings while assigning the CLI account as owner.
 func TestSSHSetupWindowsInstallSecuresNewPathsAndPreservesExistingPermissions(t *testing.T) {
 	if os.Getenv(nestedGuardEnv) == strconv.Itoa(os.Getppid()) {
 		t.Skip("nested offline guard isolates PATH to fake programs; the outer suite checks native Windows OpenSSH")
