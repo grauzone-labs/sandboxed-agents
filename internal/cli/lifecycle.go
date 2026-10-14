@@ -44,7 +44,6 @@ type sandboxObjects struct {
 // readSandbox collects Podman facts without deciding which states a command accepts.
 func readSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 	var objects sandboxObjects
-	requiresContainer := request.Command != "remove" && !(request.Command == "ssh-config" && request.Options["remove"] != "")
 	objects.volumeOwners = make(map[string]string)
 	names := DerivedNames(request.Group, request.Name)
 	exists, err := p.exists(containerResource, names.Container)
@@ -111,6 +110,7 @@ func (objects sandboxObjects) ownerError() error {
 }
 
 func requireSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
+	requiresContainer := request.Command != "remove" && !(request.Command == "ssh-config" && request.Options["remove"] != "")
 	objects, err := readSandbox(request, p)
 	if err != nil {
 		return objects, err

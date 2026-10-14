@@ -77,7 +77,7 @@ func (s sshSetup) hostEntry(request Request, objects sandboxObjects) (string, er
 }
 
 func configureSSH(request Request, p podmanTarget, stdout, stderr io.Writer) error {
-	objects, err := inspectSandbox(request, p)
+	objects, err := requireSandbox(request, p)
 	if err != nil {
 		return err
 	}
