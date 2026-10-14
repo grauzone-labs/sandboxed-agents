@@ -243,7 +243,7 @@ func (r sessionReport) write(output io.Writer, name string) {
 }
 
 func guardSessions(request Request, p podmanTarget) (sessionReport, error) {
-	output, err := queryManager(p, DerivedNames(request.Group, request.Name).Container, "sessions")
+	output, err := queryManagerSessions(request, p)
 	if err != nil {
 		if request.Options["force"] != "" {
 			return sessionReport{unavailable: true}, nil

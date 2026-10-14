@@ -264,7 +264,7 @@ func TestMalformedManagerRequestsNeverStartPrograms(t *testing.T) {
 		for _, identity := range []manager.Identity{{UID: 0, GID: 0}, {UID: 1000, GID: 1000}} {
 			var stdout, stderr bytes.Buffer
 			status := manager.RunWithEffects(args, &stdout, &stderr, noProcesses(t, identity))
-			if status != 2 || stdout.Len() != 0 || stderr.String() != "usage: sandboxed-agents-manager version | sessions | integrations config git identity --name N --email E | integrations config git credentials\n" {
+			if status != 2 || stdout.Len() != 0 || stderr.String() != "usage: sandboxed-agents-manager version | sessions | integrations config git credentials | integrations config git identity --name NAME --email EMAIL\n" {
 				t.Errorf("args=%q identity=%+v status=%d stdout=%q stderr=%q; want usage error", args, identity, status, stdout.String(), stderr.String())
 			}
 		}

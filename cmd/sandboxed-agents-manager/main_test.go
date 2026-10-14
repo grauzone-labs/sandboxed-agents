@@ -21,7 +21,7 @@ func TestManagerBinaryVersionAndUsage(t *testing.T) {
 		stdout, stderr string
 	}{
 		{[]string{"version"}, 0, "sandboxed-agents-manager development\n", ""},
-		{[]string{"unknown"}, 2, "", "usage: sandboxed-agents-manager version | sessions | integrations config git identity --name N --email E | integrations config git credentials\n"},
+		{[]string{"unknown"}, 2, "", "usage: sandboxed-agents-manager version | sessions | integrations config git credentials | integrations config git identity --name NAME --email EMAIL\n"},
 	} {
 		command := exec.Command(executable, tc.args...)
 		// Even accidental external program lookup cannot reach a host executable.
