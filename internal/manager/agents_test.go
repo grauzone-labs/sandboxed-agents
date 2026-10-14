@@ -45,7 +45,7 @@ func agentEffects(t *testing.T, home string, version *string, installs *int) man
 		if err := os.MkdirAll(packagePath, 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(packagePath, "package.json"), []byte(fmt.Sprintf(`{"version":%q}`, installed)), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(packagePath, "package.json"), []byte(fmt.Sprintf(`{"name":%q,"version":%q}`, packageName, installed)), 0600); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.MkdirAll(filepath.Join(prefix, "bin"), 0700); err != nil {
@@ -503,5 +503,357 @@ func TestAgentInstallationFailureReturnsManagerFailure(t *testing.T) {
 	runAgents(t, e, 1, "enable", "codex")
 	if got := readAgentStatus(t, e, "codex"); got.Enabled {
 		t.Fatalf("failed install enabled=%+v", got)
+	}
+}
+
+// interruptedAgentLink creates the on-disk command publication left before its selection was committed.
+func interruptedAgentLink(t *testing.T, home, name, version string) string {
+	t.Helper()
+	definition := catalog.Default.Agents[name]
+	prefix := filepath.Join(home, ".local", "share", "sandboxed-agents", "installation-interrupted")
+	pkg := filepath.Join(prefix, "lib", "node_modules", definition.Install.Package)
+	if err := os.MkdirAll(pkg, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "package.json"), []byte(fmt.Sprintf(`{"name":%q,"version":%q}`, definition.Install.Package, version)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "cli.js"), []byte("orphan managed command"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(prefix, "bin")
+	if err := os.MkdirAll(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(bin, definition.Command)
+	relative, err := filepath.Rel(bin, filepath.Join(pkg, "cli.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(relative, target); err != nil {
+		t.Fatal(err)
+	}
+	command := filepath.Join(home, ".local", "bin", definition.Command)
+	if err := os.Remove(command); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, command); err != nil {
+		t.Fatal(err)
+	}
+	return target
+}
+
+// TestForcedEnableRepairsInterruptedPublication proves normal enable refuses a mismatched managed link while explicit force reinstalls the selected pin through RunWithEffects and a real temporary home.
+func TestForcedEnableRepairsInterruptedPublication(t *testing.T) {
+	home, version, installs := t.TempDir(), "1.0.0", 0
+	e := agentEffects(t, home, &version, &installs)
+	runAgents(t, e, 0, "enable", "codex", "--version", "1.0.0")
+	orphan := interruptedAgentLink(t, home, "codex", "2.0.0")
+	if out := runAgents(t, e, 1, "enable", "codex", "--version", "1.0.0"); !strings.Contains(out, "--force") {
+		t.Fatalf("missing repair hint: %s", out)
+	}
+	if got := readAgentStatus(t, e, "codex"); got.Pin != "1.0.0" || got.InstalledVersion != "1.0.0" {
+		t.Fatalf("refusal changed selection=%+v", got)
+	}
+	version = "3.0.0"
+	runAgents(t, e, 0, "enable", "codex", "--force")
+	if got := readAgentStatus(t, e, "codex"); got.Pin != "1.0.0" || got.InstalledVersion != "1.0.0" || installs != 2 {
+		t.Fatalf("forced repair lost pin/status=%+v installs=%d", got, installs)
+	}
+	target, err := os.Readlink(filepath.Join(home, ".local", "bin", "codex"))
+	if err != nil || target == orphan {
+		t.Fatalf("forced repair left orphan link=%s error=%v", target, err)
+	}
+	runAgents(t, e, 0, "disable", "codex")
+}
+
+// TestForcedUpdateAndDisableRepairInterruptedPublication proves force repairs a mismatched npm publication while ordinary mutations refuse and unrelated selections survive at RunWithEffects.
+func TestForcedUpdateAndDisableRepairInterruptedPublication(t *testing.T) {
+	for _, operation := range []string{"update", "disable"} {
+		t.Run(operation, func(t *testing.T) {
+			home, version, installs := t.TempDir(), "1.0.0", 0
+			e := agentEffects(t, home, &version, &installs)
+			preserved := []string{".git-credentials", ".npm/cache", ".config/codex/auth.json"}
+			for _, name := range preserved {
+				path := filepath.Join(home, name)
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("preserve "+name), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			runAgents(t, e, 0, "enable", "claude")
+			runAgents(t, e, 0, "enable", "codex", "--version", "1.0.0")
+			interruptedAgentLink(t, home, "codex", "2.0.0")
+			before := installs
+			runAgents(t, e, 1, operation, "codex")
+			if installs != before {
+				t.Fatalf("ordinary mutation started npm: %d != %d", installs, before)
+			}
+			runAgents(t, e, 0, operation, "codex", "--force")
+			got := readAgentStatus(t, e, "codex")
+			if operation == "update" && (!got.Enabled || got.Pin != "1.0.0" || got.InstalledVersion != "1.0.0") {
+				t.Fatalf("forced update=%+v", got)
+			}
+			if operation == "disable" {
+				if got.Enabled {
+					t.Fatalf("forced disable retained=%+v", got)
+				}
+				if _, err := os.Lstat(filepath.Join(home, ".local", "bin", "codex")); !os.IsNotExist(err) {
+					t.Fatalf("force retained command: %v", err)
+				}
+			}
+			for _, name := range preserved {
+				if data, err := os.ReadFile(filepath.Join(home, name)); err != nil || string(data) != "preserve "+name {
+					t.Fatalf("recovery changed %s=%q error=%v", name, data, err)
+				}
+			}
+			if got := readAgentStatus(t, e, "claude"); !got.Enabled || got.InstalledVersion != "1.0.0" {
+				t.Fatalf("other agent changed=%+v", got)
+			}
+		})
+	}
+}
+
+// TestForcedEnableRepairsMissingCommand proves a missing enabled command cannot silently succeed or repin and force preserves its pin at RunWithEffects with a real home.
+func TestForcedEnableRepairsMissingCommand(t *testing.T) {
+	home, version, installs := t.TempDir(), "1.0.0", 0
+	e := agentEffects(t, home, &version, &installs)
+	runAgents(t, e, 0, "enable", "codex", "--version", "1.0.0")
+	if err := os.Remove(filepath.Join(home, ".local", "bin", "codex")); err != nil {
+		t.Fatal(err)
+	}
+	if output := runAgents(t, e, 1, "enable", "codex", "--version", "2.0.0"); !strings.Contains(output, "--force") {
+		t.Fatalf("missing repair hint: %s", output)
+	}
+	if got := readAgentStatus(t, e, "codex"); got.Pin != "1.0.0" || installs != 1 {
+		t.Fatalf("refusal repinned=%+v installs=%d", got, installs)
+	}
+	runAgents(t, e, 0, "enable", "codex", "--force")
+	if got := readAgentStatus(t, e, "codex"); got.Pin != "1.0.0" || got.InstalledVersion != "1.0.0" || installs != 2 {
+		t.Fatalf("missing command repair=%+v installs=%d", got, installs)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".local", "bin", "codex")); err != nil {
+		t.Fatalf("missing command unrepaired: %v", err)
+	}
+}
+
+// TestForcedMutationsPreserveUnmanagedCommands proves force never replaces or removes a regular command or changes its selected pin at RunWithEffects and the temporary-home filesystem seam.
+func TestForcedMutationsPreserveUnmanagedCommands(t *testing.T) {
+	home, version, installs := t.TempDir(), "1.0.0", 0
+	e := agentEffects(t, home, &version, &installs)
+	runAgents(t, e, 0, "enable", "codex", "--version", "1.0.0")
+	command := filepath.Join(home, ".local", "bin", "codex")
+	if err := os.Remove(command); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(command, []byte("unrelated command"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"enable", "codex", "--force"}, {"enable", "codex", "--version", "2.0.0", "--force"}, {"update", "codex", "--force"}, {"disable", "codex", "--force"}} {
+		output := runAgents(t, e, 1, args...)
+		if strings.Contains(output, "retry with --force") {
+			t.Fatalf("unsafe command implied bypass: %s", output)
+		}
+		if got := readAgentStatus(t, e, "codex"); !got.Enabled || got.Pin != "1.0.0" || got.InstalledVersion != "1.0.0" || installs != 1 {
+			t.Fatalf("refusal changed selection=%+v installs=%d", got, installs)
+		}
+		if data, err := os.ReadFile(command); err != nil || string(data) != "unrelated command" {
+			t.Fatalf("unmanaged command changed=%q error=%v", data, err)
+		}
+	}
+}
+
+// TestForcedRecoveryRejectsEscapingOrWrongAgentLinks proves force refuses foreign package identity, traversal, and symlink escapes before npm while preserving selection and the link at RunWithEffects.
+func TestForcedRecoveryRejectsEscapingOrWrongAgentLinks(t *testing.T) {
+	for _, kind := range []string{"outside", "relative-traversal", "wrong-agent", "prefix-symlink", "bin-symlink", "command-symlink", "metadata-symlink", "invalid-version", "selected-prefix-symlink", "selected-bin-symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			home, version, installs := t.TempDir(), "1.0.0", 0
+			e := agentEffects(t, home, &version, &installs)
+			runAgents(t, e, 0, "enable", "codex", "--version", "1.0.0")
+			command := filepath.Join(home, ".local", "bin", "codex")
+			target, err := os.Readlink(command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(kind, "selected-") {
+				target = interruptedAgentLink(t, home, "codex", "2.0.0")
+			}
+			prefix := filepath.Dir(filepath.Dir(target))
+			metadata := filepath.Join(prefix, "lib", "node_modules", "@openai", "codex", "package.json")
+			outside := t.TempDir()
+			external := filepath.Join(outside, "codex")
+			if err := os.WriteFile(external, []byte("unrelated external command"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			replace := func(path, link string) {
+				t.Helper()
+				if err := os.RemoveAll(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(link, path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			switch kind {
+			case "outside":
+				replace(command, external)
+			case "relative-traversal":
+				replace(command, "../../share/sandboxed-agents/installation-interrupted/bin/codex")
+			case "wrong-agent":
+				if err := os.WriteFile(metadata, []byte(`{"name":"@anthropic-ai/claude-code","version":"2.0.0"}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "prefix-symlink", "selected-prefix-symlink":
+				moved := filepath.Join(outside, "installation-moved")
+				if err := os.Rename(prefix, moved); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(moved, prefix); err != nil {
+					t.Fatal(err)
+				}
+			case "bin-symlink", "selected-bin-symlink":
+				replace(filepath.Join(prefix, "bin"), outside)
+			case "command-symlink":
+				replace(target, external)
+			case "metadata-symlink":
+				path := filepath.Join(outside, "package.json")
+				if err := os.WriteFile(path, []byte(`{"name":"@openai/codex","version":"2.0.0"}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+				replace(metadata, path)
+			case "invalid-version":
+				if err := os.WriteFile(metadata, []byte(`{"name":"@openai/codex","version":"latest"}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			previous, err := os.Readlink(command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, operation := range []string{"enable", "update", "disable"} {
+				runAgents(t, e, 1, operation, "codex", "--force")
+				if installs != 1 {
+					t.Fatalf("unsafe recovery ran npm: %d", installs)
+				}
+				if got := readAgentStatus(t, e, "codex"); !got.Enabled || got.Pin != "1.0.0" || got.InstalledVersion != "1.0.0" {
+					t.Fatalf("unsafe recovery changed selection=%+v", got)
+				}
+				if after, err := os.Readlink(command); err != nil || after != previous {
+					t.Fatalf("unsafe recovery changed link=%s error=%v", after, err)
+				}
+				if data, err := os.ReadFile(external); err != nil || string(data) != "unrelated external command" {
+					t.Fatalf("external command changed=%q error=%v", data, err)
+				}
+			}
+		})
+	}
+}
+
+// TestForcedRecoveryHandlesInitialPublication proves force can enable or disable a validated orphan without a selection and unpinned recovery installs current npm at RunWithEffects.
+func TestForcedRecoveryHandlesInitialPublication(t *testing.T) {
+	for _, operation := range []string{"enable", "disable"} {
+		t.Run(operation, func(t *testing.T) {
+			home, version, installs := t.TempDir(), "1.0.0", 0
+			e := agentEffects(t, home, &version, &installs)
+			runAgents(t, e, 0, "enable", "codex")
+			runAgents(t, e, 0, "disable", "codex")
+			interruptedAgentLink(t, home, "codex", "2.0.0")
+			if operation == "enable" {
+				runAgents(t, e, 1, "enable", "codex")
+			} else {
+				runAgents(t, e, 0, "disable", "codex")
+			}
+			version = "3.0.0"
+			runAgents(t, e, 0, operation, "codex", "--force")
+			got := readAgentStatus(t, e, "codex")
+			if operation == "enable" && (!got.Enabled || got.InstalledVersion != "3.0.0" || got.Pin != "" || installs != 2) {
+				t.Fatalf("initial force enable=%+v installs=%d", got, installs)
+			}
+			if operation == "disable" {
+				if got.Enabled || installs != 1 {
+					t.Fatalf("initial force disable=%+v installs=%d", got, installs)
+				}
+				if _, err := os.Lstat(filepath.Join(home, ".local", "bin", "codex")); !os.IsNotExist(err) {
+					t.Fatalf("orphan link survived disable: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestFailedForcedRecoveryPreservesPublication proves a failed repair keeps the old selection pin and interrupted command link for a later retry at RunWithEffects.
+func TestFailedForcedRecoveryPreservesPublication(t *testing.T) {
+	home, version, installs := t.TempDir(), "1.0.0", 0
+	e := agentEffects(t, home, &version, &installs)
+	runAgents(t, e, 0, "enable", "codex", "--version", "1.0.0")
+	orphan := interruptedAgentLink(t, home, "codex", "2.0.0")
+	failed := e
+	failed.Start = func(manager.Process) error { return fmt.Errorf("npm unavailable") }
+	for _, operation := range []string{"enable", "update"} {
+		runAgents(t, failed, 1, operation, "codex", "--force")
+		if got := readAgentStatus(t, e, "codex"); got.Pin != "1.0.0" || got.InstalledVersion != "1.0.0" {
+			t.Fatalf("failed force changed selection=%+v", got)
+		}
+		if target, err := os.Readlink(filepath.Join(home, ".local", "bin", "codex")); err != nil || target != orphan {
+			t.Fatalf("failed force changed publication=%s error=%v", target, err)
+		}
+	}
+}
+
+// TestOrdinaryMutationsHandleMissingCommand proves update restores a pinned command and disable removes its selection and names the pin without force while preserving other home data at RunWithEffects.
+func TestOrdinaryMutationsHandleMissingCommand(t *testing.T) {
+	for _, operation := range []string{"update", "disable"} {
+		t.Run(operation, func(t *testing.T) {
+			home, version, installs := t.TempDir(), "1.0.0", 0
+			e := agentEffects(t, home, &version, &installs)
+			preserved := []string{".git-credentials", ".npm/cache"}
+			for _, name := range preserved {
+				path := filepath.Join(home, name)
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("preserve "+name), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runAgents(t, e, 0, "enable", "claude")
+			runAgents(t, e, 0, "enable", "codex", "--version", "1.0.0")
+			command := filepath.Join(home, ".local", "bin", "codex")
+			if err := os.Remove(command); err != nil {
+				t.Fatal(err)
+			}
+			version = "2.0.0"
+			output := runAgents(t, e, 0, operation, "codex")
+			got := readAgentStatus(t, e, "codex")
+			if operation == "update" {
+				if !got.Enabled || got.Pin != "1.0.0" || got.InstalledVersion != "1.0.0" || installs != 3 {
+					t.Fatalf("ordinary update=%+v installs=%d", got, installs)
+				}
+				if _, err := os.Stat(command); err != nil {
+					t.Fatalf("ordinary update did not restore command: %v", err)
+				}
+			} else {
+				if got.Enabled || got.Pin != "" || got.InstalledVersion != "" || installs != 2 || !strings.Contains(output, "removed pin 1.0.0") {
+					t.Fatalf("ordinary disable=%+v installs=%d output=%s", got, installs, output)
+				}
+				if _, err := os.Lstat(command); !os.IsNotExist(err) {
+					t.Fatalf("ordinary disable recreated command: %v", err)
+				}
+				if list := runAgents(t, e, 0, "list"); list != "[\"claude\"]\n" {
+					t.Fatalf("ordinary disable retained selection: %s", list)
+				}
+			}
+			if other := readAgentStatus(t, e, "claude"); !other.Enabled || other.InstalledVersion != "1.0.0" {
+				t.Fatalf("other selection changed=%+v", other)
+			}
+			for _, name := range preserved {
+				if data, err := os.ReadFile(filepath.Join(home, name)); err != nil || string(data) != "preserve "+name {
+					t.Fatalf("ordinary mutation changed %s=%q error=%v", name, data, err)
+				}
+			}
+		})
 	}
 }
