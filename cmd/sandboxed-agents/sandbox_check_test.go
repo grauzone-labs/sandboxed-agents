@@ -140,6 +140,24 @@ func TestCheckLargeCPULimitUsesDecimalNotation(t *testing.T) {
 	assertCheckQueriesOnly(t, fakes, 0)
 }
 
+// TestCheckReportsFractionalCPUOverride proves check recovers an override from its truncated quota and preserves ratios that do not match a valid override through the built CLI and fake Podman seam.
+func TestCheckReportsFractionalCPUOverride(t *testing.T) {
+	for _, test := range []struct{ quota, want string }{{"7099", "0.071"}, {"899", "0.009"}, {"12345", "0.12345"}} {
+		t.Run(test.quota, func(t *testing.T) {
+			responses := healthyCheckResponses(false)
+			record := responses["container inspect sandboxed-agents.default.demo"]
+			record.Output = strings.Replace(record.Output, `"CpuQuota":250000`, `"CpuQuota":`+test.quota, 1)
+			responses["container inspect sandboxed-agents.default.demo"] = record
+			fakes := sshSetupHarness(t, responses)
+			status, stdout, stderr := sshSetupRun(t, "check", "demo")
+			if status != 0 || !strings.Contains(stdout, "cpus "+test.want+"\n") {
+				t.Fatalf("reported CPU override=%d %q %q", status, stdout, stderr)
+			}
+			assertCheckQueriesOnly(t, fakes, 0)
+		})
+	}
+}
+
 // TestCheckInspectionFailuresCannotClaimHealth proves missing running state, unreadable inspect data, and absent resource facts cause failure through the built CLI and fake Podman seam.
 func TestCheckInspectionFailuresCannotClaimHealth(t *testing.T) {
 	for _, field := range []string{"State", "HostConfig", "inspect"} {
