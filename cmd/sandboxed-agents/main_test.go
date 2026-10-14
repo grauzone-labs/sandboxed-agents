@@ -1378,6 +1378,11 @@ func TestLifecycleRemoveFailurePreventsVolumeDeletion(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			responses := ownedLifecycleResponses(true)
 			responses["stop sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 23}
+			for _, kind := range []string{"workspace", "home", "ssh"} {
+				name := "sandboxed-agents.default.demo." + kind
+				responses["volume exists "+name] = lifecycleResponse{}
+				responses["volume inspect "+name] = lifecycleResponse{Output: `[{"Labels":{"io.sandboxed-agents.owner":"default"}}]`}
+			}
 			fakes := lifecycleHarness(t, responses)
 			args := []string{"remove", "demo", "--force"}
 			wantMessage := "exit status 23"
@@ -1392,6 +1397,11 @@ func TestLifecycleRemoveFailurePreventsVolumeDeletion(t *testing.T) {
 			calls := testutil.Invocations(t, fakes.PodmanLog)
 			if !reflect.DeepEqual(lifecycleMutations(calls), want) {
 				t.Fatalf("mutations=%v want=%v", calls, want)
+			}
+			for _, call := range calls {
+				if len(call) > 1 && call[0] == "volume" && call[1] == "rm" {
+					t.Fatalf("deleted volume after failed stop: %v", call)
+				}
 			}
 		})
 	}

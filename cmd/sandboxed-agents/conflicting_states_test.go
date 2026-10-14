@@ -208,7 +208,7 @@ func namedCommandForms() [][]string {
 	}
 }
 
-// TestNamedCommandsRefuseConflictingVolumeBeforeLaterChecks proves every delivered command path refuses an owned sandbox's foreign volume before backup, stopped, or action checks through the CLI boundary.
+// TestNamedCommandsRefuseConflictingVolumeBeforeLaterChecks proves every accepted named command form refuses an owned sandbox's foreign volume before backup, stopped, or action checks through the CLI boundary.
 func TestNamedCommandsRefuseConflictingVolumeBeforeLaterChecks(t *testing.T) {
 	for _, args := range namedCommandForms() {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -456,7 +456,7 @@ func TestControllerGroupsIsolateEveryNamedCommand(t *testing.T) {
 	}
 }
 
-// TestUpRefusesOccupiedExplicitPortBeforeCreation proves a real host listener or another group's recorded port prevents all creation and builds through the CLI boundary.
+// TestUpRefusesOccupiedExplicitPortBeforeCreation proves a real host listener or another group's recorded port, including ownerless backups, prevents creation and builds through the CLI boundary.
 func TestUpRefusesOccupiedExplicitPortBeforeCreation(t *testing.T) {
 	for _, source := range []string{"host listener", "foreign record", "ownerless record", "ownerless backup record"} {
 		t.Run(source, func(t *testing.T) {
