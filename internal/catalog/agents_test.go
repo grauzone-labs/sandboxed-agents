@@ -32,8 +32,8 @@ func TestDeliveredAgentsShareInstallData(t *testing.T) {
 	}
 }
 
-// TestVersionPinsRequireExactSemanticVersions proves literal release, prerelease, and build versions are accepted while ranges, tags, injection, and invalid numeric forms are rejected at catalog.ValidateVersion.
-func TestVersionPinsRequireExactSemanticVersions(t *testing.T) {
+// TestPackageVersionsRequireExactSemanticVersions proves literal release, prerelease, and build versions are accepted while ranges, tags, injection, and invalid numeric forms are rejected at catalog.ValidateVersion.
+func TestPackageVersionsRequireExactSemanticVersions(t *testing.T) {
 	for _, version := range []string{"0.0.0", "1.2.3", "10.20.30-rc.1", "1.2.3+build.01", "1.2.3-alpha-beta.0+build.3"} {
 		if err := catalog.ValidateVersion(version); err != nil {
 			t.Fatalf("exact version %q refused: %v", version, err)
@@ -42,6 +42,23 @@ func TestVersionPinsRequireExactSemanticVersions(t *testing.T) {
 	for _, version := range []string{"", "latest", "beta", "*", "^1.2.3", "~1.2.3", "1.2.x", ">=1.2.3", "1.2.3 || 2.0.0", "file:/tmp/pkg", "01.2.3", "1.02.3", "1.2.03", "1.2.3-01", "1.2.3-rc.01", "1.2.3;id", "1.2.3\n"} {
 		if err := catalog.ValidateVersion(version); err == nil {
 			t.Fatalf("unsafe/non-exact version %q accepted", version)
+		}
+	}
+}
+
+// TestPinVersionsRejectBuildMetadata proves pin versions reject npm-normalized build metadata while installed package metadata remains valid at the catalog validation seams.
+func TestPinVersionsRejectBuildMetadata(t *testing.T) {
+	for _, version := range []string{"1.2.3+build.4", "1.2.3-rc.1+build.4"} {
+		if err := catalog.ValidateVersion(version); err != nil {
+			t.Fatalf("installed version %q refused: %v", version, err)
+		}
+		if err := catalog.ValidatePinVersion(version); err == nil {
+			t.Fatalf("build metadata pin %q accepted", version)
+		}
+	}
+	for _, version := range []string{"1.2.3", "1.2.3-rc.1"} {
+		if err := catalog.ValidatePinVersion(version); err != nil {
+			t.Fatalf("exact pin %q refused: %v", version, err)
 		}
 	}
 }

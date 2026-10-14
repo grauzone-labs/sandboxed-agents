@@ -72,3 +72,24 @@ func ValidateVersion(version string) error {
 	}
 	return nil
 }
+
+// ValidatePinVersion validates the exact npm version a user can pin.
+func ValidatePinVersion(version string) error {
+	if err := ValidateVersion(version); err != nil {
+		return err
+	}
+	if strings.Contains(version, "+") {
+		return fmt.Errorf("invalid pin version %q: --version requires an exact npm version without build metadata", version)
+	}
+	return nil
+}
+
+// AgentStatus is the shared machine-readable view of an agent selection.
+type AgentStatus struct {
+	Name             string `json:"name"`
+	Enabled          bool   `json:"enabled"`
+	InstalledVersion string `json:"installed_version"`
+	Pin              string `json:"pin"`
+	Session          bool   `json:"session"`
+	SignedIn         string `json:"signed_in"`
+}

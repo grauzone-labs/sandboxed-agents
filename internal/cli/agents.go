@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
 type managerUnavailable struct{ cause error }
@@ -33,6 +35,15 @@ func administerAgent(request Request, p podmanTarget, stdout io.Writer) error {
 	if verb == "status" {
 		return printAgentStatus(request, p, stdout)
 	}
+	if verb == "update" {
+		status, err := readAgentStatus(request, p)
+		if err != nil {
+			return err
+		}
+		if !status.Enabled {
+			return fmt.Errorf("%s not enabled; run agents enable %s %s", request.Args[1], request.Name, request.Args[1])
+		}
+	}
 	args := []string{"agents", verb, request.Args[1]}
 	for _, option := range []string{"version", "unpin", "force"} {
 		if value := request.Options[option]; value != "" {
@@ -48,7 +59,13 @@ func administerAgent(request Request, p podmanTarget, stdout io.Writer) error {
 			return agentManagerError(request, err)
 		}
 		if verb == "update" {
-			return fmt.Errorf("%w; to enable the agent use agents enable %s %s", err, request.Name, request.Args[1])
+			retry := "agents update " + request.Name + " " + request.Args[1]
+			for _, option := range []string{"unpin", "force"} {
+				if request.Options[option] != "" {
+					retry += " --" + option
+				}
+			}
+			return fmt.Errorf("%w; retry: %s", err, retry)
 		}
 		return err
 	}
@@ -72,21 +89,22 @@ func runAgentChange(request Request, p podmanTarget, stdout io.Writer, payload .
 	return err
 }
 
-func printAgentStatus(request Request, p podmanTarget, stdout io.Writer) error {
+func readAgentStatus(request Request, p podmanTarget) (catalog.AgentStatus, error) {
+	var status catalog.AgentStatus
 	answer, err := requestManager(request, p, "agents", "status", request.Args[1])
 	if err != nil {
-		return agentManagerError(request, err)
-	}
-	var status struct {
-		Name             string `json:"name"`
-		Enabled          bool   `json:"enabled"`
-		InstalledVersion string `json:"installed_version"`
-		Pin              string `json:"pin"`
-		SignedIn         string `json:"signed_in"`
-		Session          bool   `json:"session"`
+		return status, agentManagerError(request, err)
 	}
 	if err := json.Unmarshal([]byte(answer), &status); err != nil || status.Name != request.Args[1] || (status.Enabled && status.InstalledVersion == "") {
-		return agentManagerError(request, fmt.Errorf("invalid agent status answer"))
+		return status, agentManagerError(request, fmt.Errorf("invalid agent status answer"))
+	}
+	return status, nil
+}
+
+func printAgentStatus(request Request, p podmanTarget, stdout io.Writer) error {
+	status, err := readAgentStatus(request, p)
+	if err != nil {
+		return err
 	}
 	if !status.Enabled {
 		_, err = fmt.Fprintf(stdout, "%s: not enabled\n", status.Name)

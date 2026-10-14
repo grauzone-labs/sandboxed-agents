@@ -8,7 +8,13 @@ This page covers installing, pinning, updating, and removing agents. Agent sessi
 
 Every `agents` command needs a running sandbox. A stopped sandbox fails and names `start NAME`; a sandbox with only volumes names `up NAME`. If the manager does not answer, the command names `check NAME` for diagnosis and `restart NAME` as the next step. Nothing starts automatically and there is no fallback around the manager.
 
-The manager installs and works on agents as `agent` (UID and GID 1000), never as container root ([ADR 0006](adr/0006-podman-target-and-execution-identity.md)). Installation changes take the manager lock, so they run one at a time in a sandbox.
+The manager installs and works on agents as `agent` (UID and GID 1000), never as container root ([ADR 0006](adr/0006-podman-target-and-execution-identity.md)).
+
+## Concurrent changes
+
+Installation changes (`enable`, `update`, `disable`) take the manager lock, so only one runs at a time in a sandbox. The lock is exclusive and nonblocking, the same rule [ADR 0007](adr/0007-serialize-sandbox-lifecycle-commands.md) sets for lifecycle commands. A change that finds another agent change in progress does not wait. It exits non-zero, says that another agent change is in progress, and tells you to retry. Nothing retries automatically: run the command again once the first one has finished, and scripts that change agents in parallel must retry themselves.
+
+`agents status` and `list` do not take the lock. They read the agent selection as one consistent snapshot and stay responsive while an npm install runs. The snapshot only contains committed installations. While a first `enable` is still running, the agent is not in the snapshot yet: `status` reports it as not enabled and `list` omits it until the installation finishes. While an `update` or other replacement is running, the snapshot still shows the previously committed installation and version, not an absence, until the replacement commits.
 
 The agent selection and its pins live in the sandbox's home data. They survive `stop` and `start`, and the host keeps no copy.
 
@@ -21,7 +27,7 @@ sandboxed-agents agents enable agent01 claude --version 1.2.3
 
 Without `--version`, the command installs the agent's package at its newest version and records no pin. If the agent is already enabled, the command changes nothing, reports the installed version and the pin (or that there is none), and exits zero.
 
-With `--version X`, the command installs exactly that package version and pins the agent to it:
+With `--version X`, the command installs exactly that package version and pins the agent to it. `X` must be an exact npm package version, `MAJOR.MINOR.PATCH` with an optional prerelease such as `1.2.3-beta.1`. Tags, ranges, and versions with `+build` metadata are rejected: npm strips build metadata, so it cannot provide an installation that matches such a literal pin.
 
 - If that version is already installed, the command records the pin and installs nothing.
 - If a different version is installed, the command replaces it with `X` and records the pin.
@@ -69,6 +75,8 @@ sandboxed-agents up agent01 --agents claude,codex
 
 If an agent fails to install, the sandbox keeps running. `up` still attempts the remaining agents, exits non-zero, reports each failure, and names `agents enable NAME AGENT` to retry that agent.
 
+If the manager does not answer, the sandbox also keeps running and `up` reports no agent as installed. If the manager stopped answering partway through, agents installed earlier in the same request are not rolled back. `up` reports that once, with one diagnosis that names `check NAME` and `restart NAME`, and lists the `agents enable NAME AGENT` command to retry for every agent you listed.
+
 ## See the selection
 
 ```text
@@ -79,4 +87,6 @@ sandboxed-agents list
 
 ## Limits
 
-Agent sessions, agent login workflows, and running an agent once are not delivered by these commands. This page has not been verified against a live sandbox.
+Agent sessions, agent login workflows, and running an agent once are not delivered by these commands.
+
+The `agents` commands cannot work against the base image the project supplies today. That image still holds a placeholder keepalive entrypoint ([#49](https://github.com/grauzone-labs/sandboxed-agents/issues/49)), contains no manager, and has no `agent` account. Until the image integration is completed, every `agents` command and `up --agents` fails at the manager check described under [Requirements](#requirements), and no agent can be installed. This page describes the intended behaviour of the commands; it has not been verified against a live sandbox.

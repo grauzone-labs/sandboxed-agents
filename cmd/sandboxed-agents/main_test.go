@@ -657,6 +657,7 @@ func diagnosticNamesPath(output []byte, path string) bool {
 // lifecycleResponse scripts only the external Podman boundary.
 type lifecycleResponse struct {
 	Output             string
+	Stderr             string
 	Exit               int
 	ReadyFile, WaitFor string
 	HoldOutputUntil    string

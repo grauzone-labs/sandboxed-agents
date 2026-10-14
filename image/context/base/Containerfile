@@ -1,6 +1,6 @@
 FROM debian:trixie-slim
 
-ENV PATH="/home/agent/.local/bin:${PATH}"
+ENV PATH="${PATH}:/home/agent/.local/bin"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl gnupg git \
