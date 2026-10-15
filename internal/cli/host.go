@@ -316,10 +316,7 @@ func (p podmanTarget) query(args ...string) (string, error) {
 }
 
 func (p podmanTarget) queryContext(ctx context.Context, waitDelay time.Duration, args ...string) (string, error) {
-	args = p.arguments(args)
-	command := exec.CommandContext(ctx, "podman", args...)
-	command.WaitDelay = waitDelay
-	command.Env = p.environment()
+	command := p.command(ctx, waitDelay, args...)
 	// Only stdout is query data. Preserve both streams in failure diagnostics so
 	// stderr warnings cannot corrupt successful JSON or plain-text responses.
 	var stderr bytes.Buffer
@@ -330,9 +327,16 @@ func (p podmanTarget) queryContext(ctx context.Context, waitDelay time.Duration,
 		if stdout := strings.TrimSpace(string(output)); stdout != "" {
 			diagnostics = strings.TrimSpace(stdout + "\n" + diagnostics)
 		}
-		return string(output), fmt.Errorf("podman %s: %w: %s", strings.Join(args, " "), err, diagnostics)
+		return string(output), fmt.Errorf("podman %s: %w: %s", strings.Join(command.Args[1:], " "), err, diagnostics)
 	}
 	return string(output), nil
+}
+
+func (p podmanTarget) command(ctx context.Context, waitDelay time.Duration, args ...string) *exec.Cmd {
+	command := exec.CommandContext(ctx, "podman", p.arguments(args)...)
+	command.WaitDelay = waitDelay
+	command.Env = p.environment()
+	return command
 }
 
 // windowsPodmanEnvironment reads current variables on each call while stripping

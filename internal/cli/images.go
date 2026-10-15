@@ -69,7 +69,7 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		return err
 	}
 	names := DerivedNames(request.Group, request.Name)
-	labels := []string{"--label", OwnerLabel + "=" + request.Group, "--label", SandboxNameLabel + "=" + request.Name}
+	labels := sandboxIdentityLabels(request)
 	volumes := []string{names.Workspace, names.Home, names.SSH}
 	workspaceMount := "type=volume,source=" + names.Workspace + ",destination=/workspace"
 	if len(request.Args) == 2 {

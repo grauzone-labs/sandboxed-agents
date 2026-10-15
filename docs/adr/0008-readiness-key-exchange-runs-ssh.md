@@ -26,6 +26,7 @@ The SSH check of `update`'s readiness wait (ADR-0007) runs the host's `ssh -v` w
 
 ## Consequences
 
+- The probe also sets `GlobalKnownHostsFile=none`, `HostKeyAlgorithms=ssh-ed25519`, and `HashKnownHosts=no`: the temporary file is the only host-key store, the negotiated host key is Ed25519, and the loopback entry can be checked directly.
 - Each readiness attempt makes one unauthenticated SSH connection that ends before sign-in.
 - The readiness wait uses no OpenSSH program beyond the prerequisites `ssh` and `ssh-keygen`, so the preflight checks nothing further for it.
 - The known_hosts file is named relative to the working directory of `ssh`, so its command line holds no path. A path would need quoting for `ssh`'s option parser, and Windows programs split a quoted argument in different ways: the inbox Windows OpenSSH Client reads a quoted path as one argument, while Git for Windows' `ssh`, which runs on the MSYS2 runtime, can stop with `invalid quotes` on a quoted path that holds no space. The inbox Windows OpenSSH Client stays the supported Windows client.

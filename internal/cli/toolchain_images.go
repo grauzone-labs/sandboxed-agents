@@ -211,6 +211,10 @@ func sandboxImageOutdated(p podmanTarget, container sandboxContainer, hash strin
 	if err != nil {
 		return false, err
 	}
+	return imageOutdated(p, container.Image, set, hash)
+}
+
+func imageOutdated(p podmanTarget, imageID string, set []string, hash string) (bool, error) {
 	tag := image.Tag(hash, set)
 	exists, err := p.exists(imageResource, tag)
 	if err != nil {
@@ -223,7 +227,7 @@ func sandboxImageOutdated(p podmanTarget, container sandboxContainer, hash strin
 	if err != nil {
 		return false, err
 	}
-	if strings.TrimPrefix(current.ID, "sha256:") != strings.TrimPrefix(container.Image, "sha256:") {
+	if strings.TrimPrefix(current.ID, "sha256:") != strings.TrimPrefix(imageID, "sha256:") {
 		return true, nil
 	}
 	if len(set) == 0 {

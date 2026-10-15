@@ -41,11 +41,34 @@ func waitContext(ctx context.Context, d time.Duration) error {
 
 func waitReadiness(ctx context.Context, p podmanTarget, container string, port uint16, r readinessRuntime) error {
 	deadline := r.now().Add(60 * time.Second)
-	ready := [2]bool{}
-	failures := [2]error{}
+	type readinessProbe struct {
+		name    string
+		run     func(context.Context, time.Duration) error
+		ready   bool
+		failure error
+	}
+	probes := []readinessProbe{
+		{name: "manager", run: func(ctx context.Context, drain time.Duration) error {
+			args, _ := ManagerQueryArgs(container, managerPath, "version")
+			answer, err := r.run(ctx, p.command(ctx, drain, args...))
+			if err == nil && !strings.HasPrefix(strings.TrimSpace(string(answer)), "sandboxed-agents-manager ") {
+				return fmt.Errorf("manager did not answer its version query")
+			}
+			return err
+		}},
+		{name: "SSH", run: func(ctx context.Context, _ time.Duration) error { return probeSSH(ctx, port, r.run) }},
+	}
+	timedOut := func() error {
+		var failures []string
+		for _, probe := range probes {
+			failures = append(failures, fmt.Sprintf("%s: %v", probe.name, probe.failure))
+		}
+		return fmt.Errorf("readiness wait failed: 60s deadline exceeded (%s)", strings.Join(failures, "; "))
+	}
 	for {
-		for i := range ready {
-			if ready[i] {
+		for i := range probes {
+			probe := &probes[i]
+			if probe.ready {
 				continue
 			}
 			if err := ctx.Err(); err != nil {
@@ -53,48 +76,32 @@ func waitReadiness(ctx context.Context, p podmanTarget, container string, port u
 			}
 			remaining := deadline.Sub(r.now())
 			if remaining <= 0 {
-				return readinessTimeout(failures)
+				return timedOut()
 			}
 			// Reserve pipe-drain time inside the probe budget as well as the total wait.
 			timeout := min(3*time.Second, remaining)
 			drain := min(25*time.Millisecond, timeout/10)
 			probeCtx, cancel := context.WithTimeout(ctx, timeout-drain)
-			if i == 0 {
-				args, _ := ManagerQueryArgs(container, managerPath, "version")
-				cmd := exec.CommandContext(probeCtx, "podman", p.arguments(args)...)
-				cmd.Env = p.environment()
-				cmd.WaitDelay = drain
-				answer, err := r.run(probeCtx, cmd)
-				if err == nil && !strings.HasPrefix(strings.TrimSpace(string(answer)), "sandboxed-agents-manager ") {
-					err = fmt.Errorf("manager did not answer its version query")
-				}
-				failures[i] = err
-			} else {
-				failures[i] = probeSSH(probeCtx, port, r.run)
-			}
+			probe.failure = probe.run(probeCtx, drain)
 			if probeCtx.Err() != nil {
-				failures[i] = probeCtx.Err()
+				probe.failure = probeCtx.Err()
 			}
 			cancel()
-			ready[i] = failures[i] == nil
+			probe.ready = probe.failure == nil
 		}
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("readiness wait failed: %w", err)
 		}
 		if !r.now().Before(deadline) {
-			return readinessTimeout(failures)
+			return timedOut()
 		}
-		if ready[0] && ready[1] {
+		if !slices.ContainsFunc(probes, func(probe readinessProbe) bool { return !probe.ready }) {
 			return nil
 		}
 		if err := r.wait(ctx, min(250*time.Millisecond, deadline.Sub(r.now()))); err != nil {
 			return fmt.Errorf("readiness wait failed: %w", err)
 		}
 	}
-}
-
-func readinessTimeout(failures [2]error) error {
-	return fmt.Errorf("readiness wait failed: 60s deadline exceeded (manager: %v; SSH: %v)", failures[0], failures[1])
 }
 
 // probeSSH requires the verified exchange and the matching Ed25519 known_hosts entry.

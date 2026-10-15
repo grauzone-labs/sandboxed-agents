@@ -9,6 +9,8 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/image"
 )
 
+const updateWasRunningLabel = "io.sandboxed-agents.update-was-running"
+
 func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
 	objects, err := requireSandbox(request, p)
 	if err != nil {
@@ -31,9 +33,7 @@ func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	candidate := objects.container
-	candidate.Config.Labels = map[string]string{ToolchainsLabel: toolchainSet(set)}
-	outdated, err := sandboxImageOutdated(p, candidate, hash)
+	outdated, err := imageOutdated(p, objects.container.Image, set, hash)
 	if err != nil {
 		return err
 	}
@@ -124,8 +124,6 @@ func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
 	return nil
 }
 
-const updateWasRunningLabel = "io.sandboxed-agents.update-was-running"
-
 // replacementArgs reconstructs only the supported configuration, refusing missing data.
 func replacementArgs(request Request, objects sandboxObjects, set []string, tag string) ([]string, uint16, error) {
 	c := objects.container
@@ -171,7 +169,6 @@ func replacementArgs(request Request, objects sandboxObjects, set []string, tag 
 	if len(seen) != 3 {
 		return nil, 0, fmt.Errorf("recorded workspace, home, and SSH mounts are required")
 	}
-	args := sandboxCreateArgs(request, port, workspaceMount, tag)
-	args = append(args[:len(args)-1], "--label", updateWasRunningLabel+"="+strconv.FormatBool(*c.State.Running), tag)
+	args := sandboxCreateArgs(request, port, workspaceMount, tag, updateWasRunningLabel+"="+strconv.FormatBool(*c.State.Running))
 	return args, port, nil
 }
