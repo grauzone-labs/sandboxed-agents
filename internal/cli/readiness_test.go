@@ -16,39 +16,44 @@ const readinessHostKey = "[127.0.0.1]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI
 // TestReadinessRetriesOnlyPendingProbes proves both checks run immediately and only pending checks retry every 250ms through the injected readiness process and clock seam.
 func TestReadinessRetriesOnlyPendingProbes(t *testing.T) {
 	for _, slow := range []string{"podman", "ssh"} {
-		t.Run(slow, func(t *testing.T) {
-			now := time.Now()
-			start := now
-			counts := map[string]int{}
-			var waits []time.Duration
-			r := readinessRuntime{now: func() time.Time { return now }, wait: func(_ context.Context, d time.Duration) error { waits = append(waits, d); now = now.Add(d); return nil }}
-			r.run = func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
-				name := filepath.Base(cmd.Path)
-				counts[name]++
-				deadline, ok := ctx.Deadline()
-				if !ok || time.Until(deadline) > 3*time.Second || cmd.Cancel == nil {
-					t.Fatal("probe cancellation missing")
+		for _, suffix := range []string{"", ".exe"} {
+			t.Run(slow+suffix, func(t *testing.T) {
+				now := time.Now()
+				start := now
+				counts := map[string]int{}
+				var waits []time.Duration
+				r := readinessRuntime{now: func() time.Time { return now }, wait: func(_ context.Context, d time.Duration) error { waits = append(waits, d); now = now.Add(d); return nil }}
+				r.run = func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+					if cmd.Args[0] == "ssh" {
+						cmd.Path = strings.TrimSuffix(cmd.Path, ".exe") + suffix
+					}
+					name := cmd.Args[0]
+					counts[name]++
+					deadline, ok := ctx.Deadline()
+					if !ok || time.Until(deadline) > 3*time.Second || cmd.Cancel == nil {
+						t.Fatal("probe cancellation missing")
+					}
+					if name == slow && counts[name] == 1 {
+						return nil, fmt.Errorf("not ready")
+					}
+					if name == "podman" {
+						return []byte("sandboxed-agents-manager development\n"), nil
+					}
+					if err := os.WriteFile(filepath.Join(cmd.Dir, "known_hosts"), []byte(readinessHostKey), 0600); err != nil {
+						t.Fatal(err)
+					}
+					return []byte("debug1: SSH2_MSG_NEWKEYS received\n"), fmt.Errorf("authentication refused")
 				}
-				if name == slow && counts[name] == 1 {
-					return nil, fmt.Errorf("not ready")
-				}
-				if name == "podman" {
-					return []byte("sandboxed-agents-manager development\n"), nil
-				}
-				if err := os.WriteFile(filepath.Join(cmd.Dir, "known_hosts"), []byte(readinessHostKey), 0600); err != nil {
+				p := targetForHost((Host{}).defaults())
+				err := waitReadiness(context.Background(), p, "sandboxed-agents.default.demo", 2222, r)
+				if err != nil {
 					t.Fatal(err)
 				}
-				return []byte("debug1: SSH2_MSG_NEWKEYS received\n"), fmt.Errorf("authentication refused")
-			}
-			p := targetForHost((Host{}).defaults())
-			err := waitReadiness(context.Background(), p, "sandboxed-agents.default.demo", 2222, r)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if counts[slow] != 2 || counts[map[string]string{"podman": "ssh", "ssh": "podman"}[slow]] != 1 || len(waits) != 1 || waits[0] != 250*time.Millisecond || now.Sub(start) != 250*time.Millisecond {
-				t.Fatalf("counts=%v waits=%v", counts, waits)
-			}
-		})
+				if counts[slow] != 2 || counts[map[string]string{"podman": "ssh", "ssh": "podman"}[slow]] != 1 || len(waits) != 1 || waits[0] != 250*time.Millisecond || now.Sub(start) != 250*time.Millisecond {
+					t.Fatalf("counts=%v waits=%v", counts, waits)
+				}
+			})
+		}
 	}
 }
 
