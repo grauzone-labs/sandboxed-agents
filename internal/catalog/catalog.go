@@ -10,14 +10,14 @@ type Catalog struct {
 
 type Integration struct {
 	Login           *LoginWorkflow
-	LoginWorkflows  []string
+	LoginWorkflows  []string // Explicit positional names; empty means the delivered login accepts no workflow argument.
 	ConfigWorkflows map[string]ConfigWorkflow
 }
 
 type LoginWorkflow struct {
 	Delivered               bool
 	WorkflowOmittable       bool
-	Options                 []string
+	Options                 map[string]string // option name to usage value label
 	RequiredOptions         []string
 	InvalidOptionsMessage   string
 	InvalidArgumentsMessage string
@@ -44,9 +44,9 @@ var Default = Catalog{
 		"azure": {LoginWorkflows: []string{}, Login: &LoginWorkflow{
 			WorkflowOmittable: true, InvalidOptionsMessage: "--organization is only valid for azdo",
 		}},
-		"azdo": {LoginWorkflows: []string{}, Login: &LoginWorkflow{
+		AzureDevOpsIntegration: {LoginWorkflows: []string{}, Login: &LoginWorkflow{
 			Delivered: true,
-			Options:   []string{"organization"}, RequiredOptions: []string{"organization"},
+			Options:   map[string]string{OrganizationOption: "URL"}, RequiredOptions: []string{OrganizationOption},
 			InvalidArgumentsMessage: "azdo requires --organization URL and no workflow",
 		}},
 		GitIntegration: {ConfigWorkflows: map[string]ConfigWorkflow{

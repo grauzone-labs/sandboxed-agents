@@ -19,7 +19,7 @@ func TestAzureDevOpsLoginReadsStdin(t *testing.T) {
 			f.responses[integrationProbe] = response{}
 			workflow := strings.Fields("exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " integrations login azdo --organization https://dev.azure.com/contoso")
 			f.responses[strings.Join(workflow, " ")] = response{EchoStdin: true, ExpectedStdin: "pat-host-sentinel\n"}
-			status, output, calls := f.run(t, "integrations", "login", "agent01", "azdo", "--organization", "https://dev.azure.com/contoso")
+			status, output, calls := f.run(t, "integrations", "login", "agent01", "azdo", "--organization", "https://dev.azure.com/contoso/")
 			want := append(sandboxQueryCalls(), strings.Fields(integrationProbe), workflow)
 			if status != 0 || !reflect.DeepEqual(calls, want) {
 				t.Fatalf("status=%d output=%s calls=%q", status, output, calls)
@@ -126,5 +126,14 @@ func TestAzureDevOpsUsageFailsBeforePodman(t *testing.T) {
 		if status != 2 || len(calls) != 0 {
 			t.Fatalf("status=%d calls=%q", status, calls)
 		}
+	}
+}
+
+// TestAzureDevOpsRejectsWorkflowWithDeliveredGrammar proves the host explains Azure DevOps accepts no workflow without falsely describing it as undelivered at the CLI seam.
+func TestAzureDevOpsRejectsWorkflowWithDeliveredGrammar(t *testing.T) {
+	f := sandboxStateFixture(t)
+	status, output, calls := f.run(t, "integrations", "login", "agent01", "azdo", "bogusflow", "--organization", "https://dev.azure.com/contoso")
+	if status != 2 || len(calls) != 0 || !strings.Contains(output, "azdo requires --organization URL and no workflow") || strings.Contains(output, "no valid names are available yet") {
+		t.Fatalf("status=%d output=%s calls=%q", status, output, calls)
 	}
 }

@@ -14,6 +14,7 @@ type Request struct {
 	Group           string
 	Name            string
 	ConfigSelection catalog.ConfigSelection
+	OrganizationURL string
 	Args            []string
 	Options         map[string]string
 	Toolchains      []string
@@ -58,7 +59,7 @@ var commands = map[string]commandSpec{
 	"agents status":       spec(2, 2, true, "", ""),
 	"agents run":          spec(2, -1, true, "", ""),
 	"agents session":      spec(2, 2, true, "", "stop"),
-	"integrations login":  spec(2, 3, true, "organization", ""),
+	"integrations login":  spec(2, 3, true, catalog.OrganizationOption, ""),
 	"integrations config": spec(2, 3, true, "", ""),
 }
 
@@ -191,7 +192,7 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 		integration := catalog.Default.Integrations[request.Args[1]]
 		workflow := integration.Login
 		for option := range request.Options {
-			if !slices.Contains(workflow.Options, option) {
+			if _, known := workflow.Options[option]; !known {
 				return request, fmt.Errorf("%s", workflow.InvalidOptionsMessage)
 			}
 		}
@@ -203,10 +204,12 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 				return request, fmt.Errorf("%s", workflow.InvalidArgumentsMessage)
 			}
 		}
-		if request.Args[1] == "azdo" {
-			if _, _, err := catalog.AzureDevOpsOrganization(request.Options["organization"]); err != nil {
+		if request.Args[1] == catalog.AzureDevOpsIntegration {
+			organization, _, err := catalog.AzureDevOpsOrganization(request.Options[catalog.OrganizationOption])
+			if err != nil {
 				return request, err
 			}
+			request.OrganizationURL = organization
 		}
 	case "integrations config":
 		workflowName := ""

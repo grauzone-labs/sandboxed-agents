@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
@@ -131,5 +132,22 @@ func TestAzureDevOpsLoginFailuresDoNotDiscloseToken(t *testing.T) {
 		if status != 1 || starts != failureAt || strings.Contains(out.String(), "failure-pat-sentinel") {
 			t.Fatalf("status=%d starts=%d unsafe=%t", status, starts, strings.Contains(out.String(), "failure-pat-sentinel"))
 		}
+	}
+}
+
+// TestAzureDevOpsLoginHonorsDeliveredCatalog proves the manager refuses an undelivered login before reading credentials or starting a process at its public command seam.
+func TestAzureDevOpsLoginHonorsDeliveredCatalog(t *testing.T) {
+	original := catalog.Default.Integrations[catalog.AzureDevOpsIntegration]
+	integration := original
+	definition := *integration.Login
+	definition.Delivered = false
+	integration.Login = &definition
+	catalog.Default.Integrations[catalog.AzureDevOpsIntegration] = integration
+	t.Cleanup(func() { catalog.Default.Integrations[catalog.AzureDevOpsIntegration] = original })
+	effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
+	var output bytes.Buffer
+	status := manager.RunWithEffects([]string{"integrations", "login", "azdo", "--organization", "https://dev.azure.com/contoso"}, &output, &output, effects)
+	if status != 2 || !strings.Contains(output.String(), `unknown integration "azdo"`) {
+		t.Fatalf("status=%d output=%s", status, &output)
 	}
 }
