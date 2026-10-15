@@ -32,6 +32,7 @@ func runAgentWork(request Request, p podmanTarget, stdout, stderr io.Writer) (in
 	if err != nil {
 		return 1, err
 	}
+	// The shared status contract provides enabled state and may also run an optional sign-in probe.
 	status, err := readAgentStatus(request, p)
 	if err != nil {
 		return 1, err

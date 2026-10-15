@@ -90,12 +90,17 @@ func administerAgent(request Request, p podmanTarget, stdout io.Writer) error {
 	return nil
 }
 
+// podmanTransportFailure identifies Podman failures to execute the requested manager command.
+func podmanTransportFailure(code int) bool {
+	return code == 125 || code == 126 || code == 127
+}
+
 // runAgentChange captures an administrative mutation result and separates transport failures from operation failures.
 func runAgentChange(request Request, p podmanTarget, stdout io.Writer, payload ...string) error {
 	args := append([]string{"exec", "--user=0:0", DerivedNames(request.Group, request.Name).Container, managerPath}, payload...)
 	var output, diagnostic bytes.Buffer
 	status, err := p.run(nil, &output, &diagnostic, args...)
-	if err != nil || status == 125 || status == 126 || status == 127 {
+	if err != nil || podmanTransportFailure(status) {
 		if err == nil {
 			err = fmt.Errorf("manager request failed with exit status %d: %s", status, strings.TrimSpace(diagnostic.String()))
 		}
@@ -116,7 +121,7 @@ func readAgentStatus(request Request, p podmanTarget) (catalog.AgentStatus, erro
 		var exit *exec.ExitError
 		if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) && errors.As(err, &exit) {
 			code := exit.ExitCode()
-			if code > 0 && code != 125 && code != 126 && code != 127 {
+			if code > 0 && !podmanTransportFailure(code) {
 				return status, err
 			}
 		}
