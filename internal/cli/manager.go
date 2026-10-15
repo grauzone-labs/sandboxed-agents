@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -51,7 +52,11 @@ func requestManager(request Request, p podmanTarget, subcommand string, payload 
 	defer cancel()
 	// Bound inherited output pipes as well as Podman itself: descendants may
 	// keep them open after their parent exits. Other Podman queries have no delay.
-	return p.queryContext(ctx, time.Second, args...)
+	answer, err := p.queryContext(ctx, time.Second, args...)
+	if ctx.Err() != nil {
+		return answer, errors.Join(err, ctx.Err())
+	}
+	return answer, err
 }
 
 const managerPath = "/usr/local/bin/sandboxed-agents-manager"

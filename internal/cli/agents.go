@@ -2,10 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"strings"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
@@ -26,18 +28,26 @@ func agentNotEnabledError(request Request) error {
 	return fmt.Errorf("%s not enabled; run agents enable %s %s", request.Args[1], request.Name, request.Args[1])
 }
 
-// administerAgent enforces ordered sandbox checks and dispatches a validated agent operation through the manager.
-func administerAgent(request Request, p podmanTarget, stdout io.Writer) error {
+// requireAgentManager checks sandbox existence, ownership, running state, and manager availability in order.
+func requireAgentManager(request Request, p podmanTarget) (ObjectNames, error) {
 	objects, err := requireSandbox(request, p)
 	if err != nil {
-		return err
+		return ObjectNames{}, err
 	}
 	names, err := requireRunning(request, objects)
 	if err != nil {
-		return err
+		return ObjectNames{}, err
 	}
 	if err := checkManager(p, names.Container); err != nil {
-		return agentManagerError(request, err)
+		return ObjectNames{}, agentManagerError(request, err)
+	}
+	return names, nil
+}
+
+// administerAgent enforces ordered sandbox checks and dispatches a validated agent operation through the manager.
+func administerAgent(request Request, p podmanTarget, stdout io.Writer) error {
+	if _, err := requireAgentManager(request, p); err != nil {
+		return err
 	}
 	verb := strings.TrimPrefix(request.Command, "agents ")
 	if verb == "status" {
@@ -103,6 +113,13 @@ func readAgentStatus(request Request, p podmanTarget) (catalog.AgentStatus, erro
 	var status catalog.AgentStatus
 	answer, err := requestManager(request, p, "agents", "status", request.Args[1])
 	if err != nil {
+		var exit *exec.ExitError
+		if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) && errors.As(err, &exit) {
+			code := exit.ExitCode()
+			if code > 0 && code != 125 && code != 126 && code != 127 {
+				return status, err
+			}
+		}
 		return status, agentManagerError(request, err)
 	}
 	if err := json.Unmarshal([]byte(answer), &status); err != nil || status.Name != request.Args[1] || (status.Enabled && status.InstalledVersion == "") {
