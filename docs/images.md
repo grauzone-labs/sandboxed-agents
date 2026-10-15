@@ -27,7 +27,7 @@ Release limitations:
 
 The base image is Debian 13 (trixie) slim, which uses glibc, with Node.js 24 LTS installed on top. Debian 13 is the current stable release, while Debian 12 is only in its LTS period. Node.js 24 remains an LTS release.
 
-Every toolchain's packages are available for Debian 13. The sources, checked on 2026-10-14, are in [Toolchains](#toolchains). Only a live build proves the images, and none of the toolchain images has been built live yet (see [Honest limits](#honest-limits)).
+Every toolchain's packages are available for Debian 13. The sources, checked on 2026-10-14, are in [Toolchains](#toolchains). Only a live build proves the images; the reported live runs are in [Honest limits](#honest-limits).
 
 The base image contains:
 
@@ -195,9 +195,8 @@ SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1 \
 
 ### Honest limits
 
-- The live image coverage has not run for this change. The development host has Podman 4.3.1, below the Linux minimum of 4.4.0 in [host prerequisites](host-prerequisites.md), so its preflight stops there. No toolchain image has been built, and no smoke check has run inside one.
-- Nothing about this change has been run on Windows 11.
-- The one live image build on record is the base-image build against the NodeSource key on 2026-10-11, described above. It predates the toolchain recipes and the manager.
-- Package availability for Debian 13 rests on the vendor pages listed under [Toolchains](#toolchains), not on a build.
+- `TestLiveImages` passed on one Linux host and one Windows host, as reported from output excerpts: Linux `--- PASS: TestLiveImages (1107.23s)` with package `1107.779s`, and Windows `--- PASS: TestLiveImages (2710.16s)` with package `2716.322s`. The excerpts name no commit, host Podman version, or date, and this workspace did not run them. The test covers five sandboxes (the base and the four toolchains) with the agent smoke checks, a real base build with the NodeSource key, the four toolchain checks, the labels and shared base layers, one `build` with the outdated marking, and cleanup.
+- This workspace has Podman 4.3.1, below the Linux minimum of 4.4.0 in [host prerequisites](host-prerequisites.md), so its preflight stops there and it cannot execute the qualifying suite. The external hosts passed it.
+- The base-image build against the NodeSource key on 2026-10-11, described above, predates the toolchain recipes and the manager. It is no longer the only live build on record.
 - Not covered: the Microsoft signing key for the .NET feed (`packages-microsoft-prod.deb` is fetched over HTTPS and not pinned), digests of the pulled Debian image or of built images, and pinned Playwright, .NET patch, or Debian package versions. The version manifest records what a build installed.
 - Podman images in release preprocessing: `scripts/release.sh` builds none.
