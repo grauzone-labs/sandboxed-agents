@@ -140,14 +140,7 @@ func TestAgentChecksPrecedeChanges(t *testing.T) {
 					message = "manager does not answer"
 				}
 				f := agentExecutableHarness(t, responses)
-				args := []string{"agents", verb, "demo", "codex"}
-				if verb == "login" {
-					args = append(args, "device-code")
-				}
-				if verb == "session-stop" {
-					args[1] = "session"
-					args = append(args, "--stop")
-				}
+				args := agentVerbArgs(verb)
 				status, output := runAgentExecutable(t, args...)
 				if status != 1 || !strings.Contains(output, message) {
 					t.Fatalf("status=%d output=%s want=%s", status, output, message)
@@ -354,14 +347,7 @@ func TestAgentStatusDistinguishesOperationFailures(t *testing.T) {
 			responses[agentManagerPrefix+"version"] = lifecycleResponse{Output: "sandboxed-agents-manager development\n"}
 			responses[agentManagerPrefix+"agents status codex"] = failure.response
 			f := agentExecutableHarness(t, responses)
-			args := []string{"agents", verb, "demo", "codex"}
-			if verb == "login" {
-				args = append(args, "device-code")
-			}
-			if verb == "session-stop" {
-				args[1] = "session"
-				args = append(args, "--stop")
-			}
+			args := agentVerbArgs(verb)
 			status, output := runAgentExecutable(t, args...)
 			if status != 1 || strings.Contains(output, "manager does not answer") != failure.unavailable {
 				t.Fatalf("verb=%s response=%+v status=%d output=%s", verb, failure.response, status, output)
@@ -393,4 +379,17 @@ func TestAgentStatusTimeoutReportsUnavailableManager(t *testing.T) {
 	if calls := agentManagerCalls(t, f); len(calls) != 2 {
 		t.Fatalf("work attempted after status timeout: %v", calls)
 	}
+}
+
+// agentVerbArgs supplies a valid codex command for each precondition-test operation.
+func agentVerbArgs(verb string) []string {
+	args := []string{"agents", verb, "demo", "codex"}
+	switch verb {
+	case "login":
+		args = append(args, "device-code")
+	case "session-stop":
+		args[1] = "session"
+		args = append(args, "--stop")
+	}
+	return args
 }
