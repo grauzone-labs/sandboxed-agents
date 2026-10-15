@@ -33,9 +33,6 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		}
 		var err error
 		request, err = parseForHost(args, group, host)
-		if err == nil && (request.Command == "agents login" || request.Command == "agents run" || request.Command == "agents session") {
-			err = fmt.Errorf("%s: not delivered yet", request.Command)
-		}
 		if err == nil {
 			switch request.Command {
 			case "up", "start", "stop", "restart", "remove", "update":
@@ -210,6 +207,16 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			return 1
 		}
 		return 0
+	case "agents run", "agents login", "agents session":
+		target, err := selectedTarget()
+		if err != nil {
+			return 1
+		}
+		status, err := runAgentWork(request, target, stdout, stderr)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+		}
+		return status
 
 	case "fingerprint":
 		target, err := selectedTarget()

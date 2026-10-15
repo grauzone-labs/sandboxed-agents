@@ -20,6 +20,9 @@ func agentEffects(t *testing.T, home string, version *string, installs *int) man
 	e := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
 	e.HomeDirectory = func() (string, error) { return home, nil }
 	e.Start = func(p manager.Process) error {
+		if p.Program == "tmux" {
+			return nil
+		}
 		if p.Program != "npm" || p.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
 			t.Fatalf("unexpected installation process=%+v", p)
 		}
@@ -251,7 +254,7 @@ func TestAgentRequestsValidateBeforeHomeOrProcesses(t *testing.T) {
 		for _, pin := range []string{"", "latest", "^1.2.3", "~1.2.3", "1", "1.2", "-x", "1.2.3;id", "1.2.3+build.4", "1.2.3-rc.1+build.4", "file:/tmp/package", "1.2.3\n"} {
 			runAgents(t, e, 2, "enable", "codex", "--version", pin)
 		}
-		for _, args := range [][]string{{}, {"list", "extra"}, {"enable"}, {"enable", "codex", "extra"}, {"status", "codex", "--force"}, {"update", "codex", "--version", "1.2.3"}, {"disable", "codex", "--unpin"}, {"run", "codex"}} {
+		for _, args := range [][]string{{}, {"list", "extra"}, {"enable"}, {"enable", "codex", "extra"}, {"status", "codex", "--force"}, {"update", "codex", "--version", "1.2.3"}, {"disable", "codex", "--unpin"}, {"unknown", "codex"}} {
 			runAgents(t, e, 2, args...)
 		}
 	}
@@ -446,6 +449,9 @@ func TestAgentStatusUsesOnlyUsableWorkerProbe(t *testing.T) {
 	} {
 		calls := 0
 		e.Start = func(p manager.Process) error {
+			if p.Program == "tmux" {
+				return nil
+			}
 			calls++
 			if p.Program != filepath.Join(home, ".local", "bin", "codex") || p.Identity != (manager.Identity{UID: 1000, GID: 1000}) || strings.Join(p.Args, " ") != "auth status --json" {
 				t.Fatalf("probe process=%+v", p)
@@ -478,7 +484,12 @@ func TestAgentStatusUsesOnlyUsableWorkerProbe(t *testing.T) {
 	if err := os.WriteFile(command, []byte("unmanaged command"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	e.Start = func(manager.Process) error { t.Error("unmanaged probe started"); return nil }
+	e.Start = func(p manager.Process) error {
+		if p.Program != "tmux" {
+			t.Error("unmanaged probe started")
+		}
+		return nil
+	}
 	if got := readAgentStatus(t, e, "codex"); got.SignedIn != "unknown" {
 		t.Fatalf("unmanaged sign-in=%+v", got)
 	}
@@ -488,7 +499,12 @@ func TestAgentStatusUsesOnlyUsableWorkerProbe(t *testing.T) {
 	if err := os.Symlink(previous, command); err != nil {
 		t.Fatal(err)
 	}
-	e.Start = func(manager.Process) error { t.Error("disabled probe started"); return nil }
+	e.Start = func(p manager.Process) error {
+		if p.Program != "tmux" {
+			t.Error("disabled probe started")
+		}
+		return nil
+	}
 	runAgents(t, e, 0, "disable", "codex")
 	if got := readAgentStatus(t, e, "codex"); got.SignedIn != "unknown" {
 		t.Fatalf("disabled sign-in=%+v", got)
@@ -927,6 +943,9 @@ func TestFailedSelectionCommitPreservesRecoveredPrefix(t *testing.T) {
 			selectionPath := filepath.Join(home, ".local", "share", "sandboxed-agents", "selection.json")
 			start := e.Start
 			e.Start = func(p manager.Process) error {
+				if p.Program == "tmux" {
+					return start(p)
+				}
 				if err := start(p); err != nil {
 					return err
 				}

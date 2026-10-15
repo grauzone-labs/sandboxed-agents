@@ -110,7 +110,7 @@ func TestAgentAdministrationExecutable(t *testing.T) {
 
 // TestAgentChecksPrecedeChanges proves every delivered agent command reports the first sandbox or manager failure through the executable CLI boundary.
 func TestAgentChecksPrecedeChanges(t *testing.T) {
-	for _, verb := range []string{"enable", "disable", "update", "status"} {
+	for _, verb := range []string{"enable", "disable", "update", "status", "run", "login", "session", "session-stop"} {
 		for _, state := range []string{"stopped", "volumes only", "container owner", "volume owner", "interrupted", "manager"} {
 			t.Run(verb+"/"+state, func(t *testing.T) {
 				responses := ownedLifecycleResponses(false)
@@ -138,7 +138,15 @@ func TestAgentChecksPrecedeChanges(t *testing.T) {
 					message = "manager does not answer"
 				}
 				f := agentExecutableHarness(t, responses)
-				status, output := runAgentExecutable(t, "agents", verb, "demo", "codex")
+				args := []string{"agents", verb, "demo", "codex"}
+				if verb == "login" {
+					args = append(args, "device-code")
+				}
+				if verb == "session-stop" {
+					args[1] = "session"
+					args = append(args, "--stop")
+				}
+				status, output := runAgentExecutable(t, args...)
 				if status != 1 || !strings.Contains(output, message) {
 					t.Fatalf("status=%d output=%s want=%s", status, output, message)
 				}
@@ -300,5 +308,29 @@ func TestAgentUpdateRetryMatchesFailure(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestForcedAgentUpdateReportsStoppedSessionOnFailure proves a completed session stop remains visible after installation fails while transport failures discard untrusted output at the executable CLI and fake Podman seam.
+func TestForcedAgentUpdateReportsStoppedSessionOnFailure(t *testing.T) {
+	for _, exit := range []int{1, 125, 126, 127} {
+		responses := ownedLifecycleResponses(true)
+		responses[agentManagerPrefix+"version"] = lifecycleResponse{Output: "sandboxed-agents-manager development\n"}
+		responses[agentManagerPrefix+"agents status codex"] = lifecycleResponse{Output: `{"name":"codex","enabled":true,"installed_version":"1.2.3","session":true}`}
+		responses[agentManagerPrefix+"agents update codex --force"] = lifecycleResponse{Output: "stopped session codex\n", Stderr: "npm installation failed\n", Exit: exit}
+		agentExecutableHarness(t, responses)
+		status, output := runAgentExecutable(t, "agents", "update", "demo", "codex", "--force")
+		if status != 1 {
+			t.Fatalf("manager exit=%d status=%d output=%s", exit, status, output)
+		}
+		if exit == 1 {
+			for _, message := range []string{"stopped session codex", "npm installation failed", "agents update demo codex --force"} {
+				if !strings.Contains(output, message) {
+					t.Fatalf("missing %q: %s", message, output)
+				}
+			}
+		} else if strings.Contains(output, "stopped session codex") || !strings.Contains(output, "manager does not answer") {
+			t.Fatalf("manager exit=%d output=%s", exit, output)
+		}
 	}
 }

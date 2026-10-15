@@ -2,7 +2,6 @@
 package manager
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -34,6 +33,7 @@ const (
 // Process is a program start requested at the operating-system seam.
 type Process struct {
 	Program           string
+	Directory         string
 	EnvironmentPolicy EnvironmentPolicy
 	Args              []string
 	Identity          Identity
@@ -135,16 +135,7 @@ func sessions(stdout, stderr io.Writer, effects Effects) int {
 	if !verifyAgent(effects, stderr) {
 		return 1
 	}
-	var tmuxStderr bytes.Buffer
-	err := effects.Start(Process{Program: "tmux", Args: []string{"list-sessions", "-F", "#{session_name}"}, Identity: agentIdentity, Stdout: stdout, Stderr: &tmuxStderr})
-	_, connectionMessage, _ := strings.Cut(tmuxStderr.String(), "error connecting to")
-	var exit interface{ ExitCode() int }
-	if errors.As(err, &exit) && exit.ExitCode() == 1 &&
-		(strings.Contains(tmuxStderr.String(), "no server running") || strings.Contains(connectionMessage, "(No such file or directory)")) {
-		return 0
-	}
-	fmt.Fprint(stderr, tmuxStderr.String())
-	return exitStatus(err, stderr)
+	return exitStatus(querySessions(stdout, stderr, effects), stderr)
 }
 
 func exitStatus(err error, stderr io.Writer) int {

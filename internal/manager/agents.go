@@ -26,7 +26,8 @@ type installation struct {
 
 type agentRequest struct {
 	operation, name, version string
-	force, unpin             bool
+	force, unpin, stop       bool
+	arguments                []string
 	definition               catalog.Agent
 }
 
@@ -43,7 +44,7 @@ func parseAgents(args []string, stderr io.Writer) (agentRequest, bool) {
 	}
 	r.operation, r.name = args[0], args[1]
 	switch r.operation {
-	case "enable", "disable", "update", "status":
+	case "enable", "disable", "update", "status", "run", "session", "login":
 	default:
 		fmt.Fprintln(stderr, "unknown agents command", r.operation)
 		return r, false
@@ -54,6 +55,27 @@ func parseAgents(args []string, stderr io.Writer) (agentRequest, bool) {
 		fmt.Fprintln(stderr, err)
 		return r, false
 	}
+	if r.operation == "run" {
+		r.arguments = args[2:]
+		return r, true
+	}
+	if r.operation == "login" {
+		if len(args) > 3 {
+			fmt.Fprintln(stderr, "agents login requires AGENT [WORKFLOW]")
+			return r, false
+		}
+		workflow := ""
+		if len(args) == 3 {
+			workflow = args[2]
+		}
+		resolved, err := catalog.Default.ResolveAgentLogin(r.name, workflow)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return r, false
+		}
+		r.arguments = r.definition.LoginWorkflows[resolved]
+		return r, true
+	}
 	f := flag.NewFlagSet("agents "+r.operation, flag.ContinueOnError)
 	f.SetOutput(stderr)
 	if r.operation == "enable" {
@@ -62,7 +84,10 @@ func parseAgents(args []string, stderr io.Writer) (agentRequest, bool) {
 	if r.operation == "update" {
 		f.BoolVar(&r.unpin, "unpin", false, "install current version and remove pin")
 	}
-	if r.operation != "status" {
+	if r.operation == "session" {
+		f.BoolVar(&r.stop, "stop", false, "end the agent session")
+	}
+	if r.operation == "enable" || r.operation == "disable" || r.operation == "update" {
 		f.BoolVar(&r.force, "force", false, "allow replacement of an active agent")
 	}
 	if err := f.Parse(args[2:]); err != nil {
@@ -92,6 +117,9 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 	r, valid := parseAgents(args, stderr)
 	if !valid {
 		return 2
+	}
+	if r.operation == "run" || r.operation == "session" || r.operation == "login" {
+		return executeAgent(r, stdout, stderr, effects)
 	}
 	if !worker && effects.Identity != nil && effects.Identity() == rootIdentity {
 		return reexecWorker(append([]string{"__worker", "agents"}, args...), stdout, stderr, effects)
@@ -132,6 +160,13 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 		return exitStatus(json.NewEncoder(stdout).Encode(names), stderr)
 	case "status":
 		status := AgentStatus{Name: r.name, Enabled: enabled, InstalledVersion: current.Version, Pin: current.Pin, SignedIn: "unknown"}
+		if enabled {
+			names, err := runningSessions(effects)
+			if err != nil {
+				return exitStatus(err, stderr)
+			}
+			status.Session = hasSession(names, r.name)
+		}
 		command := commandPath(home, r.definition)
 		previous, linkError := managedCommandLink(command, installationCommand(root, current, r.definition))
 		if enabled && r.definition.StatusProbe != nil && linkError == nil && previous != "" {
@@ -162,6 +197,11 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 		if !enabled && previous == "" {
 			fmt.Fprintf(stdout, "%s not enabled; nothing to disable\n", r.name)
 			return 0
+		}
+		if enabled {
+			if err := guardAgentSession(r, stdout, effects); err != nil {
+				return exitStatus(err, stderr)
+			}
 		}
 		if previous != "" {
 			if err := os.Remove(command); err != nil {
@@ -207,6 +247,11 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 			}
 			reportInstallation(stdout, r.name, current)
 			return 0
+		}
+		if enabled {
+			if err := guardAgentSession(r, stdout, effects); err != nil {
+				return exitStatus(err, stderr)
+			}
 		}
 		if r.operation == "update" && !r.unpin {
 			r.version = current.Pin
