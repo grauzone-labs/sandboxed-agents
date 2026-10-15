@@ -63,13 +63,15 @@ workflows the executable adds no mount and passes only the requested identity
 values and a fixed agent home to the manager. Git writes its global
 configuration in that home even if the sandbox has ambient Git config file
 overrides. The [GitHub login](#github) is the one workflow that also connects
-your terminal to the manager; it still copies nothing from the host.
+your terminal to the manager, and the [Azure DevOps login](#azure-devops) is
+the one that passes a token on standard input; both still copy nothing from the
+host.
 
 ## GitHub
 
-GitHub has one login workflow, `device-code`. It is the only login workflow
-delivered so far: other integrations either have no login workflow yet or, like
-Git, only config workflows.
+GitHub has one login workflow, `device-code`. The delivered login integrations
+are `github` and [`azdo`](#azure-devops); `azure` has no delivered login
+workflow yet, and Git has only config workflows.
 
 ```sh
 sandboxed-agents integrations login agent01 github
@@ -194,3 +196,149 @@ private test repository.
 
 Record the sandbox image, host platform, tested commit, `gh --version` from the
 sandbox, and each step's result. Never record a token or one-time code.
+
+## Azure DevOps
+
+Azure DevOps has one login workflow, which takes no workflow name. It stores a
+personal access token (PAT) for the Azure DevOps CLI extension and for Git
+remotes of one organization.
+
+```sh
+sandboxed-agents integrations login agent01 azdo --organization https://dev.azure.com/ORGANIZATION
+```
+
+`--organization URL` is required. A workflow name, a missing or invalid
+`--organization`, or `--organization` on another integration is a usage error
+that exits with status 2 before Podman is called. The token is never accepted
+as an option or argument: it is read from standard input only.
+
+The URL must be HTTPS with a host and without user information, a query, or a
+fragment; trailing slashes are removed. For `dev.azure.com` the path must be
+exactly the organization name, which also becomes the Git username (Azure
+DevOps accepts any username with a PAT). Other HTTPS hosts, such as the older
+`https://ORGANIZATION.visualstudio.com`, pass validation with the first label
+of the host as the username, but only the `dev.azure.com` form is tested.
+
+The sandbox needs the `azure` toolchain (`az` with the `azure-devops`
+extension, see [`images.md`](images.md)). The command does not check for it yet
+(issue #35): without it, the `az` step fails and nothing is stored. Add it with
+`update NAME --with SET`, where `SET` is the sandbox's toolchain set plus `azure`.
+
+### How the token is read
+
+Standard input decides, and standard output plays no part:
+
+- When standard input is a terminal, the command prompts with `Token:` on
+  standard error and reads the token without echo. Enter ends the input;
+  Ctrl+C or Ctrl+D cancels, and the command fails without storing anything.
+- Otherwise (a pipe or a redirected file) the command reads the token from it,
+  whether standard output is a terminal or not. This is how scripts and secret
+  managers pass the token:
+
+```sh
+some-secret-tool read azdo-pat | sandboxed-agents integrations login agent01 azdo --organization https://dev.azure.com/contoso
+```
+
+Only the first line is used, with surrounding whitespace removed; further lines
+are ignored, not rejected. An empty first line, an input that ends before any
+text, or a token with a carriage return or NUL inside fails with status 1
+before anything runs in the sandbox. The token is read only after the sandbox
+checks above have passed, so an unknown name, owner conflict, stopped sandbox,
+or unanswering manager is reported first and no token is consumed.
+
+### What it runs
+
+The executable starts the manager once as `agent`, without a terminal, and
+writes the token to its standard input. The manager verifies it is running as
+`agent` and runs four programs as `agent` (UID and GID 1000), in this order,
+stopping at the first failure:
+
+```sh
+az devops login --organization https://dev.azure.com/ORGANIZATION --only-show-errors
+git config --global --replace-all -- credential.helper 'store --file=/home/agent/.git-credentials'
+git config --global --replace-all -- credential.https://dev.azure.com/ORGANIZATION.username ORGANIZATION
+git -c credential.helper= -c 'credential.helper=store --file=/home/agent/.git-credentials' -c credential.useHttpPath=false credential approve
+```
+
+The first stores the token for the Azure DevOps CLI extension, from standard
+input. The second configures the same store helper as
+[`integrations config NAME git credentials`](#git-credential-helper), replacing
+every global `credential.helper` entry. The third sets the username Git sends
+for the organization URL. The fourth hands URL, username, and token to the
+helper on standard input; its `-c` options make this one call use only the
+store helper, so no helper from repository or system Git configuration sees the
+PAT, and the entry covers the host and username rather than one repository path.
+
+The token appears in no process argument on the host or in the sandbox, and
+the output of all four programs is discarded because their diagnostics could
+contain it. The programs run with a controlled environment that keeps Azure CLI
+and Git state under `/home/agent`, drops ambient `AZURE_*` values (including
+any ambient PAT) and Git trace and askpass variables, and disables Azure CLI
+telemetry, log files, and Git terminal prompts. Later `az` or `git` calls in
+the sandbox use its own environment.
+
+### Result and failure
+
+On success the command writes nothing to standard output and exits zero; with a
+terminal, the `Token:` prompt on standard error is its only output. Any
+failure, including a missing or empty token, exits with status 1 and a short
+message; the exit codes and messages of `az` and `git` are not passed through.
+
+Because the programs run in order, a failure after the first can leave a
+partial state: the Azure DevOps extension may hold the token while the Git
+helper or stored credential is missing. The message says credentials may be
+partially configured, not which step failed. Re-run the command with the same
+token; each step replaces what an earlier run wrote.
+
+### Where the token lives
+
+No ambient host credential, Azure CLI or Git configuration, or environment
+value is imported, and the executable adds no mount. The only credential in
+play is the PAT you supply on standard input. It is stored twice in the home
+volume: by the Azure DevOps CLI extension under `/home/agent/.azure`, and by
+Git's store helper as a plaintext line for `dev.azure.com` and the organization
+username in `/home/agent/.git-credentials`; the helper and username entries live
+in `/home/agent/.gitconfig`. All survive `stop`, `start`, and `update`; only
+`sandboxed-agents remove NAME --volumes` deletes them. Every agent in the
+sandbox runs as `agent`, shares the home volume, and can use the token for
+everything the PAT allows, which is why separate sandboxes, not separate agents,
+separate accounts. To revoke access, revoke the PAT in Azure DevOps;
+`az devops logout` removes only the extension's copy. A later
+[GitHub login](#github) resets the helper for `github.com` only; the Azure
+DevOps entry keeps serving its organization.
+
+### Manual Azure DevOps login check
+
+Offline tests cover command dispatch, the sandbox checks that precede reading
+the token, hidden terminal input on Linux, empty-token rejection, the identity,
+environment, and standard input of each program, and that the token appears in
+no Podman argument or output. They run real Git: after the login,
+`git credential fill` resolves the stored token for
+`https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO` with and without an
+`ORGANIZATION@` user prefix, and a repository-level helper is never called.
+`az` is replaced by a stub and no Azure DevOps server is contacted, so a live
+private clone and an `az devops` query have **not** been verified: no
+organization or PAT was available during development. Run this checklist once
+per change on a real sandbox built with `--with azure`, with a PAT that has
+`Code (Read)` and `Project and Team (Read)` for an organization holding a
+private test repository.
+
+1. In a new sandbox, confirm in `shell agent01` that `az devops --help` works
+   and `git config --global --get-regexp '^credential\.'` prints nothing.
+2. Run the command with `</dev/null`. Confirm it fails with a token message,
+   exits non-zero, and left no `credential.` entries.
+3. Run it with standard input on the terminal: it prompts, shows nothing while
+   you paste, and exits zero. Repeat with the token piped from a file.
+4. In `shell agent01`, clone a private repository without a prompt:
+   `GIT_TERMINAL_PROMPT=0 git clone https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO`,
+   then run
+   `az devops project list --organization https://dev.azure.com/ORGANIZATION --output table`.
+5. Confirm the token is not in the host shell history, and that the `podman`
+   process of step 3 had no token in its arguments (`ps` on the host while it
+   runs).
+6. Run `stop` and `start`, then repeat the clone to a fresh directory.
+7. On a sandbox without the `azure` toolchain, confirm the command fails
+   non-zero and writes no `credential.` entry.
+
+Record the sandbox image, host platform, tested commit, `az version`, and each
+step's result. Never record the token.
