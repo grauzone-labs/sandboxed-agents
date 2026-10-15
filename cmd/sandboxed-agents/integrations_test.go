@@ -23,7 +23,7 @@ func TestGitIntegrationUsagePrecedesPodman(t *testing.T) {
 		{[]string{"config", "agent01", "git"}, []string{"identity", "credentials"}},
 		{[]string{"config", "agent01", "unknown"}, []string{"unknown integration", "valid names: git"}},
 		{[]string{"config", "agent01", "git", "unknown"}, []string{"unknown", "identity", "credentials"}},
-		{[]string{"login", "agent01", "unknown"}, []string{"unknown integration", "valid names: azdo, github"}},
+		{[]string{"login", "agent01", "unknown"}, []string{"unknown integration", "valid names: azdo, azure, github"}},
 		{[]string{"config", "agent01", "git", "credentials", "--name", "N"}, []string{"takes no options"}},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
@@ -124,5 +124,51 @@ func TestGitConfigExecutableWithoutTerminal(t *testing.T) {
 				t.Fatalf("unexpected SSH calls=%v", calls)
 			}
 		})
+	}
+}
+
+// TestAzureExecutableRefusesMissingSSHBeforeLogin proves browser login names the SSH setup command and starts no login at the built executable seam.
+func TestAzureExecutableRefusesMissingSSHBeforeLogin(t *testing.T) {
+	f := testutil.Install(t, fakeExecutable)
+	container := "sandboxed-agents.default.agent01"
+	prefix := ""
+	responses := map[string]lifecycleResponse{}
+	var want [][]string
+	if runtime.GOOS == "windows" {
+		prefix = "--connection chosen "
+		responses["machine list --format json"] = lifecycleResponse{Output: `[{"Name":"chosen","Default":true,"VMType":"wsl"}]`}
+		responses["machine inspect chosen"] = lifecycleResponse{Output: `[{"Name":"chosen","State":"running","Rootful":false}]`}
+		want = [][]string{{"machine", "list", "--format", "json"}, {"machine", "inspect", "chosen"}}
+	}
+	add := func(args []string, response lifecycleResponse) {
+		responses[prefix+strings.Join(args, " ")] = response
+		if prefix != "" {
+			args = append([]string{"--connection", "chosen"}, args...)
+		}
+		want = append(want, args)
+	}
+	add([]string{"container", "exists", container}, lifecycleResponse{})
+	add([]string{"container", "inspect", container}, lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.toolchains":"azure"}},"State":{"Running":true}}]`})
+	for _, suffix := range []string{".workspace", ".home", ".ssh"} {
+		add([]string{"volume", "exists", container + suffix}, lifecycleResponse{Exit: 1})
+	}
+	add([]string{"container", "exists", "sandboxed-agents-backup.default.agent01"}, lifecycleResponse{Exit: 1})
+	add([]string{"exec", "--user=0:0", container, "/usr/local/bin/sandboxed-agents-manager", "sessions"}, lifecycleResponse{})
+	data, err := json.Marshal(responses)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(executable, "integrations", "login", "agent01", "azure", "browser")
+	state := t.TempDir()
+	command.Env = testutil.Env(f.Env(os.Environ()), map[string]string{"TEST_PODMAN_RESPONSES": string(data), "XDG_STATE_HOME": state, "LOCALAPPDATA": state})
+	output, err := command.CombinedOutput()
+	if status := exitStatus(t, err); status != 1 || !strings.Contains(string(output), "ssh-config agent01 --install") {
+		t.Fatalf("status=%d output=%s", status, output)
+	}
+	if calls := testutil.Invocations(t, f.PodmanLog); !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls=%v want=%v", calls, want)
+	}
+	if calls := testutil.Invocations(t, f.SSHLog); len(calls) != 0 {
+		t.Fatalf("unexpected SSH calls=%v", calls)
 	}
 }

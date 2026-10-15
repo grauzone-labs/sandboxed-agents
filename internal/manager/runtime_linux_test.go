@@ -362,3 +362,46 @@ func TestProductionAzureDevOpsKeepsSecretsInHome(t *testing.T) {
 		t.Fatalf("status=%d starts=%d", status, starts)
 	}
 }
+
+// TestProductionAzureLoginKeepsHomeAndBrowserCallback proves Azure credentials stay in home and browser launch uses the manager callback through the production exec.Cmd seam.
+func TestProductionAzureLoginKeepsHomeAndBrowserCallback(t *testing.T) {
+	for _, workflow := range []string{"device-code", "browser"} {
+		starts := 0
+		effects := newEffects(systemCalls{
+			Identity: func() Identity { return agentIdentity },
+			Environment: func() []string {
+				return []string{"HOME=/outside", "AZURE_CONFIG_DIR=/outside/azure", "BROWSER=ambient-browser", "PATH=/usr/bin"}
+			},
+			Start: func(command *exec.Cmd) error {
+				starts++
+				assertAgentCredentials(t, command, true)
+				values := map[string]string{}
+				for _, entry := range command.Env {
+					key, value, _ := strings.Cut(entry, "=")
+					values[key] = value
+				}
+				if values["AZURE_CONFIG_DIR"] != "/home/agent/.azure" {
+					t.Errorf("config=%q", values["AZURE_CONFIG_DIR"])
+				}
+				if workflow == "browser" && values["BROWSER"] != "/usr/local/bin/sandboxed-agents-manager __azure-browser agent01 %s" {
+					t.Errorf("browser=%q", values["BROWSER"])
+				}
+				if workflow == "device-code" && values["BROWSER"] != "" {
+					t.Errorf("ambient browser=%q", values["BROWSER"])
+				}
+				if command.Stdin != os.Stdin {
+					t.Error("login lost terminal input")
+				}
+				return nil
+			},
+		})
+		stubPassingAgentIDReads(&effects)
+		args := []string{"integrations", "login", "azure", workflow}
+		if workflow == "browser" {
+			args = append(args, "--ssh-host", "agent01")
+		}
+		if status := RunWithEffects(args, io.Discard, io.Discard, effects); status != 0 || starts != 2 {
+			t.Fatalf("status=%d starts=%d", status, starts)
+		}
+	}
+}

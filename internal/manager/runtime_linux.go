@@ -51,6 +51,9 @@ func newEffects(calls systemCalls) Effects {
 		}
 		if process.EnvironmentPolicy == AzureDevOpsEnvironment {
 			command.Env = azureDevOpsEnvironment(command.Env)
+	}
+		if process.EnvironmentPolicy == AzureEnvironment {
+			command.Env = azureEnvironment(command.Env, process.AzureSSHHost)
 		}
 		return calls.Start(command)
 	}
@@ -63,6 +66,23 @@ func newEffects(calls systemCalls) Effects {
 			process.Program = path
 			return run(process)
 		}}
+}
+
+// azureEnvironment keeps the token cache in home and substitutes the tunnel
+// instructions for a browser process inside the sandbox.
+func azureEnvironment(environment []string, sshHost string) []string {
+	var result []string
+	for _, entry := range environment {
+		key, _, _ := strings.Cut(entry, "=")
+		if key != "AZURE_CONFIG_DIR" && key != "BROWSER" {
+			result = append(result, entry)
+		}
+	}
+	result = append(result, "AZURE_CONFIG_DIR=/home/agent/.azure")
+	if sshHost != "" {
+		result = append(result, "BROWSER=/usr/local/bin/sandboxed-agents-manager __azure-browser "+sshHost+" %s")
+	}
+	return result
 }
 
 // githubEnvironment confines gh and Git configuration to the home volume and removes ambient authentication tokens.
