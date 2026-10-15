@@ -307,18 +307,9 @@ func TestImageBuildDeclaresKeepalive(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		const want = `ENTRYPOINT ["sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait"]`
-		found := false
-		for _, line := range strings.Split(string(containerfile), "\n") {
-			if strings.HasPrefix(line, "ENTRYPOINT ") {
-				if line != want {
-					t.Fatalf("image entrypoint=%q; want=%q", line, want)
-				}
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("materialized Containerfile lacks keepalive entrypoint %q", want)
+		entrypoint := imageEntrypoint(t, containerfile)
+		if len(entrypoint) != 3 || entrypoint[0] != "sh" || entrypoint[1] != "-c" || !strings.Contains(entrypoint[2], "sleep infinity & wait") {
+			t.Fatalf("materialized Containerfile lacks keepalive: %q", entrypoint)
 		}
 		return nil
 	})

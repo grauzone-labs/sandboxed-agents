@@ -45,7 +45,7 @@ type liveImage struct {
 	}
 }
 
-// TestLiveImages proves the base and four toolchains work as agent, share base layers, carry image labels, and become outdated after one rebuild at the real CLI and Podman seams, only with the separate image opt-in.
+// TestLiveImages proves the base and four toolchains work as agent, initialize persistent SSH host keys, share base layers, carry image labels, and become outdated after one rebuild at the real CLI and Podman seams, only with the separate image opt-in.
 func TestLiveImages(t *testing.T) {
 	if os.Getenv(liveImagesEnv) != "1" {
 		t.Skip("set " + liveImagesEnv + "=1 to select host-wide image rebuild coverage")
@@ -83,6 +83,14 @@ func TestLiveImages(t *testing.T) {
 		name := "image-" + set
 		host.cleanupSandbox(t, name)
 		host.mustCLI(t, "", "up", name, "--with", set)
+		key := host.sshHostKey(t, name)
+		if set == "none" {
+			host.mustCLI(t, "", "stop", name)
+			host.mustCLI(t, "", "start", name)
+			if restarted := host.sshHostKey(t, name); restarted != key {
+				t.Fatalf("restart changed the SSH host key: before=%q after=%q", key, restarted)
+			}
+		}
 		host.mustCLI(t, liveAgentIdentity+liveImageSmoke(set), "shell", name)
 		container := host.inspectContainer(t, name)
 		if strings.Contains(container.Config.Image, host.group) {
@@ -138,6 +146,25 @@ func TestLiveImages(t *testing.T) {
 		}
 	}
 	t.Logf("image coverage complete on %s: base and four toolchains, one build; controller group %s", runtime.GOOS, host.group)
+}
+
+// sshHostKey exercises the same administrative query used by SSH setup immediately after startup.
+func (host liveImageHost) sshHostKey(t *testing.T, name string) string {
+	t.Helper()
+	args, err := cli.ManagerQueryArgs(cli.DerivedNames(host.group, name).Container, "/usr/local/bin/sandboxed-agents-manager", "ssh-host-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	command := host.podmanCommand(ctx, args...)
+	command.WaitDelay = time.Second
+	output, err := command.CombinedOutput()
+	key := strings.TrimSpace(string(output))
+	if err != nil || !strings.HasPrefix(key, "ssh-ed25519 ") {
+		t.Fatalf("read live SSH host key for %s: %v\n%s", name, err, output)
+	}
+	return key
 }
 
 func buildLiveImageExecutable(t *testing.T) string {
