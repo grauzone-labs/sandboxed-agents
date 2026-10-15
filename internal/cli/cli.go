@@ -171,10 +171,11 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 				return 1
 			}
 			defer lock.Close()
-			if _, err := requireSandbox(request, target); err != nil {
+			if err := updateSandbox(request, target, stdout); err != nil {
 				fmt.Fprintln(stderr, err)
 				return 1
 			}
+			return 0
 		}
 		fmt.Fprintln(stderr, "update: not implemented")
 		return 1

@@ -18,7 +18,7 @@ type sandboxContainer struct {
 	HostConfig struct{ Memory, PidsLimit, ShmSize, NanoCpus, CpuQuota, CpuPeriod *int64 }
 	State      struct{ Running *bool }
 	Mounts     []struct {
-		Type, Source, Destination string
+		Type, Name, Source, Destination string
 	}
 }
 

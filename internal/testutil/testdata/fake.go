@@ -54,12 +54,18 @@ func main() {
 		return
 	}
 	fmt.Fprint(os.Stdout, os.Getenv(prefix+"_OUTPUT"))
+	if prefix == "TEST_SSH" && os.Getenv("TEST_SSH_KNOWN_HOSTS") != "" {
+		if err := os.WriteFile("known_hosts", []byte(os.Getenv("TEST_SSH_KNOWN_HOSTS")), 0600); err != nil {
+			panic(err)
+		}
+	}
 	code, err := strconv.Atoi(os.Getenv(prefix + "_EXIT"))
 	if err != nil {
 		code = 0
 	}
 	if script := os.Getenv(prefix + "_RESPONSES"); script != "" {
 		var responses map[string]struct {
+			FailOnce           bool
 			Output             string
 			Stderr             string
 			Exit               int
@@ -93,6 +99,20 @@ func main() {
 			}
 		}
 		if ok {
+			if response.FailOnce {
+				data, _ := os.ReadFile(os.Getenv(prefix + "_LOG"))
+				count := 0
+				for _, line := range strings.Split(string(data), "\n") {
+					var args []string
+					if json.Unmarshal([]byte(line), &args) == nil && slices.Equal(args, os.Args[1:]) {
+						count++
+					}
+				}
+				if count > 1 {
+					response.Exit = 0
+					response.Output = ""
+				}
+			}
 			if response.HoldOutputUntil != "" {
 				executable, err := os.Executable()
 				if err != nil {
