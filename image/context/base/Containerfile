@@ -45,6 +45,8 @@ RUN mkdir -p /usr/local/share/sandboxed-agents \
 
 WORKDIR /workspace
 
-# Keep the sandbox running until sshd becomes its main process (#49).
+# Keep policy in the image, outside the persistent SSH server state volume.
+COPY sshd_config /usr/local/etc/sandboxed-agents/sshd_config
+
 # Generate missing host keys only after the sandbox's SSH volume is mounted.
-ENTRYPOINT ["sh", "-c", "set -e; ssh-keygen -A; trap 'exit 0' TERM; sleep infinity & wait"]
+ENTRYPOINT ["sh", "-c", "set -e; ssh-keygen -A; exec /usr/sbin/sshd -D -e -f /usr/local/etc/sandboxed-agents/sshd_config"]
