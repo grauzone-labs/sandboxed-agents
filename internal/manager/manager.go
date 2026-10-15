@@ -28,6 +28,7 @@ const (
 	NPMEnvironment
 	GitHubEnvironment
 	AzureDevOpsEnvironment
+	AzureEnvironment
 )
 
 // Process is a program start requested at the operating-system seam.
@@ -38,6 +39,8 @@ type Process struct {
 	Identity          Identity
 	Stdin             io.Reader
 	Stdout, Stderr    io.Writer
+	// AzureSSHHost supplies the validated SSH alias to Azure's browser callback.
+	AzureSSHHost string
 }
 
 // Effects supplies only operating-system operations; command behavior runs real.
@@ -63,6 +66,9 @@ type Effects struct {
 // Version answers without identity checks. Root session queries re-exec a
 // trusted agent worker; only a verified agent identity may reach tmux.
 func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) int {
+	if len(args) == 3 && args[0] == "__azure-browser" {
+		return azureBrowser(args[1], args[2], stdout, stderr, effects)
+	}
 	if len(args) == 1 && args[0] == "version" {
 		fmt.Fprintln(stdout, "sandboxed-agents-manager development")
 		return 0
@@ -90,6 +96,9 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 	}
 	if len(args) >= 3 && args[0] == "integrations" && args[1] == "login" && args[2] == catalog.AzureDevOpsIntegration {
 		return loginAzureDevOps(args[3:], stderr, effects)
+	}
+	if len(args) >= 3 && args[0] == "integrations" && args[1] == "login" && args[2] == "azure" {
+		return loginAzure(args[3:], stdout, stderr, effects)
 	}
 	if (len(args) == 3 || len(args) == 4) && args[0] == "integrations" && args[1] == "login" {
 		workflow := ""

@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
+	"slices"
 	"strings"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/azdo"
@@ -36,6 +38,27 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 		// Credential subprocess diagnostics are untrusted and may contain the PAT.
 		stdout, stderr = io.Discard, io.Discard
 	} else if request.Command == "integrations login" {
+		if request.Args[1] == "azure" {
+			set, err := sandboxToolchains(objects.container)
+			if err != nil {
+				return err
+			}
+			if !slices.Contains(set, "azure") {
+				set = append(set, "azure")
+				slices.Sort(set)
+				return fmt.Errorf("azure login requires the azure toolchain; run update %s --with %s", request.Name, toolchainSet(set))
+			}
+		}
+		browser := request.Args[1] == "azure" && loginWorkflow(request.Args) == "browser"
+		if browser {
+			setup, err := sshSetupPaths(request, p.host.Platform)
+			if err != nil {
+				return err
+			}
+			if _, err := os.Stat(setup.entry); err != nil {
+				return fmt.Errorf("Azure browser login needs an installed SSH setup; run ssh-config %s --install (%w)", request.Name, err)
+			}
+		}
 		if !p.host.IsInputTerminal(p.host.Stdin) || !p.host.IsOutputTerminal(stdout) {
 			return fmt.Errorf("%s login needs an interactive terminal", request.Args[1])
 		}
@@ -44,6 +67,9 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 			return err
 		}
 		args = append(args, "-it", names.Container, managerPath, "integrations", "login", request.Args[1], workflow)
+		if browser {
+			args = append(args, "--ssh-host", sshHostName(request))
+		}
 		stdin = p.host.Stdin
 	} else {
 		selection := request.ConfigSelection

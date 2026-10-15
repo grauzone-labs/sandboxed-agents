@@ -40,7 +40,8 @@ var Default = Catalog{
 			Delivered:             true,
 			InvalidOptionsMessage: "--organization is only valid for azdo",
 		}},
-		"azure": {LoginWorkflows: []string{}, Login: &LoginWorkflow{
+		"azure": {LoginWorkflows: []string{"device-code", "browser"}, Login: &LoginWorkflow{
+			Delivered:         true,
 			InvalidOptionsMessage: "--organization is only valid for azdo",
 		}},
 		AzureDevOpsIntegration: {LoginWorkflows: []string{}, Login: &LoginWorkflow{
