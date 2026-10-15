@@ -297,12 +297,13 @@ main process
 ([issue #49](https://github.com/grauzone-labs/sandboxed-agents/issues/49))
 and accepts the `agent` login with the key that SSH setup installs. The
 server's configuration and policy are described in
-[images](images.md#ssh-server). No host has yet started that image in a live
-container or connected to it over SSH: this workspace has Podman 4.3.1, below
-the repository minimum of 4.4, so it cannot run the live suite. `device-code`
-needs no tunnel, so this gap does not affect it; the browser workflow stays
-unverified until a live run proves the login. To complete the login where sshd
-runs:
+[images](images.md#ssh-server). Linux and Windows runs of the live image
+suite on 2026-10-15 started that image in live containers and completed an
+unauthenticated SSH key exchange with its sshd, as recorded in
+[images](images.md#live-proof); no host has yet logged in over SSH as `agent`
+or opened this tunnel. `device-code` needs no tunnel, so this gap does not
+affect it; the browser workflow stays unverified until a live run proves the
+login. To complete the login where sshd runs:
 
 1. On the machine with your browser, run the printed `ssh` command in a second
    terminal and leave it running. It binds that one port on your machine's
@@ -378,8 +379,10 @@ the workflows, on a real sandbox built with the `azure` toolchain, with a
 browser and an Azure account that can select a subscription. Steps 6 and 7
 need a sandbox whose SSH server runs. The default image now starts sshd as its
 main process ([issue #49](https://github.com/grauzone-labs/sandboxed-agents/issues/49)),
-but no host has run that image live, and no browser login has been verified
-live yet.
+and Linux and Windows live runs on 2026-10-15 started it with sshd as PID 1
+and completed an unauthenticated key exchange ([images](images.md#live-proof)),
+but no host has logged in over SSH as `agent` or verified a browser login live
+yet.
 
 1. Use a new, clean test sandbox. Run
    `sandboxed-agents integrations login agent01 azure device-code`, wait for
@@ -536,10 +539,13 @@ no Podman argument or output. They run real Git: after the login,
 `ORGANIZATION@` user prefix, and a repository-level helper is never called.
 `az` is replaced by a stub and no Azure DevOps server is contacted, so a live
 private clone and an `az devops` query have **not** been verified: no
-organization or PAT was available during development. Run this checklist once
-per change on a real sandbox built with `--with azure`, with a PAT that has
-`Code (Read)` and `Project and Team (Read)` for an organization holding a
-private test repository.
+organization or PAT was available during development. The Linux and Windows
+live image runs of 2026-10-15 confirmed that `az version` and
+`az devops --help` work in the `azure` image, with the Azure CLI warnings
+recorded in [images](images.md#live-proof), but they contacted no Azure DevOps
+organization. Run this checklist once per change on a real sandbox built with
+`--with azure`, with a PAT that has `Code (Read)` and `Project and Team (Read)`
+for an organization holding a private test repository.
 
 1. In a new sandbox, confirm in `shell agent01` that `az devops --help` works
    and `git config --global --get-regexp '^credential\.'` prints nothing.

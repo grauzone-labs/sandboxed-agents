@@ -2,7 +2,7 @@
 
 This document states the Podman versions that the sandboxed-agents executable needs on the host. For each floor, it gives the reason and how the floor was confirmed.
 
-The versions were confirmed from versioned upstream Podman documentation and source code, not on a live host. Only the live suite checks live behavior. Nothing here shows that a given Podman installation behaves as its documentation says.
+The versions were confirmed from versioned upstream Podman documentation and source code, not on a live host. Only the live suite checks live behavior. The live image suite has passed on Linux with rootless Podman 5.4.2 and on Windows with Podman client 5.8.3 and a machine running Podman 5.8.9 ([images](images.md#live-proof)); those runs exercise the preflight at those versions, not at the floors below. Nothing here shows that a Podman installation at a floor behaves as its documentation says.
 
 The behavior described here follows Epic #1, its Features, and the ADRs. The executable does not implement all of it yet.
 
@@ -13,7 +13,7 @@ The behavior described here follows Epic #1, its Features, and the ADRs. The exe
 | Linux amd64 | Rootless Podman 4.4.0 | A usable pasta program on the engine side |
 | Windows 11 x64 | Podman client 4.7.0 and Podman machine 4.7.0 | A running, rootless WSL2 machine, and a usable pasta program on the engine side |
 
-The preflight is planned to check the host prerequisites automatically before `build`, `up`, and `update`. The `check` command is planned to run it on its own too.
+The preflight checks the host prerequisites before `build`, `up`, and `update`, and the `check` command runs it on its own.
 
 ## Linux amd64
 
@@ -43,10 +43,10 @@ While those variables are removed, the 4.8.0 guarantee does not raise the floor 
 
 These are known limits of what this page confirms.
 
-- **Automount root query.** The Windows preflight first runs `podman machine ssh NAME test -e /etc/wsl.conf`, then reads an existing file with `podman machine ssh NAME cat /etc/wsl.conf`. A silent exit status 1 from the existence query defaults to `/mnt/`; other query failures and unreadable existing files fail preflight. The recorded `[automount] root` also defaults to `/mnt/` when its setting is absent. Preflight accepts and records a custom root; refusal of a workspace under a custom root belongs to #14 and is not yet implemented. These plain arguments require no shell quoting when the transport joins them, but the two-call transport awaits confirmation on a live Windows host. `podman machine ssh` runs commands in the machine from 4.0.0; the automount setting itself does not depend on the Podman version.
+- **Automount root query.** The Windows preflight first runs `podman machine ssh NAME test -e /etc/wsl.conf`, then reads an existing file with `podman machine ssh NAME cat /etc/wsl.conf`. A silent exit status 1 from the existence query defaults to `/mnt/`; other query failures and unreadable existing files fail preflight. The recorded `[automount] root` also defaults to `/mnt/` when its setting is absent. Preflight accepts and records a custom root; refusal of a workspace under a custom root belongs to #14 and is not yet implemented. These plain arguments require no shell quoting when the transport joins them. The two-call transport ran in the Windows live run of 2026-10-15, where `check` passed with Podman client 5.8.3 and machine 5.8.9 ([images](images.md#live-proof)); that machine's `wsl.conf` existed without an `[automount]` section, so the run exercised the read of an existing file and the default root, not an absent file or a custom root, and nothing confirms the transport at the 4.7.0 floor. `podman machine ssh` runs commands in the machine from 4.0.0; the automount setting itself does not depend on the Podman version.
 - **Exact introduction versions on Linux.** For the Linux options whose introduction release is not established (the user, security, and resource-limit options in the Linux section), availability below 4.4.0 is confirmed, but the release that introduced them is not. The first release that offers the label readback that the executable needs is also not established. Since all of them are available below 4.4.0, they do not raise the Linux floor.
-- **Info query.** The info fields for rootless mode and cgroup controllers are confirmed from 3.2.0. The exact command and the rule the preflight applies to them are not confirmed. Podman's info output has no field that shows whether cgroup controllers are delegated to the user, and the Podman version alone does not show it either.
-- **Engine version query.** `podman --version` reports the version of the client only. The call that reads the engine version is not confirmed.
+- **Info query.** The info fields for rootless mode and cgroup controllers are confirmed from 3.2.0. The preflight runs `podman info --format json` and requires `host.cgroupVersion` to be `v2` and `host.security.rootless` to be true. Podman's info output has no field that shows whether cgroup controllers are delegated to the user, and the Podman version alone does not show it either, so the preflight reads delegation itself: on Windows it runs `podman machine ssh NAME id -u` and then `cat` on the user's `cgroup.controllers` and `cgroup.subtree_control` files, and reports a controller as delegated only when both list it. These queries passed in the Linux live run with Podman 5.4.2 and in the Windows live run with machine Podman 5.8.9 ([images](images.md#live-proof)); nothing confirms them at the floors.
+- **Engine version query.** `podman --version` reports the version of the client only. The preflight reads the engine version with `podman version --format json` through the selected machine connection and requires its `Server.Version` to meet the machine floor. That query reported the machine's Podman 5.8.9 in the Windows live run ([images](images.md#live-proof)); nothing confirms it at the 4.7.0 floor.
 - **Remote Podman on Linux.** On Linux the executable calls the local Podman without a connection. A remote setting there, such as `CONTAINER_HOST`, remains a documented limit of the check ([ADR 0006](adr/0006-podman-target-and-execution-identity.md)).
 
 ## How this was confirmed
