@@ -245,3 +245,17 @@ The runs did not prove an authenticated SSH login: every client authentication m
 - The base-image build against the NodeSource key on 2026-10-11, described above, predates the toolchain recipes and the manager. It is no longer the only live build on record.
 - Not covered: the Microsoft signing key for the .NET feed (`packages-microsoft-prod.deb` is fetched over HTTPS and not pinned), digests of the pulled Debian image or of built images, and pinned Playwright, .NET patch, or Debian package versions. The version manifest records what a build installed.
 - Podman images in release preprocessing: `scripts/release.sh` builds none.
+
+## Updating a sandbox
+
+`update NAME` moves one sandbox to the image of the installed executable. It keeps the workspace, home data, SSH server state, loopback port, resource limits, and toolchain set. `update NAME --with dotnet,native` replaces the set; `--with none` selects the base image. A current image prints `already up to date` without asking about agent sessions or replacing the sandbox.
+
+The command checks prerequisites, takes the sandbox's lifecycle lock, checks ownership and state, and builds any missing image before changing the sandbox. A toolchain image based on an older base image is rebuilt first. A running agent session blocks replacement unless `--force` is given. When the manager cannot answer, the command also requires `--force`, since it cannot rule out sessions.
+
+During replacement, the old container becomes a backup. The replacement uses the same volumes and is created before the old container stops; it starts only after that stop succeeds. Readiness requires the manager's version response and a completed Ed25519 SSH key exchange through the recorded port. Pending probes retry every 250 milliseconds, with a 3-second limit per probe and a 60-second total deadline. The SSH probe uses temporary known_hosts data and does not change the installed SSH setup.
+
+A create, start, or readiness failure removes the replacement and restores the old container's name and prior running/stopped state. No update or rollback path removes a named volume. Sessions ended by stopping the old container cannot be restarted by rollback; the output names them, or says their names were unavailable. A stopped sandbox is started for readiness and stopped again after successful backup removal.
+
+If backup removal fails, the update succeeded but the sandbox is `update interrupted`; other commands refuse it. If the final stop fails, the update succeeded but the sandbox is still running. Interrupted-update recovery and `update --all` are deferred to issue #29; this version refuses a leftover backup without changing it.
+
+Offline tests cover replacement, failures, session guards, lifecycle locking, toolchain changes, and the readiness deadline. The real host SSH client is tested against a test peer with valid, corrupt, and absent exchange signatures. The opt-in `TestLiveImages` suite also checks one successful update and one Podman rollback caused by a deliberately failing SSH probe, plus host-key and authorization persistence. Those new live scenarios have not been run on Linux or Windows: this workspace's preflight rejects Podman 4.3.1, missing `pasta`, and unavailable delegated cgroup controllers.
