@@ -199,6 +199,7 @@ func TestCheckNamesKeptAndUnusedWorkspaceVolumes(t *testing.T) {
 	}
 }
 
+// namedCommandForms lists delivered sandbox commands exercised by the shared state and owner checks.
 func namedCommandForms() [][]string {
 	return [][]string{
 		{"up", "demo"}, {"start", "demo"}, {"stop", "demo", "--force"}, {"restart", "demo", "--force"}, {"remove", "demo", "--force"},
