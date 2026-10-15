@@ -84,11 +84,13 @@ other name fails and lists `device-code`. The workflow takes no options.
 Standard input and standard output must both be terminals. Without them the
 command fails before `gh` starts, so redirecting or piping either stream does not
 work. The terminal is connected through to the sandbox, so you answer the GitHub
-CLI's prompts yourself: it may ask to confirm before re-authenticating an
-existing login, shows a one-time code and a URL, and waits for you to press
-Enter. The sandbox has no browser, so `gh` may report that it cannot open one.
-That is expected: open the URL in a browser on any machine, enter the code, and
-approve. The browser needs no connection back into the sandbox.
+CLI's prompts yourself. It may ask whether to re-authenticate an existing login
+and whether to "Authenticate Git with your GitHub credentials?" (either answer
+works, because the second command configures the helper afterward). It then
+shows a one-time code and a URL and waits for you to press Enter. The sandbox
+has no browser, so `gh` may report that it cannot open one. That is expected:
+open the URL in a browser on any machine, enter the code, and approve. The
+browser needs no connection back into the sandbox.
 
 ### What it runs
 
@@ -112,19 +114,25 @@ before its private repositories work. See the GitHub CLI manual for
 Both commands run with the same controlled environment: `GH_TOKEN`,
 `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, and any
 `GH_CONFIG_DIR` are removed, and `GH_CONFIG_DIR`, `GIT_CONFIG_GLOBAL`, and
-`XDG_CONFIG_HOME` are set to fixed paths in `/home/agent`. The login therefore
-always stores its own token in the home volume and never reuses an ambient one.
-This applies only to these two commands: a token variable set elsewhere in the
-sandbox's environment still takes precedence when you later run `gh` yourself.
+`XDG_CONFIG_HOME` are set to fixed paths in `/home/agent`. The workflow therefore
+never uses an ambient token; it may still reuse a login already stored in the
+home volume, as `gh`'s prompts decide. This applies only to these two commands: a
+token variable set elsewhere in the sandbox's environment still takes precedence
+when you later run `gh` yourself.
 
 ### Result and failure
 
-The command exits zero only when both commands succeed. If the first fails or is
-cancelled (for example with Ctrl+C, or when the code expires), the second does not
-run, so Git is not configured. If the second fails, the command fails even though
-the first already stored a login. Every failure, including a missing terminal
-and a failed check that the manager runs as `agent`, gives exit status 1 with a
-short message; the exit code of `gh` itself is not passed through. After a
+The command exits zero only when both commands succeed. If `gh auth login` fails
+or is cancelled (for example with Ctrl+C, or when the code expires), the separate
+`setup-git` step does not run. `gh auth login` may already have written
+configuration, and may have configured Git, before it failed, so a partial login
+or helper entry can remain. If `setup-git` fails, the command fails even though
+the login is stored.
+
+A reported workflow or runtime failure, including a missing terminal, exits with
+status 1 and a short message; the exit code of `gh` is not passed through. A
+usage error (such as an unknown workflow name) exits non-zero, and a process
+stopped by an outside signal may report a different non-zero status. After a
 partial failure, re-run the command, or run
 `gh auth setup-git --hostname github.com` in a `shell NAME` session if the login
 already succeeded.
@@ -146,11 +154,12 @@ sandboxes, not separate agents, separate accounts. Only
 alone keeps its volumes. To revoke access on GitHub's side, revoke the token in
 your GitHub account settings.
 
-`setup-git` adds helper entries for `github.com` and does not remove the global
-helper that [`integrations config NAME git credentials`](#git-credential-helper)
-sets. If you use both, Git consults the configured helpers in order; check
-`git config --global --get-all credential.helper` and the
-`credential.https://github.com.helper` entries if Git still prompts.
+`setup-git` writes an empty `github.com` helper entry followed by the `gh`
+helper (and the same for `gist.github.com`). The empty entry resets any earlier
+helper for those hosts, so the generic store helper from
+[`integrations config NAME git credentials`](#git-credential-helper) no longer
+applies to `github.com`, but still serves other hosts. `gh auth logout` removes
+the stored login, not these Git entries.
 
 ### Manual GitHub login check
 
@@ -161,12 +170,13 @@ a private clone, or a push. Run this checklist once for each change to the
 workflow, on a real sandbox, with a browser and an account that can push to a
 private test repository.
 
-1. Start from a sandbox that is not logged in (a new one, or run `gh auth logout`
-   in a `shell NAME` session). Run
+1. Use a new, clean test sandbox; `gh auth logout` does not undo Git helper
+   entries, so an earlier login leaves it unclean. Run
    `sandboxed-agents integrations login agent01 github`, wait for the code, and
    press Ctrl+C. Confirm the status is non-zero and that, in `shell agent01`,
-   `gh auth status` reports no login and `git config --global --get-regexp '^credential\.'`
-   shows no `github.com` helper.
+   `gh auth status` reports no login. Note any
+   `git config --global --get-regexp '^credential\.'` entries; a cancelled
+   login may leave some.
 2. Run the command again and complete the device flow in your browser. Confirm
    it exits zero and prints no error.
 3. In `shell agent01`, run `gh auth status`; it must show `github.com` logged in.
@@ -180,7 +190,7 @@ private test repository.
    directory. Confirm it still works: the login persisted in the home volume.
 6. Run the command without a terminal, for example
    `sandboxed-agents integrations login agent01 github </dev/null`. Confirm it
-   fails with a terminal error and exit status 1 and starts no `gh`.
+   fails with a terminal error and a non-zero status, and starts no `gh`.
 
 Record the sandbox image, host platform, tested commit, `gh --version` from the
 sandbox, and each step's result. Never record a token or one-time code.

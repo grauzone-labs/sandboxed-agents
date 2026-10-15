@@ -25,7 +25,7 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 	var stdin io.Reader
 	if request.Command == "integrations login" {
 		if !p.host.IsInputTerminal(p.host.Stdin) || !p.host.IsOutputTerminal(stdout) {
-			return fmt.Errorf("GitHub login needs an interactive terminal")
+			return fmt.Errorf("%s login needs an interactive terminal", request.Args[1])
 		}
 		workflow, err := catalog.Default.ResolveLogin(request.Args[1], loginWorkflow(request.Args))
 		if err != nil {

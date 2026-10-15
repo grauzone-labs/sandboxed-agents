@@ -96,7 +96,7 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 			fmt.Fprintln(stderr, err)
 			return 2
 		}
-		if args[2] == "github" {
+		if args[2] == catalog.GitHubIntegration {
 			return loginGitHub(stdout, stderr, effects)
 		}
 	}

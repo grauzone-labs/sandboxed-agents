@@ -9,6 +9,7 @@ import (
 
 const (
 	GitIntegration         = "git"
+	GitHubIntegration      = "github"
 	GitIdentityWorkflow    = "identity"
 	GitCredentialsWorkflow = "credentials"
 	GitNameOption          = "name"
@@ -117,7 +118,7 @@ func (c Catalog) ResolveLogin(name, workflow string) (string, error) {
 	integration, known := c.Integrations[name]
 	if !known || integration.Login == nil || !integration.Login.Delivered {
 		if known && len(integration.ConfigWorkflows) > 0 {
-			return "", fmt.Errorf("%s has no login workflow; use integrations config; config workflows: %s", name, ValidNames(integration.ConfigWorkflowNames()))
+			return "", fmt.Errorf("%s has no login workflow; use integrations config NAME %s; config workflows: %s", name, name, ValidNames(integration.ConfigWorkflowNames()))
 		}
 		return "", fmt.Errorf("unknown integration %q: %s", name, ValidNames(c.LoginIntegrationNames()))
 	}
