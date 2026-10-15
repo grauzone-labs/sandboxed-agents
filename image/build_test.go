@@ -300,16 +300,32 @@ func TestImageBuildUsesSelectedToolchainTag(t *testing.T) {
 	}
 }
 
-// TestImageBuildDeclaresKeepalive proves the materialized embedded build context declares sleep infinity through the public image.Build seam supplied to Podman.
-func TestImageBuildDeclaresKeepalive(t *testing.T) {
+// TestImageBuildDeclaresSSHD proves the materialized embedded build context declares foreground sshd with image-owned configuration through the public image.Build seam supplied to Podman.
+func TestImageBuildDeclaresSSHD(t *testing.T) {
 	_, err := image.Build(context.Background(), nil, func(_ context.Context, args ...string) error {
 		containerfile, err := os.ReadFile(args[2])
 		if err != nil {
 			t.Fatal(err)
 		}
+		if !strings.Contains(string(containerfile), "COPY sshd_config /usr/local/etc/sandboxed-agents/sshd_config") {
+			t.Fatal("SSH policy is not copied outside the server state volume")
+		}
+		configuration, err := os.ReadFile(filepath.Join(args[5], "sshd_config"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, setting := range []string{
+			"HostKey /etc/ssh/ssh_host_ed25519_key", "HostKey /etc/ssh/ssh_host_ecdsa_key", "HostKey /etc/ssh/ssh_host_rsa_key",
+			"AuthorizedKeysFile /etc/ssh/authorized_keys", "AllowUsers agent", "PermitRootLogin no",
+			"AuthenticationMethods publickey", "PasswordAuthentication no", "KbdInteractiveAuthentication no", "AllowAgentForwarding no",
+		} {
+			if !strings.Contains(string(configuration), setting+"\n") {
+				t.Errorf("materialized SSH configuration lacks %q", setting)
+			}
+		}
 		entrypoint := imageEntrypoint(t, containerfile)
-		if len(entrypoint) != 3 || entrypoint[0] != "sh" || entrypoint[1] != "-c" || !strings.Contains(entrypoint[2], "sleep infinity & wait") {
-			t.Fatalf("materialized Containerfile lacks keepalive: %q", entrypoint)
+		if len(entrypoint) != 3 || entrypoint[0] != "sh" || entrypoint[1] != "-c" || !strings.Contains(entrypoint[2], "exec /usr/sbin/sshd -D -e -f /usr/local/etc/sandboxed-agents/sshd_config") {
+			t.Fatalf("materialized Containerfile lacks foreground sshd: %q", entrypoint)
 		}
 		return nil
 	})

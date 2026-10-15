@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -45,7 +46,7 @@ type liveImage struct {
 	}
 }
 
-// TestLiveImages proves the base and four toolchains work as agent, initialize persistent SSH host keys, share base layers, carry image labels, and become outdated after one rebuild at the real CLI and Podman seams, only with the separate image opt-in.
+// TestLiveImages proves the base and four toolchains work as agent, run root sshd with persistent host keys and an Ed25519 key exchange, share base layers, carry image labels, and become outdated after one rebuild at the real CLI, Podman, and SSH seams, only with the separate image opt-in.
 func TestLiveImages(t *testing.T) {
 	if os.Getenv(liveImagesEnv) != "1" {
 		t.Skip("set " + liveImagesEnv + "=1 to select host-wide image rebuild coverage")
@@ -84,12 +85,14 @@ func TestLiveImages(t *testing.T) {
 		host.cleanupSandbox(t, name)
 		host.mustCLI(t, "", "up", name, "--with", set)
 		key := host.sshHostKey(t, name)
+		host.assertSSHServer(t, name, key)
 		if set == "none" {
 			host.mustCLI(t, "", "stop", name)
 			host.mustCLI(t, "", "start", name)
 			if restarted := host.sshHostKey(t, name); restarted != key {
 				t.Fatalf("restart changed the SSH host key: before=%q after=%q", key, restarted)
 			}
+			host.assertSSHServer(t, name, key)
 		}
 		host.mustCLI(t, liveAgentIdentity+liveImageSmoke(set), "shell", name)
 		container := host.inspectContainer(t, name)
@@ -146,6 +149,62 @@ func TestLiveImages(t *testing.T) {
 		}
 	}
 	t.Logf("image coverage complete on %s: base and four toolchains, one build; controller group %s", runtime.GOOS, host.group)
+}
+
+// assertSSHServer checks PID 1 and its identity, then completes an unauthenticated
+// exchange with the recorded loopback port and compares its key with server state.
+func (host liveImageHost) assertSSHServer(t *testing.T, name, hostKey string) {
+	t.Helper()
+	container := host.inspectContainer(t, name)
+	if !container.State.Running || container.Config.User != "0:0" {
+		t.Fatalf("sandbox %s is not running as container root: %+v", name, container)
+	}
+	output, err := host.podman("exec", "--user=0:0", cli.DerivedNames(host.group, name).Container, "sh", "-c", "cat /proc/1/comm; cat /proc/1/status")
+	if err != nil || !strings.HasPrefix(output, "sshd\n") || !regexp.MustCompile(`(?m)^Uid:\s+0\s+0\s+0\s+0$`).MatchString(output) {
+		t.Fatalf("sandbox PID 1 is not root sshd: %v\n%s", err, output)
+	}
+	port := container.Config.Labels[cli.SSHPortLabel]
+	number, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || number == 0 {
+		t.Fatalf("sandbox %s has invalid recorded SSH port %q", name, port)
+	}
+	bindings := container.HostConfig.PortBindings["22/tcp"]
+	if len(bindings) != 1 || bindings[0].HostIP != "127.0.0.1" || bindings[0].HostPort != port {
+		t.Fatalf("sandbox SSH is not published only on its recorded loopback port: %+v", bindings)
+	}
+	directory := t.TempDir()
+	keyFields := strings.Fields(hostKey)
+	if len(keyFields) < 2 || keyFields[0] != "ssh-ed25519" {
+		t.Fatalf("invalid server-state host key: %q", hostKey)
+	}
+	// Follow ADR-0008: a recorded key alone precedes signature verification.
+	// NEWKEYS proves the exchange completed; authentication is disabled.
+	deadline := time.Now().Add(15 * time.Second)
+	var diagnostics []byte
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		command := exec.CommandContext(ctx, "ssh", "-v", "-F", "none", "-p", port,
+			"-o", "BatchMode=yes", "-o", "ConnectTimeout=2", "-o", "StrictHostKeyChecking=accept-new",
+			"-o", "UserKnownHostsFile=known_hosts", "-o", "GlobalKnownHostsFile=none",
+			"-o", "HostKeyAlgorithms=ssh-ed25519", "-o", "IdentityAgent=none",
+			"-o", "PubkeyAuthentication=no", "-o", "PasswordAuthentication=no",
+			"-o", "KbdInteractiveAuthentication=no", "-o", "HostbasedAuthentication=no",
+			"-o", "GSSAPIAuthentication=no", "agent@127.0.0.1")
+		command.Dir = directory
+		command.Env = host.environment
+		command.WaitDelay = time.Second
+		diagnostics, _ = command.CombinedOutput()
+		cancel()
+		known, readErr := os.ReadFile(filepath.Join(directory, "known_hosts"))
+		fields := strings.Fields(string(known))
+		if readErr == nil && len(fields) == 3 && fields[0] == "[127.0.0.1]:"+port &&
+			fields[1] == keyFields[0] && fields[2] == keyFields[1] &&
+			strings.Contains(string(diagnostics), "debug1: SSH2_MSG_NEWKEYS received") {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("no completed Ed25519 key exchange for %s on recorded port %s:\n%s", name, port, diagnostics)
 }
 
 // sshHostKey exercises the same administrative query used by SSH setup immediately after startup.
@@ -335,7 +394,14 @@ func (host *liveImageHost) selectConnection(t *testing.T) {
 
 type liveImageContainer struct {
 	Image  string
-	Config struct{ Image string }
+	State  struct{ Running bool }
+	Config struct {
+		Image, User string
+		Labels      map[string]string
+	}
+	HostConfig struct {
+		PortBindings map[string][]struct{ HostIP, HostPort string }
+	}
 }
 
 func (host liveImageHost) inspectContainer(t *testing.T, name string) liveImageContainer {

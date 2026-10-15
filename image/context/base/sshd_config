@@ -1,0 +1,16 @@
+# Only server state lives in /etc/ssh; never include configuration from that volume.
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_rsa_key
+AuthorizedKeysFile /etc/ssh/authorized_keys
+
+AllowUsers agent
+PermitRootLogin no
+AuthenticationMethods publickey
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+UsePAM yes
+AllowAgentForwarding no
+
+Subsystem sftp internal-sftp

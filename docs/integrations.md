@@ -292,15 +292,18 @@ The alias in the `ssh` command is the sandbox's installed
 This is why the workflow requires an installed SSH setup.
 
 **Current limitation.** The tunnel needs the sandbox's SSH server to be
-running, and the default image does not start it yet: its entrypoint generates
-the host keys and then only keeps the sandbox running, pending
-[issue #49](https://github.com/grauzone-labs/sandboxed-agents/issues/49),
-which makes sshd the sandbox's long-running process. Until that lands, the
-browser workflow starts and prints its instructions, but the tunnel cannot
-connect and the login cannot complete on a sandbox built from the default
-image. It can complete only on a separately prepared sandbox that already runs
-sshd. Use `device-code` on the default image. This limitation predates the
-Azure workflows and is outside their scope. To complete the login where sshd
+running. The default image's entrypoint generates the host keys and then
+`exec`s sshd as root in the foreground as the container's main process
+([issue #49](https://github.com/grauzone-labs/sandboxed-agents/issues/49)).
+sshd reads its trusted configuration from
+`/usr/local/etc/sandboxed-agents/sshd_config` in the image, outside the
+persisted `/etc/ssh` volume, and accepts only the user `agent` by public key
+from `/etc/ssh/authorized_keys`, which SSH setup installs; see
+[images](images.md#ssh-server). No host has yet started that image in a live
+container or connected to it over SSH: this workspace has Podman 4.3.1, below
+the repository minimum of 4.4, so it cannot run the live suite. `device-code`
+needs no tunnel, so this gap does not affect it; the browser workflow stays
+unverified until a live run proves the login. To complete the login where sshd
 runs:
 
 1. On the machine with your browser, run the printed `ssh` command in a second
@@ -375,9 +378,10 @@ run no real `az`, open no tunnel, and contact no Microsoft server, so they are
 **not proof** of a working login. Run this checklist once for each change to
 the workflows, on a real sandbox built with the `azure` toolchain, with a
 browser and an Azure account that can select a subscription. Steps 6 and 7
-need a sandbox whose SSH server runs; on the default image they stay pending
-until [issue #49](https://github.com/grauzone-labs/sandboxed-agents/issues/49)
-lands, and no browser login has been verified live yet.
+need a sandbox whose SSH server runs. The default image now starts sshd as its
+main process ([issue #49](https://github.com/grauzone-labs/sandboxed-agents/issues/49)),
+but no host has run that image live, and no browser login has been verified
+live yet.
 
 1. Use a new, clean test sandbox. Run
    `sandboxed-agents integrations login agent01 azure device-code`, wait for
