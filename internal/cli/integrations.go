@@ -38,7 +38,7 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 		// Credential subprocess diagnostics are untrusted and may contain the PAT.
 		stdout, stderr = io.Discard, io.Discard
 	} else if request.Command == "integrations login" {
-		if request.Args[1] == "azure" {
+		if request.Args[1] == catalog.AzureIntegration {
 			set, err := sandboxToolchains(objects.container)
 			if err != nil {
 				return err
@@ -49,7 +49,7 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 				return fmt.Errorf("azure login requires the azure toolchain; run update %s --with %s", request.Name, toolchainSet(set))
 			}
 		}
-		browser := request.Args[1] == "azure" && loginWorkflow(request.Args) == "browser"
+		browser := request.Args[1] == catalog.AzureIntegration && loginWorkflow(request.Args) == catalog.BrowserWorkflow
 		if browser {
 			setup, err := sshSetupPaths(request, p.host.Platform)
 			if err != nil {

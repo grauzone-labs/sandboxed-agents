@@ -289,8 +289,19 @@ https://login.microsoftonline.com/...
 The alias in the `ssh` command is the sandbox's installed
 [host entry](ssh.md#host-entry-names-and-controller-groups): `agent01` in the
 `default` controller group, `agent01.GROUP` in any other.
-This is why the workflow requires an installed SSH setup. To complete the
-login:
+This is why the workflow requires an installed SSH setup.
+
+**Current limitation.** The tunnel needs the sandbox's SSH server to be
+running, and the default image does not start it yet: its entrypoint generates
+the host keys and then only keeps the sandbox running, pending
+[issue #49](https://github.com/grauzone-labs/sandboxed-agents/issues/49),
+which makes sshd the sandbox's long-running process. Until that lands, the
+browser workflow starts and prints its instructions, but the tunnel cannot
+connect and the login cannot complete on a sandbox built from the default
+image. It can complete only on a separately prepared sandbox that already runs
+sshd. Use `device-code` on the default image. This limitation predates the
+Azure workflows and is outside their scope. To complete the login where sshd
+runs:
 
 1. On the machine with your browser, run the printed `ssh` command in a second
    terminal and leave it running. It binds that one port on your machine's
@@ -363,7 +374,10 @@ and account check, the browser callback's output, and failure statuses. They
 run no real `az`, open no tunnel, and contact no Microsoft server, so they are
 **not proof** of a working login. Run this checklist once for each change to
 the workflows, on a real sandbox built with the `azure` toolchain, with a
-browser and an Azure account that can select a subscription.
+browser and an Azure account that can select a subscription. Steps 6 and 7
+need a sandbox whose SSH server runs; on the default image they stay pending
+until [issue #49](https://github.com/grauzone-labs/sandboxed-agents/issues/49)
+lands, and no browser login has been verified live yet.
 
 1. Use a new, clean test sandbox. Run
    `sandboxed-agents integrations login agent01 azure device-code`, wait for
