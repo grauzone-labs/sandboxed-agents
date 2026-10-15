@@ -203,7 +203,7 @@ func namedCommandForms() [][]string {
 	return [][]string{
 		{"up", "demo"}, {"start", "demo"}, {"stop", "demo", "--force"}, {"restart", "demo", "--force"}, {"remove", "demo", "--force"},
 		{"shell", "demo"}, {"fingerprint", "demo"}, {"ssh-config", "demo"}, {"ssh-config", "demo", "--install"}, {"ssh-config", "demo", "--remove"},
-		{"update", "demo"}, {"integrations", "login", "demo", "azure"}, {"integrations", "login", "demo", "azdo", "--organization", "https://example.com/org"},
+		{"update", "demo"}, {"integrations", "login", "demo", "github"},
 		{"integrations", "config", "demo", "git", "identity"}, {"integrations", "config", "demo", "git", "credentials"},
 	}
 }

@@ -99,3 +99,44 @@ func ValidNames(names []string) string {
 	}
 	return "valid names: " + strings.Join(names, ", ")
 }
+
+// LoginIntegrationNames lists only integrations whose login handler is delivered.
+func (c Catalog) LoginIntegrationNames() []string {
+	var names []string
+	for name, integration := range c.Integrations {
+		if integration.Login != nil && integration.Login.Delivered {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+// ResolveLogin validates delivered names and resolves an omitted single workflow.
+func (c Catalog) ResolveLogin(name, workflow string) (string, error) {
+	integration, known := c.Integrations[name]
+	if !known || integration.Login == nil || !integration.Login.Delivered {
+		if known && len(integration.ConfigWorkflows) > 0 {
+			return "", fmt.Errorf("%s has no login workflow; use integrations config; config workflows: %s", name, ValidNames(integration.ConfigWorkflowNames()))
+		}
+		return "", fmt.Errorf("unknown integration %q: %s", name, ValidNames(c.LoginIntegrationNames()))
+	}
+	if workflow == "" && len(integration.LoginWorkflows) == 1 {
+		return integration.LoginWorkflows[0], nil
+	}
+	if !slices.Contains(integration.LoginWorkflows, workflow) {
+		return "", fmt.Errorf("unknown workflow %q: %s", workflow, ValidNames(integration.LoginWorkflows))
+	}
+	return workflow, nil
+}
+
+// LoginUsage returns the delivered manager login command forms.
+func (c Catalog) LoginUsage() []string {
+	var forms []string
+	for _, name := range c.LoginIntegrationNames() {
+		for _, workflow := range c.Integrations[name].LoginWorkflows {
+			forms = append(forms, "integrations login "+name+" "+workflow)
+		}
+	}
+	return forms
+}

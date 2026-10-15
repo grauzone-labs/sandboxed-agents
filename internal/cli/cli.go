@@ -189,12 +189,12 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			fmt.Fprintln(stderr, err)
 		}
 		return status
-	case "integrations config":
+	case "integrations config", "integrations login":
 		target, err := selectedTarget()
 		if err != nil {
 			return 1
 		}
-		if err := configureIntegration(request, target, stdout, stderr); err != nil {
+		if err := runIntegration(request, target, stdout, stderr); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}

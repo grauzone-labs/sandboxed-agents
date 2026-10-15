@@ -171,9 +171,10 @@ func withoutGitCredentials(t *testing.T) {
 	t.Cleanup(func() { catalog.Default.Integrations["git"] = original })
 }
 
-// TestGitConfigRejectsUnsafeIdentity proves complete Git workflows reject root, wrong IDs, missing identity reads, and unsafe groups before any process through manager.RunWithEffects.
-func TestGitConfigRejectsUnsafeIdentity(t *testing.T) {
+// TestIntegrationWorkflowsRejectUnsafeIdentity proves Git config and GitHub login workflows reject root, wrong IDs, missing identity reads, and unsafe groups before any process through manager.RunWithEffects.
+func TestIntegrationWorkflowsRejectUnsafeIdentity(t *testing.T) {
 	for _, args := range [][]string{
+		{"integrations", "login", "github", "device-code"},
 		{"integrations", "config", "git", "credentials"},
 		{"integrations", "config", "git", "identity", "--name", "N", "--email", "E"},
 	} {
@@ -216,5 +217,66 @@ func TestGitConfigRejectsUnsafeIdentity(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// TestGitHubLoginConfiguresHTTPS proves device-code authentication precedes github.com helper setup as agent through the manager command and injected process seam.
+func TestGitHubLoginConfiguresHTTPS(t *testing.T) {
+	effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
+	var calls [][]string
+	effects.Start = func(p manager.Process) error {
+		if p.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
+			t.Errorf("identity=%v", p.Identity)
+		}
+		calls = append(calls, append([]string{p.Program}, p.Args...))
+		return nil
+	}
+	var out bytes.Buffer
+	status := manager.RunWithEffects([]string{"integrations", "login", "github"}, &out, &out, effects)
+	want := [][]string{{"gh", "auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web"}, {"gh", "auth", "setup-git", "--hostname", "github.com"}}
+	if status != 0 || !reflect.DeepEqual(calls, want) {
+		t.Fatalf("status=%d calls=%q output=%s want=%q", status, calls, &out, want)
+	}
+}
+
+// TestGitHubLoginStopsOnFailure proves either GitHub process failure becomes status 1 and stops the workflow through the manager command seam.
+func TestGitHubLoginStopsOnFailure(t *testing.T) {
+	for _, failureAt := range []int{1, 2} {
+		for _, failure := range []error{childExit(23), errors.New("cannot start gh")} {
+			effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
+			starts := 0
+			effects.Start = func(manager.Process) error {
+				starts++
+				if starts == failureAt {
+					return failure
+				}
+				return nil
+			}
+			var out bytes.Buffer
+			status := manager.RunWithEffects([]string{"integrations", "login", "github", "device-code"}, &out, &out, effects)
+			if status != 1 || starts != failureAt {
+				t.Fatalf("status=%d starts=%d output=%s", status, starts, &out)
+			}
+		}
+	}
+}
+
+// TestGitHubLoginRejectsInvalidRequests proves unknown workflows and undelivered integrations cannot start a process through the manager command seam.
+func TestGitHubLoginRejectsInvalidRequests(t *testing.T) {
+	for _, args := range [][]string{{"github", "unknown"}, {"azure"}, {"azdo"}, {"github", "device-code", "extra"}} {
+		effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
+		var out bytes.Buffer
+		if status := manager.RunWithEffects(append([]string{"integrations", "login"}, args...), &out, &out, effects); status != 2 {
+			t.Fatalf("status=%d output=%s", status, &out)
+		}
+	}
+}
+
+// TestManagerUsageListsDeliveredGitHubLogin proves usage exposes the delivered GitHub workflow through the manager command seam.
+func TestManagerUsageListsDeliveredGitHubLogin(t *testing.T) {
+	var out bytes.Buffer
+	status := manager.RunWithEffects([]string{"unknown"}, &out, &out, noProcesses(t, manager.Identity{UID: 1000, GID: 1000}))
+	if status != 2 || !strings.Contains(out.String(), "integrations login github device-code") {
+		t.Fatalf("status=%d output=%s", status, &out)
 	}
 }

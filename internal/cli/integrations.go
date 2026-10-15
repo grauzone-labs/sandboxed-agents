@@ -9,7 +9,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
-func configureIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) error {
+func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) error {
 	objects, err := requireSandbox(request, p)
 	if err != nil {
 		return err
@@ -21,18 +21,30 @@ func configureIntegration(request Request, p podmanTarget, stdout, stderr io.Wri
 	if _, err := queryManagerSessions(request, p); err != nil {
 		return fmt.Errorf("sandbox %q: manager does not answer; use check %s for diagnosis and restart %s (%w)", request.Name, request.Name, request.Name, err)
 	}
-	selection := request.ConfigSelection
-
-	args := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent", names.Container, managerPath, "integrations", "config", selection.Integration, selection.Workflow}
-	if selection.Integration == catalog.GitIntegration && selection.Workflow == catalog.GitIdentityWorkflow {
-		identity, err := readGitIdentity(request.Options[catalog.GitNameOption], request.Options[catalog.GitEmailOption], p.host, stdout)
+	args := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent"}
+	var stdin io.Reader
+	if request.Command == "integrations login" {
+		if !p.host.IsInputTerminal(p.host.Stdin) || !p.host.IsOutputTerminal(stdout) {
+			return fmt.Errorf("GitHub login needs an interactive terminal")
+		}
+		workflow, err := catalog.Default.ResolveLogin(request.Args[1], loginWorkflow(request.Args))
 		if err != nil {
 			return err
 		}
-		args = append(args, "--"+catalog.GitNameOption, identity.Name, "--"+catalog.GitEmailOption, identity.Email)
+		args = append(args, "-it", names.Container, managerPath, "integrations", "login", request.Args[1], workflow)
+		stdin = p.host.Stdin
+	} else {
+		selection := request.ConfigSelection
+		args = append(args, names.Container, managerPath, "integrations", "config", selection.Integration, selection.Workflow)
+		if selection.Integration == catalog.GitIntegration && selection.Workflow == catalog.GitIdentityWorkflow {
+			identity, err := readGitIdentity(request.Options[catalog.GitNameOption], request.Options[catalog.GitEmailOption], p.host, stdout)
+			if err != nil {
+				return err
+			}
+			args = append(args, "--"+catalog.GitNameOption, identity.Name, "--"+catalog.GitEmailOption, identity.Email)
+		}
 	}
-
-	status, err := p.run(nil, stdout, stderr, args...)
+	status, err := p.run(stdin, stdout, stderr, args...)
 	if err != nil {
 		return err
 	}
@@ -74,4 +86,11 @@ func readGitIdentity(name, email string, host Host, stdout io.Writer) (gitIdenti
 		*field.value = value
 	}
 	return identity, nil
+}
+
+func loginWorkflow(args []string) string {
+	if len(args) == 3 {
+		return args[2]
+	}
+	return ""
 }
