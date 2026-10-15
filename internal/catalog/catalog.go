@@ -16,7 +16,6 @@ type Integration struct {
 
 type LoginWorkflow struct {
 	Delivered               bool
-	WorkflowOmittable       bool
 	Options                 map[string]string // option name to usage value label
 	RequiredOptions         []string
 	InvalidOptionsMessage   string
@@ -38,11 +37,11 @@ var Default = Catalog{
 	Toolchains: []string{"dotnet", "playwright", "azure", "native"},
 	Integrations: map[string]Integration{
 		GitHubIntegration: {LoginWorkflows: []string{"device-code"}, Login: &LoginWorkflow{
-			Delivered:         true,
-			WorkflowOmittable: true, InvalidOptionsMessage: "--organization is only valid for azdo",
+			Delivered:             true,
+			InvalidOptionsMessage: "--organization is only valid for azdo",
 		}},
 		"azure": {LoginWorkflows: []string{}, Login: &LoginWorkflow{
-			WorkflowOmittable: true, InvalidOptionsMessage: "--organization is only valid for azdo",
+			InvalidOptionsMessage: "--organization is only valid for azdo",
 		}},
 		AzureDevOpsIntegration: {LoginWorkflows: []string{}, Login: &LoginWorkflow{
 			Delivered: true,
@@ -54,7 +53,7 @@ var Default = Catalog{
 				Options:     []string{GitNameOption, GitEmailOption},
 				GitSettings: []GitSetting{{Key: "user.name", Option: GitNameOption}, {Key: "user.email", Option: GitEmailOption}},
 			},
-			GitCredentialsWorkflow: {GitSettings: []GitSetting{{Key: "credential.helper", Value: "store --file=/home/agent/.git-credentials"}}},
+			GitCredentialsWorkflow: {GitSettings: []GitSetting{{Key: "credential.helper", Value: GitCredentialStoreHelper}}},
 		}},
 	},
 }

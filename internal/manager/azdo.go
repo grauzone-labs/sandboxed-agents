@@ -35,9 +35,9 @@ func loginAzureDevOps(args []string, stderr io.Writer, effects Effects) int {
 
 	processes := []Process{
 		{Program: "az", Args: []string{"devops", "login", "--" + catalog.OrganizationOption, organization, "--only-show-errors"}, Stdin: strings.NewReader(token + "\n")},
-		{Program: "git", Args: []string{"config", "--global", "--replace-all", "--", "credential.helper", "store --file=/home/agent/.git-credentials"}},
+		{Program: "git", Args: []string{"config", "--global", "--replace-all", "--", "credential.helper", catalog.GitCredentialStoreHelper}},
 		{Program: "git", Args: []string{"config", "--global", "--replace-all", "--", "credential." + organization + ".username", username}},
-		{Program: "git", Args: []string{"-c", "credential.helper=", "-c", "credential.helper=store --file=/home/agent/.git-credentials", "-c", "credential.useHttpPath=false", "credential", "approve"}, Stdin: strings.NewReader("url=" + organization + "\nusername=" + username + "\npassword=" + token + "\n\n")},
+		{Program: "git", Args: []string{"-c", "credential.helper=", "-c", "credential.helper=" + catalog.GitCredentialStoreHelper, "-c", "credential.useHttpPath=false", "credential", "approve"}, Stdin: strings.NewReader("url=" + organization + "\nusername=" + username + "\npassword=" + token + "\n\n")},
 	}
 	for _, p := range processes {
 		p.Identity = agentIdentity

@@ -23,12 +23,19 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 	if _, err := queryManagerSessions(request, p); err != nil {
 		return fmt.Errorf("sandbox %q: manager does not answer; use check %s for diagnosis and restart %s (%w)", request.Name, request.Name, request.Name, err)
 	}
-	if request.Command == "integrations login" && request.Args[1] == catalog.AzureDevOpsIntegration {
-		return runAzureDevOpsLogin(request, p, names, stderr)
-	}
+	azdoLogin := request.Command == "integrations login" && request.Args[1] == catalog.AzureDevOpsIntegration
 	args := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent"}
 	var stdin io.Reader
-	if request.Command == "integrations login" {
+	if azdoLogin {
+		token, err := readAzureDevOpsToken(p.host, stderr)
+		if err != nil {
+			return err
+		}
+		args = append(args, "-i", names.Container, managerPath, "integrations", "login", catalog.AzureDevOpsIntegration, "--"+catalog.OrganizationOption, request.OrganizationURL)
+		stdin = strings.NewReader(token + "\n")
+		// Credential subprocess diagnostics are untrusted and may contain the PAT.
+		stdout, stderr = io.Discard, io.Discard
+	} else if request.Command == "integrations login" {
 		if !p.host.IsInputTerminal(p.host.Stdin) || !p.host.IsOutputTerminal(stdout) {
 			return fmt.Errorf("%s login needs an interactive terminal", request.Args[1])
 		}
@@ -50,6 +57,9 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 		}
 	}
 	status, err := p.run(stdin, stdout, stderr, args...)
+	if azdoLogin && (err != nil || status != 0) {
+		return fmt.Errorf("Azure DevOps login failed; credentials may be partially configured")
+	}
 	if err != nil {
 		return err
 	}
@@ -102,26 +112,14 @@ func loginWorkflow(args []string) string {
 	return ""
 }
 
-// runAzureDevOpsLogin transports only stdin to the unprivileged manager and never exposes child output that might contain the token.
-func runAzureDevOpsLogin(request Request, p podmanTarget, names ObjectNames, stderr io.Writer) error {
-	var token string
-	var err error
-	if p.host.IsInputTerminal(p.host.Stdin) {
-		var data []byte
-		data, err = readTerminalSecret(p.host.Stdin, stderr)
+// readAzureDevOpsToken selects hidden terminal input or the shared first-line reader using stdin alone.
+func readAzureDevOpsToken(host Host, stderr io.Writer) (string, error) {
+	if host.IsInputTerminal(host.Stdin) {
+		data, err := readTerminalSecret(host.Stdin, stderr)
 		if err != nil {
-			return fmt.Errorf("cannot read Azure DevOps token")
+			return "", fmt.Errorf("cannot read Azure DevOps token")
 		}
-		token, err = azdo.NormalizeToken(string(data))
-	} else {
-		token, err = azdo.ReadToken(p.host.Stdin)
+		return azdo.NormalizeToken(string(data))
 	}
-	if err != nil {
-		return err
-	}
-	status, err := p.run(strings.NewReader(token+"\n"), io.Discard, io.Discard, "exec", "--user=1000:1000", "--env", "HOME=/home/agent", "-i", names.Container, managerPath, "integrations", "login", catalog.AzureDevOpsIntegration, "--"+catalog.OrganizationOption, request.OrganizationURL)
-	if err != nil || status != 0 {
-		return fmt.Errorf("Azure DevOps login failed; credentials may be partially configured")
-	}
-	return nil
+	return azdo.ReadToken(host.Stdin)
 }

@@ -196,9 +196,6 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 				return request, fmt.Errorf("%s", workflow.InvalidOptionsMessage)
 			}
 		}
-		if !workflow.WorkflowOmittable && len(request.Args) != 2 {
-			return request, fmt.Errorf("%s", workflow.InvalidArgumentsMessage)
-		}
 		for _, option := range workflow.RequiredOptions {
 			if request.Options[option] == "" {
 				return request, fmt.Errorf("%s", workflow.InvalidArgumentsMessage)
