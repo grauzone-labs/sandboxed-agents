@@ -31,6 +31,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 func newEffects(calls systemCalls) Effects {
 	run := func(process Process) error {
 		command := exec.Command(process.Program, process.Args...)
+		command.Stdin = process.Stdin
 		command.Stdout, command.Stderr = process.Stdout, process.Stderr
 		command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{
 			Uid: uint32(process.Identity.UID), Gid: uint32(process.Identity.GID),
@@ -45,9 +46,12 @@ func newEffects(calls systemCalls) Effects {
 		if process.EnvironmentPolicy == NPMEnvironment {
 			command.Env = npmEnvironment(command.Env)
 		}
+		if process.EnvironmentPolicy == GitHubEnvironment {
+			command.Env = githubEnvironment(command.Env)
+		}
 		return calls.Start(command)
 	}
-	return Effects{HomeDirectory: func() (string, error) { return "/home/agent", nil }, Identity: calls.Identity, Groups: os.Getgroups, UIDs: unix.Getresuid, GIDs: unix.Getresgid, Start: run,
+	return Effects{Stdin: os.Stdin, HomeDirectory: func() (string, error) { return "/home/agent", nil }, Identity: calls.Identity, Groups: os.Getgroups, UIDs: unix.Getresuid, GIDs: unix.Getresgid, Start: run,
 		ReadFile: os.ReadFile, ReplaceAuthorizedKey: func(data []byte) error { return replaceAuthorizedKey("/etc/ssh", data) }, RemoveAuthorizedKey: func() error { return removeAuthorizedKey("/etc/ssh") }, Reexec: func(process Process) error {
 			path, err := calls.Executable()
 			if err != nil {
@@ -56,6 +60,20 @@ func newEffects(calls systemCalls) Effects {
 			process.Program = path
 			return run(process)
 		}}
+}
+
+// Device login must save its own token in the home volume, not use an ambient token.
+func githubEnvironment(environment []string) []string {
+	var result []string
+	for _, entry := range gitEnvironment(environment) {
+		key, _, _ := strings.Cut(entry, "=")
+		switch key {
+		case "GH_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN":
+			continue
+		}
+		result = append(result, entry)
+	}
+	return append(result, "GH_CONFIG_DIR=/home/agent/.config/gh")
 }
 
 func agentEnvironment(environment []string) []string {

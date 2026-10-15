@@ -8,6 +8,22 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
+func loginGitHub(stdout, stderr io.Writer, effects Effects) int {
+	if !verifyAgent(effects, stderr) {
+		return 1
+	}
+	for _, args := range [][]string{
+		{"auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web"},
+		{"auth", "setup-git", "--hostname", "github.com"},
+	} {
+		if err := effects.Start(Process{Program: "gh", Args: args, Identity: agentIdentity, EnvironmentPolicy: GitHubEnvironment, Stdin: effects.Stdin, Stdout: stdout, Stderr: stderr}); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
+	return 0
+}
+
 func configureGit(args []string, stdout, stderr io.Writer, effects Effects) int {
 	workflowName := ""
 	if len(args) > 0 {

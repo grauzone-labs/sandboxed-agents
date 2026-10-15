@@ -26,6 +26,7 @@ const (
 	AgentEnvironment EnvironmentPolicy = iota
 	GitConfigEnvironment
 	NPMEnvironment
+	GitHubEnvironment
 )
 
 // Process is a program start requested at the operating-system seam.
@@ -34,6 +35,7 @@ type Process struct {
 	EnvironmentPolicy EnvironmentPolicy
 	Args              []string
 	Identity          Identity
+	Stdin             io.Reader
 	Stdout, Stderr    io.Writer
 }
 
@@ -41,6 +43,7 @@ type Process struct {
 // Reexec starts this same trusted manager executable, ignoring Program.
 // ReplaceAuthorizedKey atomically stores a root-owned mode-0644 authorization file.
 type Effects struct {
+	Stdin io.Reader
 	// HomeDirectory is evaluated only by a verified agent worker. Tests use a
 	// temporary directory; production uses the sandbox's fixed home volume.
 	HomeDirectory        func() (string, error)
@@ -84,8 +87,22 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 	if len(args) >= 3 && args[0] == "integrations" && args[1] == "config" && args[2] == catalog.GitIntegration {
 		return configureGit(args[3:], stdout, stderr, effects)
 	}
+	if (len(args) == 3 || len(args) == 4) && args[0] == "integrations" && args[1] == "login" {
+		workflow := ""
+		if len(args) == 4 {
+			workflow = args[3]
+		}
+		if _, err := catalog.Default.ResolveLogin(args[2], workflow); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 2
+		}
+		if args[2] == "github" {
+			return loginGitHub(stdout, stderr, effects)
+		}
+	}
 
 	forms := append([]string{"version", "sessions", "ssh-host-key", "ssh-authorize KEY", "ssh-deauthorize"}, catalog.Default.ConfigUsage()...)
+	forms = append(forms, catalog.Default.LoginUsage()...)
 	fmt.Fprintln(stderr, "usage: sandboxed-agents-manager "+strings.Join(forms, " | "))
 	return 2
 }

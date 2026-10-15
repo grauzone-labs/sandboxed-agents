@@ -198,3 +198,97 @@ func TestGitConfigWorkflowFailureIsNotPassedThrough(t *testing.T) {
 		t.Fatalf("status=%d output=%s calls=%v want=%v", status, output, calls, want)
 	}
 }
+
+// TestGitHubLoginRunsInteractiveWorkflow proves GitHub login dispatches the manager as agent with terminal streams and normalizes failures through the host CLI and fake Podman seam.
+func TestGitHubLoginRunsInteractiveWorkflow(t *testing.T) {
+	for _, code := range []int{0, 23} {
+		t.Setenv("GH_TOKEN", "host-token-sentinel")
+		t.Setenv("GIT_CONFIG_GLOBAL", "/host/gitconfig")
+		t.Setenv("GIT_ASKPASS", "/host/askpass")
+		f := sandboxStateFixture(t)
+		f.host.IsInputTerminal = func(io.Reader) bool { return true }
+		f.host.IsOutputTerminal = func(io.Writer) bool { return true }
+		f.responses[integrationProbe] = response{}
+		workflow := strings.Fields("exec --user=1000:1000 --env HOME=/home/agent -it " + shellContainer + " " + integrationManager + " integrations login github device-code")
+		f.host.Stdin = strings.NewReader("device-flow-input\n")
+		f.responses[strings.Join(workflow, " ")] = response{Exit: code, EchoStdin: true}
+		status, output, calls := f.run(t, "integrations", "login", "agent01", "github")
+		wantStatus := 0
+		if code != 0 {
+			wantStatus = 1
+		}
+		want := append(sandboxQueryCalls(), strings.Fields(integrationProbe), workflow)
+		if status != wantStatus || !strings.Contains(output, "device-flow-input") || !reflect.DeepEqual(calls, want) {
+			t.Fatalf("status=%d output=%s calls=%v want=%v", status, output, calls, want)
+		}
+	}
+}
+
+// TestGitHubLoginChecksStateBeforeTerminal proves sandbox and manager failures win before missing terminal and prevent login through the host CLI seam.
+func TestGitHubLoginChecksStateBeforeTerminal(t *testing.T) {
+	for _, tc := range []struct {
+		name, message string
+		configure     func(*fixture)
+		calls         [][]string
+	}{
+		{"unknown", "does not exist", func(f *fixture) { f.responses["container exists "+shellContainer] = response{Exit: 1} }, sandboxExistenceCalls()},
+		{"volumes-only", "up agent01", func(f *fixture) {
+			f.responses["container exists "+shellContainer] = response{Exit: 1}
+			f.responses["volume exists "+sandboxVolumes[1]] = response{}
+		}, sandboxObjectCalls(false, false, sandboxVolumes[1])},
+		{"owner", "owner conflict", func(f *fixture) { f.responses[shellInspect] = response{Output: containerInspectAnswer(`{}`, "false")} }, sandboxQueryCalls()},
+		{"backup", "update agent01", func(f *fixture) { f.responses["container exists "+sandboxBackup] = response{} }, sandboxObjectCalls(true, true)},
+		{"stopped", "start agent01", func(f *fixture) {
+			f.responses[shellInspect] = response{Output: containerInspectAnswer(`{"io.sandboxed-agents.owner":"default"}`, "false")}
+		}, sandboxQueryCalls()},
+		{"manager", "manager does not answer", func(f *fixture) { f.responses[integrationProbe] = response{Exit: 125} }, append(sandboxQueryCalls(), strings.Fields(integrationProbe))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := sandboxStateFixture(t)
+			tc.configure(f)
+			f.host.IsInputTerminal = func(io.Reader) bool { t.Error("terminal checked before state"); return false }
+			status, output, calls := f.run(t, "integrations", "login", "agent01", "github")
+			if status != 1 || !strings.Contains(output, tc.message) || !reflect.DeepEqual(calls, tc.calls) {
+				t.Fatalf("status=%d output=%s calls=%v want=%v", status, output, calls, tc.calls)
+			}
+			if tc.name == "manager" && (!strings.Contains(output, "check agent01") || !strings.Contains(output, "restart agent01")) {
+				t.Errorf("missing recovery guidance: %s", output)
+			}
+		})
+	}
+}
+
+// TestGitHubLoginNeedsBothTerminals proves redirected input or output prevents login after manager validation through the host CLI seam.
+func TestGitHubLoginNeedsBothTerminals(t *testing.T) {
+	for _, terminal := range [][2]bool{{false, false}, {false, true}, {true, false}} {
+		f := sandboxStateFixture(t)
+		f.responses[integrationProbe] = response{}
+		f.host.IsInputTerminal = func(io.Reader) bool { return terminal[0] }
+		f.host.IsOutputTerminal = func(io.Writer) bool { return terminal[1] }
+		status, output, calls := f.run(t, "integrations", "login", "agent01", "github", "device-code")
+		want := append(sandboxQueryCalls(), strings.Fields(integrationProbe))
+		if status != 1 || !strings.Contains(output, "interactive terminal") || !reflect.DeepEqual(calls, want) {
+			t.Fatalf("status=%d output=%s calls=%v", status, output, calls)
+		}
+	}
+}
+
+// TestGitHubLoginSelectsWindowsTarget proves GitHub login keeps the selected Podman connection and explicit identities through the host CLI seam.
+func TestGitHubLoginSelectsWindowsTarget(t *testing.T) {
+	f := windowsHost(t)
+	configureSandboxQueries(f, "default", "--connection chosen ")
+	f.responses["--connection chosen container exists "+shellContainer] = response{}
+	f.responses["--connection chosen "+integrationProbe] = response{}
+	f.host.IsInputTerminal = func(io.Reader) bool { return true }
+	f.host.IsOutputTerminal = func(io.Writer) bool { return true }
+	workflow := strings.Fields("exec --user=1000:1000 --env HOME=/home/agent -it " + shellContainer + " " + integrationManager + " integrations login github device-code")
+	f.responses["--connection chosen "+strings.Join(workflow, " ")] = response{}
+	status, output, calls := f.run(t, "integrations", "login", "agent01", "github", "device-code")
+	want := [][]string{{"machine", "list", "--format", "json"}, {"machine", "inspect", "chosen"}}
+	for _, call := range append(sandboxQueryCalls(), strings.Fields(integrationProbe), workflow) {
+		want = append(want, append([]string{"--connection", "chosen"}, call...))
+	}
+	if status != 0 || !reflect.DeepEqual(calls, want) {
+		t.Fatalf("status=%d output=%s calls=%v want=%v", status, output, calls, want)
+	}
+}

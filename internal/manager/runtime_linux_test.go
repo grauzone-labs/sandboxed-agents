@@ -285,3 +285,41 @@ func TestProductionNpmUsesAgentHomeAndCredentials(t *testing.T) {
 		t.Fatalf("status=%d starts=%d", status, starts)
 	}
 }
+
+// TestProductionGitHubLoginKeepsInputAndHome proves the device flow receives terminal input and confines gh and Git credentials to agent's home through the production exec.Cmd seam.
+func TestProductionGitHubLoginKeepsInputAndHome(t *testing.T) {
+	starts := 0
+	effects := newEffects(systemCalls{
+		Identity: func() Identity { return agentIdentity },
+		Environment: func() []string {
+			return []string{"HOME=/outside", "GH_CONFIG_DIR=/outside/gh", "GH_TOKEN=ambient", "GITHUB_TOKEN=ambient", "GIT_CONFIG_GLOBAL=/outside/git", "XDG_CONFIG_HOME=/outside", "PATH=/usr/bin"}
+		},
+		Start: func(command *exec.Cmd) error {
+			starts++
+			assertAgentCredentials(t, command, true)
+			if command.Stdin != os.Stdin {
+				t.Error("login lost terminal stdin")
+			}
+			values := map[string]string{}
+			for _, entry := range command.Env {
+				key, value, _ := strings.Cut(entry, "=")
+				values[key] = value
+			}
+			for key, want := range map[string]string{"HOME": "/home/agent", "GH_CONFIG_DIR": "/home/agent/.config/gh", "GIT_CONFIG_GLOBAL": "/home/agent/.gitconfig", "XDG_CONFIG_HOME": "/home/agent/.config"} {
+				if values[key] != want {
+					t.Errorf("%s=%q want=%q", key, values[key], want)
+				}
+			}
+			for _, key := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
+				if _, ok := values[key]; ok {
+					t.Errorf("ambient %s bypasses device login", key)
+				}
+			}
+			return nil
+		},
+	})
+	stubPassingAgentIDReads(&effects)
+	if status := RunWithEffects([]string{"integrations", "login", "github"}, io.Discard, io.Discard, effects); status != 0 || starts != 2 {
+		t.Fatalf("status=%d starts=%d", status, starts)
+	}
+}

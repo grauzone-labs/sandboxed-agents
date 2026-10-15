@@ -185,19 +185,10 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 			}
 		}
 	case "integrations login":
-		integration, known := catalog.Default.Integrations[request.Args[1]]
-		if !known || integration.Login == nil {
-			if known && len(integration.ConfigWorkflows) > 0 {
-				return request, fmt.Errorf("%s has no login workflow; use integrations config %s %s; config workflows: %s", request.Args[1], request.Name, request.Args[1], catalog.ValidNames(integration.ConfigWorkflowNames()))
-			}
-			return request, fmt.Errorf("unknown integration %q: no valid names are available yet", request.Args[1])
+		if _, err := catalog.Default.ResolveLogin(request.Args[1], loginWorkflow(request.Args)); err != nil {
+			return request, err
 		}
-		if len(request.Args) == 3 && !slices.Contains(integration.LoginWorkflows, request.Args[2]) {
-			if len(integration.LoginWorkflows) == 0 {
-				return request, fmt.Errorf("unknown workflow %q: no valid names are available yet", request.Args[2])
-			}
-			return request, fmt.Errorf("unknown workflow %q: valid names: %s", request.Args[2], strings.Join(integration.LoginWorkflows, ", "))
-		}
+		integration := catalog.Default.Integrations[request.Args[1]]
 		workflow := integration.Login
 		for option := range request.Options {
 			if !slices.Contains(workflow.Options, option) {

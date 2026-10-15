@@ -15,6 +15,7 @@ type Integration struct {
 }
 
 type LoginWorkflow struct {
+	Delivered               bool
 	WorkflowOmittable       bool
 	Options                 []string
 	RequiredOptions         []string
@@ -36,7 +37,8 @@ var Default = Catalog{
 	},
 	Toolchains: []string{"dotnet", "playwright", "azure", "native"},
 	Integrations: map[string]Integration{
-		"github": {LoginWorkflows: []string{}, Login: &LoginWorkflow{
+		"github": {LoginWorkflows: []string{"device-code"}, Login: &LoginWorkflow{
+			Delivered:         true,
 			WorkflowOmittable: true, InvalidOptionsMessage: "--organization is only valid for azdo",
 		}},
 		"azure": {LoginWorkflows: []string{}, Login: &LoginWorkflow{
