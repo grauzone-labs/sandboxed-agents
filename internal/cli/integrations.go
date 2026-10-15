@@ -9,6 +9,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
+// runIntegration checks sandbox readiness, runs the selected workflow as agent, and normalizes workflow failures.
 func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) error {
 	objects, err := requireSandbox(request, p)
 	if err != nil {
@@ -56,6 +57,7 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 
 type gitIdentity struct{ Name, Email string }
 
+// readGitIdentity collects explicit or terminal-supplied name and email before any Git configuration is written.
 func readGitIdentity(name, email string, host Host, stdout io.Writer) (gitIdentity, error) {
 	identity := gitIdentity{Name: name, Email: email}
 	if name != "" && email != "" {
@@ -88,6 +90,7 @@ func readGitIdentity(name, email string, host Host, stdout io.Writer) (gitIdenti
 	return identity, nil
 }
 
+// loginWorkflow returns the optional workflow from validated host arguments, leaving an omitted workflow empty.
 func loginWorkflow(args []string) string {
 	if len(args) == 3 {
 		return args[2]

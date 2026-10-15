@@ -161,6 +161,7 @@ func TestManagerUsageListsDeliveredConfigWorkflows(t *testing.T) {
 	}
 }
 
+// withoutGitCredentials temporarily removes the credential workflow to exercise shared catalog validation.
 func withoutGitCredentials(t *testing.T) {
 	t.Helper()
 	original := catalog.Default.Integrations["git"]

@@ -8,6 +8,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
+// loginGitHub authenticates and configures HTTPS credentials as agent, stopping with status 1 on either process failure.
 func loginGitHub(stdout, stderr io.Writer, effects Effects) int {
 	if !verifyAgent(effects, stderr) {
 		return 1
@@ -24,6 +25,7 @@ func loginGitHub(stdout, stderr io.Writer, effects Effects) int {
 	return 0
 }
 
+// configureGit validates the requested Git settings before writing global configuration as a verified agent.
 func configureGit(args []string, stdout, stderr io.Writer, effects Effects) int {
 	workflowName := ""
 	if len(args) > 0 {

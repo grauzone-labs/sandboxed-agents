@@ -62,7 +62,7 @@ func newEffects(calls systemCalls) Effects {
 		}}
 }
 
-// Device login must save its own token in the home volume, not use an ambient token.
+// githubEnvironment confines gh and Git configuration to the home volume and removes ambient authentication tokens.
 func githubEnvironment(environment []string) []string {
 	var result []string
 	for _, entry := range gitEnvironment(environment) {
