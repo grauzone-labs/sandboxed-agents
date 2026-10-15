@@ -216,7 +216,7 @@ func TestCommandGrammar(t *testing.T) {
 		{[]string{"agents", "session", "demo", "codex", "--stop"}, 2},
 		{[]string{"integrations", "login", "demo", "github", "browser"}, 2},
 		{[]string{"integrations", "login", "demo", "azure"}, 2},
-		{[]string{"integrations", "login", "demo", "azdo", "--organization", "https://example.com/org"}, 2},
+		{[]string{"integrations", "login", "demo", "azdo", "--organization", "https://example.com/org"}, 1},
 		{[]string{"integrations", "config", "demo", "git", "identity", "--name", "A Person", "--email", "a@example.com"}, 1},
 		{[]string{"integrations", "config", "demo", "git", "credentials"}, 1},
 		{nil, 2}, {[]string{"demo", "up"}, 2}, {[]string{"agents", "unknown", "demo", "codex"}, 2},
@@ -352,8 +352,8 @@ func TestLoginWorkflowsAreValidatedBeforeExternalCalls(t *testing.T) {
 		diagnostic string
 	}{
 		{[]string{"integrations", "login", "demo", "github", "bogusflow"}, 2, `unknown workflow "bogusflow": valid names: device-code`},
-		{[]string{"integrations", "login", "demo", "azure", "bogusflow"}, 2, `unknown integration "azure": valid names: github`},
-		{[]string{"integrations", "login", "demo", "azdo", "bogusflow", "--organization", "https://example.com/org"}, 2, `unknown integration "azdo": valid names: github`},
+		{[]string{"integrations", "login", "demo", "azure", "bogusflow"}, 2, `unknown integration "azure": valid names: azdo, github`},
+		{[]string{"integrations", "login", "demo", "azdo", "bogusflow", "--organization", "https://example.com/org"}, 2, `unknown workflow "bogusflow": no valid names are available yet`},
 		{[]string{"integrations", "login", "demo", "github"}, 1, ""},
 		{[]string{"agents", "login", "demo", "codex", "bogusflow"}, 2, ""},
 	}

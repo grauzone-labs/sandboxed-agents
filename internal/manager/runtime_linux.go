@@ -49,6 +49,9 @@ func newEffects(calls systemCalls) Effects {
 		if process.EnvironmentPolicy == GitHubEnvironment {
 			command.Env = githubEnvironment(command.Env)
 		}
+		if process.EnvironmentPolicy == AzureDevOpsEnvironment {
+			command.Env = azureDevOpsEnvironment(command.Env)
+		}
 		return calls.Start(command)
 	}
 	return Effects{Stdin: os.Stdin, HomeDirectory: func() (string, error) { return "/home/agent", nil }, Identity: calls.Identity, Groups: os.Getgroups, UIDs: unix.Getresuid, GIDs: unix.Getresgid, Start: run,
@@ -114,4 +117,17 @@ func npmEnvironment(environment []string) []string {
 		result = append(result, entry)
 	}
 	return append(result, "NPM_CONFIG_CACHE=/home/agent/.npm", "NPM_CONFIG_USERCONFIG=/home/agent/.npmrc")
+}
+
+// azureDevOpsEnvironment keeps credentials in the home volume and disables ambient debug logging and alternate authentication.
+func azureDevOpsEnvironment(environment []string) []string {
+	var result []string
+	for _, entry := range gitEnvironment(environment) {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "AZURE_") || strings.HasPrefix(key, "GIT_TRACE") || key == "GIT_CURL_VERBOSE" || key == "GIT_ASKPASS" || key == "SSH_ASKPASS" || key == "GIT_TERMINAL_PROMPT" {
+			continue
+		}
+		result = append(result, entry)
+	}
+	return append(result, "AZURE_CONFIG_DIR=/home/agent/.azure", "AZURE_CORE_COLLECT_TELEMETRY=0", "AZURE_CORE_LOG_LEVEL=critical", "AZURE_LOGGING_ENABLE_LOG_FILE=false", "GIT_TERMINAL_PROMPT=0")
 }

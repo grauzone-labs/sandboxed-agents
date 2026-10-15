@@ -65,6 +65,7 @@ func main() {
 			Exit               int
 			ReadyFile, WaitFor string
 			HoldOutputUntil    string
+			ExpectedStdin      string
 			EchoStdin          bool
 		}
 		if err := json.Unmarshal([]byte(script), &responses); err != nil {
@@ -130,7 +131,16 @@ func main() {
 			}
 			fmt.Fprint(os.Stdout, response.Output)
 			fmt.Fprint(os.Stderr, response.Stderr)
-			if response.EchoStdin {
+			if response.ExpectedStdin != "" {
+				data, err := io.ReadAll(os.Stdin)
+				if err != nil || string(data) != response.ExpectedStdin {
+					fmt.Fprintln(os.Stderr, "fake stdin mismatch")
+					os.Exit(125)
+				}
+				if response.EchoStdin {
+					fmt.Fprint(os.Stdout, string(data))
+				}
+			} else if response.EchoStdin {
 				if _, err := io.Copy(os.Stdout, os.Stdin); err != nil {
 					fmt.Fprintln(os.Stderr, err)
 					os.Exit(125)
