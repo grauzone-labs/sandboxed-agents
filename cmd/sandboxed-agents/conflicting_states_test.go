@@ -431,7 +431,7 @@ func TestLifecycleLockPrecedesEverySandboxState(t *testing.T) {
 
 // TestUsageAndPreflightPrecedeTakenLifecycleLock proves usage and path errors make no Podman calls and preflight failure wins over a held lock through the CLI boundary.
 func TestUsageAndPreflightPrecedeTakenLifecycleLock(t *testing.T) {
-	for _, args := range [][]string{{"up", "demo", "--port", "0"}, {"up", "demo", "MISSING"}, {"start", "demo", "--bad"}, {"stop", "demo", "--bad"}, {"restart", "demo", "--bad"}, {"remove", "demo", "--bad"}, {"up", "demo"}} {
+	for _, args := range [][]string{{"up", "demo", "--port", "0"}, {"up", "demo", "MISSING"}, {"start", "demo", "--bad"}, {"stop", "demo", "--bad"}, {"restart", "demo", "--bad"}, {"remove", "demo", "--bad"}, {"update", "demo", "--with", "none,dotnet"}, {"update", "demo"}, {"up", "demo"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			responses := newSandboxResponses()
 			responses["--version"] = lifecycleResponse{Exit: 125, Output: "preflight failure sentinel"}
@@ -708,7 +708,7 @@ func TestUpdateAndCheckPermitOwnedBackupState(t *testing.T) {
 			fakes := lifecycleHarness(t, responses)
 			status, output := runWithHost(lifecycleLinuxHost(t, fakes), verb, "demo")
 			if verb == "update" {
-				if status != 1 || output != "update: not implemented\n" {
+				if status != 1 || !strings.Contains(output, "interrupted update; recovery is not delivered yet") {
 					t.Fatalf("status=%d output=%s", status, output)
 				}
 			} else if status != 1 || !strings.Contains(output, "sandboxed-agents-backup.default.demo") || !strings.Contains(output, "update demo") {

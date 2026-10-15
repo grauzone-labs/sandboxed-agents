@@ -46,7 +46,7 @@ type liveImage struct {
 	}
 }
 
-// TestLiveImages proves the base and four toolchains work as agent, run root sshd with persistent host keys and an Ed25519 key exchange, share base layers, carry image labels, and become outdated after one rebuild at the real CLI, Podman, and SSH seams, only with the separate image opt-in.
+// TestLiveImages proves the base and four toolchains work as agent, run root sshd with persistent host keys and an Ed25519 key exchange, share base layers, carry image labels, become outdated after one rebuild, and preserve keys across update and forced rollback at the real CLI, Podman, and SSH seams, only with the separate image opt-in.
 func TestLiveImages(t *testing.T) {
 	if os.Getenv(liveImagesEnv) != "1" {
 		t.Skip("set " + liveImagesEnv + "=1 to select host-wide image rebuild coverage")
@@ -148,6 +148,7 @@ func TestLiveImages(t *testing.T) {
 			t.Errorf("list omitted %s:\n%s", name, listing)
 		}
 	}
+	verifyLiveUpdates(t, host, images, rebuilt)
 	t.Logf("image coverage complete on %s: base and four toolchains, one build; controller group %s", runtime.GOOS, host.group)
 }
 

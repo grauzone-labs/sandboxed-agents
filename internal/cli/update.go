@@ -1,0 +1,177 @@
+package cli
+
+import (
+	"fmt"
+	"io"
+	"slices"
+	"strconv"
+
+	"github.com/grauzone-labs/sandboxed-agents/image"
+)
+
+func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
+	objects, err := requireSandbox(request, p)
+	if err != nil {
+		return err
+	}
+	if objects.backup {
+		return fmt.Errorf("sandbox %q has an interrupted update; recovery is not delivered yet", request.Name)
+	}
+	if objects.container.State.Running == nil {
+		return fmt.Errorf("sandbox %q: running state is missing", request.Name)
+	}
+	set, err := sandboxToolchains(objects.container)
+	if err != nil {
+		return err
+	}
+	if request.Options["with"] != "" {
+		set = request.Toolchains
+	}
+	hash, err := image.Hash(image.Context())
+	if err != nil {
+		return err
+	}
+	candidate := objects.container
+	candidate.Config.Labels = map[string]string{ToolchainsLabel: toolchainSet(set)}
+	outdated, err := sandboxImageOutdated(p, candidate, hash)
+	if err != nil {
+		return err
+	}
+	if !outdated {
+		fmt.Fprintf(output, "sandbox %s already up to date\n", request.Name)
+		return nil
+	}
+	tag, err := ensureImage(p, set, output)
+	if err != nil {
+		return err
+	}
+	args, port, err := replacementArgs(request, objects, set, tag)
+	if err != nil {
+		return err
+	}
+	running := *objects.container.State.Running
+	var ended sessionReport
+	if running {
+		ended, err = guardSessions(request, p)
+		if err != nil {
+			return err
+		}
+	}
+	names := DerivedNames(request.Group, request.Name)
+	if _, err = p.query("rename", names.Container, names.Backup); err != nil {
+		return err
+	}
+	created, stopped := false, false
+	rollback := func(cause error) error {
+		if !created {
+			exists, err := p.exists(containerResource, names.Container)
+			if err != nil {
+				return fmt.Errorf("%w; rollback cannot inspect replacement: %v", cause, err)
+			}
+			if exists {
+				partial, err := inspectContainer(p, names.Container)
+				if err != nil || partial.Config.Labels[OwnerLabel] != request.Group {
+					return fmt.Errorf("%w; rollback cannot verify replacement owner; use Podman", cause)
+				}
+			}
+			created = exists
+		}
+		if created {
+			if _, err := p.query("rm", "--force", names.Container); err != nil {
+				return fmt.Errorf("%w; rollback could not remove replacement: %v; backup retained", cause, err)
+			}
+		}
+		if _, err := p.query("rename", names.Backup, names.Container); err != nil {
+			return fmt.Errorf("%w; rollback could not restore name: %v; backup retained", cause, err)
+		}
+		if running && stopped {
+			if _, err := p.query("start", names.Container); err != nil {
+				return fmt.Errorf("%w; restored sandbox %s but could not start it: %v; use start %s", cause, request.Name, err, request.Name)
+			}
+		}
+		return fmt.Errorf("%w; restored sandbox %s to its previous state", cause, request.Name)
+	}
+	if _, err = p.query(args...); err != nil {
+		return rollback(err)
+	}
+	created = true
+	if running {
+		stopped = true
+		if _, err = p.query("stop", names.Backup); err != nil {
+			return rollback(err)
+		}
+		ended.write(output, request.Name)
+	}
+	if _, err = p.query("start", names.Container); err != nil {
+		return rollback(err)
+	}
+	if err = readySandbox(p, names.Container, port); err != nil {
+		return rollback(err)
+	}
+	if _, err = p.query("rm", names.Backup); err != nil {
+		state := ""
+		if !running {
+			state = "; sandbox is still running"
+		}
+		return fmt.Errorf("sandbox %s: update succeeded%s, but backup removal failed: %w; state is update interrupted and other commands refuse it; update %s cleans up (recovery is not delivered yet)", request.Name, state, err, request.Name)
+	}
+	if !running {
+		if _, err = p.query("stop", names.Container); err != nil {
+			return fmt.Errorf("sandbox %s: update succeeded but sandbox is still running: %w; use stop %s", request.Name, err, request.Name)
+		}
+	}
+	fmt.Fprintf(output, "sandbox %s updated\n", request.Name)
+	return nil
+}
+
+const updateWasRunningLabel = "io.sandboxed-agents.update-was-running"
+
+// replacementArgs reconstructs only the supported configuration, refusing missing data.
+func replacementArgs(request Request, objects sandboxObjects, set []string, tag string) ([]string, uint16, error) {
+	c := objects.container
+	names := DerivedNames(request.Group, request.Name)
+	port, err := parseSSHPort(c.Config.Labels[SSHPortLabel])
+	if err != nil {
+		return nil, 0, fmt.Errorf("recorded SSH port is missing or invalid: %w", err)
+	}
+	limits := [3]int64{}
+	for i, limit := range c.integerLimits() {
+		value, err := limit.read()
+		if err != nil {
+			return nil, 0, err
+		}
+		if value <= 0 {
+			return nil, 0, fmt.Errorf("recorded --%s must be positive", limit.option)
+		}
+		limits[i] = value
+	}
+	cpu, err := c.cpuLimit()
+	if err != nil {
+		return nil, 0, err
+	}
+	request.Resources = Resources{Memory: limits[0], PIDsLimit: limits[1], ShmSize: limits[2], CPUs: cpu.displayCores()}
+	request.Toolchains = set
+	workspaceMount := "type=volume,source=" + names.Workspace + ",destination=/workspace"
+	expected := map[string]string{"/workspace": names.Workspace, "/home/agent": names.Home, "/etc/ssh": names.SSH}
+	seen := map[string]bool{}
+	for _, mount := range c.Mounts {
+		volume, ok := expected[mount.Destination]
+		if !ok || seen[mount.Destination] {
+			return nil, 0, fmt.Errorf("unsupported recorded mount at %s", mount.Destination)
+		}
+		seen[mount.Destination] = true
+		if mount.Destination == "/workspace" && mount.Type == "bind" && mount.Source != "" {
+			workspaceMount = bindWorkspaceMount(mount.Source)
+			continue
+		}
+		if mount.Type != "volume" || mount.Name != volume || !slices.Contains(objects.volumes, volume) {
+			return nil, 0, fmt.Errorf("recorded volume at %s is missing or unsupported", mount.Destination)
+		}
+	}
+	if len(seen) != 3 {
+		return nil, 0, fmt.Errorf("recorded workspace, home, and SSH mounts are required")
+	}
+	args := sandboxCreateArgs(request, port, workspaceMount, tag)
+	args = append(args[:len(args)-1], "--label", updateWasRunningLabel+"="+strconv.FormatBool(*c.State.Running), tag)
+	return args, port, nil
+}

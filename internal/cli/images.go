@@ -7,7 +7,6 @@ import (
 	"io"
 	"os/exec"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -103,16 +102,7 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		created = append(created, volume)
 		fmt.Fprintf(output, "created volume %s\n", volume)
 	}
-	args := append([]string{"create", "--name", names.Container}, labels...)
-	args = append(args, "--label", SSHPortLabel+"="+strconv.Itoa(int(port)),
-		"--userns=keep-id:uid=1000,gid=1000", "--user=0:0", "--security-opt=no-new-privileges", "--network=pasta:--no-map-gw",
-		"--memory", strconv.FormatInt(request.Resources.Memory, 10), "--cpus", strconv.FormatFloat(request.Resources.CPUs, 'f', -1, 64),
-		"--pids-limit", strconv.FormatInt(request.Resources.PIDsLimit, 10), "--shm-size", strconv.FormatInt(request.Resources.ShmSize, 10),
-		"--publish", fmt.Sprintf("127.0.0.1:%d:22/tcp", port),
-		"--label", ToolchainsLabel+"="+toolchainSet(request.Toolchains),
-		"--mount", workspaceMount,
-		"--mount", "type=volume,source="+names.Home+",destination=/home/agent",
-		"--mount", "type=volume,source="+names.SSH+",destination=/etc/ssh", tag)
+	args := sandboxCreateArgs(request, port, workspaceMount, tag)
 	if _, err := p.query(args...); err != nil {
 		return fail(err)
 	}

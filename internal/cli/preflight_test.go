@@ -37,6 +37,7 @@ func TestMain(m *testing.M) {
 }
 
 type response struct {
+	FailOnce      bool
 	Output        string
 	Stderr        string
 	Exit          int
