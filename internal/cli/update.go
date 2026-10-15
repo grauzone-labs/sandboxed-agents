@@ -5,6 +5,7 @@ import (
 	"io"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
 )
@@ -113,7 +114,13 @@ func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
 		if !running {
 			state = "; sandbox is still running"
 		}
-		return fmt.Errorf("sandbox %s: update succeeded%s, but backup removal failed: %w; state is update interrupted and other commands refuse it; update %s cleans up (recovery is not delivered yet)", request.Name, state, err, request.Name)
+		command, shell := "podman rm "+names.Backup, ""
+		if p.connection != "" {
+			// The selected connection belongs to the Windows host; quote it for PowerShell.
+			command = "podman --connection '" + strings.ReplaceAll(p.connection, "'", "''") + "' rm " + names.Backup
+			shell = " in PowerShell"
+		}
+		return fmt.Errorf("sandbox %s: update succeeded%s, but backup removal failed: %w; state is update interrupted and other commands refuse it; remove the stopped backup%s: %s; cleanup via update %s is not available in this version", request.Name, state, err, shell, command, request.Name)
 	}
 	if !running {
 		if _, err = p.query("stop", names.Container); err != nil {

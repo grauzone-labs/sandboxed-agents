@@ -155,7 +155,7 @@ func TestUpdateCleanupFailuresAreNotRolledBack(t *testing.T) {
 					}
 				}
 				if tc.stage == "backup removal" {
-					for _, want := range []string{"update interrupted", "other commands refuse", "update demo"} {
+					for _, want := range []string{"update interrupted", "other commands refuse", "remove the stopped backup: podman rm sandboxed-agents-backup.default.demo", "cleanup via update demo is not available in this version"} {
 						if !strings.Contains(output, want) {
 							t.Errorf("output lacks %q: %s", want, output)
 						}
@@ -358,7 +358,7 @@ func TestUpdateRebuildsStaleToolchainBase(t *testing.T) {
 // TestUpdatePreservesSSHFilesAndAuthorization proves stop/start/update retain the same SSH volume and leave host keys, managed config and authorization untouched at the CLI process and filesystem seams.
 func TestUpdatePreservesSSHFilesAndAuthorization(t *testing.T) {
 	f := replacementFixture(t)
-	groupDirectory := filepath.Join(f.fakes.Dir, "sandboxed-agents", "group-default", "ssh")
+	groupDirectory := filepath.Join(os.Getenv("XDG_STATE_HOME"), "sandboxed-agents", "group-default", "ssh")
 	hash := sha256.Sum256([]byte("demo"))
 	directory := filepath.Join(groupDirectory, fmt.Sprintf("sandbox-%x", hash))
 	if err := os.MkdirAll(directory, 0700); err != nil {
@@ -368,6 +368,9 @@ func TestUpdatePreservesSSHFilesAndAuthorization(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(directory, name), []byte("original "+name), 0600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if status, output, _ := runUpExecutable(t, f, "ssh-config", "demo"); status != 0 || output != "original entry" {
+		t.Fatalf("SSH config did not read the fixture entry: status=%d output=%s fixture=%s", status, output, directory)
 	}
 	f.responses["stop sandboxed-agents.default.demo"] = response{}
 	if status, output, _ := runUpExecutable(t, f, "stop", "demo"); status != 0 {
@@ -402,9 +405,9 @@ func TestUpdatePreservesSSHFilesAndAuthorization(t *testing.T) {
 	}
 }
 
-// TestWindowsUpdateUsesPreflightTarget proves image, replacement, rollback and administrative readiness calls keep the selected connection through RunWithHost and fake Podman.
+// TestWindowsUpdateUsesPreflightTarget proves image, replacement, rollback, readiness and manual cleanup guidance keep the selected connection through RunWithHost and fake Podman.
 func TestWindowsUpdateUsesPreflightTarget(t *testing.T) {
-	for _, failure := range []bool{false, true} {
+	for _, failure := range []string{"", "start", "backup removal"} {
 		t.Run(fmt.Sprint(failure), func(t *testing.T) {
 			f := replacementFixture(t)
 			win := windowsHost(t)
@@ -413,17 +416,27 @@ func TestWindowsUpdateUsesPreflightTarget(t *testing.T) {
 					win.responses["--connection chosen "+key] = value
 				}
 			}
-			if failure {
+			if failure == "start" {
 				win.responses["--connection chosen start sandboxed-agents.default.demo"] = response{Exit: 125, FailOnce: true}
 				win.responses["--connection chosen rm --force sandboxed-agents.default.demo"] = response{}
 				win.responses["--connection chosen rename sandboxed-agents-backup.default.demo sandboxed-agents.default.demo"] = response{}
+			}
+			if failure == "backup removal" {
+				win.responses["--connection chosen rm sandboxed-agents-backup.default.demo"] = response{Exit: 125, Output: "backup removal failed"}
 			}
 			// windowsHost resets the fake SSH environment; restore successful readiness.
 			t.Setenv("TEST_SSH_OUTPUT", "debug1: SSH2_MSG_NEWKEYS received\n")
 			t.Setenv("TEST_SSH_EXIT", "255")
 			status, output, calls := win.run(t, "update", "demo")
-			if status != map[bool]int{false: 0, true: 1}[failure] {
+			wantStatus := 0
+			if failure != "" {
+				wantStatus = 1
+			}
+			if status != wantStatus {
 				t.Fatalf("status=%d output=%s", status, output)
+			}
+			if failure == "backup removal" && !strings.Contains(output, "remove the stopped backup in PowerShell: podman --connection 'chosen' rm sandboxed-agents-backup.default.demo") {
+				t.Fatalf("cleanup guidance lacks the selected target: %s", output)
 			}
 			for _, call := range calls {
 				if call[0] != "machine" && call[0] != "--version" && (len(call) < 3 || call[0] != "--connection" || call[1] != "chosen") {
