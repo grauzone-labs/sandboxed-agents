@@ -172,10 +172,11 @@ func withoutGitCredentials(t *testing.T) {
 	t.Cleanup(func() { catalog.Default.Integrations["git"] = original })
 }
 
-// TestIntegrationWorkflowsRejectUnsafeIdentity proves Git config and GitHub login workflows reject root, wrong IDs, missing identity reads, and unsafe groups before any process through manager.RunWithEffects.
+// TestIntegrationWorkflowsRejectUnsafeIdentity proves Git config, GitHub and Azure DevOps login workflows reject root, wrong IDs, missing identity reads, and unsafe groups before any process through manager.RunWithEffects.
 func TestIntegrationWorkflowsRejectUnsafeIdentity(t *testing.T) {
 	for _, args := range [][]string{
 		{"integrations", "login", "github", "device-code"},
+		{"integrations", "login", "azdo", "--organization", "https://dev.azure.com/contoso"},
 		{"integrations", "config", "git", "credentials"},
 		{"integrations", "config", "git", "identity", "--name", "N", "--email", "E"},
 	} {

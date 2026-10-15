@@ -10,6 +10,8 @@ import (
 const (
 	GitIntegration         = "git"
 	GitHubIntegration      = "github"
+	AzureDevOpsIntegration = "azdo"
+	OrganizationOption     = "organization"
 	GitIdentityWorkflow    = "identity"
 	GitCredentialsWorkflow = "credentials"
 	GitNameOption          = "name"
@@ -122,7 +124,10 @@ func (c Catalog) ResolveLogin(name, workflow string) (string, error) {
 		}
 		return "", fmt.Errorf("unknown integration %q: %s", name, ValidNames(c.LoginIntegrationNames()))
 	}
-	if workflow == "" && len(integration.LoginWorkflows) == 0 {
+	if len(integration.LoginWorkflows) == 0 {
+		if workflow != "" {
+			return "", fmt.Errorf("%s", integration.Login.InvalidArgumentsMessage)
+		}
 		return "", nil
 	}
 	if workflow == "" && len(integration.LoginWorkflows) == 1 {
@@ -138,11 +143,20 @@ func (c Catalog) ResolveLogin(name, workflow string) (string, error) {
 func (c Catalog) LoginUsage() []string {
 	var forms []string
 	for _, name := range c.LoginIntegrationNames() {
-		if len(c.Integrations[name].LoginWorkflows) == 0 {
-			forms = append(forms, "integrations login "+name+" --organization URL")
+		integration := c.Integrations[name]
+		workflows := integration.LoginWorkflows
+		if len(workflows) == 0 {
+			workflows = []string{""}
 		}
-		for _, workflow := range c.Integrations[name].LoginWorkflows {
-			forms = append(forms, "integrations login "+name+" "+workflow)
+		for _, workflow := range workflows {
+			form := "integrations login " + name
+			if workflow != "" {
+				form += " " + workflow
+			}
+			for _, option := range slices.Sorted(maps.Keys(integration.Login.Options)) {
+				form += " --" + option + " " + integration.Login.Options[option]
+			}
+			forms = append(forms, form)
 		}
 	}
 	return forms

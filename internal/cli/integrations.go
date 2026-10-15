@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/azdo"
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
@@ -22,7 +23,7 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 	if _, err := queryManagerSessions(request, p); err != nil {
 		return fmt.Errorf("sandbox %q: manager does not answer; use check %s for diagnosis and restart %s (%w)", request.Name, request.Name, request.Name, err)
 	}
-	if request.Command == "integrations login" && request.Args[1] == "azdo" {
+	if request.Command == "integrations login" && request.Args[1] == catalog.AzureDevOpsIntegration {
 		return runAzureDevOpsLogin(request, p, names, stderr)
 	}
 	args := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent"}
@@ -108,19 +109,17 @@ func runAzureDevOpsLogin(request Request, p podmanTarget, names ObjectNames, std
 	if p.host.IsInputTerminal(p.host.Stdin) {
 		var data []byte
 		data, err = readTerminalSecret(p.host.Stdin, stderr)
-		token = string(data)
+		if err != nil {
+			return fmt.Errorf("cannot read Azure DevOps token")
+		}
+		token, err = azdo.NormalizeToken(string(data))
 	} else {
-		token, err = bufio.NewReader(p.host.Stdin).ReadString('\n')
+		token, err = azdo.ReadToken(p.host.Stdin)
 	}
-	if err != nil && err != io.EOF {
-		return fmt.Errorf("cannot read Azure DevOps token")
+	if err != nil {
+		return err
 	}
-	token = strings.TrimSpace(token)
-	if token == "" || strings.ContainsAny(token, "\r\n\x00") {
-		return fmt.Errorf("Azure DevOps token is required and must be a single line")
-	}
-	organization, _, _ := catalog.AzureDevOpsOrganization(request.Options["organization"])
-	status, err := p.run(strings.NewReader(token+"\n"), io.Discard, io.Discard, "exec", "--user=1000:1000", "--env", "HOME=/home/agent", "-i", names.Container, managerPath, "integrations", "login", "azdo", "--organization", organization)
+	status, err := p.run(strings.NewReader(token+"\n"), io.Discard, io.Discard, "exec", "--user=1000:1000", "--env", "HOME=/home/agent", "-i", names.Container, managerPath, "integrations", "login", catalog.AzureDevOpsIntegration, "--"+catalog.OrganizationOption, request.OrganizationURL)
 	if err != nil || status != 0 {
 		return fmt.Errorf("Azure DevOps login failed; credentials may be partially configured")
 	}

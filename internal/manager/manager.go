@@ -88,7 +88,7 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 	if len(args) >= 3 && args[0] == "integrations" && args[1] == "config" && args[2] == catalog.GitIntegration {
 		return configureGit(args[3:], stdout, stderr, effects)
 	}
-	if len(args) >= 3 && args[0] == "integrations" && args[1] == "login" && args[2] == "azdo" {
+	if len(args) >= 3 && args[0] == "integrations" && args[1] == "login" && args[2] == catalog.AzureDevOpsIntegration {
 		return loginAzureDevOps(args[3:], stderr, effects)
 	}
 	if (len(args) == 3 || len(args) == 4) && args[0] == "integrations" && args[1] == "login" {

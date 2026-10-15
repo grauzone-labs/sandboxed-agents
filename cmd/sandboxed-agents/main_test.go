@@ -353,7 +353,7 @@ func TestLoginWorkflowsAreValidatedBeforeExternalCalls(t *testing.T) {
 	}{
 		{[]string{"integrations", "login", "demo", "github", "bogusflow"}, 2, `unknown workflow "bogusflow": valid names: device-code`},
 		{[]string{"integrations", "login", "demo", "azure", "bogusflow"}, 2, `unknown integration "azure": valid names: azdo, github`},
-		{[]string{"integrations", "login", "demo", "azdo", "bogusflow", "--organization", "https://example.com/org"}, 2, `unknown workflow "bogusflow": no valid names are available yet`},
+		{[]string{"integrations", "login", "demo", "azdo", "bogusflow", "--organization", "https://example.com/org"}, 2, `azdo requires --organization URL and no workflow`},
 		{[]string{"integrations", "login", "demo", "github"}, 1, ""},
 		{[]string{"agents", "login", "demo", "codex", "bogusflow"}, 2, ""},
 	}
