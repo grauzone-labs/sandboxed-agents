@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -51,9 +52,22 @@ func newEffects(calls systemCalls) Effects {
 		}
 		if process.EnvironmentPolicy == AzureDevOpsEnvironment {
 			command.Env = azureDevOpsEnvironment(command.Env)
-	}
+		}
 		if process.EnvironmentPolicy == AzureEnvironment {
-			command.Env = azureEnvironment(command.Env, process.AzureSSHHost)
+			command.Env = azureEnvironment(command.Env)
+			if process.AzureSSHHost != "" {
+				path, err := calls.Executable()
+				if err != nil {
+					return err
+				}
+				// Python splits BROWSER on ':' before shlex parsing, then replaces
+				// every %s in each argument with the URL. Neither is escapable.
+				if strings.ContainsAny(path, ":\r\n\x00") || strings.Contains(path, "%s") || path == "" {
+					return fmt.Errorf("manager executable path cannot be represented in Azure's browser callback")
+				}
+				quoted := "'" + strings.ReplaceAll(path, "'", "'\"'\"'") + "'"
+				command.Env = append(command.Env, "BROWSER="+quoted+" __azure-browser "+process.AzureSSHHost+" %s")
+			}
 		}
 		return calls.Start(command)
 	}
@@ -68,9 +82,8 @@ func newEffects(calls systemCalls) Effects {
 		}}
 }
 
-// azureEnvironment keeps the token cache in home and substitutes the tunnel
-// instructions for a browser process inside the sandbox.
-func azureEnvironment(environment []string, sshHost string) []string {
+// azureEnvironment keeps the token cache in home and removes ambient browsers.
+func azureEnvironment(environment []string) []string {
 	var result []string
 	for _, entry := range environment {
 		key, _, _ := strings.Cut(entry, "=")
@@ -78,11 +91,7 @@ func azureEnvironment(environment []string, sshHost string) []string {
 			result = append(result, entry)
 		}
 	}
-	result = append(result, "AZURE_CONFIG_DIR=/home/agent/.azure")
-	if sshHost != "" {
-		result = append(result, "BROWSER=/usr/local/bin/sandboxed-agents-manager __azure-browser "+sshHost+" %s")
-	}
-	return result
+	return append(result, "AZURE_CONFIG_DIR=/home/agent/.azure")
 }
 
 // githubEnvironment confines gh and Git configuration to the home volume and removes ambient authentication tokens.

@@ -37,11 +37,11 @@ var Default = Catalog{
 	Toolchains: []string{"dotnet", "playwright", "azure", "native"},
 	Integrations: map[string]Integration{
 		GitHubIntegration: {LoginWorkflows: []string{DeviceCodeWorkflow}, Login: &LoginWorkflow{
-			Delivered:         true,
+			Delivered:             true,
 			InvalidOptionsMessage: "--organization is only valid for azdo",
 		}},
 		AzureIntegration: {LoginWorkflows: []string{DeviceCodeWorkflow, BrowserWorkflow}, Login: &LoginWorkflow{
-			Delivered:         true,
+			Delivered:             true,
 			InvalidOptionsMessage: "--organization is only valid for azdo",
 		}},
 		AzureDevOpsIntegration: {LoginWorkflows: []string{}, Login: &LoginWorkflow{

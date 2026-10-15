@@ -368,7 +368,8 @@ func TestProductionAzureLoginKeepsHomeAndBrowserCallback(t *testing.T) {
 	for _, workflow := range []string{"device-code", "browser"} {
 		starts := 0
 		effects := newEffects(systemCalls{
-			Identity: func() Identity { return agentIdentity },
+			Identity:   func() Identity { return agentIdentity },
+			Executable: func() (string, error) { return "/usr/local/bin/sandboxed-agents-manager", nil },
 			Environment: func() []string {
 				return []string{"HOME=/outside", "AZURE_CONFIG_DIR=/outside/azure", "BROWSER=ambient-browser", "PATH=/usr/bin"}
 			},
@@ -383,7 +384,7 @@ func TestProductionAzureLoginKeepsHomeAndBrowserCallback(t *testing.T) {
 				if values["AZURE_CONFIG_DIR"] != "/home/agent/.azure" {
 					t.Errorf("config=%q", values["AZURE_CONFIG_DIR"])
 				}
-				if workflow == "browser" && values["BROWSER"] != "/usr/local/bin/sandboxed-agents-manager __azure-browser agent01 %s" {
+				if workflow == "browser" && values["BROWSER"] != "'/usr/local/bin/sandboxed-agents-manager' __azure-browser agent01 %s" {
 					t.Errorf("browser=%q", values["BROWSER"])
 				}
 				if workflow == "device-code" && values["BROWSER"] != "" {
@@ -402,6 +403,64 @@ func TestProductionAzureLoginKeepsHomeAndBrowserCallback(t *testing.T) {
 		}
 		if status := RunWithEffects(args, io.Discard, io.Discard, effects); status != 0 || starts != 2 {
 			t.Fatalf("status=%d starts=%d", status, starts)
+		}
+	}
+}
+
+// TestProductionAzureBrowserUsesRelocatedManager proves Python's real browser adapter launches the running manager path with literal arguments through the production environment seam.
+func TestProductionAzureBrowserUsesRelocatedManager(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("Python browser adapter is unavailable")
+	}
+	callback := filepath.Join(t.TempDir(), "manager's callback")
+	if err := os.WriteFile(callback, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	address := "https://login.example/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A43123&state=literal"
+	starts := 0
+	effects := newEffects(systemCalls{
+		Identity:    func() Identity { return agentIdentity },
+		Executable:  func() (string, error) { return callback, nil },
+		Environment: os.Environ,
+		Start: func(command *exec.Cmd) error {
+			starts++
+			if command.Args[1] != "login" {
+				return nil
+			}
+			browser := exec.Command(python, "-c", "import sys,webbrowser; sys.exit(0 if webbrowser.open(sys.argv[1]) else 1)", address)
+			browser.Env = command.Env
+			output, err := browser.CombinedOutput()
+			want := "__azure-browser\nagent01\n" + address + "\n"
+			if err != nil || string(output) != want {
+				t.Errorf("browser output=%q err=%v want=%q", output, err, want)
+			}
+			return err
+		},
+	})
+	stubPassingAgentIDReads(&effects)
+	var out bytes.Buffer
+	if status := RunWithEffects([]string{"integrations", "login", "azure", "browser", "--ssh-host", "agent01"}, &out, &out, effects); status != 0 || starts != 2 {
+		t.Fatalf("status=%d starts=%d output=%s", status, starts, &out)
+	}
+}
+
+// TestProductionAzureBrowserRejectsUnusableExecutable proves callback path lookup and unrepresentable BROWSER paths fail before Azure starts through the production process seam.
+func TestProductionAzureBrowserRejectsUnusableExecutable(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		err  error
+	}{{"", errors.New("executable unavailable")}, {"/manager:other", nil}, {"/manager%s", nil}, {"", nil}} {
+		effects := newEffects(systemCalls{
+			Identity:    func() Identity { return agentIdentity },
+			Executable:  func() (string, error) { return tc.path, tc.err },
+			Environment: func() []string { return nil },
+			Start:       func(*exec.Cmd) error { t.Fatal("Azure started without a usable browser callback"); return nil },
+		})
+		stubPassingAgentIDReads(&effects)
+		var out bytes.Buffer
+		if status := RunWithEffects([]string{"integrations", "login", "azure", "browser", "--ssh-host", "agent01"}, &out, &out, effects); status != 1 {
+			t.Fatalf("path=%q status=%d output=%s", tc.path, status, &out)
 		}
 	}
 }
