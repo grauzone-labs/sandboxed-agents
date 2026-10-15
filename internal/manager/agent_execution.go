@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"slices"
 )
 
@@ -19,17 +17,11 @@ type agentWork struct {
 
 // executeAgent runs work only under the already unprivileged identity.
 func executeAgent(r agentRequest, stdout, stderr io.Writer, effects Effects) int {
-	if !verifyAgent(effects, stderr) {
+	home, root, ok := verifiedAgentHome(effects, stderr)
+	if !ok {
 		return 1
 	}
-	if effects.HomeDirectory == nil {
-		return exitStatus(fmt.Errorf("agent home storage is unavailable"), stderr)
-	}
-	home, err := effects.HomeDirectory()
-	if err != nil {
-		return exitStatus(err, stderr)
-	}
-	work := agentWork{request: r, home: home, root: filepath.Join(home, ".local", "share", "sandboxed-agents"), stdout: stdout, stderr: stderr, effects: effects}
+	work := agentWork{request: r, home: home, root: root, stdout: stdout, stderr: stderr, effects: effects}
 	enabled, err := work.requireEnabled()
 	if err != nil {
 		return exitStatus(err, stderr)
@@ -84,10 +76,7 @@ func (w agentWork) session() int {
 			return w.attach()
 		}
 	}
-	if err := os.MkdirAll(w.root, 0700); err != nil {
-		return exitStatus(err, w.stderr)
-	}
-	unlock, err := lockManager(filepath.Join(w.root, "manager.lock"))
+	unlock, err := lockAgentData(w.root)
 	if err != nil {
 		return exitStatus(err, w.stderr)
 	}

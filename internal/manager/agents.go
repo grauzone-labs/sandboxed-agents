@@ -124,22 +124,12 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 	if !worker && effects.Identity != nil && effects.Identity() == rootIdentity {
 		return reexecWorker(append([]string{"__worker", "agents"}, args...), stdout, stderr, effects)
 	}
-	if !verifyAgent(effects, stderr) {
+	home, root, ok := verifiedAgentHome(effects, stderr)
+	if !ok {
 		return 1
 	}
-	if effects.HomeDirectory == nil {
-		return exitStatus(errors.New("agent home storage is unavailable"), stderr)
-	}
-	home, err := effects.HomeDirectory()
-	if err != nil {
-		return exitStatus(err, stderr)
-	}
-	root := filepath.Join(home, ".local", "share", "sandboxed-agents")
 	if r.operation != "list" && r.operation != "status" {
-		if err := os.MkdirAll(root, 0700); err != nil {
-			return exitStatus(err, stderr)
-		}
-		unlock, err := lockManager(filepath.Join(root, "manager.lock"))
+		unlock, err := lockAgentData(root)
 		if err != nil {
 			return exitStatus(err, stderr)
 		}
@@ -565,4 +555,29 @@ func validateManagedTarget(root, target string, definition catalog.Agent, metada
 		}
 	}
 	return nil
+}
+
+// verifiedAgentHome verifies the worker identity before resolving persistent agent data.
+func verifiedAgentHome(effects Effects, stderr io.Writer) (home, root string, ok bool) {
+	if !verifyAgent(effects, stderr) {
+		return "", "", false
+	}
+	if effects.HomeDirectory == nil {
+		fmt.Fprintln(stderr, "agent home storage is unavailable")
+		return "", "", false
+	}
+	home, err := effects.HomeDirectory()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return "", "", false
+	}
+	return home, filepath.Join(home, ".local", "share", "sandboxed-agents"), true
+}
+
+// lockAgentData prepares the private data root and acquires its shared manager lock.
+func lockAgentData(root string) (func(), error) {
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return nil, err
+	}
+	return lockManager(filepath.Join(root, "manager.lock"))
 }

@@ -77,14 +77,7 @@ func TestDisabledAgentWorkRefusesBeforeTerminal(t *testing.T) {
 		responses[agentManagerPrefix+"agents disable codex"] = lifecycleResponse{Output: "codex: not enabled; nothing to do\n"}
 		responses["exec --user=1000:1000 --env HOME=/home/agent -i sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager agents session codex --stop"] = lifecycleResponse{Output: "codex: no running session; nothing to stop\n"}
 		f := agentExecutableHarness(t, responses)
-		args := []string{"agents", verb, "demo", "codex"}
-		if verb == "login" {
-			args = append(args, "device-code")
-		}
-		if verb == "session-stop" {
-			args[1] = "session"
-			args = append(args, "--stop")
-		}
+		args := agentVerbArgs(verb)
 		status, output := runAgentExecutable(t, args...)
 		if verb == "status" || verb == "disable" || verb == "session-stop" {
 			if status != 0 {
