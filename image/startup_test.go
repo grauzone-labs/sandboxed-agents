@@ -23,7 +23,7 @@ func TestImageStartupInitializesSSHHostKeys(t *testing.T) {
 	}
 	keygen, err := exec.LookPath("ssh-keygen")
 	if err != nil {
-		t.Fatal(err)
+		t.Skipf("host ssh-keygen is unavailable: %v", err)
 	}
 	recipe, err := fs.ReadFile(image.Context(), "base/Containerfile")
 	if err != nil {
