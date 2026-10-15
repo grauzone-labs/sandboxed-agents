@@ -17,9 +17,9 @@ const (
 	GitCredentialStoreHelper = "store --file=/home/agent/.git-credentials"
 	GitNameOption            = "name"
 	GitEmailOption           = "email"
-	AzureIntegration = "azure"
-	DeviceCodeWorkflow = "device-code"
-	BrowserWorkflow = "browser"
+	AzureIntegration         = "azure"
+	DeviceCodeWorkflow       = "device-code"
+	BrowserWorkflow          = "browser"
 )
 
 // GitSetting is a global Git value, either fixed or supplied by a workflow option.
