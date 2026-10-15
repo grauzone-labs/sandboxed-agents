@@ -203,6 +203,11 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 				return request, fmt.Errorf("%s", workflow.InvalidArgumentsMessage)
 			}
 		}
+		if request.Args[1] == "azdo" {
+			if _, _, err := catalog.AzureDevOpsOrganization(request.Options["organization"]); err != nil {
+				return request, err
+			}
+		}
 	case "integrations config":
 		workflowName := ""
 		if len(request.Args) == 3 {

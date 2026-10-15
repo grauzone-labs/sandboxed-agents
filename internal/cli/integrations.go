@@ -22,6 +22,9 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 	if _, err := queryManagerSessions(request, p); err != nil {
 		return fmt.Errorf("sandbox %q: manager does not answer; use check %s for diagnosis and restart %s (%w)", request.Name, request.Name, request.Name, err)
 	}
+	if request.Command == "integrations login" && request.Args[1] == "azdo" {
+		return runAzureDevOpsLogin(request, p, names, stderr)
+	}
 	args := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent"}
 	var stdin io.Reader
 	if request.Command == "integrations login" {
@@ -96,4 +99,30 @@ func loginWorkflow(args []string) string {
 		return args[2]
 	}
 	return ""
+}
+
+// runAzureDevOpsLogin transports only stdin to the unprivileged manager and never exposes child output that might contain the token.
+func runAzureDevOpsLogin(request Request, p podmanTarget, names ObjectNames, stderr io.Writer) error {
+	var token string
+	var err error
+	if p.host.IsInputTerminal(p.host.Stdin) {
+		var data []byte
+		data, err = readTerminalSecret(p.host.Stdin, stderr)
+		token = string(data)
+	} else {
+		token, err = bufio.NewReader(p.host.Stdin).ReadString('\n')
+	}
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("cannot read Azure DevOps token")
+	}
+	token = strings.TrimSpace(token)
+	if token == "" || strings.ContainsAny(token, "\r\n\x00") {
+		return fmt.Errorf("Azure DevOps token is required and must be a single line")
+	}
+	organization, _, _ := catalog.AzureDevOpsOrganization(request.Options["organization"])
+	status, err := p.run(strings.NewReader(token+"\n"), io.Discard, io.Discard, "exec", "--user=1000:1000", "--env", "HOME=/home/agent", "-i", names.Container, managerPath, "integrations", "login", "azdo", "--organization", organization)
+	if err != nil || status != 0 {
+		return fmt.Errorf("Azure DevOps login failed; credentials may be partially configured")
+	}
+	return nil
 }

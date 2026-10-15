@@ -122,6 +122,9 @@ func (c Catalog) ResolveLogin(name, workflow string) (string, error) {
 		}
 		return "", fmt.Errorf("unknown integration %q: %s", name, ValidNames(c.LoginIntegrationNames()))
 	}
+	if workflow == "" && len(integration.LoginWorkflows) == 0 {
+		return "", nil
+	}
 	if workflow == "" && len(integration.LoginWorkflows) == 1 {
 		return integration.LoginWorkflows[0], nil
 	}
@@ -135,6 +138,9 @@ func (c Catalog) ResolveLogin(name, workflow string) (string, error) {
 func (c Catalog) LoginUsage() []string {
 	var forms []string
 	for _, name := range c.LoginIntegrationNames() {
+		if len(c.Integrations[name].LoginWorkflows) == 0 {
+			forms = append(forms, "integrations login "+name+" --organization URL")
+		}
 		for _, workflow := range c.Integrations[name].LoginWorkflows {
 			forms = append(forms, "integrations login "+name+" "+workflow)
 		}

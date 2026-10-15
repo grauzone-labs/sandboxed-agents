@@ -45,7 +45,8 @@ var Default = Catalog{
 			WorkflowOmittable: true, InvalidOptionsMessage: "--organization is only valid for azdo",
 		}},
 		"azdo": {LoginWorkflows: []string{}, Login: &LoginWorkflow{
-			Options: []string{"organization"}, RequiredOptions: []string{"organization"},
+			Delivered: true,
+			Options:   []string{"organization"}, RequiredOptions: []string{"organization"},
 			InvalidArgumentsMessage: "azdo requires --organization URL and no workflow",
 		}},
 		GitIntegration: {ConfigWorkflows: map[string]ConfigWorkflow{

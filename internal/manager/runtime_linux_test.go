@@ -323,3 +323,42 @@ func TestProductionGitHubLoginKeepsInputAndHome(t *testing.T) {
 		t.Fatalf("status=%d starts=%d", status, starts)
 	}
 }
+
+// TestProductionAzureDevOpsKeepsSecretsInHome proves token subprocesses have explicit agent identity, fixed home storage, and no ambient authentication or trace overrides through the production exec.Cmd seam.
+func TestProductionAzureDevOpsKeepsSecretsInHome(t *testing.T) {
+	starts := 0
+	effects := newEffects(systemCalls{
+		Identity: func() Identity { return agentIdentity },
+		Environment: func() []string {
+			return []string{"HOME=/outside", "AZURE_CONFIG_DIR=/outside", "AZURE_DEVOPS_EXT_PAT=ambient", "AZURE_CORE_LOG_LEVEL=debug", "AZURE_LOGGING_ENABLE_LOG_FILE=true", "GIT_CONFIG_GLOBAL=/outside/git", "GIT_TRACE=/outside/trace", "GIT_CURL_VERBOSE=1", "PATH=/usr/bin"}
+		},
+		Start: func(command *exec.Cmd) error {
+			starts++
+			assertAgentCredentials(t, command, true)
+			values := map[string]string{}
+			for _, entry := range command.Env {
+				key, value, _ := strings.Cut(entry, "=")
+				values[key] = value
+			}
+			for key, want := range map[string]string{"HOME": "/home/agent", "AZURE_CONFIG_DIR": "/home/agent/.azure", "GIT_CONFIG_GLOBAL": "/home/agent/.gitconfig", "AZURE_LOGGING_ENABLE_LOG_FILE": "false", "AZURE_CORE_LOG_LEVEL": "critical"} {
+				if values[key] != want {
+					t.Errorf("%s=%q want=%q", key, values[key], want)
+				}
+			}
+			for _, key := range []string{"AZURE_DEVOPS_EXT_PAT", "GIT_TRACE", "GIT_CURL_VERBOSE"} {
+				if _, ok := values[key]; ok {
+					t.Errorf("unsafe environment %s", key)
+				}
+			}
+			if strings.Contains(strings.Join(command.Args, " "), "runtime-pat-sentinel") {
+				t.Fatal("token in arguments")
+			}
+			return nil
+		},
+	})
+	stubPassingAgentIDReads(&effects)
+	effects.Stdin = strings.NewReader("runtime-pat-sentinel\n")
+	if status := RunWithEffects([]string{"integrations", "login", "azdo", "--organization", "https://dev.azure.com/contoso"}, io.Discard, io.Discard, effects); status != 0 || starts != 4 {
+		t.Fatalf("status=%d starts=%d", status, starts)
+	}
+}
