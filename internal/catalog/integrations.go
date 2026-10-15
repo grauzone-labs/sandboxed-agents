@@ -8,14 +8,15 @@ import (
 )
 
 const (
-	GitIntegration         = "git"
-	GitHubIntegration      = "github"
-	AzureDevOpsIntegration = "azdo"
-	OrganizationOption     = "organization"
-	GitIdentityWorkflow    = "identity"
-	GitCredentialsWorkflow = "credentials"
-	GitNameOption          = "name"
-	GitEmailOption         = "email"
+	GitIntegration           = "git"
+	GitHubIntegration        = "github"
+	AzureDevOpsIntegration   = "azdo"
+	OrganizationOption       = "organization"
+	GitIdentityWorkflow      = "identity"
+	GitCredentialsWorkflow   = "credentials"
+	GitCredentialStoreHelper = "store --file=/home/agent/.git-credentials"
+	GitNameOption            = "name"
+	GitEmailOption           = "email"
 )
 
 // GitSetting is a global Git value, either fixed or supplied by a workflow option.
