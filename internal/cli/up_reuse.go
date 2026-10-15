@@ -10,7 +10,7 @@ func reusedUpConflict(request Request, reason string) error {
 	return fmt.Errorf("sandbox %s: %s; use remove %s followed by up %s to change it", request.Name, reason, request.Name, request.Name)
 }
 
-// checkReusedUp checks supplied port, resource, and workspace options before an existing sandbox starts.
+// checkReusedUp checks supplied port, resource, workspace, and toolchain options before an existing sandbox starts.
 func checkReusedUp(request Request, p podmanTarget, container sandboxContainer) error {
 	if request.Options["port"] != "" {
 		port, err := parseSSHPort(container.Config.Labels[SSHPortLabel])
@@ -75,6 +75,7 @@ func checkReusedResources(request Request, container sandboxContainer) error {
 	return nil
 }
 
+// checkReusedToolchains compares an explicitly requested set with the sandbox's recorded set.
 func checkReusedToolchains(request Request, container sandboxContainer) error {
 	if _, supplied := request.Options["with"]; supplied {
 		set, err := sandboxToolchains(container)
