@@ -21,6 +21,11 @@ func agentManagerError(request Request, cause error) error {
 	return fmt.Errorf("sandbox %q: manager does not answer; use check %s for diagnosis and restart %s (%w)", request.Name, request.Name, request.Name, cause)
 }
 
+// agentNotEnabledError gives the host command that enables the requested agent.
+func agentNotEnabledError(request Request) error {
+	return fmt.Errorf("%s not enabled; run agents enable %s %s", request.Args[1], request.Name, request.Args[1])
+}
+
 // administerAgent enforces ordered sandbox checks and dispatches a validated agent operation through the manager.
 func administerAgent(request Request, p podmanTarget, stdout io.Writer) error {
 	objects, err := requireSandbox(request, p)
@@ -44,7 +49,7 @@ func administerAgent(request Request, p podmanTarget, stdout io.Writer) error {
 			return err
 		}
 		if !status.Enabled {
-			return fmt.Errorf("%s not enabled; run agents enable %s %s", request.Args[1], request.Name, request.Args[1])
+			return agentNotEnabledError(request)
 		}
 	}
 	args := []string{"agents", verb, request.Args[1]}

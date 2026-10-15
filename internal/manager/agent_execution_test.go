@@ -1,6 +1,7 @@
 package manager_test
 
 import (
+	"bytes"
 	"io"
 	"path/filepath"
 	"reflect"
@@ -31,10 +32,12 @@ func TestAgentRunForwardsArgumentsStreamsAndExit(t *testing.T) {
 		io.WriteString(p.Stderr, "agent diagnostic")
 		return childExit(17)
 	}
-	output := runAgents(t, e, 17, "run", "codex", "--flag", "a b", "$(literal)", "--")
-	if !strings.Contains(output, "agent output") || !strings.Contains(output, "agent diagnostic") {
-		t.Fatal(output)
+	var output, diagnostic bytes.Buffer
+	status := manager.RunWithEffects([]string{"agents", "run", "codex", "--flag", "a b", "$(literal)", "--"}, &output, &diagnostic, e)
+	if status != 17 || output.String() != "agent output" || diagnostic.String() != "agent diagnostic" {
+		t.Fatalf("status=%d stdout=%q stderr=%q", status, &output, &diagnostic)
 	}
+
 }
 
 // TestAgentSessionStartsOnceAndAttachesWithoutLock proves repeated clients share one session and attachment releases the manager lock at RunWithEffects and its process seam.

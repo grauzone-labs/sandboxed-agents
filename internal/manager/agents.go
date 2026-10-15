@@ -161,11 +161,11 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 	case "status":
 		status := AgentStatus{Name: r.name, Enabled: enabled, InstalledVersion: current.Version, Pin: current.Pin, SignedIn: "unknown"}
 		if enabled {
-			names, err := runningSessions(effects)
+			names, err := readSessionNames(effects)
 			if err != nil {
 				return exitStatus(err, stderr)
 			}
-			status.Session = hasSession(names, r.name)
+			status.Session = slices.Contains(names, r.name)
 		}
 		command := commandPath(home, r.definition)
 		previous, linkError := managedCommandLink(command, installationCommand(root, current, r.definition))
