@@ -292,13 +292,11 @@ The alias in the `ssh` command is the sandbox's installed
 This is why the workflow requires an installed SSH setup.
 
 **Current limitation.** The tunnel needs the sandbox's SSH server to be
-running. The default image's entrypoint generates the host keys and then
-`exec`s sshd as root in the foreground as the container's main process
-([issue #49](https://github.com/grauzone-labs/sandboxed-agents/issues/49)).
-sshd reads its trusted configuration from
-`/usr/local/etc/sandboxed-agents/sshd_config` in the image, outside the
-persisted `/etc/ssh` volume, and accepts only the user `agent` by public key
-from `/etc/ssh/authorized_keys`, which SSH setup installs; see
+running. The default image's entrypoint now starts sshd as the container's
+main process
+([issue #49](https://github.com/grauzone-labs/sandboxed-agents/issues/49))
+and accepts the `agent` login with the key that SSH setup installs. The
+server's configuration and policy are described in
 [images](images.md#ssh-server). No host has yet started that image in a live
 container or connected to it over SSH: this workspace has Podman 4.3.1, below
 the repository minimum of 4.4, so it cannot run the live suite. `device-code`

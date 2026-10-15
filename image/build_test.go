@@ -310,10 +310,13 @@ func TestImageBuildDeclaresSSHD(t *testing.T) {
 		if !strings.Contains(string(containerfile), "COPY sshd_config /usr/local/etc/sandboxed-agents/sshd_config") {
 			t.Fatal("SSH policy is not copied outside the server state volume")
 		}
-		configuration, err := os.ReadFile(filepath.Join(args[5], "sshd_config"))
+		buildContext := args[len(args)-1]
+		configuration, err := os.ReadFile(filepath.Join(buildContext, "sshd_config"))
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Keep materialization coverage on Windows and hosts without sshd,
+		// where the effective-policy parser test cannot run.
 		for _, setting := range []string{
 			"HostKey /etc/ssh/ssh_host_ed25519_key", "HostKey /etc/ssh/ssh_host_ecdsa_key", "HostKey /etc/ssh/ssh_host_rsa_key",
 			"AuthorizedKeysFile /etc/ssh/authorized_keys", "AllowUsers agent", "PermitRootLogin no",

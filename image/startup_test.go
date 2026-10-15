@@ -122,7 +122,7 @@ func TestImageSSHPolicy(t *testing.T) {
 		t.Fatalf("generate temporary parser host key: %v\n%s", err, output)
 	}
 	// A temporary host key lets an unprivileged host parse the unchanged policy
-	// without reading any private host key from the host's /etc/ssh.
+	// without needing access to the host's private keys in /etc/ssh.
 	output, err := exec.CommandContext(ctx, sshd, "-T", "-f", file, "-h", key).Output()
 	if err != nil {
 		t.Fatalf("parse image SSH policy: %v", err)
@@ -131,7 +131,7 @@ func TestImageSSHPolicy(t *testing.T) {
 	for _, line := range strings.Split(string(output), "\n") {
 		name, value, ok := strings.Cut(line, " ")
 		if ok {
-			settings[name] = append(settings[name], value)
+			settings[name] = append(settings[name], strings.TrimSpace(value))
 		}
 	}
 	for name, want := range map[string]string{
