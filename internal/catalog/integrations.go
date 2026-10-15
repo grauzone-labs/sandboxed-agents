@@ -17,6 +17,9 @@ const (
 	GitCredentialStoreHelper = "store --file=/home/agent/.git-credentials"
 	GitNameOption            = "name"
 	GitEmailOption           = "email"
+	AzureIntegration = "azure"
+	DeviceCodeWorkflow = "device-code"
+	BrowserWorkflow = "browser"
 )
 
 // GitSetting is a global Git value, either fixed or supplied by a workflow option.
@@ -131,8 +134,11 @@ func (c Catalog) ResolveLogin(name, workflow string) (string, error) {
 		}
 		return "", nil
 	}
-	if workflow == "" && len(integration.LoginWorkflows) == 1 {
-		return integration.LoginWorkflows[0], nil
+	if workflow == "" {
+		if len(integration.LoginWorkflows) == 1 {
+			return integration.LoginWorkflows[0], nil
+		}
+		return "", fmt.Errorf("%s login requires a workflow: %s", name, ValidNames(integration.LoginWorkflows))
 	}
 	if !slices.Contains(integration.LoginWorkflows, workflow) {
 		return "", fmt.Errorf("unknown workflow %q: %s", workflow, ValidNames(integration.LoginWorkflows))

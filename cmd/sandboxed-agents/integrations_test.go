@@ -13,13 +13,14 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
-// TestGitIntegrationUsagePrecedesPodman proves invalid integration requests list delivered choices without external calls at the executable CLI seam.
-func TestGitIntegrationUsagePrecedesPodman(t *testing.T) {
+// TestIntegrationUsagePrecedesPodman proves invalid integration requests list delivered choices without external calls at the executable CLI seam.
+func TestIntegrationUsagePrecedesPodman(t *testing.T) {
 	for _, tc := range []struct {
 		args     []string
 		messages []string
 	}{
 		{[]string{"login", "agent01", "git"}, []string{"identity", "credentials", "config"}},
+		{[]string{"login", "agent01", "azure"}, []string{"azure login requires a workflow", "valid names: device-code, browser"}},
 		{[]string{"config", "agent01", "git"}, []string{"identity", "credentials"}},
 		{[]string{"config", "agent01", "unknown"}, []string{"unknown integration", "valid names: git"}},
 		{[]string{"config", "agent01", "git", "unknown"}, []string{"unknown", "identity", "credentials"}},

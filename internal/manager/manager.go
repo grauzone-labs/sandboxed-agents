@@ -65,6 +65,8 @@ type Effects struct {
 // RunWithEffects returns the manager command's exit status at injected OS seams.
 // Version answers without identity checks. Root session queries re-exec a
 // trusted agent worker; only a verified agent identity may reach tmux.
+// The internal __azure-browser callback verifies agent identity and prints the
+// SSH tunnel and browser URL without starting another process.
 func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) int {
 	if len(args) == 3 && args[0] == "__azure-browser" {
 		return azureBrowser(args[1], args[2], stdout, stderr, effects)
@@ -97,19 +99,24 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 	if len(args) >= 3 && args[0] == "integrations" && args[1] == "login" && args[2] == catalog.AzureDevOpsIntegration {
 		return loginAzureDevOps(args[3:], stderr, effects)
 	}
-	if len(args) >= 3 && args[0] == "integrations" && args[1] == "login" && args[2] == "azure" {
-		return loginAzure(args[3:], stdout, stderr, effects)
-	}
-	if (len(args) == 3 || len(args) == 4) && args[0] == "integrations" && args[1] == "login" {
+	if len(args) >= 3 && args[0] == "integrations" && args[1] == "login" {
 		workflow := ""
-		if len(args) == 4 {
+		if len(args) >= 4 {
 			workflow = args[3]
 		}
-		if _, err := catalog.Default.ResolveLogin(args[2], workflow); err != nil {
+		resolvedWorkflow, err := catalog.Default.ResolveLogin(args[2], workflow)
+		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 2
 		}
-		if args[2] == catalog.GitHubIntegration {
+		if args[2] == catalog.AzureIntegration {
+			var options []string
+			if len(args) > 4 {
+				options = args[4:]
+			}
+			return loginAzure(resolvedWorkflow, options, stdout, stderr, effects)
+		}
+		if args[2] == catalog.GitHubIntegration && len(args) <= 4 {
 			return loginGitHub(stdout, stderr, effects)
 		}
 	}
