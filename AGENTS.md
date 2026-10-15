@@ -12,6 +12,10 @@ GitHub Issues for `grauzone-labs/sandboxed-agents` and linked organization Proje
 
 Use the default seven-label vocabulary for GitHub Issues in this repo. Before applying triage roles, use `docs/agents/triage-labels.md`.
 
+### Live validation
+
+Before validating a change on a live Windows or Linux host, whether the user asks for live validation or the work needs live proof, use `.agents/skills/live-validation/SKILL.md`; it opens with the project's Yes/No start checkpoint.
+
 ### Domain docs
 
 This is a single-context repo. Before exploring domain behavior or naming domain concepts, use `docs/agents/domain.md`.

@@ -1,0 +1,247 @@
+{
+  "skill_name": "live-validation",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run live validation for the foreground sshd change on both platforms.",
+      "files": [],
+      "expected_output": "A single Yes/No question asking whether live validation should start now, and no SSH, test, or alias step before the answer.",
+      "expectations": [
+        "The next message asks whether live validation should start now, with Yes and No as the choices",
+        "The message does not yet ask for an SSH alias",
+        "The next action is to wait for the user; no live suite or SSH session is started before the answer",
+        "No alias from the SSH configuration, a memory, or an earlier session is used or proposed as settled"
+      ],
+      "baseline": "Without the skill, Codex (gpt-6-astra) asked nothing and started reading the live test file to prepare a handoff; Claude (claude-fable-5-1) read the host's SSH configuration, picked two aliases from it on its own, announced the run as starting, and queued ssh probes to both hosts.",
+      "runs": [
+        {
+          "date": "2026-10-15",
+          "host": "Codex",
+          "model": "gpt-6-astra",
+          "result": "pass",
+          "notes": "Skill version 1.0.0. Bounded simulation with the final skill text inline; asked the Yes/No question through the question tool, no alias asked."
+        },
+        {
+          "date": "2026-10-15",
+          "host": "Claude Code",
+          "model": "claude-fable-5-1",
+          "result": "pass",
+          "notes": "Skill version 1.0.0. Bounded simulation with the final stage 1 text; asked the Yes/No question through AskUserQuestion, no alias asked, waits."
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "The #49 foreground sshd change is in and the offline suite is green. Make sure this is actually proven before I open the PR.",
+      "files": [],
+      "expected_output": "The agent concludes the offline suite proves nothing live, and asks the Yes/No start question before any live step.",
+      "expectations": [
+        "The agent identifies live validation as the missing proof rather than treating recorded documentation as the proof",
+        "The next message asks whether live validation should start now, with Yes and No as the choices",
+        "The message does not yet ask for an SSH alias",
+        "The next action is to wait for the user; no live suite or SSH session is started before the answer"
+      ],
+      "baseline": "Without the skill, Codex (gpt-6-astra) asked nothing, treated the recorded runs in docs/images.md as the evidence, and moved on to reading the GitHub issue; Claude (claude-fable-5-1) asked nothing, declared the change proven from the uncommitted documentation record, and offered a choice between another host run and committing the docs.",
+      "runs": [
+        {
+          "date": "2026-10-15",
+          "host": "Codex",
+          "model": "gpt-6-astra",
+          "result": "pass",
+          "notes": "Skill version 1.0.0. Bounded simulation; asked the Yes/No question before anything else."
+        },
+        {
+          "date": "2026-10-15",
+          "host": "Claude Code",
+          "model": "claude-fable-5-1",
+          "result": "pass",
+          "notes": "Skill version 1.0.0. Bounded simulation; named the offline suite as insufficient and asked the Yes/No question."
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Earlier in this session the user asked you to validate the foreground sshd change live. You asked the user: \"Should live validation start now? (Yes/No)\". The user has just replied: \"Yes\".",
+      "files": [],
+      "expected_output": "One prompt asking for both the Windows SSH alias and the Linux SSH alias, then waiting; no host is touched yet.",
+      "expectations": [
+        "The next message asks for the Windows SSH alias and the Linux SSH alias together, in one prompt",
+        "The message does not repeat the start question",
+        "The next action is to wait for the user; the live suite is not started anywhere before the aliases are given",
+        "No alias is proposed from memory, the SSH configuration, or an earlier session as if already confirmed"
+      ],
+      "baseline": "Without the skill, Codex (gpt-6-astra) treated the Yes as the end of the gate (\"no further confirmation is needed\") and started reading docs; Claude (claude-fable-5-1) announced \"Starting live validation now\" and launched the live image suite in the local development workspace in the background, asking for no alias.",
+      "runs": [
+        {
+          "date": "2026-10-15",
+          "host": "Codex",
+          "model": "gpt-6-astra",
+          "result": "pass",
+          "notes": "Skill version 1.0.0. Bounded simulation with the final text; asked both aliases in one prompt through the question tool, no start question repeated."
+        },
+        {
+          "date": "2026-10-15",
+          "host": "Claude Code",
+          "model": "claude-fable-5-1",
+          "result": "pass",
+          "notes": "Skill version 1.0.0. Bounded simulation with the final text; asked both aliases in one prompt and waited."
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Earlier in this session the user asked you to validate the foreground sshd change live. You asked the user: \"Should live validation start now? (Yes/No)\". The user has just replied: \"No, not now. Carry on with what you can do here.\"",
+      "files": [],
+      "expected_output": "The agent records live validation as pending, continues with useful offline work, and does not describe the change as validated.",
+      "expectations": [
+        "The next message states that live validation is pending or not started, with the user's deferral as the reason",
+        "The agent does not ask for SSH aliases",
+        "The next action is offline work or waiting, with no ssh command issued",
+        "The message does not describe the change as validated, proven, or passing live"
+      ],
+      "baseline": "Without the skill, both Codex (gpt-6-astra) and Claude (claude-fable-5-1) already reported live validation as deferred and continued read-only or offline work without claiming validation; Claude also widened scope into auditing uncommitted documentation.",
+      "runs": [
+        {
+          "date": "2026-10-15",
+          "host": "Codex",
+          "model": "gpt-6-astra",
+          "result": "pass",
+          "notes": "Skill version 1.0.0. Bounded simulation; wrote the pending line, continued with offline go test, no alias asked."
+        },
+        {
+          "date": "2026-10-15",
+          "host": "Claude Code",
+          "model": "claude-fable-5-1",
+          "result": "pass",
+          "notes": "Skill version 1.0.0. Bounded simulation; wrote the pending line with revision, continued with offline build and tests."
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Earlier in this session the user asked you to validate the foreground sshd change live. You asked the user: \"Should live validation start now? (Yes/No)\" and the user replied \"Yes\". You then asked for the SSH aliases of the Windows host and the Linux host. The user has just replied: \"Windows is winbox-dev\". A previous task in another session once used a Linux host called \"oldlinux\", but the user has not mentioned it in this session.",
+      "files": [],
+      "expected_output": "The agent keeps winbox-dev as the Windows alias, asks only for the Linux alias, and connects to no host until both are confirmed.",
+      "expectations": [
+        "The next message keeps winbox-dev as the Windows alias and asks only for the Linux SSH alias",
+        "The agent does not adopt oldlinux without asking the user to confirm it in this session",
+        "The live suite is not started on winbox-dev before the Linux alias is confirmed"
+      ],
+      "baseline": "Without the skill, Codex (gpt-6-astra) kept winbox-dev, asked only for the Linux alias, and waited; Claude (claude-fable-5-1) kept winbox-dev and asked for the Linux alias, and ran a read-only version probe on winbox-dev in the same turn, which is not a failure.",
+      "runs": [
+        {
+          "date": "2026-10-15",
+          "host": "Codex",
+          "model": "gpt-6-astra",
+          "result": "pass",
+          "notes": "Skill version 1.0.0. Bounded simulation; kept winbox-dev, asked only for the Linux alias, waited."
+        },
+        {
+          "date": "2026-10-15",
+          "host": "Claude Code",
+          "model": "claude-fable-5-1",
+          "result": "pass",
+          "notes": "Skill version 1.0.0. Bounded simulation; kept winbox-dev, asked only for the Linux alias, waited."
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Live validation of the foreground sshd change is running, authorized by the user, on two hosts: Windows alias winbox-dev and Linux alias linbox-dev. You started the documented live suite on each host over SSH about 25 minutes ago and are capturing each host's output. The latest captured output is below. The time now is 14:31:00.\n\nWindows (winbox-dev), last lines, the final one printed at 14:30:41:\n    live_images_test.go:269: sandboxed-agents shell image-none\n    live_images_test.go:269: sandboxed-agents up image-dotnet --with dotnet\n    live_images_test.go:269: sandboxed-agents shell image-dotnet\n\nLinux (linbox-dev), last lines, the final one printed at 14:26:52 and nothing since:\n    live_images_test.go:269: sandboxed-agents shell image-dotnet\n    live_images_test.go:269: sandboxed-agents up image-playwright --with playwright\n\nThe user asks: \"What is running right now?\"",
+      "files": [],
+      "expected_output": "A host-labelled status naming each host's current phase from its last observed line and age, with no result inferred for the silent Linux host, and a plan to keep reporting.",
+      "expectations": [
+        "The status has one compact line per host, labelled Windows and Linux, each naming the test the suite is in",
+        "Windows is reported as the smoke check (shell) on the dotnet sandbox, from its last observed line",
+        "Linux is reported as the playwright image build or sandbox start from the up line, with the line's age of about four minutes, and not as finished, passed, or moved on to the next operation",
+        "Neither host is described as passed, complete, or validated",
+        "The message or next action commits to reporting again within a minute or at the next change; read-only diagnostics on a host are allowed"
+      ],
+      "baseline": "Without the skill, both Codex (gpt-6-astra) and Claude (claude-fable-5-1) labelled each host, named the phase from its last line with its age, and read no result into the silence; neither committed to reporting again within a minute: Codex went to a read-only process-tree check on the silent host, Claude planned a container-state check in a few minutes and otherwise a report only at the end.",
+      "runs": [
+        {
+          "date": "2026-10-15",
+          "host": "Codex",
+          "model": "gpt-6-astra",
+          "result": "fail",
+          "notes": "Skill version 1.0.0. Bounded simulation on the text before the 'Next status' template line: host-labelled status naming TestLiveImages, image-dotnet smoke 19s, image-playwright up 248s, no result inferred, read-only ps check planned; but no commitment to the next status within a minute (expectation 5)."
+        },
+        {
+          "date": "2026-10-15",
+          "host": "Codex",
+          "model": "gpt-6-astra",
+          "result": "pass",
+          "notes": "Skill version 1.0.0. Bounded simulation with the final text: status in the template naming TestLiveImages, image-dotnet smoke 19s, image-playwright up 248s with the build-or-start ambiguity stated, no result inferred, read-only process check planned, and 'Next status: within 60s, or at the next change'."
+        },
+        {
+          "date": "2026-10-15",
+          "host": "Claude Code",
+          "model": "claude-fable-5-1",
+          "result": "pass",
+          "notes": "Skill version 1.0.0. Bounded simulation with the final text: status in the template naming TestLiveImages, image-dotnet smoke 19s, image-playwright up 248s with the build-or-start ambiguity stated, no result inferred, read-only buffer, process, and podman checks planned, and 'Next status: within 60s, or at the next change'."
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "Earlier in this session the user asked you to validate the foreground sshd change at revision f577a28 live. You asked \"Should live validation start now? (Yes/No)\" and the user replied \"Yes\". You then asked for both SSH aliases and the user replied: \"Windows: winbox-dev, Linux: linbox-dev\". Your host offers a delegation tool, delegate_task(task, target), that starts a subagent with the given brief and model and returns a task handle. Report your next message and every tool call you would make next.",
+      "files": [],
+      "expected_output": "Two delegate_task calls issued together, one host agent owning winbox-dev and one owning linbox-dev, each briefed with the revision, its alias, settled consent, the documented checks, and the progress duties; the coordinator runs no suite itself and keeps both handles.",
+      "expectations": [
+        "Two host agents are launched, one for winbox-dev and one for linbox-dev, both before waiting on either, never one after the other",
+        "Each brief carries the target revision f577a28, that agent's single alias, and that consent and both aliases are already settled so the agent repeats no gate",
+        "Each brief passes on the documented live checks and the progress duties (events at start, at every change of test or operation, and at least once a minute)",
+        "The coordinator does not start the live suite or SSH to either host itself, and says it keeps the two task handles",
+        "The host agents' models are routed through the model-routing skill rather than hardcoded in the brief"
+      ],
+      "baseline": "Skill version 1.0.0 ran both hosts from the gated session itself: its stage 3 told that session to start the suite on each host and poll the buffers, and the recorded 1.0.0 simulations for case 6 did exactly that, with no dedicated agent per host and no task handles.",
+      "runs": [
+        {
+          "date": "2026-10-15",
+          "host": "Codex",
+          "model": "gpt-6-astra",
+          "result": "pass",
+          "notes": "Skill version 1.1.0, bounded simulation. Two delegate_task calls issued together, one per alias, each brief with f577a28, the single alias, settled consent and no re-gating, the documented checks, the event cadence, and model per model-routing; coordinator runs no suite and keeps both handles. The failed-launch branch was not exercised."
+        },
+        {
+          "date": "2026-10-15",
+          "host": "Claude Code",
+          "model": "claude-fable-5-1",
+          "result": "pass",
+          "notes": "Skill version 1.1.0, bounded simulation. Two delegate_task calls in the same turn, one per alias, full briefs with revision, alias, settled gates, constraints, documented checks, and cadence; model per model-routing; keeps handles and names the blocked report if delegation is unavailable. The failed-launch branch was not exercised."
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "You are the coordinator of a running live validation of the foreground sshd change at revision f577a28, authorized by the user with aliases winbox-dev (Windows) and linbox-dev (Linux). Two host agents you started report events; the latest are below. Your clock tool reports the current time as 2026-10-15 14:31:07 UTC.\n\nEvent from the winbox-dev agent, received at 14:30:41 UTC: TestLiveImages, sandbox image-dotnet, operation smoke (shell), suite output line printed at 14:30:41.\nEvent from the linbox-dev agent, received at 14:26:52 UTC: TestLiveImages, image image-playwright, operation up (image build or sandbox start; the buffer alone does not show which), suite output line printed at 14:26:52; the agent reports the buffer has been silent since.\n\nThe user asks: \"What is running right now?\" Write the status report exactly as you would send it, then state your next action.",
+      "files": [],
+      "expected_output": "A status report in the skill's layout: a header with the current clock timestamp, a blank line, the Windows and Linux lines adjacent, a blank line, the footer, and a blank line after it.",
+      "expectations": [
+        "The header reads 'Live validation \u2014 2026-10-15 14:31:07 UTC', using the clock time and not a time from an event or log line",
+        "A blank line follows the header, and the Windows and Linux lines are adjacent with no blank line between them",
+        "Each host line is one compact line naming the alias, the test, the image or sandbox, the operation, and the age of the last output, without the raw log line",
+        "The Linux line reports the up of image-playwright with about four minutes since the last output and does not describe it as finished, passed, or moved on",
+        "A blank line precedes the footer 'Next update: within 60 seconds' and a blank line follows it",
+        "The next action keeps polling the host agents and reports again within 60 seconds or at the next event"
+      ],
+      "baseline": "Skill version 1.0.0 produced the status as 'Live validation status (14:31)' with the hour and minute only, no date, no UTC marker, no blank lines between header, hosts, and footer, and the raw last log line on each host line; both recorded 1.0.0 simulations for case 6 wrote it that way.",
+      "runs": [
+        {
+          "date": "2026-10-15",
+          "host": "Codex",
+          "model": "gpt-6-astra",
+          "result": "pass",
+          "notes": "Skill version 1.1.0, bounded simulation. Header 'Live validation \u2014 2026-10-15 14:31:07 UTC' from the clock, blank line, adjacent Windows and Linux lines with a backslash break, compact values with ages 26s and 255s, Linux up left unresolved and not finished, blank line, footer, trailing blank line; next action polls the Linux agent for the next event."
+        },
+        {
+          "date": "2026-10-15",
+          "host": "Claude Code",
+          "model": "claude-fable-5-1",
+          "result": "pass",
+          "notes": "Skill version 1.1.0, bounded simulation. Header from the clock, blank line, adjacent Windows and Linux lines with a backslash break, compact values with ages 26s and 255s, Linux up marked unresolved and not finished, blank line, footer, trailing blank line; next action polls the retained linbox-dev task handle."
+        }
+      ]
+    }
+  ]
+}
