@@ -13,6 +13,7 @@ type Request struct {
 	Command         string
 	Group           string
 	Name            string
+	AgentWorkflow   string
 	ConfigSelection catalog.ConfigSelection
 	OrganizationURL string
 	Args            []string
@@ -172,9 +173,11 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 	}
 	switch request.Command {
 	case "agents login":
-		if _, err := catalog.Default.ResolveAgentLogin(request.Args[1], loginWorkflow(request.Args)); err != nil {
+		workflow, err := catalog.Default.ResolveAgentLogin(request.Args[1], loginWorkflow(request.Args))
+		if err != nil {
 			return request, err
 		}
+		request.AgentWorkflow = workflow
 	case "integrations login":
 		if _, err := catalog.Default.ResolveLogin(request.Args[1], loginWorkflow(request.Args)); err != nil {
 			return request, err

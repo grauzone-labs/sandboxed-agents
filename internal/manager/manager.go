@@ -135,7 +135,7 @@ func sessions(stdout, stderr io.Writer, effects Effects) int {
 	if !verifyAgent(effects, stderr) {
 		return 1
 	}
-	return exitStatus(querySessions(stdout, stderr, effects), stderr)
+	return exitStatus(writeSessionNames(stdout, stderr, effects), stderr)
 }
 
 func exitStatus(err error, stderr io.Writer) int {

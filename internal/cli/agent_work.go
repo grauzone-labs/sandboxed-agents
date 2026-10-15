@@ -3,13 +3,31 @@ package cli
 import (
 	"fmt"
 	"io"
-	"strings"
-
-	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
 // runAgentWork checks sandbox and selection state before starting unprivileged agent work.
 func runAgentWork(request Request, p podmanTarget, stdout, stderr io.Writer) (int, error) {
+	var verb string
+	var needsTerminal, stopping, passExit bool
+	var payload []string
+	switch request.Command {
+	case "agents run":
+		verb, passExit = "run", true
+		payload = request.Args[1:]
+	case "agents login":
+		verb, needsTerminal = "login", true
+		payload = []string{request.Args[1], request.AgentWorkflow}
+	case "agents session":
+		verb = "session"
+		stopping = request.Options["stop"] != ""
+		needsTerminal = !stopping
+		payload = []string{request.Args[1]}
+		if stopping {
+			payload = append(payload, "--stop")
+		}
+	default:
+		return 1, fmt.Errorf("unknown agent work command %q", request.Command)
+	}
 	objects, err := requireSandbox(request, p)
 	if err != nil {
 		return 1, err
@@ -25,33 +43,21 @@ func runAgentWork(request Request, p podmanTarget, stdout, stderr io.Writer) (in
 	if err != nil {
 		return 1, err
 	}
-	stopping := request.Command == "agents session" && request.Options["stop"] != ""
 	if !status.Enabled && !stopping {
-		return 1, fmt.Errorf("%s not enabled; run agents enable %s %s", request.Args[1], request.Name, request.Args[1])
+		return 1, agentNotEnabledError(request)
 	}
 	args := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent", "-i"}
-	interactive := p.host.IsInputTerminal(p.host.Stdin) && p.host.IsOutputTerminal(stdout)
-	if request.Command != "agents run" && !stopping && !interactive {
-		return 1, fmt.Errorf("%s %s needs an interactive terminal", request.Args[1], strings.TrimPrefix(request.Command, "agents "))
+	interactive := !stopping && p.host.IsInputTerminal(p.host.Stdin) && p.host.IsOutputTerminal(stdout)
+	if needsTerminal && !interactive {
+		return 1, fmt.Errorf("%s %s needs an interactive terminal", request.Args[1], verb)
 	}
-	if interactive && !stopping {
+	if interactive {
 		args = append(args, "-t")
 	}
-	args = append(args, names.Container, managerPath, "agents", strings.TrimPrefix(request.Command, "agents "))
-	if request.Command == "agents login" {
-		workflow, err := catalog.Default.ResolveAgentLogin(request.Args[1], loginWorkflow(request.Args))
-		if err != nil {
-			return 1, err
-		}
-		args = append(args, request.Args[1], workflow)
-	} else {
-		args = append(args, request.Args[1:]...)
-		if stopping {
-			args = append(args, "--stop")
-		}
-	}
+	args = append(args, names.Container, managerPath, "agents", verb)
+	args = append(args, payload...)
 	exit, err := p.run(p.host.Stdin, stdout, stderr, args...)
-	if request.Command == "agents run" {
+	if passExit {
 		return exit, err
 	}
 	if err != nil {
