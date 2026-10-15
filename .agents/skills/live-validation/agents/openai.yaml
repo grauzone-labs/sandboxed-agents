@@ -1,0 +1,6 @@
+interface:
+  display_name: "Live validation"
+  short_description: "Gate and run live checks on Windows and Linux hosts"
+
+policy:
+  allow_implicit_invocation: true
