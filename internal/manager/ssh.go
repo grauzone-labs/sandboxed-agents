@@ -3,6 +3,8 @@ package manager
 import (
 	"fmt"
 	"io"
+	"os"
+	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/sshkey"
 )
@@ -60,7 +62,15 @@ func sshHostKey(stdout, stderr io.Writer, effects Effects) int {
 	if effects.ReadFile == nil {
 		return exitStatus(fmt.Errorf("SSH server storage is unavailable"), stderr)
 	}
-	data, err := effects.ReadFile("/etc/ssh/ssh_host_ed25519_key.pub")
+	// Podman can accept exec before the entrypoint finishes generating keys.
+	// Stay within the host's three-second administrative query deadline.
+	const path = "/etc/ssh/ssh_host_ed25519_key.pub"
+	deadline := time.Now().Add(2 * time.Second)
+	data, err := effects.ReadFile(path)
+	for (os.IsNotExist(err) || err == nil && len(data) == 0) && time.Now().Before(deadline) {
+		time.Sleep(25 * time.Millisecond)
+		data, err = effects.ReadFile(path)
+	}
 	if err != nil {
 		return exitStatus(err, stderr)
 	}

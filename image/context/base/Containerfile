@@ -46,4 +46,5 @@ RUN mkdir -p /usr/local/share/sandboxed-agents \
 WORKDIR /workspace
 
 # Keep the sandbox running until sshd becomes its main process (#49).
-ENTRYPOINT ["sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait"]
+# Generate missing host keys only after the sandbox's SSH volume is mounted.
+ENTRYPOINT ["sh", "-c", "set -e; ssh-keygen -A; trap 'exit 0' TERM; sleep infinity & wait"]

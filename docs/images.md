@@ -33,13 +33,19 @@ The base image contains:
 
 - OpenSSH server and client, Git, GitHub CLI, tmux, `curl`, `jq`, `ripgrep`, `less`, `unzip`, `zip`, `xz-utils`, `file`, `procps`, Bash, coreutils, findutils, `gnupg`, and CA certificates.
 - Node.js 24 and npm from the NodeSource repository `node_24.x`, installed after the [signing key check](#nodesource-signing-key-check).
-- The user `agent` with UID and GID 1000, the directory `/workspace` owned by `agent`, and no SSH host keys.
+- The user `agent` with UID and GID 1000, the directory `/workspace` owned by `agent`, and no baked SSH host keys. See [SSH host keys](#ssh-host-keys).
 - The in-container manager at `/usr/local/bin/sandboxed-agents-manager`.
 - No agent and none of the toolchains below.
 
 ### Installed version manifest
 
 Every image records the versions of what it installed in `/usr/local/share/sandboxed-agents/versions.txt`. The base image writes `/etc/os-release`, every Debian package with its version, the Node.js and npm versions, and the manager version. A toolchain image rewrites the same file with `image/context/toolchains/record-versions.sh`, which adds the output of `dotnet --list-sdks`, `playwright --version`, `az version`, and `cc --version` for the toolchains present.
+
+### SSH host keys
+
+The recipe removes the SSH host keys that the Debian package creates, so no key is shared between sandboxes or recorded in an image. The entrypoint instead runs `ssh-keygen -A` under `set -e` at every container start, before the keepalive. The sandbox's SSH volume is mounted at `/etc/ssh` by then, so `ssh-keygen -A` creates only the keys that volume lacks. The keys are therefore generated on first start and survive `stop`, `start`, and `update`, which keep the volumes. If key generation fails, the container fails to start rather than run without host keys.
+
+Podman can accept `exec` before the entrypoint has finished. The manager's `ssh-host-key` command, which SSH setup uses to pin the host key, therefore polls every 25 ms for up to 2 seconds while `/etc/ssh/ssh_host_ed25519_key.pub` is missing or empty, inside the host's 3-second limit for administrative queries. Any other failure, such as a permission error or a malformed non-empty key, fails at once. The command prints no key on failure.
 
 ### NodeSource signing key check
 
@@ -184,9 +190,11 @@ The offline test is run with `bash image/test/nodesource/test-check-nodesource-k
 
 `go test ./image ./internal/cli ./cmd/sandboxed-agents` runs offline with a fake Podman and builds no image. It covers tag derivation, the generated toolchain recipes, the base recipe contents, the manager overlay, toolchain validation, and the `build` and `up` behavior described above.
 
+`go test ./image ./internal/manager` also runs offline. `TestImageStartupInitializesSSHHostKeys` executes the embedded entrypoint under a real shell and OpenSSH, with `ssh-keygen -f` redirected to a temporary prefix. It checks that the key exists before the keepalive starts, that a second start keeps it, and that a failing `ssh-keygen` stops the startup before the keepalive. `TestSSHHostKeyWaitsForStartup` and `TestSSHHostKeyFailsClosed` check the bounded wait for a missing or empty public key, and that a permission error or malformed key fails at once with no key printed. These tests run no Podman and no container, so they do not prove the volume mount.
+
 ### Live image tests
 
-The live image coverage creates one sandbox per toolchain and one without, runs each smoke check inside its sandbox as `agent` with `shell NAME`, calls `build` once, and then checks the labels, the shared base layers, that existing sandboxes keep their image, and that `list` marks them outdated. It compiles its own prepared executable and uses a new controller group. Because `build` renews every image of the current executable on the Podman host, the coverage has its own opt-in, `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1`, and needs no other variable:
+The live image coverage creates one sandbox per toolchain and one without. Right after each `up` it runs the manager's `ssh-host-key` query as root, and for the base sandbox it also compares that key after `stop` and `start`. It runs each smoke check inside its sandbox as `agent` with `shell NAME`, calls `build` once, and then checks the labels, the shared base layers, that existing sandboxes keep their image, and that `list` marks them outdated. It compiles its own prepared executable and uses a new controller group. Because `build` renews every image of the current executable on the Podman host, the coverage has its own opt-in, `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1`, and needs no other variable:
 
 ```sh
 SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1 \
@@ -196,6 +204,7 @@ SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1 \
 ### Honest limits
 
 - `TestLiveImages` passed on one Linux host and one Windows host, as reported from output excerpts: Linux `--- PASS: TestLiveImages (1107.23s)` with package `1107.779s`, and Windows `--- PASS: TestLiveImages (2710.16s)` with package `2716.322s`. The excerpts name no commit, host Podman version, or date, and this workspace did not run them. The test covers five sandboxes (the base and the four toolchains) with each smoke check run as user `agent`, a real base build with the NodeSource key, the labels and shared base layers, one `build` with the outdated marking, and cleanup.
+- Those runs predate the SSH host-key startup change, whose live checks (the immediate `ssh-host-key` query after each `up` and the key comparison across `stop` and `start`) have not been run on any host. Only the offline tests above cover that change.
 - This workspace has Podman 4.3.1, below the Linux minimum of 4.4.0 in [host prerequisites](host-prerequisites.md), so its preflight stops there and it cannot execute the qualifying suite. The external hosts passed it.
 - The base-image build against the NodeSource key on 2026-10-11, described above, predates the toolchain recipes and the manager. It is no longer the only live build on record.
 - Not covered: the Microsoft signing key for the .NET feed (`packages-microsoft-prod.deb` is fetched over HTTPS and not pinned), digests of the pulled Debian image or of built images, and pinned Playwright, .NET patch, or Debian package versions. The version manifest records what a build installed.
