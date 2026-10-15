@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -54,6 +55,25 @@ func (c Catalog) ResolveAgent(name string) (Agent, error) {
 		return Agent{}, fmt.Errorf("unknown agent %q: %s", name, ValidNames(c.AgentNames()))
 	}
 	return agent, nil
+}
+
+// ResolveAgentLogin validates a login workflow and resolves an omitted sole choice.
+func (c Catalog) ResolveAgentLogin(name, workflow string) (string, error) {
+	agent, err := c.ResolveAgent(name)
+	if err != nil {
+		return "", err
+	}
+	names := slices.Sorted(maps.Keys(agent.LoginWorkflows))
+	if workflow == "" {
+		if len(names) != 1 {
+			return "", fmt.Errorf("%s login requires a workflow: %s", name, ValidNames(names))
+		}
+		return names[0], nil
+	}
+	if _, known := agent.LoginWorkflows[workflow]; !known {
+		return "", fmt.Errorf("unknown workflow %q: %s", workflow, ValidNames(names))
+	}
+	return workflow, nil
 }
 
 var exactVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`)

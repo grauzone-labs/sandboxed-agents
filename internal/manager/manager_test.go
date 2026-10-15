@@ -52,7 +52,7 @@ func TestDirectSessionsStartTmuxWithAgentIdentity(t *testing.T) {
 		t.Fatalf("status=%d starts=%d stderr=%q; want one successful direct session query", status, len(started), stderr.String())
 	}
 	process := started[0]
-	if process.Program != "tmux" || process.Identity != (manager.Identity{UID: 1000, GID: 1000}) || !reflect.DeepEqual(process.Args, []string{"list-sessions", "-F", "#{session_name}"}) {
+	if process.Program != "tmux" || process.Identity != (manager.Identity{UID: 1000, GID: 1000}) || !reflect.DeepEqual(process.Args, []string{"-L", "sandboxed-agents", "-f", "/dev/null", "list-sessions", "-F", "#{session_name}"}) {
 		t.Fatalf("process=%+v; want tmux list-sessions -F #{session_name} as 1000:1000", process)
 	}
 }
@@ -296,15 +296,15 @@ func TestRootSessionQueryReexecutesBeforeTmux(t *testing.T) {
 	worker := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
 	worker.Start = func(process manager.Process) error {
 		events = append(events, "tmux")
-		if process.Identity != (manager.Identity{UID: 1000, GID: 1000}) || process.Program != "tmux" || !reflect.DeepEqual(process.Args, []string{"list-sessions", "-F", "#{session_name}"}) {
+		if process.Identity != (manager.Identity{UID: 1000, GID: 1000}) || process.Program != "tmux" || !reflect.DeepEqual(process.Args, []string{"-L", "sandboxed-agents", "-f", "/dev/null", "list-sessions", "-F", "#{session_name}"}) {
 			t.Errorf("session query process=%+v", process)
 		}
-		process.Stdout.Write([]byte("codex-session\n"))
+		process.Stdout.Write([]byte("claude\ncodex\nopencode\n"))
 		return nil
 	}
 	root := rootToWorker(t, worker, &events)
 	status := manager.RunWithEffects([]string{"sessions"}, &stdout, &stderr, root)
-	if status != 0 || stdout.String() != "codex-session\n" || stderr.Len() != 0 || !reflect.DeepEqual(events, []string{"worker", "tmux"}) {
+	if status != 0 || stdout.String() != "claude\ncodex\nopencode\n" || stderr.Len() != 0 || !reflect.DeepEqual(events, []string{"worker", "tmux"}) {
 		t.Fatalf("status=%d events=%v stdout=%q stderr=%q", status, events, stdout.String(), stderr.String())
 	}
 }

@@ -172,18 +172,8 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 	}
 	switch request.Command {
 	case "agents login":
-		if len(request.Args) == 3 {
-			var validNames []string
-			for name := range catalog.Default.Agents[request.Args[1]].LoginWorkflows {
-				validNames = append(validNames, name)
-			}
-			slices.Sort(validNames)
-			if !slices.Contains(validNames, request.Args[2]) {
-				if len(validNames) == 0 {
-					return request, fmt.Errorf("unknown workflow %q: no valid names are available yet", request.Args[2])
-				}
-				return request, fmt.Errorf("unknown workflow %q: valid names: %s", request.Args[2], strings.Join(validNames, ", "))
-			}
+		if _, err := catalog.Default.ResolveAgentLogin(request.Args[1], loginWorkflow(request.Args)); err != nil {
+			return request, err
 		}
 	case "integrations login":
 		if _, err := catalog.Default.ResolveLogin(request.Args[1], loginWorkflow(request.Args)); err != nil {

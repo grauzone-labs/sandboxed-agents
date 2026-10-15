@@ -161,7 +161,7 @@ func TestProductionSessionQueryKeepsAgentCredentials(t *testing.T) {
 		Environment: func() []string { return []string{"HOME=/root", "KEEP=value"} },
 		Start: func(command *exec.Cmd) error {
 			calls++
-			if !reflect.DeepEqual(command.Args, []string{"tmux", "list-sessions", "-F", "#{session_name}"}) {
+			if !reflect.DeepEqual(command.Args, []string{"tmux", "-L", "sandboxed-agents", "-f", "/dev/null", "list-sessions", "-F", "#{session_name}"}) {
 				t.Errorf("tmux arguments=%q", command.Args)
 			}
 			assertAgentCredentials(t, command, true)

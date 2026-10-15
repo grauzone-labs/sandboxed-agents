@@ -32,6 +32,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 func newEffects(calls systemCalls) Effects {
 	run := func(process Process) error {
 		command := exec.Command(process.Program, process.Args...)
+		command.Dir = process.Directory
 		command.Stdin = process.Stdin
 		command.Stdout, command.Stderr = process.Stdout, process.Stderr
 		command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{

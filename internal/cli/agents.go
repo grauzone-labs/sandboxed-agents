@@ -86,11 +86,11 @@ func runAgentChange(request Request, p podmanTarget, stdout io.Writer, payload .
 		}
 		return managerUnavailable{cause: err}
 	}
+	_, outputErr := io.Copy(stdout, &output)
 	if status != 0 {
-		return fmt.Errorf("%s: %s", strings.Join(payload[:3], " "), strings.TrimSpace(diagnostic.String()))
+		return errors.Join(fmt.Errorf("%s: %s", strings.Join(payload[:3], " "), strings.TrimSpace(diagnostic.String())), outputErr)
 	}
-	_, err = io.Copy(stdout, &output)
-	return err
+	return outputErr
 }
 
 // readAgentStatus validates the shared manager response before callers use its selection state.
