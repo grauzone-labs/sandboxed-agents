@@ -28,16 +28,9 @@ func runAgentWork(request Request, p podmanTarget, stdout, stderr io.Writer) (in
 	default:
 		return 1, fmt.Errorf("unknown agent work command %q", request.Command)
 	}
-	objects, err := requireSandbox(request, p)
+	names, err := requireAgentManager(request, p)
 	if err != nil {
 		return 1, err
-	}
-	names, err := requireRunning(request, objects)
-	if err != nil {
-		return 1, err
-	}
-	if err := checkManager(p, names.Container); err != nil {
-		return 1, agentManagerError(request, err)
 	}
 	status, err := readAgentStatus(request, p)
 	if err != nil {

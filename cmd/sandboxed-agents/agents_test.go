@@ -3,10 +3,12 @@ package main_test
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
@@ -332,5 +334,63 @@ func TestForcedAgentUpdateReportsStoppedSessionOnFailure(t *testing.T) {
 		} else if strings.Contains(output, "stopped session codex") || !strings.Contains(output, "manager does not answer") {
 			t.Fatalf("manager exit=%d output=%s", exit, output)
 		}
+	}
+}
+
+// TestAgentStatusDistinguishesOperationFailures proves manager-reported status failures remain operation errors while transport and malformed responses report an unavailable manager at the executable CLI seam.
+func TestAgentStatusDistinguishesOperationFailures(t *testing.T) {
+	for _, verb := range []string{"status", "update", "run", "login", "session", "session-stop"} {
+		for _, failure := range []struct {
+			response    lifecycleResponse
+			unavailable bool
+		}{
+			{lifecycleResponse{Exit: 1, Stderr: "cannot query agent sessions: permission denied\n"}, false},
+			{lifecycleResponse{Exit: 125, Stderr: "transport failed\n"}, true},
+			{lifecycleResponse{Exit: 126, Stderr: "manager cannot execute\n"}, true},
+			{lifecycleResponse{Exit: 127, Stderr: "manager missing\n"}, true},
+			{lifecycleResponse{Output: "malformed status answer\n"}, true},
+		} {
+			responses := ownedLifecycleResponses(true)
+			responses[agentManagerPrefix+"version"] = lifecycleResponse{Output: "sandboxed-agents-manager development\n"}
+			responses[agentManagerPrefix+"agents status codex"] = failure.response
+			f := agentExecutableHarness(t, responses)
+			args := []string{"agents", verb, "demo", "codex"}
+			if verb == "login" {
+				args = append(args, "device-code")
+			}
+			if verb == "session-stop" {
+				args[1] = "session"
+				args = append(args, "--stop")
+			}
+			status, output := runAgentExecutable(t, args...)
+			if status != 1 || strings.Contains(output, "manager does not answer") != failure.unavailable {
+				t.Fatalf("verb=%s response=%+v status=%d output=%s", verb, failure.response, status, output)
+			}
+			if !failure.unavailable && !strings.Contains(output, "cannot query agent sessions: permission denied") {
+				t.Fatalf("lost operation diagnostic: %s", output)
+			}
+			if failure.unavailable && (!strings.Contains(output, "check demo") || !strings.Contains(output, "restart demo")) {
+				t.Fatalf("missing manager recovery commands: %s", output)
+			}
+			if calls := agentManagerCalls(t, f); len(calls) != 2 {
+				t.Fatalf("work attempted after failed status: %v", calls)
+			}
+		}
+	}
+}
+
+// TestAgentStatusTimeoutReportsUnavailableManager proves a bounded status query timeout remains a manager availability failure at the executable CLI and fake Podman seam.
+func TestAgentStatusTimeoutReportsUnavailableManager(t *testing.T) {
+	responses := ownedLifecycleResponses(true)
+	responses[agentManagerPrefix+"version"] = lifecycleResponse{Output: "sandboxed-agents-manager development\n"}
+	responses[agentManagerPrefix+"agents status codex"] = lifecycleResponse{WaitFor: filepath.Join(t.TempDir(), "never-created")}
+	f := agentExecutableHarness(t, responses)
+	started := time.Now()
+	status, output := runAgentExecutable(t, "agents", "status", "demo", "codex")
+	if status != 1 || !strings.Contains(output, "manager does not answer") || !strings.Contains(output, "check demo") || !strings.Contains(output, "restart demo") || time.Since(started) > 5*time.Second {
+		t.Fatalf("status=%d output=%s", status, output)
+	}
+	if calls := agentManagerCalls(t, f); len(calls) != 2 {
+		t.Fatalf("work attempted after status timeout: %v", calls)
 	}
 }

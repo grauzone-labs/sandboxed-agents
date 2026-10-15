@@ -123,10 +123,10 @@ func (w agentWork) changeSession() error {
 	if running {
 		return nil
 	}
-	return tmux(w.effects, io.Discard, w.stderr, "new-session", "-d", "-s", w.request.name, "-c", "/workspace", "--", "/usr/bin/env", commandPath(w.home, w.request.definition))
+	return tmux(w.effects, nil, io.Discard, w.stderr, "new-session", "-d", "-s", w.request.name, "-c", "/workspace", "--", "/usr/bin/env", commandPath(w.home, w.request.definition))
 }
 
 // attach selects the exact session name and keeps terminal IO outside the manager lock.
 func (w agentWork) attach() int {
-	return exitStatus(tmux(w.effects, w.stdout, w.stderr, "attach-session", "-t", "="+w.request.name), w.stderr)
+	return exitStatus(tmux(w.effects, w.effects.Stdin, w.stdout, w.stderr, "attach-session", "-t", "="+w.request.name), w.stderr)
 }
