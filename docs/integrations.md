@@ -62,16 +62,15 @@ or host environment value is copied into the sandbox. For these config
 workflows the executable adds no mount and passes only the requested identity
 values and a fixed agent home to the manager. Git writes its global
 configuration in that home even if the sandbox has ambient Git config file
-overrides. The [GitHub login](#github) is the one workflow that also connects
-your terminal to the manager, and the [Azure DevOps login](#azure-devops) is
-the one that passes a token on standard input; both still copy nothing from the
-host.
+overrides. The login workflows for [GitHub](#github) and [Azure](#azure) also
+connect your terminal to the manager. [Azure DevOps](#azure-devops) passes a
+token on standard input; these workflows copy no ambient host credentials.
 
 ## GitHub
 
-GitHub has one login workflow, `device-code`. The delivered login integrations
-are `github` and [`azdo`](#azure-devops); `azure` has no delivered login
-workflow yet, and Git has only config workflows.
+GitHub has one login workflow, `device-code`. [Azure](#azure) delivers two
+login workflows, `device-code` and `browser`. [Azure DevOps](#azure-devops)
+accepts a token without a workflow name, and Git has only config workflows.
 
 ```sh
 sandboxed-agents integrations login agent01 github
@@ -196,6 +195,209 @@ private test repository.
 
 Record the sandbox image, host platform, tested commit, `gh --version` from the
 sandbox, and each step's result. Never record a token or one-time code.
+
+## Azure
+
+Azure has two login workflows, `device-code` and `browser`. Name one
+explicitly: omitting the workflow fails and lists both, and neither takes
+options.
+
+```sh
+sandboxed-agents integrations login agent01 azure device-code
+sandboxed-agents integrations login agent01 azure browser
+```
+
+Both store an Azure CLI login for `agent` in the home volume. `device-code`
+works from any terminal and needs no connection back into the sandbox.
+`browser` completes the login in a browser on your machine and needs an SSH
+tunnel to the sandbox while it runs, so it works only with an installed [SSH
+setup](ssh.md). When in doubt, use `device-code`.
+
+### What both workflows need
+
+Beyond the running sandbox and answering manager that every integration command
+needs, the checks run in this order, and each failure happens before the Azure
+login starts; only the manager probe that every integration command runs has
+touched the sandbox by then:
+
+- The sandbox's image must include the `azure` [toolchain](images.md), which
+  provides the Azure CLI. Otherwise the command fails and names the fix:
+  `update NAME --with SET`, where `SET` is the sandbox's recorded toolchain set
+  plus `azure` in canonical sorted order, for example `--with azure` for a
+  base-only sandbox or `--with azure,dotnet` for a sandbox built with `dotnet`.
+- For `browser`, the sandbox's SSH setup must be installed. Otherwise the
+  command fails and names `ssh-config NAME --install`. The device-code workflow
+  does not need it.
+- Standard input and standard output must both be terminals. Redirecting or
+  piping either stream fails before `az` starts. The terminal is connected
+  through to the sandbox, so you see the Azure CLI's output and answer its
+  prompts yourself.
+
+### What they run
+
+The manager verifies it is running as `agent`, then runs two commands as `agent`
+(UID and GID 1000), in this order, each attached to your terminal:
+
+| Workflow | Login command | Account check |
+| --- | --- | --- |
+| `device-code` | `az login --use-device-code` | `az account show` |
+| `browser` | `az login` | `az account show` |
+
+The account check runs only after the login command succeeded. It prints the
+account and subscription the Azure CLI selected as its default, so you can see
+at once whether you signed in to the right tenant and subscription. See the
+Azure CLI documentation for
+[`az login`](https://learn.microsoft.com/en-us/cli/azure/authenticate-azure-cli-interactively)
+and
+[`az account show`](https://learn.microsoft.com/en-us/cli/azure/account#az-account-show).
+
+Both commands run with `HOME=/home/agent` and `AZURE_CONFIG_DIR=/home/agent/.azure`,
+replacing any ambient value, so the Azure CLI reads and writes its configuration
+and token cache only in the home volume. Any ambient `BROWSER` value is removed;
+the `browser` workflow sets its own, as described below. No host credential,
+Azure CLI configuration, or environment value is copied into the sandbox, and
+the executable adds no mount. The login exists only because you complete the
+sign-in.
+
+### Device-code workflow
+
+`az login --use-device-code` prints a one-time code and a URL and waits. Open
+the URL in a browser on any machine, enter the code, and sign in. The browser
+needs no connection back into the sandbox. When the sign-in completes, the
+Azure CLI stores the login and lists the subscriptions it found, and the account
+check prints the selected one.
+
+### Browser workflow
+
+`az login` without options is the Azure CLI's interactive login: it opens a
+browser and starts a listener inside the sandbox on a port chosen when the
+login starts, waiting for the redirect that completes the sign-in. The redirect
+URL addresses `localhost` on that port. The listener stays inside the sandbox's
+network, the sandbox has no browser, and it publishes no port beyond SSH, so
+the manager stands in for the browser. It sets `BROWSER` so that the Azure
+CLI, once it knows the redirect port and before it waits for the reply, runs
+the manager's callback instead of a browser. The callback prints instructions
+in this form, with the port filled in:
+
+```text
+On the machine with your browser, run this in another terminal and leave it running:
+ssh -N -L 127.0.0.1:PORT:127.0.0.1:PORT -o ExitOnForwardFailure=yes agent01
+Then open this URL in that browser:
+https://login.microsoftonline.com/...
+```
+
+The alias in the `ssh` command is the sandbox's installed
+[host entry](ssh.md#host-entry-names-and-controller-groups): `agent01` in the
+`default` controller group, `agent01.GROUP` in any other.
+This is why the workflow requires an installed SSH setup. To complete the
+login:
+
+1. On the machine with your browser, run the printed `ssh` command in a second
+   terminal and leave it running. It binds that one port on your machine's
+   loopback address only, forwards it to the same port on the sandbox's
+   loopback address, and runs no remote command. With
+   `ExitOnForwardFailure=yes`, it exits at once if the port is already in use
+   on your machine; free the port or cancel and retry.
+2. Open the printed URL in that browser and sign in. Microsoft then redirects
+   the browser to `http://localhost:PORT/...`, and the tunnel carries that
+   request to the listener waiting in the sandbox.
+3. Keep the tunnel open until the command in the first terminal prints the
+   account check, then stop the tunnel with Ctrl+C. The login is stored; the
+   tunnel is not needed afterwards.
+
+The printed `ssh` command assumes the alias resolves on the machine where you
+run it. That is the case when your browser runs on the sandbox host, where
+`ssh-config NAME --install` wrote the entry. When the sandbox runs on a remote
+host, your browser machine needs an SSH configuration of its own under which
+that alias reaches the sandbox's SSH server through that host, for example a
+`ProxyJump` through the host with the sandbox's dedicated key and pinned host
+key. The executable installs the SSH setup only on the sandbox host and
+provisions nothing on other machines; if no such configuration exists, use the
+`device-code` workflow instead.
+
+The tunnel is the browser's only path to the listener: the executable forwards
+no host credential, configuration, or environment value through it, and the
+sandbox still publishes nothing beyond SSH. The callback prints the login URL once;
+it contains no password or token, but it is tied to this login attempt, so do
+not record it.
+
+If the callback cannot find a loopback redirect port in the URL the Azure CLI
+hands it, it reports that and asks you to cancel; press Ctrl+C in the first
+terminal and use `device-code`.
+
+### Result and failure
+
+The command exits zero only when both commands succeed. If `az login` fails or
+is cancelled, for example with Ctrl+C, when a device code expires, or when the
+tunnel is closed before the redirect arrives, the account check does not run.
+`az login` may already have written configuration under `/home/agent/.azure`
+before it failed. If `az account show` fails, for example because the account
+has no subscription the CLI can select, the command fails even though the login
+is stored.
+
+A reported workflow or runtime failure, including a missing terminal, exits
+with status 1 and a short message; the exit code of `az` is not passed through.
+A usage error (such as an unknown workflow name) exits non-zero, and a process
+stopped by an outside signal may report a different non-zero status. After a
+failure, re-run the command, or inspect the stored state with `az account show`
+in a `shell NAME` session.
+
+### Where the login lives
+
+The Azure CLI keeps its configuration and its token cache under
+`/home/agent/.azure` in the home volume, so the login survives `stop`, `start`,
+and `update`. Treat that directory as a plaintext credential: every agent in the
+sandbox runs as `agent`, shares the home volume, and can read it and use it for
+anything your account can reach. This is why separate sandboxes, not separate
+agents, separate accounts. `az logout` in a `shell NAME` session removes the
+stored login, and `sandboxed-agents remove NAME --volumes` deletes the home
+volume; removing the sandbox alone keeps its volumes. To revoke access on
+Microsoft's side, revoke the sessions in your account's security settings or
+have a tenant administrator do so.
+
+### Manual Azure login check
+
+Offline tests cover command dispatch, the toolchain and SSH setup checks, the
+terminal check, process identities and environments, the order of the login
+and account check, the browser callback's output, and failure statuses. They
+run no real `az`, open no tunnel, and contact no Microsoft server, so they are
+**not proof** of a working login. Run this checklist once for each change to
+the workflows, on a real sandbox built with the `azure` toolchain, with a
+browser and an Azure account that can select a subscription.
+
+1. Use a new, clean test sandbox. Run
+   `sandboxed-agents integrations login agent01 azure device-code`, wait for
+   the code, and press Ctrl+C. Confirm the status is non-zero, that no account
+   was printed, and that, in `shell agent01`, `az account show` reports no
+   login.
+2. Run the command again and complete the device flow in your browser. Confirm
+   it exits zero and ends by printing the selected account and subscription.
+3. In `shell agent01`, run `az account show`; it must print the same account.
+4. Run `stop` and `start`, open a new shell, and run `az account show` again.
+   Confirm the login persisted in the home volume. Then run `az logout`.
+5. On a sandbox without an installed SSH setup, run
+   `sandboxed-agents integrations login agent01 azure browser`. Confirm it fails
+   naming `ssh-config agent01 --install` and starts no `az`.
+6. Run `ssh-config agent01 --install` and run the browser workflow again.
+   Confirm the `ssh -N -L ...` line and the URL appear before anything waits on
+   you, that the alias matches the installed host entry, and that `az` is still
+   waiting. Run the tunnel on your browser machine, open the URL, sign in, and
+   confirm the command exits zero and prints the account. Stop the tunnel and
+   confirm `az account show` still works in `shell agent01`.
+7. Run the browser workflow once more, open the URL, but stop the tunnel before
+   signing in, then press Ctrl+C in the first terminal. Confirm the status is
+   non-zero and no account was printed.
+8. On a sandbox built without the `azure` toolchain, run either workflow.
+   Confirm it fails naming `update agent01 --with ...` with the sandbox's
+   recorded set plus `azure`, and runs nothing in the sandbox.
+9. Run a workflow without a terminal, for example
+   `sandboxed-agents integrations login agent01 azure device-code </dev/null`.
+   Confirm it fails with a terminal error and a non-zero status, and starts no
+   `az`.
+
+Record the sandbox image, host platform, tested commit, `az --version` from the
+sandbox, whether the browser ran on the sandbox host or elsewhere, and each
+step's result. Never record a device code, login URL, or token.
 
 ## Azure DevOps
 
