@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
 // TestLiveTerminalWaitDrainsOutput proves that once Wait reports the command finished, Output already holds everything the command wrote, through the pseudo-terminal helper and the fake process writing a last line right before it exits.
@@ -39,12 +41,23 @@ func TestLiveTerminalWaitReportsUndrainedOutputAsUnfinished(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the lingering descendant uses a POSIX shell and SIGHUP semantics")
 	}
-	terminal := startLiveTerminal(t, os.Environ(), "sh", "-c", `trap "" HUP; sleep 2 & echo "shell done"; exit 0`)
+	// The shell and its sleep come from the system directories, not from
+	// PATH, which the nested offline guard isolates to the fake programs.
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh on this host")
+	}
+	environment := testutil.Env(os.Environ(), map[string]string{"PATH": "/usr/bin:/bin"})
+	terminal := startLiveTerminal(t, environment, "/bin/sh", "-c", `trap "" HUP; sleep 2 & echo "shell done"; exit 0`)
 	defer terminal.Close()
-	if exit, finished := terminal.Wait(500 * time.Millisecond); finished {
+	exit, finished := terminal.Wait(500 * time.Millisecond)
+	if finished {
 		t.Fatalf("Wait reported the command finished (exit %d) while its descendant still held the terminal", exit)
 	}
-	exit, finished := terminal.Wait(10 * time.Second)
+	// The shell itself has ended by now: its last line is already readable.
+	if !strings.Contains(terminal.Output(), "shell done") {
+		t.Fatalf("the shell had not ended within the first wait: output=%q", terminal.Output())
+	}
+	exit, finished = terminal.Wait(10 * time.Second)
 	if !finished || exit != 0 || !strings.Contains(terminal.Output(), "shell done") {
 		t.Fatalf("after the descendant ended: finished=%v exit=%d output=%q", finished, exit, terminal.Output())
 	}
