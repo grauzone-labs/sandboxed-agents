@@ -207,6 +207,8 @@ SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1 \
   go test ./cmd/sandboxed-agents -run '^TestLiveImages$' -timeout 90m -v
 ```
 
+The suite removes its sandboxes, volumes, and group state but none of the images it builds. After every invocation, pass or fail, the host agent of the `live-validation` skill measures the disk, removes the run's unused images by ID, and reports what it kept ([Image cleanup](../.agents/skills/live-validation/SKILL.md#image-cleanup)).
+
 ### Live proof
 
 The current proof for the image, its foreground sshd ([#49](https://github.com/grauzone-labs/sandboxed-agents/issues/49)), and the host-key startup is one run of `TestLiveImages` on each supported platform. Both ran on 2026-10-15 on commit `f577a28` (`f577a2885026b2ed46c399874f16029013b84957`), both passed with exit status 0, and both compiled the same executable asset hash, `04de2cbb88dec2d7894ce2076f4bfb54098fad9ae442f4b0168012c4bb48bdef`.

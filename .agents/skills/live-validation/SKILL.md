@@ -1,21 +1,21 @@
 ---
 name: live-validation
-description: Gates live validation of a change on the project's Windows and Linux hosts behind the user's explicit consent to start, then collects both SSH aliases, starts one dedicated agent per host to run the repository's documented live checks at the target revision, and reports with a timestamp which test is running on each host. Use when the agent concludes a change needs proof on a live host, or when the user asks to validate, prove, or test a change live or on the real hosts.
+description: Gates live validation of a change on the project's Windows and Linux hosts behind the user's explicit consent to start, then collects both SSH aliases, starts one dedicated agent per host to run the repository's documented live checks at the target revision, reports with a timestamp which test is running on each host, and after every run removes the images the run built and left unused, with disk measurements before and after. Use when the agent concludes a change needs proof on a live host, when the user asks to validate, prove, or test a change live or on the real hosts, or when the user asks to clean up or free the disk a live run used on those hosts.
 license: MIT
 compatibility: Requires an SSH client with host aliases in the user's SSH configuration, the live test suite documented in docs/images.md on both hosts, a way to ask the user a question and wait for the answer, and a delegation tool that starts a subagent with a chosen model and returns a task handle.
 metadata:
   author: "Sascha Grau"
-  version: "1.1.0"
+  version: "1.2.0"
   category: "engineering"
 ---
 
 # Live validation
 
-Live validation runs the repository's documented live checks on a real Windows host and a real Linux host over SSH. The user owns the decision to start and the hosts it runs on, so the run passes a two-stage gate. A **live invocation** is one request to validate one target revision; the gate is per invocation.
+Live validation runs the repository's documented live checks on a real Windows host and a real Linux host over SSH. The user owns the decision to start and the hosts it runs on, so the run passes a two-stage gate. A **live invocation** is one request to validate one target revision; the gate is per invocation. Cleaning up after a run belongs to that run's invocation and reuses its host agents and authorization. A standalone request to clean up what a run left authorizes the scope the user names: apply the [image cleanup](#image-cleanup) rules on that host without starting the suite, judge eligibility from the run's recorded inventory and asset hash, and ask only for an alias the request leaves missing.
 
 ## Stage 1: consent to start
 
-The Yes/No checkpoint below is this project's workflow, set by its owner; it is not a permission the skill infers, and a request such as "run live validation" is the trigger, never the answer. Ask it first, before any step on a live or remote host and before any alias step. Offline checks in the local checkout need no checkpoint. Use the host's question tool with Yes/No choices when it has one; otherwise ask in plain text with the two choices and end the turn.
+The Yes/No checkpoint below is this project's workflow, set by its owner; it is not a permission the skill infers, and a request such as "run live validation" is the trigger, never the answer. For a new test invocation, ask it first, before any step on a live or remote host and before any alias step. Offline checks in the local checkout need no checkpoint. Use the host's question tool with Yes/No choices when it has one; otherwise ask in plain text with the two choices and end the turn.
 
 > Live validation would run the documented live checks for `<change>` at revision `<sha>` on a Windows host and a Linux host over SSH. Should live validation start now?
 > Choices: Yes / No
@@ -46,25 +46,25 @@ Complete when the user has named or confirmed both aliases in this invocation. T
 
 After both aliases are confirmed, the session that passed the gates is the **coordinator**. It launches two **host agents** asynchronously through the host's delegation tool before waiting on either, one owning the Windows alias and one owning the Linux alias, and it runs no suite itself. Route each host agent's model with the `model-routing` skill. Keep each returned task handle: a second request for the same host resumes its running agent instead of starting another, and a session resumed mid-run reattaches to the handles it kept. A launch that fails marks its host `pending` with the tool's own message while any agent that did start keeps running and its result and cleanup are still collected; when neither agent can start, report `Live validation: blocked (no delegation available)` with the tool's own message. Running a host in the coordinator, or the two hosts one after the other, is not a fallback.
 
-Give each host agent, in its brief: the target revision, its confirmed alias, that consent and both aliases are already settled so it asks no gate again, the user's constraints for this invocation, the documented checks below, and the progress duties in step 2. A host agent that reports blocked leaves the other running; the coordinator records that host as `pending` with the reason.
+Give each host agent, in its brief: the target revision, its confirmed alias, that consent and both aliases are already settled so it asks no gate again, the user's constraints for this invocation, the documented checks below, the progress duties in step 3, and the [image cleanup](#image-cleanup) rules. A host agent that reports blocked leaves the other running; the coordinator records that host as `pending` with the reason.
 
 Each host agent runs the live checks the repository documents in [docs/images.md](../../../docs/images.md) under "Live image tests", with their own opt-in variable, on its host over its alias. That section is the default workflow; ordinary read-only diagnostics beside it need no further consent.
 
 1. Confirm the host has a checkout at the target revision and record the SHA it reports. A missing revision is routine preparation inside the Yes: fetch it into a separate temporary checkout on the host and leave the host's existing work untouched. When the host cannot reach the revision, or access fails, report the host as `pending` with the reason; pushing source to a remote or changing the host's configuration is outside this authorization.
-2. Start the documented live suite in verbose mode as a background process with its own output buffer and a handle you can poll, never as one blocking foreground call. Send the coordinator an event at suite start, at every change of test or operation, and at least once a minute while an operation is still running. Name the test the suite is in and the image or sandbox it is working on, and classify the observed operation from the last line the suite printed, or from read-only evidence such as the host's existing logs or process metadata: **image build** (`up` of a missing image), **sandbox start or restart** (`up` of an existing image, `stop`, `start`), **SSH server check**, **smoke** (`shell`), **rebuild** (`build`), or **cleanup** (`remove`). A silent buffer keeps its last observed operation: send the last line and its age, and never read a pass, a finished check, or a next operation into silence; the suite's own `--- PASS` or `--- FAIL` line is the only result.
-3. When a preflight or check fails, report the suite's own failure text as the finding. A repair the user has already authorized proceeds; a Podman, WSL, or SSH configuration change outside that authorization is the user's decision: propose it through the coordinator and wait for the answer.
-4. Return the suite's result line, the commit it ran on, its duration, and the cleanup state (what the suite removed and anything it left behind).
+2. Before any build, record the **before** measurement and the **before** inventory defined under [Image cleanup](#image-cleanup). Judge headroom against the footprint the suite adds: it rebuilds the base image and every toolchain set without cache, so compare free space with the growth a documented or recorded run on that host showed. When no such footprint exists, report the free space and that no estimate is available, and continue. When the headroom is insufficient, first remove the images that an earlier run's record marks eligible under those rules; when it is still insufficient, or the host's own numbers cannot be read, report the host as `pending (<free> free; <needed> expected, or no reliable estimate>)` without starting the suite.
+3. Start the documented live suite in verbose mode as a background process with its own output buffer and a handle you can poll, never as one blocking foreground call. Send the coordinator an event at suite start, at every change of test or operation, and at least once a minute while an operation is still running. Name the test the suite is in and the image or sandbox it is working on, and classify the observed operation from the last line the suite printed, or from read-only evidence such as the host's existing logs or process metadata: **image build** (`up` of a missing image), **sandbox start or restart** (`up` of an existing image, `stop`, `start`), **SSH server check**, **smoke** (`shell`), **rebuild** (`build`), or **cleanup** (`remove`). A silent buffer keeps its last observed operation: send the last line and its age, and never read a pass, a finished check, or a next operation into silence; the suite's own `--- PASS` or `--- FAIL` line is the only result.
+4. When a preflight or check fails, report the suite's own failure text as the finding. A repair the user has already authorized proceeds; a Podman, WSL, or SSH configuration change outside that authorization is the user's decision: propose it through the coordinator and wait for the answer.
+5. After the suite has returned, pass or fail, and its own cleanup of sandboxes, volumes, and group state has run, remove the run's unused images as [Image cleanup](#image-cleanup) describes, then record the **after** measurement.
+6. Return the suite's result line, the commit it ran on, its duration, the before and after measurements, and the cleanup state: what the suite removed, which image IDs this step removed, which it skipped and why, and anything left behind or unverified.
 
 The coordinator turns the host agents' events into one status report, at least once a minute while either suite runs and at every event, in exactly this layout. The timestamp is the current UTC clock when the report is written, never a time copied from a log line. The Windows and Linux lines stay adjacent, each one compact line that names the alias, the test, the image or sandbox, the operation, and the age of the last output; the raw log line stays out of it. One blank line separates the header, the two-host group, and the footer, and one blank line follows the footer before anything else. The Windows line ends with a backslash so Markdown keeps the two hosts on separate lines. A host whose agent has not started, is blocked, or has finished says so in place of the operation.
 
 ```markdown
 Live validation — <YYYY-MM-DD HH:MM:SS UTC>
-
-Windows: <alias>, <test> on <image or sandbox>, <operation>, last output <n>s ago\
-Linux: <alias>, <test> on <image or sandbox>, <operation>, last output <n>s ago
-
+| --- | --- |
+| Windows:<br />**<alias>** | <test> on <image or sandbox>, <operation>, last output <n>s ago<br /><disk space left> |
+| Linux:<br />**<alias>** | <test> on <image or sandbox>, <operation>, last output <n>s ago <br /><disk space left> |
 Next update: within 60 seconds
-
 ```
 
 Report in this form when both host agents have returned, then stop:
@@ -77,7 +77,22 @@ Revision: <sha>
 | --- | --- | --- |
 | Result | <suite result line> | <suite result line> |
 | Duration | <mm:ss> | <mm:ss> |
-| Cleanup | <state> | <state> |
+| Disk | <free before → after; Podman storage before → after> | <free before → after; Podman storage before → after> |
+| Cleanup | <sandboxes, volumes, state; images removed / skipped / unverified> | <sandboxes, volumes, state; images removed / skipped / unverified> |
 ```
 
-Complete when both hosts have a recorded result and cleanup state, or a recorded reason they have none.
+Complete when both hosts have a recorded result, both measurements, and a cleanup state that accounts for every image the run created, or a recorded reason they have none.
+
+## Image cleanup
+
+The suite removes its sandboxes, volumes, and group state and leaves every image it built. Images are shared across controller groups and executables: the marker label and the asset hash say which executable built an image, not who owns it, so they never make an image disposable on their own. A rebuild moves a tag to the new image and leaves the previous one untagged, still backing any sandbox created from it. Repeated no-cache rebuilds therefore fill a host; the project's Windows host has a 100 GB drive.
+
+**Measurement.** Record, as text in the host agent's report: the free space of the filesystem that holds Podman's storage (on Windows the host drive that holds the machine's virtual disk and, through the selected connection, the machine's own image filesystem), and `podman system df` for the same engine. Take it before any build and again after cleanup.
+
+**Inventory.** Enumerate every image ID with `podman images --all --no-trunc` (a tag or digest is not an ID), read each image's labels and creation time with `podman image inspect`, and enumerate every container with `podman ps --all`, then read the image ID each one references from `podman container inspect` (the `ps` image column may show a name or tag), for the whole engine, not one group. Take it before any build; the asset hash of the executable the run compiles identifies that run's images afterwards.
+
+**Eligible for removal.** An image is eligible when all of these hold: it is absent from the before inventory; it carries this run's asset hash, or is an untagged image that this run's rebuild superseded; no container on the engine, in any group, references it after the suite's own cleanup; and the user has not asked to keep it. An image present before the run, shared by other sandboxes, or whose provenance the inventory cannot show stays, named as skipped. A query that fails leaves the image unverified, never absent.
+
+**Removal.** Remove eligible images one by one by ID, toolchain images before the base image they depend on, with `podman rmi <id>` and no `--force`; on Windows through the selected `--connection`. Never run `podman image prune`, `podman system prune`, `podman system reset`, or any host-wide removal, and never delete, compact, or reconfigure a machine, its virtual disk, or WSL: those are host configuration changes with their own authorization. Keep the host's logs, checkouts, and evidence files. When the engine is unreachable, report `cleanup: pending (engine unreachable: <message>)` and stop.
+
+**Reporting.** List removed IDs with their tags and sizes, skipped IDs with the reason, unverified items with the failing query, and the before and after measurements. A retention the user asked for is honoured and its disk cost reported. This cleanup is part of the authorized invocation and opens no new checkpoint.

@@ -14,7 +14,7 @@ Use the default seven-label vocabulary for GitHub Issues in this repo. Before ap
 
 ### Live validation
 
-Before validating a change on a live Windows or Linux host, whether the user asks for live validation or the work needs live proof, use `.agents/skills/live-validation/SKILL.md`; it opens with the project's Yes/No start checkpoint.
+Before validating a change on a live Windows or Linux host, whether the user asks for live validation or the work needs live proof, use `.agents/skills/live-validation/SKILL.md`; it opens with the project's Yes/No start checkpoint. Its "Image cleanup" section holds the rules for removing the images a live run leaves.
 
 ### Domain docs
 
