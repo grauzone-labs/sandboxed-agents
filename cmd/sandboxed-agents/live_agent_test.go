@@ -42,7 +42,7 @@ func (suite *liveSuite) agent(t *testing.T) {
 	}
 	t.Logf("session terminal output: %q", terminal.Output())
 	if !finished {
-		t.Fatal("agents session did not return after the detach keys")
+		t.Fatal("agents session did not return after the detach keys, or something kept its terminal open")
 	}
 	if exit != 0 {
 		t.Fatalf("agents session exited with status %d after detaching", exit)
