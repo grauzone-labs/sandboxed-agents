@@ -23,12 +23,12 @@ func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
 	if objects.container.State.Running == nil {
 		return fmt.Errorf("sandbox %q: running state is missing", request.Name)
 	}
-	set, err := sandboxToolchains(objects.container)
-	if err != nil {
-		return err
-	}
-	if request.Options["with"] != "" {
-		set = request.Toolchains
+	set := request.Toolchains
+	if request.Options["with"] == "" {
+		set, err = sandboxToolchains(objects.container)
+		if err != nil {
+			return err
+		}
 	}
 	hash, err := image.Hash(image.Context())
 	if err != nil {
