@@ -20,32 +20,56 @@ func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
 	if objects.backup {
 		return cleanupUpdate(request, p, objects, output)
 	}
+	plan, err := prepareSandboxUpdate(request, p, objects)
+	if err != nil {
+		return err
+	}
+	if plan == nil {
+		fmt.Fprintf(output, "sandbox %s already up to date\n", request.Name)
+		return nil
+	}
+	tag, err := ensureImage(p, plan.set, output)
+	if err != nil {
+		return err
+	}
+	return replaceSandbox(request, p, objects, plan.set, tag, output)
+}
+
+type sandboxUpdate struct {
+	request Request
+	objects sandboxObjects
+	set     []string
+}
+
+// prepareSandboxUpdate resolves the desired image from facts read under the lifecycle lock.
+func prepareSandboxUpdate(request Request, p podmanTarget, objects sandboxObjects) (*sandboxUpdate, error) {
 	if objects.container.State.Running == nil {
-		return fmt.Errorf("sandbox %q: running state is missing", request.Name)
+		return nil, fmt.Errorf("sandbox %q: running state is missing", request.Name)
 	}
 	set := request.Toolchains
+	var err error
 	if request.Options["with"] == "" {
 		set, err = sandboxToolchains(objects.container)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	hash, err := image.Hash(image.Context())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	outdated, err := imageOutdated(p, objects.container.Image, set, hash)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !outdated {
-		fmt.Fprintf(output, "sandbox %s already up to date\n", request.Name)
-		return nil
+		return nil, nil
 	}
-	tag, err := ensureImage(p, set, output)
-	if err != nil {
-		return err
-	}
+	return &sandboxUpdate{request: request, objects: objects, set: set}, nil
+}
+
+// replaceSandbox replaces one prepared sandbox and restores it when replacement fails.
+func replaceSandbox(request Request, p podmanTarget, objects sandboxObjects, set []string, tag string, output io.Writer) error {
 	args, port, err := replacementArgs(request, objects, set, tag)
 	if err != nil {
 		return err
@@ -113,44 +137,6 @@ func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(output, "sandbox %s updated\n", request.Name)
-	return nil
-}
-
-// cleanupUpdate completes only the ready-replacement case; other recovery retains the backup.
-func cleanupUpdate(request Request, p podmanTarget, objects sandboxObjects, output io.Writer) error {
-	deferred := func(reason string) error {
-		return fmt.Errorf("sandbox %q: %s; backup retained; general recovery is not delivered yet", request.Name, reason)
-	}
-	if !objects.exists || objects.container.State.Running == nil || objects.backupContainer.State.Running == nil {
-		return deferred("replacement or running state is missing")
-	}
-	if *objects.backupContainer.State.Running {
-		return deferred("backup is still running")
-	}
-	previous := objects.container.Config.Labels[updateWasRunningLabel]
-	if previous != "true" && previous != "false" {
-		return deferred("previous running state is unknown")
-	}
-	port, err := parseSSHPort(objects.container.Config.Labels[SSHPortLabel])
-	if err != nil {
-		return deferred("recorded SSH port is missing or invalid")
-	}
-	names := DerivedNames(request.Group, request.Name)
-	if _, err := recordedWorkspaceMount(names, objects); err != nil {
-		return deferred(fmt.Sprintf("replacement storage is missing or unsupported: %v", err))
-	}
-	if !*objects.container.State.Running {
-		if _, err := p.query("start", names.Container); err != nil {
-			return deferred(fmt.Sprintf("could not start replacement: %v", err))
-		}
-	}
-	if err := readySandbox(p, names.Container, port); err != nil {
-		return deferred(fmt.Sprintf("replacement readiness was not established (it may still be running): %v", err))
-	}
-	if err := finishUpdate(request, p, previous == "true"); err != nil {
-		return err
-	}
-	fmt.Fprintf(output, "sandbox %s interrupted update cleaned up\n", request.Name)
 	return nil
 }
 

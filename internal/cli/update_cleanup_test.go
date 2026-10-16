@@ -99,27 +99,18 @@ func TestUpdateCleanupRestoresRecordedState(t *testing.T) {
 	}
 }
 
-// TestUpdateCleanupRetainsUnsafeBackup proves missing state, running backups and owner conflicts prevent readiness, builds and mutations through CLI inspection fixtures.
+// TestUpdateCleanupRetainsUnsafeBackup proves missing running state and owner conflicts prevent readiness, builds and mutations through CLI inspection fixtures.
 func TestUpdateCleanupRetainsUnsafeBackup(t *testing.T) {
-	for _, state := range []string{"absent replacement", "missing replacement state", "missing backup state", "running backup", "missing prior state", "invalid prior state", "invalid port", "foreign replacement", "foreign backup", "foreign volume"} {
+	for _, state := range []string{"missing replacement state", "missing backup state", "invalid port", "foreign replacement", "foreign backup", "foreign volume"} {
 		t.Run(state, func(t *testing.T) {
 			f := cleanupFixture(t, true, false)
 			key := "container inspect sandboxed-agents.default.demo"
 			old, replacement := "", ""
 			switch state {
-			case "absent replacement":
-				f.responses["container exists sandboxed-agents.default.demo"] = response{Exit: 1}
 			case "missing replacement state":
 				old, replacement = `"Running":false`, `"Unknown":false`
 			case "missing backup state":
 				f.responses["container inspect sandboxed-agents-backup.default.demo"] = response{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default"}}}]`}
-			case "running backup":
-				key = "container inspect sandboxed-agents-backup.default.demo"
-				old, replacement = `"Running":false`, `"Running":true`
-			case "missing prior state":
-				old, replacement = `"io.sandboxed-agents.update-was-running":"true",`, ""
-			case "invalid prior state":
-				old, replacement = `"io.sandboxed-agents.update-was-running":"true"`, `"io.sandboxed-agents.update-was-running":"unknown"`
 			case "invalid port":
 				old, replacement = `"io.sandboxed-agents.port":"2222"`, `"io.sandboxed-agents.port":"invalid"`
 			case "foreign replacement":
@@ -157,9 +148,9 @@ func TestUpdateCleanupRetainsUnsafeBackup(t *testing.T) {
 	}
 }
 
-// TestUpdateCleanupFailuresRemainRetryable proves start and backup removal failures retain the backup and final-stop failures report a committed update through the executable CLI seam.
+// TestUpdateCleanupFailuresRemainRetryable proves backup removal failures retain the backup and final-stop failures report a committed update through the executable CLI seam.
 func TestUpdateCleanupFailuresRemainRetryable(t *testing.T) {
-	for _, stage := range []string{"start", "rm", "stop"} {
+	for _, stage := range []string{"rm", "stop"} {
 		t.Run(stage, func(t *testing.T) {
 			f := cleanupFixture(t, false, false)
 			failed := stage + " sandboxed-agents.default.demo"
@@ -202,32 +193,19 @@ func TestUpdateCleanupFailuresRemainRetryable(t *testing.T) {
 	}
 }
 
-// TestUpdateCleanupReadinessFailureRetainsBackup proves an unusable replacement never causes backup removal, rollback or volume mutation through the executable CLI and failed SSH probe seam.
-func TestUpdateCleanupReadinessFailureRetainsBackup(t *testing.T) {
+// TestUpdateCleanupReadinessFailureRestoresBackup proves an unusable replacement is removed and the previously stopped sandbox is restored without volume mutation through the executable CLI and failed SSH probe seam.
+func TestUpdateCleanupReadinessFailureRestoresBackup(t *testing.T) {
 	f := cleanupFixture(t, false, false)
+	f.responses["rm --force sandboxed-agents.default.demo"] = response{}
+	f.responses["rename sandboxed-agents-backup.default.demo sandboxed-agents.default.demo"] = response{}
 	t.Setenv("TEST_SSH_KNOWN_HOSTS", "invalid\n")
 	status, output, calls := runUpExecutable(t, f, "update", "demo")
-	if status != 1 || !strings.Contains(output, "readiness wait failed") || !strings.Contains(output, "backup retained") {
+	if status != 1 || !strings.Contains(output, "readiness wait failed") || !strings.Contains(output, "restored sandbox demo to its previous state") {
 		t.Fatalf("status=%d output=%s", status, output)
 	}
-	started := false
-	for _, call := range calls {
-		switch call[0] {
-		case "start":
-			if started || strings.Join(call, " ") != "start sandboxed-agents.default.demo" {
-				t.Fatalf("unsafe start: %v", calls)
-			}
-			started = true
-		case "rm", "stop", "rename", "create", "build", "image":
-			t.Fatalf("changed failed replacement or backup: %v", call)
-		case "volume":
-			if call[1] != "exists" && call[1] != "inspect" {
-				t.Fatalf("volume mutation: %v", call)
-			}
-		}
-	}
-	if !started {
-		t.Fatal("stopped replacement was not started for readiness")
+	want := []string{"start sandboxed-agents.default.demo", "rm --force sandboxed-agents.default.demo", "rename sandboxed-agents-backup.default.demo sandboxed-agents.default.demo"}
+	if got := recoveryActions(t, calls); !reflect.DeepEqual(got, want) {
+		t.Fatalf("actions=%v want=%v", got, want)
 	}
 }
 
