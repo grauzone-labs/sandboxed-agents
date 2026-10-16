@@ -7,6 +7,41 @@ import (
 	"testing"
 )
 
+// TestUpdateRecoveryRestoresUnusableReplacement proves missing running state, an invalid port, or unsupported storage restores the old sandbox without probing or starting the replacement through the executable CLI seam.
+func TestUpdateRecoveryRestoresUnusableReplacement(t *testing.T) {
+	for _, state := range []string{"missing running state", "invalid port", "unsupported storage"} {
+		t.Run(state, func(t *testing.T) {
+			f := cleanupFixture(t, true, false)
+			key := "container inspect sandboxed-agents.default.demo"
+			r := f.responses[key]
+			switch state {
+			case "missing running state":
+				r.Output = strings.Replace(r.Output, `"Running":false`, `"Running":null`, 1)
+			case "invalid port":
+				r.Output = strings.Replace(r.Output, `"io.sandboxed-agents.port":"2222"`, `"io.sandboxed-agents.port":"bad"`, 1)
+			case "unsupported storage":
+				r.Output = strings.Replace(r.Output, `"Name":"sandboxed-agents.default.demo.home"`, `"Name":"sandboxed-agents.default.other.home"`, 1)
+			}
+			f.responses[key] = r
+			f.responses["rm --force sandboxed-agents.default.demo"] = response{}
+			f.responses["rename sandboxed-agents-backup.default.demo sandboxed-agents.default.demo"] = response{}
+			status, output, calls := runUpExecutable(t, f, "update", "demo")
+			if status != 1 || !strings.Contains(output, "restored sandbox demo to its previous state") {
+				t.Fatalf("status=%d output=%s", status, output)
+			}
+			want := []string{"rm --force sandboxed-agents.default.demo", "rename sandboxed-agents-backup.default.demo sandboxed-agents.default.demo", "start sandboxed-agents.default.demo"}
+			if got := recoveryActions(t, calls); !reflect.DeepEqual(got, want) {
+				t.Fatalf("actions=%v want=%v", got, want)
+			}
+			for _, call := range calls {
+				if call[0] == "exec" {
+					t.Fatalf("probed unusable replacement: %v", call)
+				}
+			}
+		})
+	}
+}
+
 // TestUpdateRecoversWithoutReplacement proves backup-only interruptions restore the running sandbox or leave an indeterminate sandbox stopped with start guidance through the executable CLI seam.
 func TestUpdateRecoversWithoutReplacement(t *testing.T) {
 	for _, running := range []bool{false, true} {

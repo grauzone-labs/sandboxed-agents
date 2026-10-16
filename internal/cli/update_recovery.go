@@ -5,8 +5,8 @@ import (
 	"io"
 )
 
-// cleanupUpdate uses Podman alone to finish or restore an interrupted update.
-func cleanupUpdate(request Request, p podmanTarget, objects sandboxObjects, output io.Writer) error {
+// recoverUpdate uses Podman alone to finish or restore an interrupted update.
+func recoverUpdate(request Request, p podmanTarget, objects sandboxObjects, output io.Writer) error {
 	retainBackup := func(reason string) error {
 		return fmt.Errorf("sandbox %q: %s; backup retained; use Podman to inspect the objects", request.Name, reason)
 	}
@@ -45,14 +45,14 @@ func cleanupUpdate(request Request, p podmanTarget, objects sandboxObjects, outp
 		return restore(fmt.Errorf("sandbox %s: interrupted update was not completed", request.Name))
 	}
 	if objects.container.State.Running == nil {
-		return retainBackup("replacement running state is missing")
+		return restore(fmt.Errorf("sandbox %s: replacement running state is missing", request.Name))
 	}
 	port, err := parseSSHPort(objects.container.Config.Labels[SSHPortLabel])
 	if err != nil {
-		return retainBackup("recorded SSH port is missing or invalid")
+		return restore(fmt.Errorf("sandbox %s: recorded SSH port is missing or invalid", request.Name))
 	}
 	if _, err := recordedWorkspaceMount(names, objects); err != nil {
-		return retainBackup(fmt.Sprintf("replacement storage is missing or unsupported: %v", err))
+		return restore(fmt.Errorf("sandbox %s: replacement storage is missing or unsupported: %w", request.Name, err))
 	}
 	if !*objects.container.State.Running {
 		if _, err := p.query("start", names.Container); err != nil {

@@ -68,6 +68,52 @@ func TestUpdateAllContinuesAfterFailure(t *testing.T) {
 	}
 }
 
+// TestUpdateAllContinuesAfterRollback proves create and start failures restore one sandbox and rollback failures preserve its backup without preventing the next update through the executable CLI seam.
+func TestUpdateAllContinuesAfterRollback(t *testing.T) {
+	for _, stage := range []string{"create", "start", "rollback removal", "rollback rename", "rollback restart"} {
+		t.Run(stage, func(t *testing.T) {
+			f := batchUpdateFixture(t, "demo", "next")
+			f.responses["rm --force sandboxed-agents.default.demo"] = response{}
+			f.responses["rename sandboxed-agents-backup.default.demo sandboxed-agents.default.demo"] = response{}
+			f.responses["start sandboxed-agents.default.demo"] = response{Exit: 125, Output: "replacement injection", FailOnce: true}
+			want := "restored sandbox demo to its previous state"
+			switch stage {
+			case "create":
+				f.responses["create * --name sandboxed-agents.default.demo *"] = response{Exit: 125, Output: "create injection"}
+			case "rollback removal":
+				f.responses["rm --force sandboxed-agents.default.demo"] = response{Exit: 125, Output: "restore injection"}
+				want = "rollback could not remove replacement"
+			case "rollback rename":
+				f.responses["rename sandboxed-agents-backup.default.demo sandboxed-agents.default.demo"] = response{Exit: 125, Output: "restore injection"}
+				want = "rollback could not restore name"
+			case "rollback restart":
+				f.responses["start sandboxed-agents.default.demo"] = response{Exit: 125, Output: "restore injection"}
+				want = "restored sandbox demo but could not start it"
+			}
+			status, output, calls := runUpExecutable(t, f, "update", "--all")
+			if status != 1 || !strings.Contains(output, want) || !strings.Contains(output, "sandbox next updated") || !strings.Contains(output, "1 updated, 0 current, 0 volumes only, 1 not updated") {
+				t.Fatalf("status=%d output=%s calls=%v", status, output, calls)
+			}
+			removed, next := -1, -1
+			for i, call := range calls {
+				joined := strings.Join(call, " ")
+				if joined == "rm --force sandboxed-agents.default.demo" {
+					removed = i
+				}
+				if joined == "rename sandboxed-agents.default.next sandboxed-agents-backup.default.next" {
+					next = i
+				}
+				if call[0] == "volume" && call[1] != "exists" && call[1] != "inspect" && call[1] != "ls" {
+					t.Fatalf("volume mutation: %v", call)
+				}
+			}
+			if removed < 0 || next <= removed {
+				t.Fatalf("next update did not follow rollback: %v", calls)
+			}
+		})
+	}
+}
+
 // TestUpdateAllBuildsBeforeChangingSandboxes proves every required image succeeds before any replacement or session guard, and a failed build leaves every sandbox untouched through the executable CLI seam.
 func TestUpdateAllBuildsBeforeChangingSandboxes(t *testing.T) {
 	for _, fail := range []bool{false, true} {
@@ -125,7 +171,7 @@ func TestUpdateAllPassesOverVolumesAndOwnerConflicts(t *testing.T) {
 				f.responses["ps --all --format json"] = response{Output: `[{"Names":["sandboxed-agents.default.next"]}]`}
 				f.responses["volume ls --format json"] = response{Output: `[{"Name":"sandboxed-agents.default.demo.workspace"}]`}
 				f.responses["container exists sandboxed-agents.default.demo"] = response{Exit: 1}
-				wantStatus, want = 0, "1 skipped"
+				wantStatus, want = 0, "1 volumes only"
 			case "foreign container":
 				r.Output = strings.Replace(r.Output, `"io.sandboxed-agents.owner":"default"`, `"io.sandboxed-agents.owner":"foreign"`, 1)
 			case "foreign volume":

@@ -18,7 +18,7 @@ func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
 		return err
 	}
 	if objects.backup {
-		return cleanupUpdate(request, p, objects, output)
+		return recoverUpdate(request, p, objects, output)
 	}
 	plan, err := prepareSandboxUpdate(request, p, objects)
 	if err != nil {
@@ -32,7 +32,7 @@ func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return replaceSandbox(request, p, objects, plan.set, tag, output)
+	return plan.replace(p, tag, output)
 }
 
 type sandboxUpdate struct {
@@ -68,8 +68,9 @@ func prepareSandboxUpdate(request Request, p podmanTarget, objects sandboxObject
 	return &sandboxUpdate{request: request, objects: objects, set: set}, nil
 }
 
-// replaceSandbox replaces one prepared sandbox and restores it when replacement fails.
-func replaceSandbox(request Request, p podmanTarget, objects sandboxObjects, set []string, tag string, output io.Writer) error {
+// replace applies a prepared update and restores the sandbox when replacement fails.
+func (plan *sandboxUpdate) replace(p podmanTarget, tag string, output io.Writer) error {
+	request, objects, set := plan.request, plan.objects, plan.set
 	args, port, err := replacementArgs(request, objects, set, tag)
 	if err != nil {
 		return err

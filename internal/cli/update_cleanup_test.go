@@ -101,18 +101,14 @@ func TestUpdateCleanupRestoresRecordedState(t *testing.T) {
 
 // TestUpdateCleanupRetainsUnsafeBackup proves missing running state and owner conflicts prevent readiness, builds and mutations through CLI inspection fixtures.
 func TestUpdateCleanupRetainsUnsafeBackup(t *testing.T) {
-	for _, state := range []string{"missing replacement state", "missing backup state", "invalid port", "foreign replacement", "foreign backup", "foreign volume"} {
+	for _, state := range []string{"missing backup state", "foreign replacement", "foreign backup", "foreign volume"} {
 		t.Run(state, func(t *testing.T) {
 			f := cleanupFixture(t, true, false)
 			key := "container inspect sandboxed-agents.default.demo"
 			old, replacement := "", ""
 			switch state {
-			case "missing replacement state":
-				old, replacement = `"Running":false`, `"Unknown":false`
 			case "missing backup state":
 				f.responses["container inspect sandboxed-agents-backup.default.demo"] = response{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default"}}}]`}
-			case "invalid port":
-				old, replacement = `"io.sandboxed-agents.port":"2222"`, `"io.sandboxed-agents.port":"invalid"`
 			case "foreign replacement":
 				old, replacement = `"io.sandboxed-agents.owner":"default"`, `"io.sandboxed-agents.owner":"foreign"`
 			case "foreign backup":
@@ -209,7 +205,7 @@ func TestUpdateCleanupReadinessFailureRestoresBackup(t *testing.T) {
 	}
 }
 
-// TestUpdateCleanupRejectsWrongOwnedVolume proves cleanup retains the backup without starting or probing a replacement attached to another owned sandbox's home volume through the executable CLI and fake Podman seam.
+// TestUpdateCleanupRejectsWrongOwnedVolume proves recovery restores the old sandbox without starting or probing a replacement attached to another sandbox's home volume through the executable CLI seam.
 func TestUpdateCleanupRejectsWrongOwnedVolume(t *testing.T) {
 	f := cleanupFixture(t, false, false)
 	key := "container inspect sandboxed-agents.default.demo"
@@ -219,26 +215,22 @@ func TestUpdateCleanupRejectsWrongOwnedVolume(t *testing.T) {
 	// All volume names, including the other sandbox's home, exist and have this group's owner.
 	f.responses["volume exists sandboxed-agents.default.other.home"] = response{}
 	f.responses["volume inspect sandboxed-agents.default.other.home"] = response{Output: `[{"Labels":{"io.sandboxed-agents.owner":"default"}}]`}
+	f.responses["rm --force sandboxed-agents.default.demo"] = response{}
+	f.responses["rename sandboxed-agents-backup.default.demo sandboxed-agents.default.demo"] = response{}
 	status, output, calls := runUpExecutable(t, f, "update", "demo")
-	if status != 1 || !strings.Contains(output, "replacement storage") || !strings.Contains(output, "backup retained") || strings.Contains(output, "owner conflict") {
+	if status != 1 || !strings.Contains(output, "replacement storage") || !strings.Contains(output, "restored sandbox demo") || strings.Contains(output, "owner conflict") {
 		t.Fatalf("status=%d output=%s", status, output)
 	}
 	if ssh := testutil.Invocations(t, f.fakes.SSHLog); len(ssh) != 0 {
 		t.Fatalf("SSH readiness attempted on wrong storage: %v", ssh)
 	}
-	for _, call := range calls {
-		switch call[0] {
-		case "start", "stop", "rm", "exec", "create", "rename", "build", "image":
-			t.Fatalf("unsafe cleanup action: %v", call)
-		case "volume":
-			if call[1] != "exists" && call[1] != "inspect" {
-				t.Fatalf("volume mutation: %v", call)
-			}
-		}
+	want := []string{"rm --force sandboxed-agents.default.demo", "rename sandboxed-agents-backup.default.demo sandboxed-agents.default.demo"}
+	if got := recoveryActions(t, calls); !reflect.DeepEqual(got, want) {
+		t.Fatalf("actions=%v want=%v", got, want)
 	}
 }
 
-// TestUpdateCleanupRejectsMalformedStorage proves wrong, missing, duplicate and extra mounts retain the backup before readiness or mutation for running and stopped replacements through CLI inspection fixtures.
+// TestUpdateCleanupRejectsMalformedStorage proves wrong, missing, duplicate and extra mounts restore the old stopped sandbox without readiness probes or volume changes through the executable CLI seam.
 func TestUpdateCleanupRejectsMalformedStorage(t *testing.T) {
 	workspace := `{"Type":"volume","Name":"sandboxed-agents.default.demo.workspace","Destination":"/workspace"}`
 	home := `{"Type":"volume","Name":"sandboxed-agents.default.demo.home","Destination":"/home/agent"}`
@@ -283,22 +275,18 @@ func TestUpdateCleanupRejectsMalformedStorage(t *testing.T) {
 				if tc.absentVolume != "" {
 					f.responses["volume exists "+tc.absentVolume] = response{Exit: 1}
 				}
+				f.responses["rm --force sandboxed-agents.default.demo"] = response{}
+				f.responses["rename sandboxed-agents-backup.default.demo sandboxed-agents.default.demo"] = response{}
 				status, output, calls := runUpExecutable(t, f, "update", "demo")
-				if status != 1 || !strings.Contains(output, "replacement storage") || !strings.Contains(output, "backup retained") {
+				if status != 1 || !strings.Contains(output, "replacement storage") || !strings.Contains(output, "restored sandbox demo") {
 					t.Fatalf("status=%d output=%s", status, output)
 				}
 				if ssh := testutil.Invocations(t, f.fakes.SSHLog); len(ssh) != 0 {
 					t.Fatalf("SSH readiness attempted on malformed storage: %v", ssh)
 				}
-				for _, call := range calls {
-					switch call[0] {
-					case "start", "stop", "rm", "exec", "create", "rename", "build", "image":
-						t.Fatalf("unsafe cleanup action: %v", call)
-					case "volume":
-						if call[1] != "exists" && call[1] != "inspect" {
-							t.Fatalf("volume mutation: %v", call)
-						}
-					}
+				want := []string{"rm --force sandboxed-agents.default.demo", "rename sandboxed-agents-backup.default.demo sandboxed-agents.default.demo"}
+				if got := recoveryActions(t, calls); !reflect.DeepEqual(got, want) {
+					t.Fatalf("actions=%v want=%v", got, want)
 				}
 			})
 		}

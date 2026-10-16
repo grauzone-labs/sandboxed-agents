@@ -11,13 +11,13 @@ func updateAllSandboxes(request Request, p podmanTarget, stateRoot string, outpu
 	if err != nil {
 		return err
 	}
-	updated, current, skipped, failed := 0, 0, 0, 0
+	updated, current, volumesOnly, failed := 0, 0, 0, 0
 	fail := func(name string, err error) {
 		fmt.Fprintf(output, "sandbox %s not updated: %v\n", name, err)
 		failed++
 	}
 	report := func() error {
-		fmt.Fprintf(output, "%d updated, %d current, %d skipped, %d not updated\n", updated, current, skipped, failed)
+		fmt.Fprintf(output, "%d updated, %d current, %d volumes only, %d not updated\n", updated, current, volumesOnly, failed)
 		if failed > 0 {
 			return fmt.Errorf("update --all: %d sandbox(es) not updated", failed)
 		}
@@ -44,7 +44,7 @@ func updateAllSandboxes(request Request, p podmanTarget, stateRoot string, outpu
 		if !objects.exists && !objects.backup {
 			if len(objects.volumes) > 0 {
 				fmt.Fprintf(output, "sandbox %s skipped: only volumes remain; use up %s to adopt them\n", name, name)
-				skipped++
+				volumesOnly++
 			} else {
 				fail(name, fmt.Errorf("sandbox %q does not exist in this controller group", name))
 			}
@@ -83,9 +83,9 @@ func updateAllSandboxes(request Request, p podmanTarget, stateRoot string, outpu
 	}
 	for _, plan := range plans {
 		if plan.objects.backup {
-			err = cleanupUpdate(plan.request, p, plan.objects, output)
+			err = recoverUpdate(plan.request, p, plan.objects, output)
 		} else {
-			err = replaceSandbox(plan.request, p, plan.objects, plan.set, tags[toolchainSet(plan.set)], output)
+			err = plan.replace(p, tags[toolchainSet(plan.set)], output)
 		}
 		if err != nil {
 			fail(plan.request.Name, err)
