@@ -43,7 +43,7 @@ func writeOverlay(directory string) error {
 		return err
 	}
 	// Keep the generated manager out of the checkout. Both host platforms embed these exact Linux bytes.
-	manager := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-buildid=", "-o", filepath.Join(contextDirectory, "base", "manager.bin"), "./cmd/sandboxed-agents-manager")
+	manager := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w -buildid=", "-o", filepath.Join(contextDirectory, "base", "manager.bin"), "./cmd/sandboxed-agents-manager")
 	manager.Dir = root
 	manager.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "GOAMD64=v1", "GOTOOLCHAIN=local", "GOFLAGS=", "GOEXPERIMENT=", "GOWORK=off", "GOENV=off", "GOFIPS140=off")
 	if output, err := manager.CombinedOutput(); err != nil {

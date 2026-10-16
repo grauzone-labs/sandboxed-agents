@@ -77,7 +77,7 @@ for target in linux windows; do
     if [[ $target == windows ]]; then suffix=.exe; fi
     GOOS=$target GOARCH=amd64 go build -overlay "$overlay_directory/overlay.json" \
         -trimpath -buildvcs=false \
-        -ldflags "-buildid= -X $version_symbol=$version" \
+        -ldflags "-s -w -buildid= -X $version_symbol=$version" \
         -o "$output/sandboxed-agents-$target-amd64$suffix" ./cmd/sandboxed-agents
 done
 
