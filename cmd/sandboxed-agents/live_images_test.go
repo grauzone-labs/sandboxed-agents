@@ -82,7 +82,7 @@ func liveImageCoverage(t *testing.T, suite *liveSuite) {
 	// image, but must not renew an existing image. All five now exist.
 	output := host.mustCLI(t, "", "build")
 	suite.imagesRan = true
-	for _, fragment := range []string{"keep", "image", "update", "list"} {
+	for _, fragment := range []string{"keep", "image", "update", "list", "outdated"} {
 		if !strings.Contains(strings.ToLower(output), fragment) {
 			t.Fatalf("build omitted %q from its keep-images/update/list guidance:\n%s", fragment, output)
 		}
@@ -122,6 +122,7 @@ func liveImageCoverage(t *testing.T, suite *liveSuite) {
 		host.mustCLI(t, "", "remove", "image-"+set, "--volumes")
 		host.assertNoSandboxObjects(t, "image-"+set)
 	}
+	host.assertNoGroupObjects(t)
 	t.Logf("image coverage complete on %s: base and four toolchains, one build; controller group %s", runtime.GOOS, host.group)
 }
 
@@ -460,26 +461,31 @@ func (host liveHost) assertNoSandboxObjects(t *testing.T, name string) {
 // group holds no container, backup container, or volume at all.
 func (host liveHost) assertNoGroupObjectsOnCleanup(t *testing.T) {
 	t.Helper()
-	t.Cleanup(func() {
-		var leftovers []string
-		for _, query := range [][]string{{"ps", "--all", "--format", "{{.Names}}"}, {"volume", "ls", "--format", "{{.Name}}"}} {
-			output, err := host.podman(query...)
-			if err != nil {
-				t.Errorf("inventory of the controller group's objects: podman %v: %v\n%s", query, err, output)
-				return
-			}
-			for _, name := range strings.Fields(output) {
-				for _, prefix := range []string{"sandboxed-agents." + host.group + ".", "sandboxed-agents-backup." + host.group + "."} {
-					if strings.HasPrefix(name, prefix) {
-						leftovers = append(leftovers, name)
-					}
+	t.Cleanup(func() { host.assertNoGroupObjects(t) })
+}
+
+// assertNoGroupObjects checks with Podman that the controller group holds no
+// container, backup container, or volume.
+func (host liveHost) assertNoGroupObjects(t *testing.T) {
+	t.Helper()
+	var leftovers []string
+	for _, query := range [][]string{{"ps", "--all", "--format", "{{.Names}}"}, {"volume", "ls", "--format", "{{.Name}}"}} {
+		output, err := host.podman(query...)
+		if err != nil {
+			t.Errorf("inventory of the controller group's objects: podman %v: %v\n%s", query, err, output)
+			return
+		}
+		for _, name := range strings.Fields(output) {
+			for _, prefix := range []string{"sandboxed-agents." + host.group + ".", "sandboxed-agents-backup." + host.group + "."} {
+				if strings.HasPrefix(name, prefix) {
+					leftovers = append(leftovers, name)
 				}
 			}
 		}
-		if len(leftovers) != 0 {
-			t.Errorf("the live suite left objects of controller group %s behind: %v", host.group, leftovers)
-		}
-	})
+	}
+	if len(leftovers) != 0 {
+		t.Errorf("objects of controller group %s remain: %v", host.group, leftovers)
+	}
 }
 
 // assertListed checks the sandbox's state in list, or its absence when state is empty.

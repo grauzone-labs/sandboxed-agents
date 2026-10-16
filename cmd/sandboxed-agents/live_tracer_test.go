@@ -1,0 +1,241 @@
+package main_test
+
+import (
+	"archive/tar"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/grauzone-labs/sandboxed-agents/image"
+	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
+	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
+)
+
+const (
+	tracerGroup      = "live-offline-tracer"
+	tracerPort       = "2300"
+	tracerHostKey    = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB"
+	tracerAuthorized = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+)
+
+var tracerAssetHash = strings.Repeat("a", 64)
+
+// tracerImageID names a deterministic image ID per toolchain set and generation.
+func tracerImageID(set string, generation int) string {
+	seed := fmt.Sprintf("%x", set+"-"+strconv.Itoa(generation))
+	return "sha256:" + strings.Repeat(seed, 64/len(seed)+1)[:64]
+}
+
+// tracerContainer renders Podman's inspect answer for a running sandbox on the given image.
+func tracerContainer(set string, generation int) string {
+	tag := image.Tag(tracerAssetHash, nil)
+	if set != "none" {
+		tag = image.Tag(tracerAssetHash, []string{set})
+	}
+	record := map[string]any{
+		"Image": tracerImageID(set, generation),
+		"State": map[string]any{"Running": true},
+		"Config": map[string]any{"Image": tag, "User": "0:0", "Labels": map[string]string{
+			cli.OwnerLabel: tracerGroup, cli.SSHPortLabel: tracerPort, cli.ToolchainsLabel: set,
+		}},
+		"HostConfig": map[string]any{"PortBindings": map[string]any{"22/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": tracerPort}}}},
+	}
+	data, _ := json.Marshal([]any{record})
+	return string(data)
+}
+
+// tracerImage renders Podman's image inspect answer with the suite's labels and shared base layers.
+func tracerImage(set string, generation int) string {
+	labels := map[string]string{"io.sandboxed-agents.image": "sandboxed-agents", "io.sandboxed-agents.asset-sha256": tracerAssetHash, "io.sandboxed-agents.toolchains": set}
+	layers := []string{"sha256:base-layer-" + strconv.Itoa(generation)}
+	if set != "none" {
+		labels["io.sandboxed-agents.base-image"] = tracerImageID("none", generation)
+		layers = append(layers, "sha256:"+set+"-layer-"+strconv.Itoa(generation))
+	}
+	data, _ := json.Marshal([]any{map[string]any{"Id": tracerImageID(set, generation), "Config": map[string]any{"Labels": labels}, "RootFS": map[string]any{"Layers": layers}}})
+	return string(data)
+}
+
+// tracerArchive renders a docker-archive with one layer that holds no SSH host key.
+func tracerArchive(t *testing.T) string {
+	t.Helper()
+	var layer bytes.Buffer
+	inner := tar.NewWriter(&layer)
+	content := []byte("live tracer\n")
+	if err := inner.WriteHeader(&tar.Header{Name: "etc/motd", Mode: 0644, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	inner.Write(content)
+	inner.Close()
+	var archive bytes.Buffer
+	outer := tar.NewWriter(&archive)
+	if err := outer.WriteHeader(&tar.Header{Name: "layer.tar", Mode: 0644, Size: int64(layer.Len()), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	outer.Write(layer.Bytes())
+	outer.Close()
+	return archive.String()
+}
+
+// tracerListing renders list output with one row per sandbox and state.
+func tracerListing(rows ...string) string {
+	return "NAME\tSTATE\tSSH PORT\tWORKSPACE\tTOOLCHAINS\tAGENTS\tVOLUMES\tPROBLEM\n" + strings.Join(rows, "")
+}
+
+// TestLiveSuiteTracesEveryCaseAgainstFakes proves the whole live suite runs its preflight, lifecycle, update, agent, and selected image cases in order against a scripted executable, fake Podman, and fake ssh, writes a passing record whose image fields follow the selection, calls build exactly once only with the selection, and removes every sandbox it created, through the nested test process on a Linux pseudo-terminal.
+func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the tracer's detach keys need the Linux raw pseudo-terminal; Windows runs the terminal check alone")
+	}
+	if os.Getenv(nestedGuardEnv) == strconv.Itoa(os.Getppid()) {
+		t.Skip("nested offline guard; the outer suite runs the tracer")
+	}
+	sets := []string{"none", "dotnet", "playwright", "azure", "native"}
+	for _, selected := range []bool{false, true} {
+		t.Run("images-selected-"+strconv.FormatBool(selected), func(t *testing.T) {
+			fakes := testutil.Install(t, fakeExecutable)
+			data, err := os.ReadFile(fakeExecutable)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The scripted executable lives outside the fake PATH directory, which
+			// also serves as the host state root of the nested run.
+			scripted := filepath.Join(t.TempDir(), "sandboxed-agents")
+			if err := os.WriteFile(scripted, data, 0700); err != nil {
+				t.Fatal(err)
+			}
+			running := func(name, set string) string {
+				return name + "\trunning\t" + tracerPort + "\tvolume\t" + set + "\t-\t3\t-\n"
+			}
+			var outdated []string
+			for _, set := range sets[1:] {
+				outdated = append(outdated, "image-"+set+"\trunning\t"+tracerPort+"\tvolume\t"+set+"\t-\t3\toutdated; use update image-"+set+"\n")
+			}
+			executableResponses := map[string]lifecycleResponse{
+				"check":   {},
+				"version": {Output: "sandboxed-agents development\nasset-sha256 " + tracerAssetHash + "\n"},
+				"list": {Sequence: []lifecycleResponse{
+					{Output: tracerListing(running("live-lifecycle", "none"))}, {Output: tracerListing("live-lifecycle\tstopped\t" + tracerPort + "\tvolume\tnone\t-\t3\t-\n")},
+					{Output: tracerListing(running("live-lifecycle", "none"))}, {Output: tracerListing()},
+					{Output: tracerListing(running("live-update", "none"))}, {Output: tracerListing(running("live-update", "none"))},
+					{Output: tracerListing(outdated...)},
+				}},
+				"up live-lifecycle": {}, "check live-lifecycle": {}, "stop live-lifecycle": {}, "start live-lifecycle": {},
+				"stop image-none": {}, "start image-none": {},
+				"up live-update --with native":             {},
+				"update live-update --with none":           {Output: "sandbox live-update updated\n"},
+				"update live-update --with native --force": {Exit: 1, Output: "readiness wait failed: no SSH key exchange; restored sandbox live-update to its previous state\n"},
+				"check live-update":                        {},
+				"shell live-update":                        {Output: tracerAuthorized + "\n"},
+				"up live-agent":                            {},
+				"agents enable live-agent opencode":        {},
+				"agents status live-agent opencode": {Sequence: []lifecycleResponse{
+					{Output: "opencode: enabled; version 1.2.3; pin none; session false; signed in unknown\n"},
+					{Output: "opencode: enabled; version 1.2.3; pin none; session true; signed in unknown\n"},
+					{Output: "opencode: enabled; version 1.2.3; pin none; session false; signed in unknown\n"},
+					{Output: "opencode: not enabled\n"},
+				}},
+				"agents session live-agent opencode":        {Output: "opencode session screen\n", ExitOnInput: "\x02d"},
+				"agents session live-agent opencode --stop": {Output: "stopped session opencode\n"},
+				"agents disable live-agent opencode":        {},
+				"build":                                     {Output: "built image " + image.Tag(tracerAssetHash, nil) + "\nexisting sandboxes keep their image until update; list marks them as outdated\n"},
+			}
+			podmanResponses := map[string]lifecycleResponse{
+				"* exists *":                        {Exit: 1},
+				"exec --user=0:0 * ssh-host-key":    {Output: tracerHostKey + "\n"},
+				"exec --user=0:0 * ssh-authorize *": {},
+				"exec --user=0:0 * sh -c cat /proc/1/comm; cat /proc/1/status":                   {Output: "sshd\nName:\tsshd\nUid:\t0\t0\t0\t0\n"},
+				"ps --all --format {{.Names}}":                                                   {},
+				"volume ls --format {{.Name}}":                                                   {},
+				"container inspect " + cli.DerivedNames(tracerGroup, "live-lifecycle").Container: {Output: tracerContainer("none", 1)},
+				"container inspect " + cli.DerivedNames(tracerGroup, "live-update").Container: {Sequence: []lifecycleResponse{
+					{Output: tracerContainer("native", 1)}, {Output: tracerContainer("none", 1)}, {Output: tracerContainer("none", 1)},
+				}},
+				"image save --format docker-archive " + image.Tag(tracerAssetHash, nil): {Output: tracerArchive(t)},
+			}
+			for _, name := range []string{"live-lifecycle", "live-update", "live-agent"} {
+				executableResponses["remove "+name+" --volumes"] = lifecycleResponse{}
+				executableResponses["remove "+name+" --volumes --force"] = lifecycleResponse{}
+			}
+			for _, set := range sets {
+				executableResponses["up image-"+set+" --with "+set] = lifecycleResponse{}
+				executableResponses["shell image-"+set] = lifecycleResponse{}
+				executableResponses["remove image-"+set+" --volumes"] = lifecycleResponse{}
+				executableResponses["remove image-"+set+" --volumes --force"] = lifecycleResponse{}
+				podmanResponses["container inspect "+cli.DerivedNames(tracerGroup, "image-"+set).Container] = lifecycleResponse{Output: tracerContainer(set, 1)}
+				tag := image.Tag(tracerAssetHash, nil)
+				if set != "none" {
+					tag = image.Tag(tracerAssetHash, []string{set})
+				}
+				podmanResponses["image inspect "+tag] = lifecycleResponse{Sequence: []lifecycleResponse{{Output: tracerImage(set, 1)}, {Output: tracerImage(set, 2)}}}
+			}
+			executableScript, err := json.Marshal(executableResponses)
+			if err != nil {
+				t.Fatal(err)
+			}
+			podmanScript, err := json.Marshal(podmanResponses)
+			if err != nil {
+				t.Fatal(err)
+			}
+			records := t.TempDir()
+			executableLog := filepath.Join(fakes.Dir, "sandboxed-agents.jsonl")
+			output, err := liveSuiteChild(t, fakes, map[string]string{
+				"SANDBOXED_AGENTS_GROUP": tracerGroup, liveRecordDirEnv: records, liveImagesEnv: map[bool]string{false: "", true: "1"}[selected],
+				"TEST_SANDBOXED_AGENTS_EXECUTABLE": scripted, livePreparedExecutableEnv: scripted,
+				"TEST_SANDBOXED_AGENTS_LOG": executableLog, "TEST_SANDBOXED_AGENTS_RESPONSES": string(executableScript),
+				"TEST_PODMAN_RESPONSES": string(podmanScript),
+				"TEST_SSH_OUTPUT":       "debug1: SSH2_MSG_NEWKEYS received\n", "TEST_SSH_EXIT": "255",
+				"TEST_SSH_KNOWN_HOSTS": "[127.0.0.1]:" + tracerPort + " " + tracerHostKey + "\n",
+			})
+			if err != nil || !strings.Contains(output, "--- PASS: TestLiveSuite") {
+				t.Fatalf("traced suite: %v\n%s", err, output)
+			}
+			data, err = os.ReadFile(filepath.Join(records, liveRecordFilename(t)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var record struct {
+				Result                string `json:"result"`
+				ImagePartSelected     bool   `json:"image_part_selected"`
+				ImagePartRan          bool   `json:"image_part_ran"`
+				ImageCoverageComplete bool   `json:"image_coverage_complete"`
+				Checks                []struct{ Name, Result string }
+			}
+			if err := json.Unmarshal(data, &record); err != nil {
+				t.Fatal(err)
+			}
+			images := map[bool]string{false: "not-run", true: "pass"}[selected]
+			wantChecks := []struct{ Name, Result string }{{"preflight", "pass"}, {"lifecycle", "pass"}, {"update", "pass"}, {"agent", "pass"}, {"images", images}}
+			if record.Result != "pass" || record.ImagePartSelected != selected || record.ImagePartRan != selected || record.ImageCoverageComplete != selected || !slices.Equal(record.Checks, wantChecks) {
+				t.Fatalf("record=%s; want pass with image fields %v and checks %v", data, selected, wantChecks)
+			}
+			builds, created := 0, map[string]bool{}
+			for _, call := range testutil.Invocations(t, executableLog) {
+				if slices.Equal(call, []string{"build"}) {
+					builds++
+				}
+				if len(call) >= 2 && call[0] == "up" {
+					created[call[1]] = true
+				}
+				if len(call) == 3 && call[0] == "remove" && call[2] == "--volumes" {
+					delete(created, call[1])
+				}
+			}
+			if builds != map[bool]int{false: 0, true: 1}[selected] || len(created) != 0 {
+				t.Fatalf("builds=%d sandboxes without a remove=%v; want %d builds and none left", builds, created, map[bool]int{false: 0, true: 1}[selected])
+			}
+			for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
+				if slices.Contains(call, "build") || slices.Contains(call, "create") || slices.Contains(call, "rm") {
+					t.Fatalf("the suite changed Podman objects directly: %v", call)
+				}
+			}
+		})
+	}
+}

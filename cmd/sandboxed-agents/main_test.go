@@ -99,6 +99,11 @@ func TestUnknownCommandIsUsageError(t *testing.T) {
 	assertNoExternalCalls(t, fakes)
 }
 
+// nestedExecutables hands the parent-built binaries to a nested test process.
+func nestedExecutables() map[string]string {
+	return map[string]string{"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable, "TEST_RELEASE_EXECUTABLE": releaseExecutable}
+}
+
 // TestOfflineSuiteDoesNotStartLiveTests proves that the whole nested offline suite skips the live test and makes no Podman or SSH calls through the fake process harness.
 // The guard checks calls recorded in its own fake logs inherited by the subprocess, so a test installing its own fakes with testutil.Install must assert them itself with assertNoExternalCalls.
 func TestOfflineSuiteDoesNotStartLiveTests(t *testing.T) {
@@ -111,10 +116,9 @@ func TestOfflineSuiteDoesNotStartLiveTests(t *testing.T) {
 		t.Fatal(err)
 	}
 	child := exec.Command(testExecutable, "-test.v", "-test.run=.")
-	child.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{
-		"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable, "TEST_RELEASE_EXECUTABLE": releaseExecutable,
+	child.Env = testutil.Env(testutil.Env(fakes.Env(os.Environ()), nestedExecutables()), map[string]string{
 		nestedGuardEnv: strconv.Itoa(os.Getpid()),
-		liveImagesEnv:  "", liveSummaryDirEnv: "",
+		liveImagesEnv:  "", liveRecordDirEnv: "",
 	})
 	output, err := child.CombinedOutput()
 	if err != nil {
@@ -596,6 +600,8 @@ type lifecycleResponse struct {
 	ReadyFile, WaitFor string
 	HoldOutputUntil    string
 	EchoLine           bool
+	ExitOnInput        string
+	Sequence           []lifecycleResponse
 }
 
 func lifecycleHarness(t *testing.T, responses map[string]lifecycleResponse) testutil.Fakes {
