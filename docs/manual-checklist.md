@@ -28,7 +28,7 @@ These steps create, update, and delete sandboxes, install software, and edit SSH
    ```
 
    The second line of each block starts a child process and must print `manual-check`; that proves the variable is exported and reaches `sandboxed-agents`. `sandboxed-agents list` must then show no sandbox you did not create for this run. If it does, or the child prints nothing, stop.
-3. **Images are shared.** An image name contains no controller group, so every group of the same executable uses the same images. Run `build` only where an item calls for it, and do not use the machine for other work that depends on `sandboxed-agents` images.
+3. **Images are shared.** An image name contains no controller group, so every group of the same executable uses the same images. Run `build` only where an item calls for it (once, in [Persistence and update](#persistence-and-update)), and do not use the machine for other work that depends on `sandboxed-agents` images.
 4. **Name sandboxes as the items do** (`chk-persist`, `chk-vs`, `chk-base`, `chk-native`, `chk-int`, and the guide's `agent01`). Each item says when its sandbox is removed with `remove NAME --volumes`. `chk-persist` lives through several items and is removed last.
 5. **Use accounts you can revoke.** Revoke what you granted only at the end, in [Final cleanup](#final-cleanup), because the earlier items need the logins to still exist.
 6. **Never write a token, one-time code, login URL, or account secret into notes or the record.** The record has no field for them, and nothing may be added.
@@ -87,11 +87,11 @@ Several items share one long-lived sandbox, `chk-persist`, so that a login done 
 
 1. [Create `chk-persist`](#the-shared-sandbox-chk-persist).
 2. The logins, all in `chk-persist`: [agent logins](#agent-logins), [GitHub](#github-login), [Azure device code](#azure-login-device-code), [Azure browser](#azure-login-browser), [Azure DevOps](#azure-devops-token).
-3. [Persistence and update](#persistence-and-update): the baseline round, then `stop` and `start`, then `update`, with the same observations each time.
+3. [Persistence and update](#persistence-and-update): the baseline round, then `stop` and `start`, then the one `build` and the `update`, with the same observations each time.
 4. [No-terminal refusals](#toolchain-requirement-and-no-terminal-refusals), which also use `chk-persist`.
 5. The independent items, each with a sandbox it removes itself: [VS Code Remote SSH](#vs-code-remote-ssh), [an interrupted update](#an-interrupted-update), the [toolchain requirement](#toolchain-requirement-and-no-terminal-refusals), the [quick guides](#quick-guides), and the [installs](#installers-issue-no-podman-call) on clean machines.
-6. [No image removal](#no-command-removes-an-image) and [release files](#release-files-and-attestations).
-7. [Final cleanup](#final-cleanup): the destructive removal of `chk-persist` and every revocation.
+6. [Release files](#release-files-and-attestations).
+7. [Final cleanup](#final-cleanup): the destructive removal of `chk-persist`, then the [image comparison](#no-command-removes-an-image), then every revocation.
 
 ## Check identifiers
 
@@ -138,13 +138,7 @@ The first `up` builds the images, which takes a while.
 
 **Every login, workflow, and observation below runs with the current executable**, the one built from the commit under test. A result observed with any other executable does not count for that commit.
 
-The [update](#persistence-and-update) needs a sandbox whose image is older than the executable. If a previous preview's executable exists, you may use it for this one `up` command only:
-
-1. Put the previous executable first on `PATH` and run the `up` command above with it.
-2. **Immediately** put the current executable back first on `PATH`, before any login, config, or agent command. In the same terminal, run `sandboxed-agents version` and check that it prints the version of the preview under test and the `asset-sha256` that the preview's build prints.
-3. Continue with the logins.
-
-If no previous executable exists, run the `up` command with the current executable; the update then uses `--with azure,native` as described there.
+The [update](#persistence-and-update) later gets an outdated image from one explicit `build`, so `chk-persist` is created with the current executable and nothing else is needed here.
 
 ### Agent logins
 
@@ -192,7 +186,7 @@ Do not run `az logout` here; the login must still exist for the persistence obse
 
 Identifier `azure-login-browser`. Follow steps 5 to 7 of [Manual Azure login check](integrations.md#manual-azure-login-check). The earlier device-code login is a valid login, so start by removing it, and keep the sandbox without an SSH setup until step 2.
 
-1. In `shell chk-persist`, run `az logout`; `az account show` must report no login. Then, with no SSH setup installed, run `sandboxed-agents integrations login chk-persist azure browser`. **Expected:** it fails, names `ssh-config chk-persist --install`, and starts no `az`.
+1. In `shell chk-persist`, run `az logout`; `az account show` must report no login. Then, with no SSH setup installed, run `sandboxed-agents integrations login chk-persist azure browser`. **Expected:** it fails, names `ssh-config chk-persist --install`, and `az account show` still reports no login.
 2. Run `sandboxed-agents ssh-config chk-persist --install`, then the browser workflow again. **Expected:** an `ssh -N -L ...` line and a URL appear before anything waits; the alias matches the host entry `chk-persist.manual-check`.
 3. Open the URL but stop the tunnel before signing in, then press `Ctrl+C` in the first terminal. **Expected:** non-zero status, no account printed, and `az account show` reports no login (there was none to begin with).
 4. Run the workflow once more, run the tunnel on the machine whose browser you use, open the URL, and sign in. **Expected:** exit status zero and the account is printed. Stop the tunnel; `az account show` still works in the shell.
@@ -226,7 +220,7 @@ Identifiers `selection-pins-persist`, `git-identity-persist`, `credentials-persi
 5. Record the configuration the update must keep, redirecting both outputs to `config-before.txt` (on Windows write `pm inspect`, see [Podman on Windows](#podman-on-windows-and-capturing-state)):
 
    ```sh
-   podman inspect --format '{{.Image}} {{.HostConfig.Memory}} {{.HostConfig.NanoCpus}} {{.HostConfig.PidsLimit}} {{.HostConfig.ShmSize}} {{index .Config.Labels "io.sandboxed-agents.toolchains"}} {{index .Config.Labels "io.sandboxed-agents.port"}}' sandboxed-agents.manual-check.chk-persist
+   podman inspect --format '{{.Image}} {{.HostConfig.Memory}} {{.HostConfig.CpuQuota}} {{.HostConfig.CpuPeriod}} {{.HostConfig.PidsLimit}} {{.HostConfig.ShmSize}} {{index .Config.Labels "io.sandboxed-agents.toolchains"}} {{index .Config.Labels "io.sandboxed-agents.port"}}' sandboxed-agents.manual-check.chk-persist
    podman inspect --format '{{range .Mounts}}{{.Name}} {{.Destination}};{{end}}' sandboxed-agents.manual-check.chk-persist
    ```
 
@@ -252,12 +246,24 @@ Identifiers `selection-pins-persist`, `git-identity-persist`, `credentials-persi
 
 1. Round 0: the observation set, as the baseline.
 2. `sandboxed-agents stop chk-persist`, then `sandboxed-agents start chk-persist`. Round 1.
-3. Update, with the current executable. If `chk-persist` was created with the previous preview's executable, run `sandboxed-agents update chk-persist`. If it was created with the current one, run `sandboxed-agents update chk-persist --with azure,native` instead. That changes the toolchain set on purpose, keeps `azure`, is slower, and makes the toolchain observation below expect `azure,native`. Before the update, record the image IDs for the [image check](#no-command-removes-an-image): `podman images --all --format '{{.ID}} {{.Repository}}:{{.Tag}}'`.
+3. Make the image outdated, then update, all with the current executable:
+   1. Save the image inventory for the [image check](#no-command-removes-an-image) as `images-before.txt`: `podman images --all --format '{{.ID}} {{.Repository}}:{{.Tag}}'`. Note the container's image and the image its tag names now (`TAG` is the first output):
+
+      ```sh
+      podman inspect --format '{{.Config.Image}}' sandboxed-agents.manual-check.chk-persist
+      podman inspect --format '{{.Image}}' sandboxed-agents.manual-check.chk-persist
+      podman image inspect --format '{{.Id}}' TAG
+      ```
+
+      The last two print the same image ID.
+   2. Run `sandboxed-agents build` **once**. It rebuilds the base image and every existing toolchain set of this executable, here the recorded `azure` set, anew, and marks the existing sandbox as outdated. This is documented behavior ([Build, refresh, and reuse](images.md#build-refresh-and-reuse)). It is the only `build` in the whole checklist, and the [image check](#no-command-removes-an-image) reuses it. Images are shared across controller groups, which is why the safety rules ask for a dedicated account.
+   3. Check the target: `sandboxed-agents list` shows `chk-persist` as outdated, and `podman image inspect --format '{{.Id}}' TAG` now prints a **different** image ID from the container's `{{.Image}}`. If both are still the same, the update has nothing to replace, and the item cannot be observed.
+   4. Run the plain `sandboxed-agents update chk-persist`, with no `--with`. The toolchain set stays the recorded `azure` set.
 4. Round 2.
-5. Repeat the `podman inspect` commands of the setup into `config-after.txt` and compare it with `config-before.txt`; only the image ID (and the toolchain set, if `--with` named another) may differ.
+5. Repeat the `podman inspect` commands of the setup into `config-after.txt` and compare it with `config-before.txt`; only the image ID may differ, and it must equal the image ID that the tag names after the `build`.
 6. Run `ssh chk-persist.manual-check true`.
 
-**Expected after the update (`update-complete`):** the update ends with exit status zero; the image ID differs from the one recorded; the volumes (the mount names), the port, the memory, CPU, process, and shared-memory limits, the workspace, and the toolchain set (or the one `--with` named) are the same as recorded; the agent selection and the credentials are the same, as round 2 shows; and `ssh chk-persist.manual-check true` connects without a host key prompt.
+**Expected after the update (`update-complete`):** the update ends with exit status zero; the image ID differs from the one recorded; the volumes (the mount names), the port, the memory, CPU, process, and shared-memory limits, the workspace, and the toolchain set (`azure`) are the same as recorded; the agent selection and the credentials are the same, as round 2 shows; and `ssh chk-persist.manual-check true` connects without a host key prompt.
 
 **Identifiers:** `selection-pins-persist` passes on steps 1 and 2 of all three rounds; `git-identity-persist` on step 5 of all three; `credentials-persist` on steps 1, 3, 4, and 6 of all three; and, for the removal half of `credentials-persist`, on [Final cleanup](#final-cleanup); `update-complete` on the expected observations after the update.
 
@@ -265,7 +271,7 @@ Identifiers `selection-pins-persist`, `git-identity-persist`, `credentials-persi
 
 Identifiers `login-needs-terminal` and `azure-toolchain-required`. The first runs in `chk-persist` (which has the `azure` toolchain and an SSH setup), after the persistence rounds. The second uses two short-lived sandboxes.
 
-For `login-needs-terminal`, take standard input from nothing. None of the three may change the sandbox:
+For `login-needs-terminal`, first capture the state (`capture_state before-term.txt chk-persist`, or `Capture-State before-term.txt @('chk-persist')` on Windows), and note the output of `gh auth status` and `az account show` in `shell chk-persist`. Then take standard input from nothing for each login. None of the three may change the sandbox:
 
 ```sh
 sandboxed-agents integrations login chk-persist github </dev/null
@@ -279,7 +285,9 @@ cmd /c "sandboxed-agents integrations login chk-persist azure device-code < NUL"
 cmd /c "sandboxed-agents integrations login chk-persist azure browser < NUL"
 ```
 
-**Expected:** each exits non-zero with a message that the login needs an interactive terminal, and starts no `gh` or `az` process in the sandbox. Afterwards `gh auth status` and `az account show` in `shell chk-persist` still show the earlier logins.
+Record each exit status and message. Capture the state again as `after-term.txt`, and run `gh auth status` and `az account show` again.
+
+**Expected:** each exits non-zero with a message that the login needs an interactive terminal. `before-term.txt` and `after-term.txt` are identical, and the two status commands print what they printed before, so the earlier logins are untouched. This item observes the refusal message, the non-zero status, and the unchanged state. It does not observe whether a workflow process started; the offline CLI tests prove separately that none does.
 
 For `azure-toolchain-required`, create two sandboxes without the `azure` toolchain:
 
@@ -320,13 +328,13 @@ sandboxed-agents remove chk-vs --volumes
 
 ### An interrupted update
 
-Identifier `update-interrupted`. This needs a sandbox `chk-int` that an `update` can replace: create it with the previous preview's executable and put the current executable back first on `PATH` immediately afterwards, or use `update chk-int --with native` as the replacement in the steps below. The `update` and every check command run with the current executable. The goal is to stop the `update` process after the old container was renamed to the backup and before the update finished, killing **only that process**.
+Identifier `update-interrupted`. This needs a sandbox `chk-int` that an `update` replaces. Create it fresh with the current executable and replace it with `update chk-int --with native`, which changes the toolchain set and so always has something to replace (documented in [Updating a sandbox](images.md#updating-a-sandbox)). This does not depend on an older executable, and every command runs with the current one. The goal is to stop the `update` process after the old container was renamed to the backup and before the update finished, killing **only that process**.
 
 1. Create it: `sandboxed-agents up chk-int`.
 2. Start the update in the background and keep its process ID, poll for the backup for at most two minutes, and kill that one process ID:
 
    ```sh
-   sandboxed-agents update chk-int & UPDATE_PID=$!
+   sandboxed-agents update chk-int --with native & UPDATE_PID=$!
    FOUND=no
    for i in $(seq 1 600); do
      if podman container exists sandboxed-agents-backup.manual-check.chk-int; then FOUND=yes; break; fi
@@ -338,7 +346,7 @@ Identifier `update-interrupted`. This needs a sandbox `chk-int` that an `update`
    ```
 
    ```powershell
-   $Update = Start-Process sandboxed-agents -ArgumentList 'update', 'chk-int' -PassThru -NoNewWindow
+   $Update = Start-Process sandboxed-agents -ArgumentList 'update', 'chk-int', '--with', 'native' -PassThru -NoNewWindow
    $Deadline = (Get-Date).AddSeconds(120)
    $Found = $false
    while ((Get-Date) -lt $Deadline -and -not $Update.HasExited) {
@@ -349,16 +357,64 @@ Identifier `update-interrupted`. This needs a sandbox `chk-int` that an `update`
    if ($Found -and -not $Update.HasExited) { Stop-Process -Id $Update.Id -Force } else { 'backup not seen; repeat with a fresh sandbox' }
    ```
 
-   The commands name the process ID of the one `update` they started and nothing else. They never match processes by name. Use `--with native` after `update chk-int` in both blocks if you take that route. A `podman` call that was already running when the process was killed may still finish; that is part of a real interruption. If the update finished before the kill, or the backup never appears, the item cannot be observed that time: repeat with a fresh sandbox, and it does not pass until it is observed.
-3. Capture the state **before** the commands that must change nothing: `capture_state before-int.txt chk-int` (`Capture-State before-int.txt @('chk-int')` on Windows). Then run `sandboxed-agents check chk-int`, `sandboxed-agents list`, `sandboxed-agents start chk-int`, and `sandboxed-agents shell chk-int`. Capture again as `after-int.txt` and compare the two files.
+   The commands name the process ID of the one `update` they started and nothing else. They never match processes by name. A `podman` call that was already running when the process was killed may still finish; that is part of a real interruption. If the update finished before the kill, or the backup never appears, the item cannot be observed that time: repeat with a fresh sandbox, and it does not pass until it is observed.
+3. Capture the state **before** the commands that must change nothing: `capture_state before-int.txt chk-int` (`Capture-State before-int.txt @('chk-int')` on Windows). Run `sandboxed-agents check chk-int` and `sandboxed-agents list`, and record their output and exit status. Then run **every** command path that takes this sandbox's name from the list below. Save the list as `refusals.txt` in your scratch directory, one command per line (without the leading `sandboxed-agents`):
+
+   ```text
+   up chk-int
+   start chk-int
+   start chk-int --ssh-config
+   stop chk-int
+   restart chk-int
+   remove chk-int
+   shell chk-int
+   ssh-config chk-int
+   ssh-config chk-int --install
+   ssh-config chk-int --remove
+   fingerprint chk-int
+   agents enable chk-int opencode
+   agents disable chk-int opencode
+   agents update chk-int opencode
+   agents login chk-int opencode provider
+   agents status chk-int opencode
+   agents run chk-int opencode --version
+   agents session chk-int opencode
+   agents session chk-int opencode --stop
+   integrations login chk-int github
+   integrations login chk-int azure device-code
+   integrations login chk-int azure browser
+   integrations login chk-int azdo --organization https://dev.azure.com/example-organization
+   integrations config chk-int git identity --name Manual-Check --email manual-check@example.invalid
+   integrations config chk-int git credentials
+   ```
+
+   The list holds every command path of the grammar that takes a sandbox name, except `check chk-int`, `list`, `update chk-int`, and `update --all`, which recover or report. Commands that take no sandbox name (`version`, `build`, `check` without a name) are not part of it. Run them all with standard input from nothing, so that a missing terminal cannot be the reason for a refusal:
+
+   ```sh
+   while IFS= read -r line; do
+     out=$(sh -c "sandboxed-agents $line" </dev/null 2>&1); code=$?
+     case "$out" in *"update chk-int"*) names=yes ;; *) names=no ;; esac
+     printf '%s | exit %s | names update chk-int: %s\n' "$line" "$code" "$names"
+   done < refusals.txt
+   ```
+
+   ```powershell
+   foreach ($Line in Get-Content refusals.txt) {
+     $Out = cmd /c "sandboxed-agents $Line < NUL 2>&1" | Out-String
+     $Code = $LASTEXITCODE
+     '{0} | exit {1} | names update chk-int: {2}' -f $Line, $Code, ($Out -match 'update chk-int')
+   }
+   ```
+
+   Record each line the loop prints. Then capture the state again as `after-int.txt` and compare it with `before-int.txt`.
 4. Run `sandboxed-agents update chk-int`.
 
 **Expected:**
 
-- `check chk-int` reports the leftover backup container and exits non-zero. It and the refused commands change nothing: `before-int.txt` and `after-int.txt` are identical, so `list`, `ps`, `volume ls`, and the `inspect` of the container and of the backup are the same.
+- `check chk-int` reports the leftover backup container and exits non-zero. It and every refused command change nothing: `before-int.txt` and `after-int.txt` are identical, so `list`, `ps`, `volume ls`, and the `inspect` of the container and of the backup are the same.
 - `list` shows the sandbox as `update interrupted`.
-- Every other command except `update chk-int` refuses and names `update chk-int`.
-- `update chk-int` recovers instead of updating, builds no image, and exits as the state determines: zero when the replacement is ready and the update completes; non-zero when it restores the old sandbox ("restored" in its output). Either way the volumes are unchanged, no backup remains, and the next `update chk-int` updates normally. See [Updating a sandbox](images.md#updating-a-sandbox) for the cases.
+- Every line of `refusals.txt` shows a non-zero exit status and `names update chk-int: yes` (`True` on Windows). A line that exits zero, or whose output does not name `update chk-int`, fails the item; if a command such as `stop` or `remove` was not refused and changed the sandbox, discard the sandbox and repeat with a fresh one.
+- `update chk-int` recovers instead of updating, builds no image, and exits as the state determines: zero when the replacement is ready and the update completes; non-zero when it restores the old sandbox ("restored" in its output). Either way the volumes are unchanged, no backup remains, and the next `update chk-int --with native` updates normally, or reports `already up to date` if the recovery had completed the update. See [Updating a sandbox](images.md#updating-a-sandbox) for the cases.
 
 Clean up: `sandboxed-agents remove chk-int --volumes`.
 
@@ -441,40 +497,49 @@ mkdir -p /tmp/chk-fake-podman && printf '#!/bin/sh\necho "$@" >> /tmp/chk-fake-p
 export PATH="/tmp/chk-fake-podman:$PATH"
 ```
 
-**The snapshot.** It records every path under the user profile (the home directory) except the install root and the exclusions named for one step: files with their SHA-256 hashes, directories, and links with their targets, plus the user environment variables as stored. A changed, added, or removed file, directory, or link fails the comparison, and so does any read error: the snapshot stops instead of skipping what it cannot read. That is intended: a profile file or directory that cannot be read (for example a junction the account may not enter) fails the snapshot, and the item does not pass until you can take a clean snapshot, for instance on a fresh profile. Nothing in the snapshot hides read errors.
+**The snapshot.** It records every path under the user profile (the home directory) except the install root and the exclusions named for one step: files with their SHA-256 hashes, directories, and links with their targets, plus the user environment variables as stored. A changed, added, or removed file, directory, or link fails the comparison, and so does any read error: the snapshot stops instead of skipping what it cannot read. That is intended: a profile file or directory that cannot be read (for example a junction the account may not enter) fails the snapshot, and the item does not pass until you can take a clean snapshot, for instance on a fresh profile.
+
+**One exclusion is explicit.** Windows keeps the user's registry hives open while the user is signed in, so their backing files cannot be hashed, and they change whenever a registry value of the user changes, which the installers are allowed to do for the user `PATH`. The snapshot therefore leaves out exactly these operating-system-managed files, by name and by place, and nothing else: `NTUSER.DAT*` (the hive, its `.LOG1` and `.LOG2` logs, and its transaction files) in the root of the profile, and `UsrClass.dat*` (with its logs) in `%LOCALAPPDATA%\Microsoft\Windows`. Every other file, including every other unreadable one, still goes into the snapshot or fails it. What the hive files hold, the user's registry, is checked logically instead: the `.environment` snapshot records every value of `HKCU:\Environment` with its **value kind** and its raw, unexpanded content, so it shows that only the user `Path` value changed and that its kind did not.
 
 ```powershell
 function Test-Excluded($Path, $Prefixes) {
   foreach ($Prefix in $Prefixes) { if ($Path -eq $Prefix -or $Path.StartsWith($Prefix + '\')) { return $true } }
   return $false
 }
+function Test-HiveBackingFile($Item) {
+  if ($Item.PSIsContainer) { return $false }
+  if ($Item.DirectoryName.Equals($ProfileRoot, $Ignore) -and $Item.Name -like 'NTUSER.DAT*') { return $true }
+  if ($Item.DirectoryName.Equals((Join-Path $env:LOCALAPPDATA 'Microsoft\Windows'), $Ignore) -and $Item.Name -like 'UsrClass.dat*') { return $true }
+  return $false
+}
 function Take-Snapshot($Label, [string[]]$Exclude = @()) {
   $Prefixes = @($InstallRoot) + $Exclude
   Get-ChildItem $env:USERPROFILE -Recurse -Force -ErrorAction Stop |
-    Where-Object { -not (Test-Excluded $_.FullName $Prefixes) } | Sort-Object FullName |
+    Where-Object { -not (Test-Excluded $_.FullName $Prefixes) -and -not (Test-HiveBackingFile $_) } | Sort-Object FullName |
     ForEach-Object {
       if ($_.LinkType) { "link $($_.FullName) -> $($_.Target)" }
       elseif ($_.PSIsContainer) { "dir  $($_.FullName)" }
       else { "file $((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256 -ErrorAction Stop).Hash) $($_.FullName)" }
     } | Set-Content (Join-Path $Snap "$Label.tree")
   $Key = Get-Item HKCU:\Environment
-  $Key.GetValueNames() | Sort-Object | ForEach-Object { "$_ = $($Key.GetValue($_, '', 'DoNotExpandEnvironmentNames'))" } | Set-Content (Join-Path $Snap "$Label.environment")
+  $Key.GetValueNames() | Sort-Object | ForEach-Object { "$_ [$($Key.GetValueKind($_))] = $($Key.GetValue($_, '', 'DoNotExpandEnvironmentNames'))" } | Set-Content (Join-Path $Snap "$Label.environment")
 }
 ```
 
 ```sh
 snapshot() {
   set -o pipefail
-  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type f -print0 2>"$SNAP/$1.errors" | sort -z | xargs -0 -r sha256sum > "$SNAP/$1.files"
-  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type l -printf '%p -> %l\n' 2>>"$SNAP/$1.errors" | sort > "$SNAP/$1.links"
-  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type d -print 2>>"$SNAP/$1.errors" | sort > "$SNAP/$1.dirs"
+  : > "$SNAP/$1.errors"
+  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type f -print0 2>>"$SNAP/$1.errors" | sort -z 2>>"$SNAP/$1.errors" | xargs -0 -r sha256sum > "$SNAP/$1.files" 2>>"$SNAP/$1.errors" || return 1
+  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type l -printf '%p -> %l\n' 2>>"$SNAP/$1.errors" | sort > "$SNAP/$1.links" 2>>"$SNAP/$1.errors" || return 1
+  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type d -print 2>>"$SNAP/$1.errors" | sort > "$SNAP/$1.dirs" 2>>"$SNAP/$1.errors" || return 1
   test ! -s "$SNAP/$1.errors"
 }
 ```
 
 Take a snapshot before each method (`Take-Snapshot before` and `snapshot before`), run the method, take an `after` snapshot, and compare: `Compare-Object (Get-Content "$Snap\before.tree") (Get-Content "$Snap\after.tree")` and the same for `.environment`, or `diff "$SNAP/before.files" "$SNAP/after.files"` and the `.links` and `.dirs` files. A non-empty `.errors` file, or a snapshot function that returns a failure, fails the item. Take a new `before` snapshot for the next method.
 
-**Method 1, downloaded binary:** copy the verified binary to `$InstallRoot\bin\sandboxed-agents.exe` (`$INSTALL_ROOT/bin/sandboxed-agents` on Linux), run it by its full path with `version`, copy the next build over it as an upgrade, and delete it. Exclusions: none.
+**Method 1, downloaded binary:** copy the verified binary to `$InstallRoot\bin\sandboxed-agents.exe` (`$INSTALL_ROOT/bin/sandboxed-agents` on Linux), run it by its full path with `version`, then copy a **second verified copy of the same preview binary** over it and run `version` again, and delete it. The replacement exercises the overwrite and reinstall of the file; it is a same-version replacement and claims nothing about a distinct-version upgrade. (If a previous preview's verified executable exists, you may use it as the first copy and the current one as the replacement.) Verify both copies as in the [quick guides](quick-guide-linux.md#3-verify). Exclusions: none. All three methods use an explicit verified input, the binary, the `.tgz`, or the `.nupkg` of the preview under test, and the upgrade step of each method is a same-version reinstall from that input; the behavior checks of this checklist always use the current executable.
 
 **Method 2, npm package:** install the tarball with the prefix, cache, logs, and temporary directory all under the install root, and with the update notifier off. Exclusions: none.
 
@@ -521,20 +586,19 @@ The `Programs` parent directory counts as part of the install location when the 
 
 - The `calls` file (`$Fake\calls`, inside the evidence directory, or `/tmp/chk-fake-podman/calls` on Linux) is empty or does not exist, so no Podman call was issued by any method.
 - For methods 1, 2, and 3a, the `.tree` and `.environment` comparisons (on Linux the `.files`, `.links`, and `.dirs` comparisons) show **no difference**, and no snapshot reported an error.
-- For method 3b, the `.tree` comparison shows no difference apart from the `Programs` parent line, and the `.environment` comparison shows only that the user `Path` value gained the install directory entry after the installer and lost it after the remover. Entries that were already there, including unexpanded ones such as `%USERPROFILE%\bin`, are byte-for-byte unchanged.
+- For method 3b, the `.tree` comparison shows no difference apart from the `Programs` parent line, and the `.environment` comparison shows only that the user `Path` value, with an unchanged value kind, gained the install directory entry after the installer and lost it after the remover, and that no other value changed. Entries that were already there, including unexpanded ones such as `%USERPROFILE%\bin`, are byte-for-byte unchanged.
 - Any other difference fails the item, whatever wrote it. If background activity of the machine itself writes a file during the run, repeat the run on a quiescent machine; do not exempt the file. Sandboxes that exist keep running across the upgrade of any method.
 
 After the item, delete the install root, `$Snap`, and `$Fake` (on Linux `$SNAP`, `$INSTALL_ROOT`, and `/tmp/chk-fake-podman`). Leave the evidence directory itself as you found it.
 
 ### No command removes an image
 
-Identifier `no-image-removal`. Compare the images before and after the commands that could remove one.
+Identifier `no-image-removal`. Compare the images before and after the one `build` and every other command of the run that could remove one.
 
-1. The list recorded just before the `update` in [Persistence and update](#persistence-and-update): `podman images --all --format '{{.ID}} {{.Repository}}:{{.Tag}}'`.
-2. After the update, run `sandboxed-agents build` (it rebuilds the shared images and marks sandboxes outdated, which is why it runs only here). All `chk-` sandboxes still existing at that point are `chk-persist` only, since the others were removed after their items.
-3. After [Final cleanup](#final-cleanup) has removed `chk-persist` with `--volumes`, list the images again and compare the image IDs.
+1. `images-before.txt`, saved in [Persistence and update](#persistence-and-update) **before** its one `build`. This item runs no `build` of its own; that one is the shared step.
+2. After the `build`, `update`, and the removals of the later items, and after [Final cleanup](#final-cleanup) has removed `chk-persist` with `--volumes`, list the images again into `images-after.txt` with the same command and compare the image IDs.
 
-**Expected:** every image ID from step 1 is still present after step 3; after `build`, the replaced images may have lost their tags but still exist. The README names this as a limitation, and `podman image prune` removes unused images, never one a sandbox still uses.
+**Expected:** every image ID in `images-before.txt` is still present in `images-after.txt`. After the `build`, the replaced images may have lost their tags but still exist. No command of the run removed an image. The README names this as a limitation, and `podman image prune` removes unused images, never one a sandbox still uses.
 
 ### Release files and attestations
 
@@ -559,7 +623,7 @@ Do this last, after every observation above. It is the only place that removes `
 1. Remove the SSH setup: `sandboxed-agents ssh-config chk-persist --remove`.
 2. Remove the sandbox and its volumes: `sandboxed-agents remove chk-persist --volumes`. **Expected:** the three volumes are removed (`podman volume ls` shows none for `chk-persist`).
 3. This is the removal half of `credentials-persist`. Create it again, `sandboxed-agents up chk-persist --with azure`, and in `shell chk-persist` check that `/home/agent/.git-credentials` is absent, `git config --global --get user.email` prints nothing, `gh auth status` and `az account show` report no login, and `sandboxed-agents agents status chk-persist opencode` shows the agent not enabled. Then remove it for good: `sandboxed-agents remove chk-persist --volumes`.
-4. Compare the images for the [image check](#no-command-removes-an-image).
+4. Save `images-after.txt` and compare it with `images-before.txt` for the [image check](#no-command-removes-an-image).
 5. Revoke what you granted: remove the GitHub device authorization in your GitHub settings, revoke the Azure sign-in sessions for the test account, delete the Azure DevOps personal access token, and sign out of the four agents' accounts or revoke their sessions at each provider.
 6. `sandboxed-agents list` must show no sandbox of the group, and `podman ps --all` no `sandboxed-agents.manual-check.` container.
 
