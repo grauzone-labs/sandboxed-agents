@@ -26,6 +26,17 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 		return fmt.Errorf("sandbox %q: manager does not answer; use check %s for diagnosis and restart %s (%w)", request.Name, request.Name, request.Name, err)
 	}
 	azdoLogin := request.Command == "integrations login" && request.Args[1] == catalog.AzureDevOpsIntegration
+	if request.Command == "integrations login" && (request.Args[1] == catalog.AzureIntegration || azdoLogin) {
+		set, err := sandboxToolchains(objects.container)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(set, "azure") {
+			set = append(set, "azure")
+			slices.Sort(set)
+			return fmt.Errorf("%s login requires the azure toolchain; run update %s --with %s", request.Args[1], request.Name, toolchainSet(set))
+		}
+	}
 	args := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent"}
 	var stdin io.Reader
 	if azdoLogin {
@@ -38,17 +49,6 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 		// Credential subprocess diagnostics are untrusted and may contain the PAT.
 		stdout, stderr = io.Discard, io.Discard
 	} else if request.Command == "integrations login" {
-		if request.Args[1] == catalog.AzureIntegration {
-			set, err := sandboxToolchains(objects.container)
-			if err != nil {
-				return err
-			}
-			if !slices.Contains(set, "azure") {
-				set = append(set, "azure")
-				slices.Sort(set)
-				return fmt.Errorf("azure login requires the azure toolchain; run update %s --with %s", request.Name, toolchainSet(set))
-			}
-		}
 		browser := request.Args[1] == catalog.AzureIntegration && loginWorkflow(request.Args) == catalog.BrowserWorkflow
 		if browser {
 			setup, err := sshSetupPaths(request, p.host.Platform)
