@@ -199,7 +199,7 @@ Identifier `azdo-token`. Follow [Manual Azure DevOps login check](integrations.m
 
 1. Run `sandboxed-agents integrations login chk-persist azdo --organization https://dev.azure.com/ORGANIZATION` with standard input from a terminal. **Expected:** a prompt; nothing is shown while you paste the token; exit status zero.
 2. In `shell chk-persist`, `GIT_TERMINAL_PROMPT=0 git clone https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO /workspace/azdo-0` succeeds, and `az devops project list --organization https://dev.azure.com/ORGANIZATION --output table` lists projects.
-3. **Expected:** the token is in no shell history of the host, and not in the arguments of the `podman` process while the command ran.
+3. **Expected:** the token was typed only at the hidden prompt. The command line you ran, and so the host's shell history, holds `--organization` and the URL and no token.
 
 The token stays until [Final cleanup](#final-cleanup).
 
@@ -429,7 +429,7 @@ Export the dedicated group before the first `sandboxed-agents` command of the gu
 
 ### npm install on a clean machine
 
-Identifier `npm-install-clean`. Use a machine on which `sandboxed-agents` has never been installed, with Node.js 18 or newer, Podman, and OpenSSH. Download `sandboxed-agents-VERSION.tgz` from the preview prerelease. The npm registry holds no package from this repository, so the install uses the file ([npm package](npm-package.md#install)). Use the contained install commands of [the install check](#installers-issue-no-podman-call), so that npm writes its prefix, cache, temporary files, and logs only under the install root.
+Identifier `npm-install-clean`. Use a machine on which `sandboxed-agents` has never been installed, with Node.js 18 or newer, Podman, and OpenSSH. Download `sandboxed-agents-VERSION.tgz` from the preview prerelease. The npm registry holds no package from this repository, so the install uses the file ([npm package](npm-package.md#install)). Use the contained npm commands of [the install check](#installers-issue-no-podman-call) (Windows) or of its [Linux supplement](#optional-supplemental-linux-snapshots), so that npm writes its prefix, cache, temporary files, and logs only under the install root.
 
 1. Install the tarball with the contained commands.
 2. Run the installed command: `sandboxed-agents version`, `sandboxed-agents check`, and `sandboxed-agents list`.
@@ -444,17 +444,38 @@ Identifier `nuget-install-clean`, platform `windows-11`. Use a clean Windows 11 
 
 1. Record the user `Path` as stored: `(Get-Item HKCU:\Environment).GetValue('Path', '', 'DoNotExpandEnvironmentNames')`.
 2. Install, open a new terminal, and run `sandboxed-agents version`.
-3. Run the installer again (upgrade), then `remove-command.ps1`. Record the stored `Path` after each step.
+3. Run the installer again (a same-version reinstall, not a distinct-version upgrade), then `remove-command.ps1`. Record the stored `Path` after each step.
 
-**Expected:** the installer needs no administrator rights; `version` works in a new terminal; the stored `Path` differs only by the install directory entry, and existing entries, including unexpanded ones such as `%USERPROFILE%\bin`, are byte-for-byte unchanged; after removal the entry is gone and the other entries are unchanged. [The install check](#installers-issue-no-podman-call) adds the file comparison.
+**Expected:** the installer needs no administrator rights; `version` works in a new terminal; the stored `Path` differs only by the install directory entry, and existing entries, including unexpanded ones such as `%USERPROFILE%\bin`, are byte-for-byte unchanged; after removal the entry is gone and the other entries are unchanged. [The install check](#installers-issue-no-podman-call) adds the process-attributed write trace.
 
 ### Installers issue no Podman call
 
-Identifier `installers-no-podman`, platform `windows-11`. Install, upgrade, and remove through **each** of three methods, and show that no Podman call happens and that nothing outside the install location and the user `PATH` changes: the downloaded binary, the npm package, and the NuGet package. NuGet exists only on Windows, so the item is run on Windows 11, covers all three methods there, and is recorded with the platform `windows-11`. A run of methods 1 and 2 on Linux with the same commands (the shell blocks below) is welcome extra coverage; it does **not** replace the Windows run, and the item does not pass on Linux alone. Use a fresh disposable virtual machine, so that a snapshot is meaningful, with shell history off.
+Identifier `installers-no-podman`, platform `windows-11`. Install, reinstall, and remove through **each** of three methods, and show two things: no Podman call happens, and the installers change no file and no registry value outside the install location and the user `PATH`. The methods are the downloaded binary, the npm package, and the NuGet package. NuGet exists only on Windows, so the item is run on Windows 11, covers all three methods there, and is recorded with the platform `windows-11`. A Linux run of methods 1 and 2 is optional supplemental coverage ([below](#optional-supplemental-linux-snapshots)); it does **not** replace the Windows run, and the item does not pass on Linux alone.
 
-**The evidence directory.** The installers must run in a normal, non-elevated session, and a standard user cannot create folders in the root of the system drive. So arrange **before the run** an existing directory that you can write to and that lies **outside your user profile**: for example a folder on a test volume that was prepared for you, or a shared scratch location your account has write access to. Do not assume a particular drive or the ACLs of a public folder; if you have no such directory, the item cannot be run yet. The snapshots and the fake Podman go beneath it. On Windows, give its path when asked; the commands check that it exists, is a directory, lies outside the profile, does not contain the profile, and is writable, and stop otherwise:
+**Why a trace and not a comparison of the whole profile.** A signed-in Windows profile always holds files that system processes keep open and rewrite (the registry hives, the browser and shell caches), so hashing the whole profile before and after cannot finish and would blame the installers for other programs' writes. The Windows run therefore records every file system and registry write of the **installer's own process tree** with Process Monitor from Microsoft Sysinternals, and attributes each write to a process. Unrelated background processes are excluded by that attribution, not by exempting paths: **no write by the item shell or its descendants outside the allowed locations is tolerated**, whoever the writing program is.
+
+Official sources: the [Process Monitor page](https://learn.microsoft.com/en-us/sysinternals/downloads/procmon) of Microsoft Learn, and the Microsoft Learn blog post [Using Procmon in Command-line](https://learn.microsoft.com/en-us/archive/blogs/yash/using-procmon-in-command-line) for `/Quiet`, `/Minimized`, `/BackingFile`, and `/Terminate`. The Help that is installed with your version of Process Monitor is authoritative for its menus, filters, and command line; where it differs from the steps below, follow it and write down what you did.
+
+**Prerequisites a human arranges before the run** (not something an agent session does):
+
+- Process Monitor, downloaded by you from the official page above and unpacked into a directory of your choosing.
+- A **separate elevated terminal, the observer**, opened by a human who consents to running Process Monitor with administrator rights on the test machine. Only the observer is elevated. The installers run in a normal, **non-elevated** terminal, the item shell, and the item fails if an installer needs more than that.
+- The evidence directory below.
+- A fresh disposable virtual machine, so that the run starts clean.
+
+**The evidence directory.** A standard user cannot create folders in the root of the system drive. So arrange **before the run** an existing directory that you can write to and that lies **outside your user profile**: for example a folder on a test volume that was prepared for you, or a shared scratch location your account has write access to. Do not assume a particular drive or the ACLs of a public folder; if you have no such directory, the item cannot be run yet. The Process Monitor logs, the fake Podman, and the notes go beneath it. These log files can hold user names, paths, and environment details, so they are kept **locally only**, are never uploaded, and are deleted at the end of the item; the record has no field for them.
+
+**The item shell.** In the normal, non-elevated terminal, start a fresh PowerShell 7 and use it for the whole item, so that its process ID and the processes it starts form one process tree:
 
 ```powershell
+pwsh -NoProfile
+$PID
+```
+
+Write the printed process ID down as `SHELL_PID`. Run everything below that is not marked "observer" in this shell. In it, set the variables of the item. The commands check that the evidence directory exists, is a directory, lies outside the profile, does not contain it, and is writable, and stop otherwise:
+
+```powershell
+Set-PSReadLineOption -HistorySaveStyle SaveNothing
 $Evidence = Read-Host 'Existing writable evidence directory outside your user profile'
 if (-not (Test-Path -LiteralPath $Evidence -PathType Container)) { throw 'the evidence directory does not exist' }
 $Evidence = (Resolve-Path -LiteralPath $Evidence).ProviderPath.TrimEnd('\')
@@ -463,67 +484,158 @@ $Ignore = [StringComparison]::OrdinalIgnoreCase
 if ($Evidence.Equals($ProfileRoot, $Ignore) -or $Evidence.StartsWith($ProfileRoot + '\', $Ignore) -or $ProfileRoot.StartsWith($Evidence + '\', $Ignore)) { throw 'the evidence directory must be outside the user profile and must not contain it' }
 $Probe = Join-Path $Evidence "probe-$PID.tmp"
 try { Set-Content -LiteralPath $Probe -Value 'x' -ErrorAction Stop; Remove-Item -LiteralPath $Probe -ErrorAction Stop } catch { throw "the evidence directory is not writable: $Evidence" }
-$Snap = Join-Path $Evidence "chk-snapshot-$PID"
+$Pml = Join-Path $Evidence "pml-$PID"
 $Fake = Join-Path $Evidence "chk-fake-podman-$PID"
-New-Item -ItemType Directory -ErrorAction Stop $Snap, $Fake | Out-Null
-```
-
-On Linux the examples use `/tmp`, which is outside the home directory. The shell blocks in this item need Bash, because they use `set -o pipefail`; run them in Bash, not in a plain POSIX shell.
-
-**The install root.** Choose a new, empty directory as the install root, and keep every file the methods write inside it, **including npm's prefix, cache, temporary files, and logs**. Do not exempt any other location. The snapshots live outside the inspected tree, so taking them causes no drift:
-
-```powershell
+New-Item -ItemType Directory -ErrorAction Stop $Pml, $Fake | Out-Null
 $InstallRoot = Join-Path $HOME 'chk-install'
 New-Item -ItemType Directory -Force $InstallRoot | Out-Null
 foreach ($Name in 'bin', 'prefix', 'cache', 'logs', 'tmp') { New-Item -ItemType Directory -Force (Join-Path $InstallRoot $Name) | Out-Null }
-Set-PSReadLineOption -HistorySaveStyle SaveNothing
+$Pml
 ```
 
-```sh
-INSTALL_ROOT="$HOME/chk-install"; mkdir -p "$INSTALL_ROOT"/bin "$INSTALL_ROOT"/prefix "$INSTALL_ROOT"/cache "$INSTALL_ROOT"/logs "$INSTALL_ROOT"/tmp
-SNAP="$(mktemp -d /tmp/chk-snapshot.XXXXXX)"
-unset HISTFILE
-```
+The last line prints the log directory; the observer uses it.
 
-**A fake Podman that records its calls**, outside the inspected tree, first on `PATH` for the whole item. On Windows it is a `podman.cmd` that appends its arguments to a `calls` file and exits with 1:
+**The install root.** The install root is the new directory `$InstallRoot`. Every file the methods write must land inside it, **including npm's prefix, cache, temporary files, and logs**; the commands below point them there. The NuGet default location of method 3b is the one other allowed location.
+
+**A fake Podman that records its calls**, in the evidence directory, first on `PATH` of the item shell. It appends its arguments to a `calls` file and exits with 1:
 
 ```powershell
 Set-Content (Join-Path $Fake 'podman.cmd') "@echo off`r`necho %* >> `"$Fake\calls`"`r`nexit /b 1"
 $env:Path = "$Fake;$env:Path"
 ```
 
-```sh
-mkdir -p /tmp/chk-fake-podman && printf '#!/bin/sh\necho "$@" >> /tmp/chk-fake-podman/calls\nexit 1\n' > /tmp/chk-fake-podman/podman && chmod +x /tmp/chk-fake-podman/podman
-export PATH="/tmp/chk-fake-podman:$PATH"
-```
-
-**The snapshot.** It records every path under the user profile (the home directory) except the install root and the exclusions named for one step: files with their SHA-256 hashes, directories, and links with their targets, plus the user environment variables as stored. A changed, added, or removed file, directory, or link fails the comparison, and so does any read error: the snapshot stops instead of skipping what it cannot read. That is intended: a profile file or directory that cannot be read (for example a junction the account may not enter) fails the snapshot, and the item does not pass until you can take a clean snapshot, for instance on a fresh profile.
-
-**One exclusion is explicit.** Windows keeps the user's registry hives open while the user is signed in, so their backing files cannot be hashed, and they change whenever a registry value of the user changes, which the installers are allowed to do for the user `PATH`. The snapshot therefore leaves out exactly these operating-system-managed files, by name and by place, and nothing else: `NTUSER.DAT*` (the hive, its `.LOG1` and `.LOG2` logs, and its transaction files) in the root of the profile, and `UsrClass.dat*` (with its logs) in `%LOCALAPPDATA%\Microsoft\Windows`. Every other file, including every other unreadable one, still goes into the snapshot or fails it. What the hive files hold, the user's registry, is checked logically instead: the `.environment` snapshot records every value of `HKCU:\Environment` with its **value kind** and its raw, unexpanded content, so it shows that only the user `Path` value changed and that its kind did not.
+**The logical environment, recorded in memory.** The user `PATH` is a registry value of `HKCU:\Environment`. The helper records every value of that key with its kind and its raw, unexpanded content. It keeps the result in memory, so that the item shell writes no file while a trace runs:
 
 ```powershell
-function Test-Excluded($Path, $Prefixes) {
-  foreach ($Prefix in $Prefixes) { if ($Path -eq $Prefix -or $Path.StartsWith($Prefix + '\')) { return $true } }
-  return $false
-}
-function Test-HiveBackingFile($Item) {
-  if ($Item.PSIsContainer) { return $false }
-  if ($Item.DirectoryName.Equals($ProfileRoot, $Ignore) -and $Item.Name -like 'NTUSER.DAT*') { return $true }
-  if ($Item.DirectoryName.Equals((Join-Path $env:LOCALAPPDATA 'Microsoft\Windows'), $Ignore) -and $Item.Name -like 'UsrClass.dat*') { return $true }
-  return $false
-}
-function Take-Snapshot($Label, [string[]]$Exclude = @()) {
-  $Prefixes = @($InstallRoot) + $Exclude
-  Get-ChildItem $env:USERPROFILE -Recurse -Force -ErrorAction Stop |
-    Where-Object { -not (Test-Excluded $_.FullName $Prefixes) -and -not (Test-HiveBackingFile $_) } | Sort-Object FullName |
-    ForEach-Object {
-      if ($_.LinkType) { "link $($_.FullName) -> $($_.Target)" }
-      elseif ($_.PSIsContainer) { "dir  $($_.FullName)" }
-      else { "file $((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256 -ErrorAction Stop).Hash) $($_.FullName)" }
-    } | Set-Content (Join-Path $Snap "$Label.tree")
+function Get-EnvSnapshot {
   $Key = Get-Item HKCU:\Environment
-  $Key.GetValueNames() | Sort-Object | ForEach-Object { "$_ [$($Key.GetValueKind($_))] = $($Key.GetValue($_, '', 'DoNotExpandEnvironmentNames'))" } | Set-Content (Join-Path $Snap "$Label.environment")
+  $Key.GetValueNames() | Sort-Object | ForEach-Object { "$_ [$($Key.GetValueKind($_))] = $($Key.GetValue($_, '', 'DoNotExpandEnvironmentNames'))" }
 }
+$EnvSnap = [ordered]@{}
+```
+
+**Prime the tools before any trace.** The first start of PowerShell and npm can write their own caches, which are the tools' first-run state, not changes made by an installer. Start each of them once, with the redirections the methods use, before the first capture:
+
+```powershell
+$env:TEMP = Join-Path $InstallRoot 'tmp'; $env:TMP = $env:TEMP; $env:npm_config_update_notifier = 'false'
+pwsh -NoProfile -Command 'exit 0'
+node --version
+npm --version --cache "$InstallRoot\cache" --logs-dir "$InstallRoot\logs"
+```
+
+Priming does not hide anything from the trace: if a child of an installer still writes outside the allowed locations while it runs, that write is a failure of the criterion and the item fails. Do not remove the finding by priming more, redirecting more, or exempting the path.
+
+**The capture procedure, for each method.** Each method has its own log, `$Pml\METHOD.pml`, and three steps (install, reinstall, remove) inside it. Run the methods one after the other, in the order `binary`, `npm`, `nuget-root`, `nuget-default`. For each method, do these steps in order. The commands of a method are separate lines to run **one at a time**, never as one pasted block:
+
+1. **Observer (elevated terminal), start the capture.** In the directory where Process Monitor is unpacked, with `PML_DIRECTORY` the path that the item shell printed:
+
+   ```powershell
+   .\Procmon64.exe /AcceptEula /Quiet /Minimized /BackingFile "PML_DIRECTORY\METHOD.pml"
+   ```
+
+   `/Quiet` suppresses the filter prompt at startup. It does **not** guarantee that no filter is active, because Process Monitor can load the filter it saved earlier.
+2. **Observer, make the capture complete.** Open the Process Monitor window from the taskbar and do all of this **before** the item shell runs anything:
+   - **Filter**, **Filter...**: press **Reset** and then **OK**, so that no saved filter remains. The filter list is empty apart from Process Monitor's own defaults. Reset it again if you see anything else.
+   - On the **Filter** menu, make sure **Drop Filtered Events** is **not** checked, so that nothing is lost even if a filter is set by mistake.
+   - On the toolbar, make sure the buttons for **file system activity**, **registry activity**, and **process and thread activity** are all enabled (pressed).
+   - **Tools**, **Process Tree** lists the running processes (the shell with `SHELL_PID` among them), and the event counter in the status bar increases. If either does not hold, stop the capture with step 5, delete the log, and start again.
+   - The window is the authority for its own controls. Follow the Help installed with your version of Process Monitor if a menu item is named differently, and write down what you did.
+3. **Item shell, prepare.** Run the method's *before the capture* commands, if it has any, and start a fresh environment record for this method, with these two commands (the record of the previous method must not carry over):
+
+   ```powershell
+   $EnvSnap = [ordered]@{}
+   $EnvSnap['start'] = Get-EnvSnapshot
+   ```
+4. **Item shell, the steps, one command at a time and in this order.** The method sections give `INSTALL`, `REINSTALL`, and `REMOVE`. Run nothing else in the item shell in between.
+   1. Run `INSTALL`.
+   2. `$EnvSnap['after-install'] = Get-EnvSnapshot`
+   3. Run `REINSTALL`.
+   4. `$EnvSnap['after-reinstall'] = Get-EnvSnapshot`
+   5. Run `REMOVE`.
+   6. `$EnvSnap['after-remove'] = Get-EnvSnapshot`
+5. **Observer, stop the capture.**
+
+   ```powershell
+   .\Procmon64.exe /Terminate
+   ```
+
+   Wait until no `Procmon64.exe` process is left (Task Manager) before you open the log. A log that is read while Process Monitor still runs may be incomplete.
+6. **Inspect the log** as described under [Inspecting a log](#inspecting-a-log), in the observer's Process Monitor, and compare the environment record of this method, which is still in the item shell: for example `Compare-Object $EnvSnap['start'] $EnvSnap['after-install']`, and the same for each pair of neighbors.
+
+**Method 1, `binary` (downloaded binary).** The input is the verified Windows binary and a **second verified copy of the same preview binary** for the replacement. Verify both copies as in the [quick guides](quick-guide-windows.md#3-verify) before the capture. The replacement is a same-version overwrite. It exercises the overwrite and claims nothing about a distinct-version upgrade. (If a previous preview's verified executable exists, you may use it as the first copy and the current one as the replacement.) Before the capture: nothing.
+
+- `INSTALL` = `Copy-Item .\sandboxed-agents-windows-amd64.exe "$InstallRoot\bin\sandboxed-agents.exe"`, then `& "$InstallRoot\bin\sandboxed-agents.exe" version`.
+- `REINSTALL` = `Copy-Item .\second-copy.exe "$InstallRoot\bin\sandboxed-agents.exe" -Force`, then `& "$InstallRoot\bin\sandboxed-agents.exe" version`.
+- `REMOVE` = `Remove-Item "$InstallRoot\bin\sandboxed-agents.exe"`.
+
+**Method 2, `npm` (npm package).** The input is `sandboxed-agents-VERSION.tgz`. All paths are under the install root, and the update notifier is off. Before the capture: nothing.
+
+- `INSTALL` = `npm install --offline --no-audit --no-fund -g --prefix "$InstallRoot\prefix" --cache "$InstallRoot\cache" --logs-dir "$InstallRoot\logs" .\sandboxed-agents-VERSION.tgz`, then `& "$InstallRoot\prefix\sandboxed-agents.cmd" version`.
+- `REINSTALL` = the same `npm install` command again (a same-version reinstall).
+- `REMOVE` = `npm uninstall -g --prefix "$InstallRoot\prefix" --cache "$InstallRoot\cache" --logs-dir "$InstallRoot\logs" sandboxed-agents`.
+
+**Method 3a, `nuget-root` (NuGet package into the install root).** The input is the `.nupkg`. Before the capture, extract it under `$InstallRoot\package`, then run:
+
+```powershell
+$Tools = Join-Path $InstallRoot 'package\tools'
+Get-ChildItem -LiteralPath $Tools -Filter *.ps1 | Unblock-File
+```
+
+- `INSTALL` = `pwsh -File "$Tools\install-command.ps1" -InstallDirectory "$InstallRoot\nuget" -NoPathUpdate`
+- `REINSTALL` = the same command again (a same-version reinstall).
+- `REMOVE` = `pwsh -File "$Tools\remove-command.ps1" -InstallDirectory "$InstallRoot\nuget" -NoPathUpdate`
+
+**Method 3b, `nuget-default` (NuGet package to its default location and `PATH`, the separate default-path test).** Uses the same extracted package and `$Tools`, with the default arguments, so the installer uses `%LOCALAPPDATA%\Programs\sandboxed-agents` and the user `PATH`. The allowed locations of this method are the install root, `%LOCALAPPDATA%\Programs\sandboxed-agents` (and its `Programs` parent if the installer has to create it), and the user `PATH` value. Before the capture: nothing.
+
+- `INSTALL` = `pwsh -File "$Tools\install-command.ps1"`
+- `REINSTALL` = the same command again (a same-version reinstall).
+- `REMOVE` = `pwsh -File "$Tools\remove-command.ps1"`
+
+#### Inspecting a log
+
+In the observer's Process Monitor, open the saved log (**File**, **Open**). The Process Monitor page describes the tools used here: filters can be set on any field without losing data, and the Process Tree tool shows the relationship of all processes in a trace.
+
+1. **Select the process tree.** Open **Tools**, **Process Tree**. Find the process whose PID is `SHELL_PID` (`pwsh.exe`) and write down it and **every descendant**, including the ones that have already exited (they stay in the tree): `pwsh.exe` children for the NuGet scripts, `node.exe` and `cmd.exe` for npm, the installed executable for `version`. This is the set of attributed processes. If `SHELL_PID` is not in the tree, you opened the wrong log or the capture did not run, and the item fails for that method. Note the total event count of the log; zero or very few events means the capture was not complete.
+2. **Filter to the attributed events.** Open the filter dialog (**Filter**, **Filter...**, or Ctrl+L) and press **Reset** first. Add **Include** conditions `PID is N` for the shell and for each descendant. Conditions on the same field are alternatives, so the view shows the events of any of them. Add `Result is SUCCESS`, and **Include** conditions `Event Class is File System` and `Event Class is Registry`. Set **no** `Operation` and **no** `Detail` condition for the review below. The view now holds every successful file system and registry event of the attributed processes.
+3. **Navigation aids, not a definition.** To find the likely changes first, you may temporarily add `Operation is X` conditions for `WriteFile`, `SetEndOfFileInformationFile`, `SetAllocationInformationFile`, `SetDispositionInformationFile`, `SetRenameInformationFile`, `RegCreateKey`, `RegSetValue`, `RegDeleteKey`, `RegDeleteValue`, `RegSetInfoKey`, or look at `CreateFile` rows with `Detail contains OpenResult: Created` and similar. **These lists are finite and incomplete.** They leave out, for example, `SetBasicInformationFile` (times and attributes), `SetSecurityFile`, `SetEAFile`, `SetLinkInformationFile` (hard links), reparse-point and other `FileSystemControl` requests, and the registry operations that load, restore, replace, rename, or secure a key. Remove the aids before step 4; they never replace it.
+4. **Required review of ALL remaining events.** With the aids removed, list the distinct values of the **Operation** column in the view (sort by the column and scroll, or use **Tools**, **Count Occurrences...** on **Operation**). Classify **every** operation value that occurs, using the table below. An operation not in the table, or one you cannot classify, is **unknown**.
+
+   | Class | Operations | What you do |
+   |---|---|---|
+   | Changes nothing | Reads, queries, enumerations and closes: `ReadFile`, `CloseFile`, `Query...` (`QueryInformationVolume`, `QueryDirectory`, `QueryOpen`, `QueryNameInformationFile`, `QueryStandardInformationFile`, `QueryBasicInformationFile`, `QuerySecurityFile`, `QueryEAFile`, ...), `SetPositionInformationFile`, `LockFile`, `UnlockFileSingle`, `FlushBuffersFile`, and for the registry `RegOpenKey`, `RegQueryKey`, `RegQueryValue`, `RegEnumKey`, `RegEnumValue`, `RegCloseKey`, `RegQueryKeySecurity`, `RegFlushKey` | Dismiss the class. Confirm once that its rows are what the name says. |
+   | Changes content, metadata, names, security, links, or registry | `WriteFile`, `SetEndOfFileInformationFile`, `SetAllocationInformationFile`, `SetValidDataLengthInformationFile`, `SetDispositionInformationFile`, `SetRenameInformationFile`, `SetLinkInformationFile`, `SetShortNameInformation`, `SetBasicInformationFile`, `SetEAFile`, `SetSecurityFile`, `SetFileObjectIdInformation`, and for the registry `RegSetValue`, `RegSetInfoKey`, `RegDeleteKey`, `RegDeleteValue`, `RegRenameKey`, `RegLoadKey`, `RegUnLoadKey`, `RegRestoreKey`, `RegReplaceKey`, `RegSaveKey`, `RegSetKeySecurity` | **Every** row is a change. Apply the allowed locations (step 5). |
+   | Depends on the details | `CreateFile`, `RegCreateKey`, `CreateFileMapping`, `FileSystemControl`, `DeviceIoControl` | Resolve every row from its **Detail** and the events that follow it, as below. |
+
+   Resolve the third class as follows:
+   - `CreateFile` with `OpenResult: Created`, `Overwritten`, or `Superseded` (a creation or overwrite disposition that took effect) is **a change**. A `CreateFile` that opened an existing file with write-capable rights, for example `Write Attributes` or `Generic Write`, is **not by itself a change**: it counts only if the same process then produces a changing event for that path (a row of the second class), so look at the events that follow it for the same path and the same process. An open with nothing changing after it is not a change.
+   - `RegCreateKey` with a created-new-key disposition is a change; one that opened an existing key is not.
+   - `CreateFileMapping` is classified by the rows around it: mapping an image or a file for reading changes nothing; a mapping that is followed by writes to the file is already covered by `WriteFile`.
+   - `FileSystemControl` and `DeviceIoControl` are classified by the control code in **Detail**: a reparse point, hard link, sparse, compression, object-id, or encryption setting is a change; a query is not.
+   - **An operation or a row that you cannot resolve prevents a pass.** Do not guess "probably harmless". Also, for the second and third class, look at rows with a result other than `SUCCESS`: a plain failure (`ACCESS DENIED`, `NAME NOT FOUND`, `PATH NOT FOUND`, `NAME COLLISION`, `SHARING VIOLATION`) changed nothing, and any other result code is unknown until you resolve it.
+5. **Apply the allowed locations to every change.** For every row that is a change (the second class, and the rows of the third class that you resolved as changes), look at the **Path** column. A row is allowed only if its path is inside `$InstallRoot` (all methods) or, in method 3b, inside `%LOCALAPPDATA%\Programs\sandboxed-agents` (or is the `Programs` directory itself), or is the registry value `HKCU\Environment\Path` in method 3b. Rows for a named pipe (`\Device\NamedPipe\...`) are communication between the processes, not a change of a file; list them and accept that class only. **Every other row is a change outside the allowed locations, and the method fails.** Do not exclude a path in the filter to make a row go away.
+6. **Write down the verdict.** For each method, note the number of events reviewed, the operations you saw and their class, the number of changes, why each accepted change is allowed, and every unknown. The `Path` value of method 3b must be written by the NuGet install script (`pwsh.exe` running `install-command.ps1`) and removed by `remove-command.ps1`, and `HKCU\Environment\Path` must be the only registry value changed.
+
+**Keep nothing but the verdict.** Keep the logs locally until you have the verdict for every method. Do not upload them or paste their content into the record or a ticket. Delete them at the end of the item.
+
+**Expected:**
+
+- The `calls` file in `$Fake` is empty or does not exist, so no Podman call was issued by any method.
+- For methods `binary`, `npm`, and `nuget-root`, the required review finds no change outside `$InstallRoot` (apart from named pipes) and no unknown operation, and the environment records are identical at every step: `Compare-Object $EnvSnap['start'] $EnvSnap['after-install']`, and likewise for each pair of neighbors, print nothing.
+- For `nuget-default`, the required review finds no change outside the allowed locations and no unknown operation, and the environment records show: `Path` gained the install directory entry between `start` and `after-install`, is unchanged between `after-install` and `after-reinstall`, and lost the entry again between `after-reinstall` and `after-remove`, so it equals `start`; its value kind is unchanged; no other value changed. Entries that were there before, including unexpanded ones such as `%USERPROFILE%\bin`, are byte-for-byte unchanged.
+- A `Procmon64.exe` window that never counted events, a missing `SHELL_PID`, or a log that cannot be opened is no evidence: repeat the method. A write outside the allowed locations by the installer, an installer child process, or the item shell itself is a failure, and nothing is recorded as passed in its place. Sandboxes that exist keep running across the reinstall of any method.
+
+After the item, delete the install root, `$Pml`, `$Fake`, and the other files in the evidence directory that this item created. Leave the evidence directory itself as you found it.
+
+#### Optional supplemental Linux snapshots
+
+This is extra coverage for methods 1 and 2 on Linux, in Bash. It is **bounded and not exhaustive**: it hashes and lists only what `find` and `sha256sum` can read under the home directory, and it cannot see a write that was undone. It never replaces the Windows run, and a Linux result alone cannot pass `installers-no-podman`. The commands set up the install root and a fake Podman in `/tmp`, outside the home directory:
+
+```sh
+INSTALL_ROOT="$HOME/chk-install"; mkdir -p "$INSTALL_ROOT"/bin "$INSTALL_ROOT"/prefix "$INSTALL_ROOT"/cache "$INSTALL_ROOT"/logs "$INSTALL_ROOT"/tmp
+SNAP="$(mktemp -d /tmp/chk-snapshot.XXXXXX)"
+unset HISTFILE
+mkdir -p /tmp/chk-fake-podman && printf '#!/bin/sh\necho "$@" >> /tmp/chk-fake-podman/calls\nexit 1\n' > /tmp/chk-fake-podman/podman && chmod +x /tmp/chk-fake-podman/podman
+export PATH="/tmp/chk-fake-podman:$PATH"
 ```
 
 ```sh
@@ -537,59 +649,16 @@ snapshot() {
 }
 ```
 
-Take a snapshot before each method (`Take-Snapshot before` and `snapshot before`), run the method, take an `after` snapshot, and compare: `Compare-Object (Get-Content "$Snap\before.tree") (Get-Content "$Snap\after.tree")` and the same for `.environment`, or `diff "$SNAP/before.files" "$SNAP/after.files"` and the `.links` and `.dirs` files. A non-empty `.errors` file, or a snapshot function that returns a failure, fails the item. Take a new `before` snapshot for the next method.
-
-**Method 1, downloaded binary:** copy the verified binary to `$InstallRoot\bin\sandboxed-agents.exe` (`$INSTALL_ROOT/bin/sandboxed-agents` on Linux), run it by its full path with `version`, then copy a **second verified copy of the same preview binary** over it and run `version` again, and delete it. The replacement exercises the overwrite and reinstall of the file; it is a same-version replacement and claims nothing about a distinct-version upgrade. (If a previous preview's verified executable exists, you may use it as the first copy and the current one as the replacement.) Verify both copies as in the [quick guides](quick-guide-linux.md#3-verify). Exclusions: none. All three methods use an explicit verified input, the binary, the `.tgz`, or the `.nupkg` of the preview under test, and the upgrade step of each method is a same-version reinstall from that input; the behavior checks of this checklist always use the current executable.
-
-**Method 2, npm package:** install the tarball with the prefix, cache, logs, and temporary directory all under the install root, and with the update notifier off. Exclusions: none.
-
-```powershell
-$env:TEMP = Join-Path $InstallRoot 'tmp'; $env:TMP = $env:TEMP; $env:npm_config_update_notifier = 'false'
-npm install --offline --no-audit --no-fund -g --prefix "$InstallRoot\prefix" --cache "$InstallRoot\cache" --logs-dir "$InstallRoot\logs" .\sandboxed-agents-VERSION.tgz
-& "$InstallRoot\prefix\sandboxed-agents.cmd" version
-npm install --offline --no-audit --no-fund -g --prefix "$InstallRoot\prefix" --cache "$InstallRoot\cache" --logs-dir "$InstallRoot\logs" .\sandboxed-agents-VERSION.tgz
-npm uninstall -g --prefix "$InstallRoot\prefix" --cache "$InstallRoot\cache" --logs-dir "$InstallRoot\logs" sandboxed-agents
-```
+Take `snapshot before`, run a method, take `snapshot after`, and compare each pair with `diff "$SNAP/before.files" "$SNAP/after.files"` and the same for `.links` and `.dirs`. A failing `snapshot` or a non-empty `.errors` file means the snapshot is not usable. The npm commands of method 2 on Linux, with the prefix, cache, logs, and temporary directory under `$INSTALL_ROOT`:
 
 ```sh
 export TMPDIR="$INSTALL_ROOT/tmp" npm_config_update_notifier=false
 npm install --offline --no-audit --no-fund -g --prefix "$INSTALL_ROOT/prefix" --cache "$INSTALL_ROOT/cache" --logs-dir "$INSTALL_ROOT/logs" ./sandboxed-agents-VERSION.tgz
 "$INSTALL_ROOT/prefix/bin/sandboxed-agents" version
-npm install --offline --no-audit --no-fund -g --prefix "$INSTALL_ROOT/prefix" --cache "$INSTALL_ROOT/cache" --logs-dir "$INSTALL_ROOT/logs" ./sandboxed-agents-VERSION.tgz
 npm uninstall -g --prefix "$INSTALL_ROOT/prefix" --cache "$INSTALL_ROOT/cache" --logs-dir "$INSTALL_ROOT/logs" sandboxed-agents
 ```
 
-**Method 3a, NuGet package into the install root (files and Podman):** extract the `.nupkg` under `$InstallRoot\package`, then install into the install root and leave `PATH` alone, so the only location in play is the install root. Run the installer, run it again as an upgrade, and then the remover, each with the same arguments. Exclusions: none; the environment snapshots must show no difference at all.
-
-```powershell
-$Tools = Join-Path $InstallRoot 'package\tools'
-Get-ChildItem -LiteralPath $Tools -Filter *.ps1 | Unblock-File
-pwsh -File "$Tools\install-command.ps1" -InstallDirectory "$InstallRoot\nuget" -NoPathUpdate
-pwsh -File "$Tools\install-command.ps1" -InstallDirectory "$InstallRoot\nuget" -NoPathUpdate
-pwsh -File "$Tools\remove-command.ps1" -InstallDirectory "$InstallRoot\nuget" -NoPathUpdate
-```
-
-**Method 3b, NuGet package to its default location and `PATH` (the separate default-path test):** run the installer and the remover with their default arguments, so they use `%LOCALAPPDATA%\Programs\sandboxed-agents` and the user `PATH`. Take the snapshots with the install location excluded, and no other exclusion:
-
-```powershell
-$Default = Join-Path $env:LOCALAPPDATA 'Programs\sandboxed-agents'
-Take-Snapshot before @($Default)
-pwsh -File "$Tools\install-command.ps1"
-pwsh -File "$Tools\install-command.ps1"
-pwsh -File "$Tools\remove-command.ps1"
-Take-Snapshot after @($Default)
-```
-
-The `Programs` parent directory counts as part of the install location when the installer had to create it: the one `dir` line for it may differ. Nothing else may.
-
-**Expected:**
-
-- The `calls` file (`$Fake\calls`, inside the evidence directory, or `/tmp/chk-fake-podman/calls` on Linux) is empty or does not exist, so no Podman call was issued by any method.
-- For methods 1, 2, and 3a, the `.tree` and `.environment` comparisons (on Linux the `.files`, `.links`, and `.dirs` comparisons) show **no difference**, and no snapshot reported an error.
-- For method 3b, the `.tree` comparison shows no difference apart from the `Programs` parent line, and the `.environment` comparison shows only that the user `Path` value, with an unchanged value kind, gained the install directory entry after the installer and lost it after the remover, and that no other value changed. Entries that were already there, including unexpanded ones such as `%USERPROFILE%\bin`, are byte-for-byte unchanged.
-- Any other difference fails the item, whatever wrote it. If background activity of the machine itself writes a file during the run, repeat the run on a quiescent machine; do not exempt the file. Sandboxes that exist keep running across the upgrade of any method.
-
-After the item, delete the install root, `$Snap`, and `$Fake` (on Linux `$SNAP`, `$INSTALL_ROOT`, and `/tmp/chk-fake-podman`). Leave the evidence directory itself as you found it.
+Method 1 on Linux is a copy to `$INSTALL_ROOT/bin/sandboxed-agents`, `version`, a copy of the second verified copy over it, `version` again, and a delete. Expect no difference and an empty `/tmp/chk-fake-podman/calls`, which supplements the Windows result without proving it.
 
 ### No command removes an image
 
