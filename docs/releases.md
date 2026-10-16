@@ -55,10 +55,37 @@ The [Linux](quick-guide-linux.md) and [Windows](quick-guide-windows.md) quick gu
 A preview is validated when three gates passed on its commit:
 
 1. **Offline suite.** No network, Podman, or credentials. It runs in CI on every commit, on Linux and Windows.
-2. **Live suite.** An opt-in suite against real Podman on Linux and Windows 11, in a dedicated controller group so it cannot touch a sandbox somebody works in. A live run counts as passed only when it included the image coverage.
+2. **Live suite.** An opt-in suite against real Podman on Linux and Windows 11, in a dedicated controller group so it cannot touch a sandbox somebody works in. A live run counts as passed only when it included the image coverage. See [Live suite](#live-suite).
 3. **Manual checklist.** The maintained [manual checklist](manual-checklist.md), run by hand on a real host.
 
 The three gates are separate. An offline result is never presented as a live or manual result, and an offline test does not prove that isolation works on a real host.
+
+### Live suite
+
+The live suite is the test `TestLiveSuite` in `cmd/sandboxed-agents`. It runs only with `SANDBOXED_AGENTS_LIVE_TESTS=1`; without that exact value the offline suite skips it and calls no real Podman. It takes its controller group from `SANDBOXED_AGENTS_GROUP`, which must name a dedicated group other than `default` that matches `^[a-z0-9][a-z0-9-]*$`, and the directory for its record from `SANDBOXED_AGENTS_LIVE_SUMMARY_DIR`. With the `default` group, an unset or invalid group, or no record directory, the suite exits non-zero before it calls Podman. The suite's sandboxes are `live-lifecycle`, `live-update`, `live-agent`, and, in the image coverage, `image-none`, `image-dotnet`, `image-playwright`, `image-azure`, and `image-native`; because the group is a namespace of its own, these names cannot collide with sandboxes of another group.
+
+```sh
+SANDBOXED_AGENTS_LIVE_TESTS=1 \
+SANDBOXED_AGENTS_GROUP=live \
+SANDBOXED_AGENTS_LIVE_SUMMARY_DIR="$HOME/live-suite-records" \
+  go test ./cmd/sandboxed-agents -run '^TestLiveSuite$' -timeout 120m -v
+```
+
+Run it from the repository root of a clean checkout at the commit under test, with the Go version from `go.mod` on `PATH`; the record names that commit. Add `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1` to select the image coverage, which a release run must include. The suite's cases, each a subtest and a check of the record:
+
+| Check | What it does |
+|---|---|
+| `preflight` | Runs `check` with the development executable, then compiles the prepared executable with the embedded manager ([images](images.md#development-builds-with-the-manager)) that every later case uses, and reads its asset hash. When it fails, no later case runs. |
+| `lifecycle` | `up` on the existing base image (or lets `up` build it), `list`, `check NAME`, `stop`, `start`, and `remove NAME --volumes`, with the SSH server check of the image coverage after the creation and after the restart. |
+| `update` | Creates a sandbox with `--with native`, authorizes a test key, runs one successful `update NAME --with none` to the existing base image, then one forced rollback: `update NAME --with native --force` with only the readiness probe's `ssh` replaced by a failing one, which must restore the sandbox, its host key, and its authorization. |
+| `agent` | `agents enable NAME opencode` through a real npm install, `agents status` with the installed version, `agents session` started through a pseudo-terminal the suite provides and detached with the tmux keys, then `agents status` must report the running session; `agents session --stop`, `agents disable`, and the corresponding status reports. It signs in nowhere, uses no credential, and needs the network for the npm install only. |
+| `images` | The image coverage described under [live image tests](images.md#live-image-tests): one sandbox per toolchain set and one without, the smoke checks, the suite's only `build`, and the outdated marks. It runs only when selected; otherwise the record says `not-run`. |
+
+The suite writes its record before it calls any program, as a failing record with every check `not-run`, and replaces it atomically with the final one when it ends, so an interrupted run leaves a failing record. The record is `live-suite-linux.json` or `live-suite-windows-11.json` in the record directory, in the format under [Validation records](#validation-records): `image_part_selected` says whether the image coverage was selected, `image_part_ran` whether its `build` exited with status 0, and `image_coverage_complete` whether the whole `images` case passed, its cleanup included. The record holds the fixed check names above and nothing from the host: no names of the group, sandboxes, containers, volumes, or images, no paths, output, or error messages. The suite's log, which `go test -v` prints, holds those details.
+
+Every case removes its sandbox and volumes at its end; at the end of the run the suite checks that no container, backup container, or volume of its controller group remains, and it removes the group's host state. It leaves every image it built; the host agent of the `live-validation` skill removes the run's unused images afterwards ([Image cleanup](../.agents/skills/live-validation/SKILL.md#image-cleanup)).
+
+The offline suite covers the suite's own rules against fake Podman: the refusal of the `default` group and of invalid group names before any Podman call, the record written before the first Podman use with the checkout's commit and no host detail, the image selection recorded as given, the absence of `build` when the image coverage is not selected, and the pseudo-terminal counting as an interactive terminal for `agents session`. No run of the full suite is recorded yet; the live runs recorded under [live proof](images.md#live-proof) ran the image coverage of the earlier test alone.
 
 ### Validation records
 
