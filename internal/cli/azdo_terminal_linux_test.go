@@ -45,8 +45,7 @@ func TestAzureDevOpsTerminalHidesToken(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			f := sandboxStateFixture(t)
-			f.responses[shellInspect] = response{Output: containerInspectAnswer(`{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.toolchains":"azure"}`, "true")}
+			f := azureIntegrationFixture(t)
 			f.host.Stdin = slave
 			f.host.IsInputTerminal = nil
 			f.host.IsOutputTerminal = func(io.Writer) bool { return false }
