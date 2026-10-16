@@ -153,5 +153,11 @@ func (terminal *liveTerminal) Close() {
 		unix.Kill(-terminal.command.Process.Pid, unix.SIGKILL)
 		<-terminal.done
 	}
+	// Closing the master ends the reader; wait for it so nothing appends to
+	// the output after Close returns.
 	terminal.master.Close()
+	select {
+	case <-terminal.readerDone:
+	case <-time.After(5 * time.Second):
+	}
 }

@@ -159,7 +159,12 @@ func (terminal *liveTerminal) Close() {
 		<-terminal.done
 	}
 	terminal.closeConsole.Do(func() { windows.ClosePseudoConsole(terminal.console) })
-	<-terminal.readerDone
+	// Closing the console ends the output pipe; give the reader a bounded
+	// moment to see that before the handles go away.
+	select {
+	case <-terminal.readerDone:
+	case <-time.After(5 * time.Second):
+	}
 	terminal.input.Close()
 	terminal.output.Close()
 	terminal.attributes.Delete()

@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +13,14 @@ func TestLiveTerminalWaitDrainsOutput(t *testing.T) {
 	const last = "last line before exit"
 	// More than a pseudo-terminal buffer, so the final write and the exit race the reader.
 	filler := strings.Repeat("x", 64*1024)
-	for attempt := 0; attempt < 100; attempt++ {
+	// A stressed Linux run (one scheduler thread, loaded CPUs) lost the last
+	// line within a few dozen trials before the fix. A pseudo console spawn
+	// costs far more than a pseudo-terminal, so Windows runs fewer trials.
+	trials := 100
+	if runtime.GOOS == "windows" {
+		trials = 25
+	}
+	for attempt := 0; attempt < trials; attempt++ {
 		terminal := startLiveTerminal(t, append(os.Environ(), "TEST_FAKE_LOG="+t.TempDir()+"/fake.jsonl", "TEST_FAKE_OUTPUT="+filler+"\n"+last+"\n"), fakeExecutable, "write-and-exit")
 		exit, finished := terminal.Wait(20 * time.Second)
 		output := terminal.Output()
