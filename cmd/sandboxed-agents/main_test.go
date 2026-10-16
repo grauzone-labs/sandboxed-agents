@@ -29,7 +29,7 @@ var releaseExecutable string
 // nestedGuardEnv carries the PID of the process that started the nested run.
 const nestedGuardEnv = "TEST_OFFLINE_GUARD_NESTED"
 
-// TestMain prepares development, release, and fake binaries for the built CLI seam, reuses them in nested runs, and removes its temporary build directory after testing.
+// TestMain prepares development, release, fake, and live-transport fixture binaries for the built CLI seam, reuses them in nested runs, and removes its temporary build directory after testing.
 func TestMain(m *testing.M) {
 	// Nested test runs reuse parent-built binaries with an isolated PATH.
 	executable = os.Getenv("TEST_SANDBOXED_AGENTS_EXECUTABLE")
@@ -63,6 +63,10 @@ func TestMain(m *testing.M) {
 	fakeExecutable = filepath.Join(dir, "fake"+suffix)
 	fakeBuild := exec.Command("go", "build", "-o", fakeExecutable, "../../internal/testutil/testdata/fake.go")
 	if output, err := fakeBuild.CombinedOutput(); err != nil {
+		panic(string(output) + err.Error())
+	}
+	transportBuild := exec.Command("go", "build", "-o", filepath.Join(dir, "live-update-transport"+suffix), "testdata/live_update_transport.go")
+	if output, err := transportBuild.CombinedOutput(); err != nil {
 		panic(string(output) + err.Error())
 	}
 	code := m.Run()

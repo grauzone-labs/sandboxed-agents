@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -34,20 +35,7 @@ func verifyLiveUpdates(t *testing.T, host liveImageHost, old, newImages map[stri
 				t.Fatal("successful update did not select new image")
 			}
 		} else {
-			dir := t.TempDir()
-			suffix := ""
-			if runtime.GOOS == "windows" {
-				suffix = ".exe"
-			}
-			binary, err := os.ReadFile(fakeExecutable)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(dir, "ssh"+suffix), binary, 0700); err != nil {
-				t.Fatal(err)
-			}
-			failing := host
-			failing.environment = testutil.Env(host.environment, map[string]string{"PATH": dir + string(os.PathListSeparator) + os.Getenv("PATH"), "TEST_SSH_LOG": filepath.Join(dir, "ssh.jsonl"), "TEST_SSH_OUTPUT": "", "TEST_SSH_RESPONSES": "", "TEST_SSH_KNOWN_HOSTS": "", "TEST_SSH_EXIT": "255"})
+			failing := failingLiveUpdateHost(t, host, host.inspectContainer(t, name).Config.Labels[cli.SSHPortLabel])
 			output, err := failing.cli("", "update", name, "--force")
 			if err == nil || !strings.Contains(output, "readiness wait failed") || !strings.Contains(output, "restored sandbox") {
 				t.Fatalf("forced rollback: %v %s", err, output)
@@ -63,4 +51,32 @@ func verifyLiveUpdates(t *testing.T, host liveImageHost, old, newImages map[stri
 			t.Fatalf("authorization changed: %s", output)
 		}
 	}
+}
+
+// failingLiveUpdateHost prepares the image suite's forced readiness failure.
+func failingLiveUpdateHost(t *testing.T, host liveImageHost, port string) liveImageHost {
+	t.Helper()
+	realSSH, err := exec.LookPath("ssh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	realSSH, err = filepath.Abs(realSSH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	suffix := ""
+	if runtime.GOOS == "windows" {
+		suffix = ".exe"
+	}
+	binary, err := os.ReadFile(fakeExecutable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ssh"+suffix), binary, 0700); err != nil {
+		t.Fatal(err)
+	}
+	failing := host
+	failing.environment = testutil.Env(host.environment, map[string]string{"PATH": dir + string(os.PathListSeparator) + os.Getenv("PATH"), "TEST_SSH_LOG": filepath.Join(dir, "ssh.jsonl"), "TEST_SSH_OUTPUT": "", "TEST_SSH_RESPONSES": "", "TEST_SSH_KNOWN_HOSTS": "", "TEST_SSH_EXIT": "255", "TEST_SSH_REAL_EXECUTABLE": realSSH, "TEST_SSH_FAIL_PORT": port})
+	return failing
 }
