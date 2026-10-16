@@ -15,7 +15,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/image"
 )
 
-// TestReadinessWithImageSSHPolicy proves update readiness accepts the embedded server policy through real OpenSSH processes, with temporary server state and only the Podman manager response substituted.
+// TestReadinessWithImageSSHPolicy proves update readiness accepts real OpenSSH key exchange with the embedded policy as root or test-only PAM disabled as non-root, through temporary server state and a substituted Podman manager response.
 func TestReadinessWithImageSSHPolicy(t *testing.T) {
 	sshd, err := exec.LookPath("/usr/sbin/sshd")
 	if err != nil {
@@ -40,7 +40,7 @@ func TestReadinessWithImageSSHPolicy(t *testing.T) {
 	if output, err := exec.CommandContext(ctx, "ssh-keygen", "-A", "-f", directory).CombinedOutput(); err != nil {
 		t.Fatalf("generate temporary server keys: %v\n%s", err, output)
 	}
-	// Relocate only server state; retain the embedded authentication policy.
+	// Relocate server state without changing the embedded configuration file.
 	configuration := filepath.Join(directory, "sshd_config")
 	if err := os.WriteFile(configuration, []byte(strings.ReplaceAll(string(policy), "/etc/ssh/", state+"/")), 0600); err != nil {
 		t.Fatal(err)
@@ -58,8 +58,14 @@ func TestReadinessWithImageSSHPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer log.Close()
-	server := exec.CommandContext(ctx, sshd, "-D", "-e", "-f", configuration,
-		"-p", strconv.Itoa(port), "-o", "ListenAddress=127.0.0.1", "-o", "PidFile="+filepath.Join(directory, "sshd.pid"))
+	arguments := []string{"-D", "-e", "-f", configuration,
+		"-p", strconv.Itoa(port), "-o", "ListenAddress=127.0.0.1", "-o", "PidFile=" + filepath.Join(directory, "sshd.pid")}
+	if os.Geteuid() != 0 {
+		// PAM requires root. Readiness ends at key exchange, before authentication.
+		arguments = append(arguments, "-o", "UsePAM=no")
+		t.Log("non-root key-exchange test: test-only UsePAM=no; exact production PAM policy requires root")
+	}
+	server := exec.CommandContext(ctx, sshd, arguments...)
 	server.Stderr = log
 	if err := server.Start(); err != nil {
 		t.Fatal(err)
