@@ -205,7 +205,7 @@ func (host *liveHost) selectConnection(t *testing.T) {
 		}
 	}
 	if len(machines) > 1 && defaults != 1 {
-		t.Fatal("live image inspection requires the command-selected default or sole Podman machine")
+		t.Fatal("the live suite requires the command-selected default or sole Podman machine")
 	}
 	if chosen == "" || strings.HasPrefix(chosen, "-") || strings.ContainsAny(chosen, "\r\n\x00") {
 		t.Fatalf("invalid Podman machine name %q", chosen)
@@ -310,24 +310,27 @@ func (host liveHost) assertNoGroupObjects(t *testing.T) {
 	}
 }
 
+// liveListRow returns the sandbox's row of a list output and whether it is listed.
+func liveListRow(listing, name string) (string, bool) {
+	for _, row := range strings.Split(listing, "\n") {
+		if fields := strings.Fields(row); len(fields) >= 2 && fields[0] == name {
+			return row, true
+		}
+	}
+	return "", false
+}
+
 // assertListed checks the sandbox's state in list, or its absence when state is empty.
 func (host liveHost) assertListed(t *testing.T, name, state string) {
 	t.Helper()
 	listing := host.mustCLI(t, "", "list")
-	for _, row := range strings.Split(listing, "\n") {
-		fields := strings.Fields(row)
-		if len(fields) < 2 || fields[0] != name {
-			continue
-		}
-		if state == "" {
-			t.Fatalf("list still shows removed sandbox %s: %s", name, row)
-		}
-		if fields[1] != state {
-			t.Fatalf("list shows %s as %s; want %s: %s", name, fields[1], state, row)
-		}
-		return
-	}
-	if state != "" {
+	row, listed := liveListRow(listing, name)
+	switch {
+	case listed && state == "":
+		t.Fatalf("list still shows removed sandbox %s: %s", name, row)
+	case listed && strings.Fields(row)[1] != state:
+		t.Fatalf("list shows %s as %s; want %s: %s", name, strings.Fields(row)[1], state, row)
+	case !listed && state != "":
 		t.Fatalf("list omitted %s:\n%s", name, listing)
 	}
 }

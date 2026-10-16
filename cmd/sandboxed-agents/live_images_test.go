@@ -81,18 +81,11 @@ func liveImageCoverage(t *testing.T, suite *liveSuite) {
 	listing := host.mustCLI(t, "", "list")
 	for _, set := range sets {
 		name := "image-" + set
-		found := false
-		for _, row := range strings.Split(listing, "\n") {
-			fields := strings.Fields(row)
-			if len(fields) > 0 && fields[0] == name {
-				found = true
-				if !strings.Contains(strings.ToLower(row), "outdated") {
-					t.Errorf("list did not mark %s outdated: %s", name, row)
-				}
-			}
-		}
-		if !found {
+		row, listed := liveListRow(listing, name)
+		if !listed {
 			t.Errorf("list omitted %s:\n%s", name, listing)
+		} else if !strings.Contains(strings.ToLower(row), "outdated") {
+			t.Errorf("list did not mark %s outdated: %s", name, row)
 		}
 	}
 	for _, set := range sets {
