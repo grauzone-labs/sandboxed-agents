@@ -28,7 +28,14 @@ type scriptedResponse struct {
 	EchoStdin          bool
 	EchoLine           bool
 	ExitOnInput        string
-	Sequence           []scriptedResponse
+	Sequence           []scriptedAnswer
+}
+
+// scriptedAnswer is one answer of a sequence for the same argv.
+type scriptedAnswer struct {
+	Output string
+	Stderr string
+	Exit   int
 }
 
 // priorInvocations counts how often this exact argv was logged, this call included.
@@ -145,7 +152,8 @@ func main() {
 			}
 			if len(response.Sequence) > 0 {
 				// The same argv answers differently over time; the last answer repeats.
-				response = response.Sequence[min(priorInvocations(prefix)-1, len(response.Sequence)-1)]
+				answer := response.Sequence[min(priorInvocations(prefix)-1, len(response.Sequence)-1)]
+				response.Output, response.Stderr, response.Exit = answer.Output, answer.Stderr, answer.Exit
 			}
 			if response.HoldOutputUntil != "" {
 				executable, err := os.Executable()

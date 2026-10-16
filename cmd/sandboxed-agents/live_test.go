@@ -289,15 +289,15 @@ func TestLiveSuiteOptInSelectsOnlyExplicitOne(t *testing.T) {
 	for _, value := range []string{"0", "true", "1"} {
 		t.Run(value, func(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
-			summaries := t.TempDir()
-			output, err := liveSuiteChild(t, fakes, map[string]string{testutil.LiveTestsEnv: value, "SANDBOXED_AGENTS_GROUP": "live-offline", liveRecordDirEnv: summaries})
+			records := t.TempDir()
+			output, err := liveSuiteChild(t, fakes, map[string]string{testutil.LiveTestsEnv: value, "SANDBOXED_AGENTS_GROUP": "live-offline", liveRecordDirEnv: records})
 			selected := strings.Contains(output, "live test body selected")
 			calls := testutil.Invocations(t, fakes.PodmanLog)
 			if value != "1" {
 				if selected || err != nil || len(calls) != 0 || !strings.Contains(output, "--- SKIP: TestLiveSuite") {
 					t.Fatalf("unexpected live selection for %q: selected=%v err=%v calls=%v\n%s", value, selected, err, calls, output)
 				}
-				if entries, err := os.ReadDir(summaries); err != nil || len(entries) != 0 {
+				if entries, err := os.ReadDir(records); err != nil || len(entries) != 0 {
 					t.Fatalf("skipped suite wrote %v", entries)
 				}
 				return
@@ -316,8 +316,8 @@ func TestLiveSuiteFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
 	for _, availability := range []string{"missing", "unusable"} {
 		t.Run(availability, func(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
-			summaries := t.TempDir()
-			values := map[string]string{"SANDBOXED_AGENTS_GROUP": "live-offline", liveRecordDirEnv: summaries, "TEST_PODMAN_EXIT": "23", "TEST_PODMAN_OUTPUT": "scripted Podman failure\n"}
+			records := t.TempDir()
+			values := map[string]string{"SANDBOXED_AGENTS_GROUP": "live-offline", liveRecordDirEnv: records, "TEST_PODMAN_EXIT": "23", "TEST_PODMAN_OUTPUT": "scripted Podman failure\n"}
 			if availability == "missing" {
 				values["PATH"] = t.TempDir()
 			}
@@ -333,7 +333,7 @@ func TestLiveSuiteFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
 				t.Fatalf("unusable Podman: calls=%v output=%s", calls, output)
 			}
 			assertOnlyPreflightQueries(t, fakes)
-			if _, err := os.Stat(filepath.Join(summaries, liveRecordFilename(t))); err != nil {
+			if _, err := os.Stat(filepath.Join(records, liveRecordFilename(t))); err != nil {
 				t.Fatalf("failing record was not written before the first Podman use: %v", err)
 			}
 		})
@@ -350,13 +350,13 @@ func TestLiveSuiteRefusesDefaultAndInvalidControllerGroups(t *testing.T) {
 			return r
 		}, group), func(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
-			summaries := t.TempDir()
-			output, err := liveSuiteChild(t, fakes, map[string]string{"SANDBOXED_AGENTS_GROUP": group, liveRecordDirEnv: summaries})
+			records := t.TempDir()
+			output, err := liveSuiteChild(t, fakes, map[string]string{"SANDBOXED_AGENTS_GROUP": group, liveRecordDirEnv: records})
 			if status := exitStatus(t, err); status != 1 || !strings.Contains(output, "SANDBOXED_AGENTS_GROUP") || !strings.Contains(output, "--- FAIL: TestLiveSuite") {
 				t.Fatalf("group %q: status=%d output=%s; want refusal naming the variable", group, status, output)
 			}
 			assertNoExternalCalls(t, fakes)
-			if entries, err := os.ReadDir(summaries); err != nil || len(entries) != 0 {
+			if entries, err := os.ReadDir(records); err != nil || len(entries) != 0 {
 				t.Fatalf("refused run wrote %v", entries)
 			}
 		})
@@ -388,9 +388,9 @@ func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 	for _, selection := range []string{"", "0", "true", "1"} {
 		t.Run("image-opt-in-"+selection, func(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
-			summaries := t.TempDir()
+			records := t.TempDir()
 			const group = "live-offline-redaction"
-			output, err := liveSuiteChild(t, fakes, map[string]string{"SANDBOXED_AGENTS_GROUP": group, liveRecordDirEnv: summaries, liveImagesEnv: selection})
+			output, err := liveSuiteChild(t, fakes, map[string]string{"SANDBOXED_AGENTS_GROUP": group, liveRecordDirEnv: records, liveImagesEnv: selection})
 			if err == nil {
 				t.Fatalf("offline live run passed:\n%s", output)
 			}
@@ -402,11 +402,11 @@ func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 				}
 			}
 			filename := liveRecordFilename(t)
-			entries, err := os.ReadDir(summaries)
+			entries, err := os.ReadDir(records)
 			if err != nil || len(entries) != 1 || entries[0].Name() != filename {
 				t.Fatalf("record directory holds %v (err=%v); want only %s", entries, err, filename)
 			}
-			data, err := os.ReadFile(filepath.Join(summaries, filename))
+			data, err := os.ReadFile(filepath.Join(records, filename))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -431,7 +431,7 @@ func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 			// A host or account named like a fixed word of the record, such as a
 			// user called agent, cannot be told from that word and is not a leak.
 			vocabulary := strings.Join(liveCheckNames, " ") + " pass fail not-run live-suite linux windows-11"
-			for _, detail := range []string{group, summaries, fakes.Dir, hostname, account.Username, "sandboxed-agents.", "/", `\`, "live-offline"} {
+			for _, detail := range []string{group, records, fakes.Dir, hostname, account.Username, "sandboxed-agents.", "/", `\`, "live-offline"} {
 				if detail != "" && !strings.Contains(vocabulary, detail) && strings.Contains(string(data), detail) {
 					t.Fatalf("record carries host detail %q: %s", detail, data)
 				}
