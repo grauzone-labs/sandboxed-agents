@@ -93,6 +93,8 @@ func TestCIChecksCompareEntirePR(t *testing.T) {
 	})
 }
 
+// ciRepository creates an isolated temporary Git fixture with a test identity and
+// committed build and documentation inputs, skipping tests outside Linux.
 func ciRepository(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS != "linux" {
@@ -108,6 +110,8 @@ func ciRepository(t *testing.T) string {
 	return checkout
 }
 
+// ciWrite writes a private fixture file at a checkout-relative path, creating
+// private parent directories as needed and failing the test on any error.
 func ciWrite(t *testing.T, checkout, name, contents string) {
 	t.Helper()
 	path := filepath.Join(checkout, filepath.FromSlash(name))
@@ -119,6 +123,7 @@ func ciWrite(t *testing.T, checkout, name, contents string) {
 	}
 }
 
+// ciCommit stages and commits all fixture changes and returns the new commit SHA.
 func ciCommit(t *testing.T, checkout string) string {
 	t.Helper()
 	runGit(t, checkout, "add", "--all")
@@ -126,6 +131,9 @@ func ciCommit(t *testing.T, checkout string) string {
 	return gitOutput(t, checkout, "rev-parse", "HEAD")
 }
 
+// assertCIChecks runs the real CI classification script in the fixture with the
+// event, base, and head inputs and checks its exact Actions-compatible decision
+// output, reporting command errors and stderr on failure.
 func assertCIChecks(t *testing.T, checkout, event, base, head string, want bool) {
 	t.Helper()
 	script := filepath.Join(repositoryRoot(t), "scripts", "ci-checks-required.sh")
