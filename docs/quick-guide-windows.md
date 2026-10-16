@@ -24,7 +24,7 @@ podman machine list
 ssh -V
 ```
 
-`podman machine list` must show a running machine that is marked as the default (a `*` after its name).
+`podman machine list` must show a running machine marked as the default (a `*` after its name), or exactly one machine, which must be running even if it has no default mark.
 
 ## 1. Choose a release tag
 
@@ -36,15 +36,23 @@ $Tag = 'v1.0.0-preview.YYYYMMDD.N'
 
 ## 2. Download
 
-Download the Windows binary and the checksum file into a new, empty directory:
+Download the Windows binary and the checksum file into a directory that does not exist yet. The block below stops at the first problem: it refuses a directory that is already there, and it does not start the next download after a failed one. Paste all of it at once.
 
 ```text
-New-Item -ItemType Directory -Force "$HOME\sandboxed-agents-download" | Out-Null
-Set-Location "$HOME\sandboxed-agents-download"
-$Base = "https://github.com/grauzone-labs/sandboxed-agents/releases/download/$Tag"
-Invoke-WebRequest "$Base/sandboxed-agents-windows-amd64.exe" -OutFile sandboxed-agents-windows-amd64.exe
-Invoke-WebRequest "$Base/SHA256SUMS" -OutFile SHA256SUMS
+& {
+  $ErrorActionPreference = 'Stop'
+  if (-not $Tag) { throw 'set $Tag first (step 1)' }
+  $Dir = "$HOME\sandboxed-agents-download"
+  if (Test-Path -LiteralPath $Dir) { throw "$Dir already exists; choose a directory that is not in use" }
+  New-Item -ItemType Directory -Path $Dir | Out-Null
+  $Base = "https://github.com/grauzone-labs/sandboxed-agents/releases/download/$Tag"
+  Invoke-WebRequest "$Base/sandboxed-agents-windows-amd64.exe" -OutFile "$Dir\sandboxed-agents-windows-amd64.exe" -ErrorAction Stop
+  Invoke-WebRequest "$Base/SHA256SUMS" -OutFile "$Dir\SHA256SUMS" -ErrorAction Stop
+  Set-Location -LiteralPath $Dir
+}
 ```
+
+If the block prints an error, **stop**. Do not go on to step 3, and do not use the files that are there. Open a new terminal, set `$Tag` again, and run the block again with a different, unused directory name, for example `sandboxed-agents-download-2` in the `$Dir` line. Never reuse a directory from a failed attempt, because the checksum check in step 3 could then look at old files.
 
 ## 3. Verify
 
