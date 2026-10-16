@@ -25,8 +25,9 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 	if _, err := queryManagerSessions(request, p); err != nil {
 		return fmt.Errorf("sandbox %q: manager does not answer; use check %s for diagnosis and restart %s (%w)", request.Name, request.Name, request.Name, err)
 	}
-	azdoLogin := request.Command == "integrations login" && request.Args[1] == catalog.AzureDevOpsIntegration
-	if request.Command == "integrations login" && (request.Args[1] == catalog.AzureIntegration || azdoLogin) {
+	integrationLogin := request.Command == "integrations login"
+	azdoLogin := integrationLogin && request.Args[1] == catalog.AzureDevOpsIntegration
+	if integrationLogin && (request.Args[1] == catalog.AzureIntegration || azdoLogin) {
 		set, err := sandboxToolchains(objects.container)
 		if err != nil {
 			return err
@@ -48,7 +49,7 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 		stdin = strings.NewReader(token + "\n")
 		// Credential subprocess diagnostics are untrusted and may contain the PAT.
 		stdout, stderr = io.Discard, io.Discard
-	} else if request.Command == "integrations login" {
+	} else if integrationLogin {
 		browser := request.Args[1] == catalog.AzureIntegration && loginWorkflow(request.Args) == catalog.BrowserWorkflow
 		if browser {
 			setup, err := sshSetupPaths(request, p.host.Platform)

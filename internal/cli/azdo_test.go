@@ -8,12 +8,18 @@ import (
 	"testing"
 )
 
+func azureIntegrationFixture(t *testing.T) *fixture {
+	t.Helper()
+	f := sandboxStateFixture(t)
+	f.responses[shellInspect] = response{Output: containerInspectAnswer(`{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.toolchains":"azure"}`, "true")}
+	return f
+}
+
 // TestAzureDevOpsLoginReadsStdin proves piped PAT input is accepted regardless of stdout and is absent from Podman arguments and command output at the host CLI seam.
 func TestAzureDevOpsLoginReadsStdin(t *testing.T) {
 	for _, outputTerminal := range []bool{false, true} {
 		t.Run(fmt.Sprint(outputTerminal), func(t *testing.T) {
-			f := sandboxStateFixture(t)
-			f.responses[shellInspect] = response{Output: containerInspectAnswer(`{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.toolchains":"azure"}`, "true")}
+			f := azureIntegrationFixture(t)
 			f.host.Stdin = strings.NewReader("pat-host-sentinel\n")
 			f.host.IsInputTerminal = func(io.Reader) bool { return false }
 			f.host.IsOutputTerminal = func(io.Writer) bool { return outputTerminal }
@@ -102,8 +108,7 @@ func (r unreadableToken) Read([]byte) (int, error) {
 // TestAzureDevOpsRejectsEmptyToken proves empty stdin refuses before any credential workflow at the host CLI seam.
 func TestAzureDevOpsRejectsEmptyToken(t *testing.T) {
 	for _, input := range []string{"", "\n", "  \r\n"} {
-		f := sandboxStateFixture(t)
-		f.responses[shellInspect] = response{Output: containerInspectAnswer(`{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.toolchains":"azure"}`, "true")}
+		f := azureIntegrationFixture(t)
 		f.host.Stdin = strings.NewReader(input)
 		f.responses[integrationProbe] = response{}
 		status, output, calls := f.run(t, "integrations", "login", "agent01", "azdo", "--organization", "https://dev.azure.com/contoso")
