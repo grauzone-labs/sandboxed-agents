@@ -41,6 +41,26 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(125)
 	}
+	// Live rollback injection must not intercept Podman's own machine transport.
+	if prefix == "TEST_SSH" && os.Getenv("TEST_SSH_REAL_EXECUTABLE") != "" {
+		args := os.Args[1:]
+		port := slices.Index(args, "-p")
+		readiness := port >= 0 && port+1 < len(args) && args[port+1] == os.Getenv("TEST_SSH_FAIL_PORT") &&
+			slices.Contains(args, "UserKnownHostsFile=known_hosts") && len(args) > 0 && args[len(args)-1] == "agent@127.0.0.1"
+		if readiness {
+			os.Exit(255)
+		}
+		command := exec.Command(os.Getenv("TEST_SSH_REAL_EXECUTABLE"), args...)
+		command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := command.Run(); err != nil {
+			if exit, ok := err.(*exec.ExitError); ok {
+				os.Exit(exit.ExitCode())
+			}
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(125)
+		}
+		return
+	}
 	if prefix == "TEST_SSH_KEYGEN" && os.Getenv("TEST_SSH_KEYGEN_REAL_EXECUTABLE") != "" {
 		command := exec.Command(os.Getenv("TEST_SSH_KEYGEN_REAL_EXECUTABLE"), os.Args[1:]...)
 		command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
