@@ -136,6 +136,9 @@ func cleanupUpdate(request Request, p podmanTarget, objects sandboxObjects, outp
 		return deferred("recorded SSH port is missing or invalid")
 	}
 	names := DerivedNames(request.Group, request.Name)
+	if _, err := recordedWorkspaceMount(names, objects); err != nil {
+		return deferred(fmt.Sprintf("replacement storage is missing or unsupported: %v", err))
+	}
 	if !*objects.container.State.Running {
 		if _, err := p.query("start", names.Container); err != nil {
 			return deferred(fmt.Sprintf("could not start replacement: %v", err))
@@ -200,13 +203,23 @@ func replacementArgs(request Request, objects sandboxObjects, set []string, tag 
 	}
 	request.Resources = Resources{Memory: limits[0], PIDsLimit: limits[1], ShmSize: limits[2], CPUs: cpu.displayCores()}
 	request.Toolchains = set
+	workspaceMount, err := recordedWorkspaceMount(names, objects)
+	if err != nil {
+		return nil, 0, err
+	}
+	args := sandboxCreateArgs(request, port, workspaceMount, tag, updateWasRunningLabel+"="+strconv.FormatBool(*c.State.Running))
+	return args, port, nil
+}
+
+// recordedWorkspaceMount validates all sandbox storage mounts and returns the workspace creation argument.
+func recordedWorkspaceMount(names ObjectNames, objects sandboxObjects) (string, error) {
 	workspaceMount := "type=volume,source=" + names.Workspace + ",destination=/workspace"
 	expected := map[string]string{"/workspace": names.Workspace, "/home/agent": names.Home, "/etc/ssh": names.SSH}
 	seen := map[string]bool{}
-	for _, mount := range c.Mounts {
+	for _, mount := range objects.container.Mounts {
 		volume, ok := expected[mount.Destination]
 		if !ok || seen[mount.Destination] {
-			return nil, 0, fmt.Errorf("unsupported recorded mount at %s", mount.Destination)
+			return "", fmt.Errorf("unsupported recorded mount at %s", mount.Destination)
 		}
 		seen[mount.Destination] = true
 		if mount.Destination == "/workspace" && mount.Type == "bind" && mount.Source != "" {
@@ -214,12 +227,11 @@ func replacementArgs(request Request, objects sandboxObjects, set []string, tag 
 			continue
 		}
 		if mount.Type != "volume" || mount.Name != volume || !slices.Contains(objects.volumes, volume) {
-			return nil, 0, fmt.Errorf("recorded volume at %s is missing or unsupported", mount.Destination)
+			return "", fmt.Errorf("recorded volume at %s is missing or unsupported", mount.Destination)
 		}
 	}
 	if len(seen) != 3 {
-		return nil, 0, fmt.Errorf("recorded workspace, home, and SSH mounts are required")
+		return "", fmt.Errorf("recorded workspace, home, and SSH mounts are required")
 	}
-	args := sandboxCreateArgs(request, port, workspaceMount, tag, updateWasRunningLabel+"="+strconv.FormatBool(*c.State.Running))
-	return args, port, nil
+	return workspaceMount, nil
 }

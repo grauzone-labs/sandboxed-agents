@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
 func cleanupFixture(t *testing.T, wasRunning, running bool) *fixture {
@@ -226,5 +228,151 @@ func TestUpdateCleanupReadinessFailureRetainsBackup(t *testing.T) {
 	}
 	if !started {
 		t.Fatal("stopped replacement was not started for readiness")
+	}
+}
+
+// TestUpdateCleanupRejectsWrongOwnedVolume proves cleanup retains the backup without starting or probing a replacement attached to another owned sandbox's home volume through the executable CLI and fake Podman seam.
+func TestUpdateCleanupRejectsWrongOwnedVolume(t *testing.T) {
+	f := cleanupFixture(t, false, false)
+	key := "container inspect sandboxed-agents.default.demo"
+	r := f.responses[key]
+	r.Output = strings.Replace(r.Output, `"Name":"sandboxed-agents.default.demo.home"`, `"Name":"sandboxed-agents.default.other.home"`, 1)
+	f.responses[key] = r
+	// All volume names, including the other sandbox's home, exist and have this group's owner.
+	f.responses["volume exists sandboxed-agents.default.other.home"] = response{}
+	f.responses["volume inspect sandboxed-agents.default.other.home"] = response{Output: `[{"Labels":{"io.sandboxed-agents.owner":"default"}}]`}
+	status, output, calls := runUpExecutable(t, f, "update", "demo")
+	if status != 1 || !strings.Contains(output, "replacement storage") || !strings.Contains(output, "backup retained") || strings.Contains(output, "owner conflict") {
+		t.Fatalf("status=%d output=%s", status, output)
+	}
+	if ssh := testutil.Invocations(t, f.fakes.SSHLog); len(ssh) != 0 {
+		t.Fatalf("SSH readiness attempted on wrong storage: %v", ssh)
+	}
+	for _, call := range calls {
+		switch call[0] {
+		case "start", "stop", "rm", "exec", "create", "rename", "build", "image":
+			t.Fatalf("unsafe cleanup action: %v", call)
+		case "volume":
+			if call[1] != "exists" && call[1] != "inspect" {
+				t.Fatalf("volume mutation: %v", call)
+			}
+		}
+	}
+}
+
+// TestUpdateCleanupRejectsMalformedStorage proves wrong, missing, duplicate and extra mounts retain the backup before readiness or mutation for running and stopped replacements through CLI inspection fixtures.
+func TestUpdateCleanupRejectsMalformedStorage(t *testing.T) {
+	workspace := `{"Type":"volume","Name":"sandboxed-agents.default.demo.workspace","Destination":"/workspace"}`
+	home := `{"Type":"volume","Name":"sandboxed-agents.default.demo.home","Destination":"/home/agent"}`
+	ssh := `{"Type":"volume","Name":"sandboxed-agents.default.demo.ssh","Destination":"/etc/ssh"}`
+	type storageCase struct{ name, from, to, absentVolume string }
+	cases := []storageCase{}
+	for _, mount := range []struct{ name, record string }{{"workspace", workspace}, {"home", home}, {"ssh", ssh}} {
+		cases = append(cases,
+			storageCase{"wrong " + mount.name, mount.record, strings.Replace(mount.record, ".default.demo.", ".default.other.", 1), ""},
+			storageCase{"missing volume " + mount.name, "", "", "sandboxed-agents.default.demo." + mount.name},
+			storageCase{"missing mount " + mount.name, mount.record, "", ""},
+			storageCase{"duplicate " + mount.name, mount.record, mount.record + "," + mount.record, ""},
+		)
+	}
+	cases = append(cases,
+		storageCase{"extra mount", ssh, ssh + `,{"Type":"volume","Name":"extra","Destination":"/extra"}`, ""},
+		storageCase{"home bind", home, `{"Type":"bind","Source":"/somewhere","Destination":"/home/agent"}`, ""},
+		storageCase{"SSH bind", ssh, `{"Type":"bind","Source":"/somewhere","Destination":"/etc/ssh"}`, ""},
+		storageCase{"empty workspace bind", workspace, `{"Type":"bind","Source":"","Destination":"/workspace"}`, ""},
+	)
+	for _, current := range []bool{false, true} {
+		for _, tc := range cases {
+			t.Run(fmt.Sprintf("running=%t/%s", current, tc.name), func(t *testing.T) {
+				f := cleanupFixture(t, false, current)
+				key := "container inspect sandboxed-agents.default.demo"
+				r := f.responses[key]
+				if tc.from != "" {
+					from := tc.from
+					if tc.to == "" {
+						if from == ssh {
+							from = "," + from
+						} else {
+							from += ","
+						}
+					}
+					if strings.Count(r.Output, from) != 1 {
+						t.Fatal("mount fixture no longer matches")
+					}
+					r.Output = strings.Replace(r.Output, from, tc.to, 1)
+					f.responses[key] = r
+				}
+				if tc.absentVolume != "" {
+					f.responses["volume exists "+tc.absentVolume] = response{Exit: 1}
+				}
+				status, output, calls := runUpExecutable(t, f, "update", "demo")
+				if status != 1 || !strings.Contains(output, "replacement storage") || !strings.Contains(output, "backup retained") {
+					t.Fatalf("status=%d output=%s", status, output)
+				}
+				if ssh := testutil.Invocations(t, f.fakes.SSHLog); len(ssh) != 0 {
+					t.Fatalf("SSH readiness attempted on malformed storage: %v", ssh)
+				}
+				for _, call := range calls {
+					switch call[0] {
+					case "start", "stop", "rm", "exec", "create", "rename", "build", "image":
+						t.Fatalf("unsafe cleanup action: %v", call)
+					case "volume":
+						if call[1] != "exists" && call[1] != "inspect" {
+							t.Fatalf("volume mutation: %v", call)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestUpdateCleanupAcceptsWorkspaceBind proves cleanup accepts a supported workspace bind without a workspace volume and without reconstructing images, toolchains or resource limits through the executable CLI seam.
+func TestUpdateCleanupAcceptsWorkspaceBind(t *testing.T) {
+	f := cleanupFixture(t, false, false)
+	key := "container inspect sandboxed-agents.default.demo"
+	r := f.responses[key]
+	r.Output = strings.Replace(r.Output, `"Type":"volume","Name":"sandboxed-agents.default.demo.workspace"`, `"Type":"bind","Source":"/projects/my work"`, 1)
+	r.Output = strings.Replace(r.Output, `"io.sandboxed-agents.toolchains":"none"`, `"io.sandboxed-agents.toolchains":"unknown"`, 1)
+	r.Output = strings.Replace(r.Output, `"Memory":8589934592`, `"Memory":null`, 1)
+	f.responses[key] = r
+	f.responses["volume exists sandboxed-agents.default.demo.workspace"] = response{Exit: 1}
+	status, output, calls := runUpExecutable(t, f, "update", "demo")
+	if status != 0 || !strings.Contains(output, "interrupted update cleaned up") {
+		t.Fatalf("status=%d output=%s", status, output)
+	}
+	for _, call := range calls {
+		switch call[0] {
+		case "create", "rename", "build", "image":
+			t.Fatalf("unexpected reconstruction: %v", call)
+		case "volume":
+			if call[1] != "exists" && call[1] != "inspect" {
+				t.Fatalf("volume mutation: %v", call)
+			}
+		}
+	}
+	last := flatCalls(calls[len(calls)-2:])
+	if strings.Join(last, ";") != "rm sandboxed-agents-backup.default.demo;stop sandboxed-agents.default.demo" {
+		t.Fatalf("wrong finalization order: %v", calls)
+	}
+}
+
+// TestUpdateCleanupOwnerConflictPrecedesStorageValidation proves a foreign backup is reported before a replacement's invalid storage with no mutation or readiness probe through the executable CLI seam.
+func TestUpdateCleanupOwnerConflictPrecedesStorageValidation(t *testing.T) {
+	f := cleanupFixture(t, false, false)
+	key := "container inspect sandboxed-agents.default.demo"
+	r := f.responses[key]
+	r.Output = strings.Replace(r.Output, `"Name":"sandboxed-agents.default.demo.home"`, `"Name":"sandboxed-agents.default.other.home"`, 1)
+	f.responses[key] = r
+	f.responses["container inspect sandboxed-agents-backup.default.demo"] = response{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"foreign"}},"State":{"Running":false}}]`}
+	status, output, calls := runUpExecutable(t, f, "update", "demo")
+	if status != 1 || !strings.Contains(output, "owner conflict") || !strings.Contains(output, "sandboxed-agents-backup.default.demo") || strings.Contains(output, "replacement storage") {
+		t.Fatalf("status=%d output=%s", status, output)
+	}
+	for _, call := range calls {
+		switch call[0] {
+		case "start", "stop", "rm", "exec", "create", "rename", "build", "image":
+			t.Fatalf("action on foreign sandbox state: %v", call)
+		}
 	}
 }
