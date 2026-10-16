@@ -30,13 +30,17 @@ TAG=v1.0.0-preview.YYYYMMDD.N
 
 ## 2. Download
 
-Download the Linux binary and the checksum file into a new, empty directory:
+Download the Linux binary and the checksum file into a directory that does not exist yet. The command below stops at the first problem: it refuses a directory that is already there, and it does not start the next download after a failed one.
 
 ```text
-mkdir -p ~/sandboxed-agents-download && cd ~/sandboxed-agents-download
-curl -fLO "https://github.com/grauzone-labs/sandboxed-agents/releases/download/$TAG/sandboxed-agents-linux-amd64"
+test -n "$TAG" && \
+mkdir ~/sandboxed-agents-download && \
+cd ~/sandboxed-agents-download && \
+curl -fLO "https://github.com/grauzone-labs/sandboxed-agents/releases/download/$TAG/sandboxed-agents-linux-amd64" && \
 curl -fLO "https://github.com/grauzone-labs/sandboxed-agents/releases/download/$TAG/SHA256SUMS"
 ```
+
+If any part fails (the tag is not set, the directory already exists, or either download fails), **stop**. Do not go on to step 3, and do not use the files that are there. Open a new terminal, set `TAG` again, and run the command again with a different, unused directory name, for example `~/sandboxed-agents-download-2` in both places. Never reuse a directory from a failed attempt, because the checksum check in step 3 could then look at old files.
 
 ## 3. Verify
 

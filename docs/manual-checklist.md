@@ -42,11 +42,11 @@ Platforms are `linux` (Linux amd64, rootless Podman 4.4.0 or newer) and `windows
 
 ### Podman on Windows, and capturing state
 
-Some items compare Podman and `sandboxed-agents` state before and after a command, and some call `podman` directly. On Windows every direct `podman` call in this document names the Podman machine the executable works on, with `--connection`. Find the machine whose `Default` column is `true` and use it through a helper, so that the calls cannot reach another machine; on Linux call `podman` as written:
+Some items compare Podman and `sandboxed-agents` state before and after a command, and some call `podman` directly. On Windows every direct `podman` call in this document names the Podman machine the executable works on, with `--connection`. Find the machine the executable works on, which is the one whose `Default` column is `true`, or your only machine if you have just one, and use it through a helper, so that the calls cannot reach another machine; on Linux call `podman` as written:
 
 ```powershell
 podman machine list --format '{{.Name}} {{.Default}}'
-$Machine = 'MACHINE_NAME'   # the name of the machine with Default true, without a trailing *
+$Machine = 'MACHINE_NAME'   # the default machine, or your only machine, without a trailing *
 function pm { podman --connection $Machine @args }
 ```
 
@@ -702,7 +702,7 @@ Do this last, after every observation above. It is the only place that removes `
 
 1. Remove the SSH setup: `sandboxed-agents ssh-config chk-persist --remove`.
 2. Remove the sandbox and its volumes: `sandboxed-agents remove chk-persist --volumes`. **Expected:** the three volumes are removed (`podman volume ls` shows none for `chk-persist`).
-3. This is the removal half of `credentials-persist`. Create it again, `sandboxed-agents up chk-persist --with azure`, and in `shell chk-persist` check that `/home/agent/.git-credentials` is absent, `git config --global --get user.email` prints nothing, `gh auth status` and `az account show` report no login, and `sandboxed-agents agents status chk-persist opencode` shows the agent not enabled. Then remove it for good: `sandboxed-agents remove chk-persist --volumes`.
+3. This is the removal half of `credentials-persist`. Create the sandbox again: `sandboxed-agents up chk-persist --with azure`. Open `sandboxed-agents shell chk-persist` and, **inside that shell**, check that `/home/agent/.git-credentials` is absent, that `git config --global --get user.email` prints nothing, and that `gh auth status` and `az account show` report no login. Then leave the shell with `exit`. **Back in the host terminal**, run `sandboxed-agents agents status chk-persist opencode`, which shows the agent not enabled. Then remove the sandbox for good: `sandboxed-agents remove chk-persist --volumes`.
 4. Save `images-after.txt` and compare it with `images-before.txt` for the [image check](#no-command-removes-an-image).
 5. Revoke what you granted: remove the GitHub device authorization in your GitHub settings, revoke the Azure sign-in sessions for the test account, delete the Azure DevOps personal access token, and sign out of the four agents' accounts or revoke their sessions at each provider.
 6. `sandboxed-agents list` must show no sandbox of the group, and `podman ps --all` no `sandboxed-agents.manual-check.` container.
