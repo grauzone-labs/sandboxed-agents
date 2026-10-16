@@ -33,16 +33,20 @@ func tracerImageID(set string, generation int) string {
 	return "sha256:" + strings.Repeat(seed, 64/len(seed)+1)[:64]
 }
 
+// tracerTag names the image tag of a toolchain set under the tracer's asset hash.
+func tracerTag(set string) string {
+	if set == "none" {
+		return image.Tag(tracerAssetHash, nil)
+	}
+	return image.Tag(tracerAssetHash, []string{set})
+}
+
 // tracerContainer renders Podman's inspect answer for a running sandbox on the given image.
 func tracerContainer(set string, generation int) string {
-	tag := image.Tag(tracerAssetHash, nil)
-	if set != "none" {
-		tag = image.Tag(tracerAssetHash, []string{set})
-	}
 	record := map[string]any{
 		"Image": tracerImageID(set, generation),
 		"State": map[string]any{"Running": true},
-		"Config": map[string]any{"Image": tag, "User": "0:0", "Labels": map[string]string{
+		"Config": map[string]any{"Image": tracerTag(set), "User": "0:0", "Labels": map[string]string{
 			cli.OwnerLabel: tracerGroup, cli.SSHPortLabel: tracerPort, cli.ToolchainsLabel: set,
 		}},
 		"HostConfig": map[string]any{"PortBindings": map[string]any{"22/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": tracerPort}}}},
@@ -115,13 +119,13 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				return name + "\trunning\t" + tracerPort + "\tvolume\t" + set + "\t-\t3\t-\n"
 			}
 			var outdated []string
-			for _, set := range sets[1:] {
+			for _, set := range sets {
 				outdated = append(outdated, "image-"+set+"\trunning\t"+tracerPort+"\tvolume\t"+set+"\t-\t3\toutdated; use update image-"+set+"\n")
 			}
 			executableResponses := map[string]lifecycleResponse{
 				"check":   {},
 				"version": {Output: "sandboxed-agents development\nasset-sha256 " + tracerAssetHash + "\n"},
-				"list": {Sequence: []lifecycleResponse{
+				"list": {Sequence: []scriptedAnswer{
 					{Output: tracerListing(running("live-lifecycle", "none"))}, {Output: tracerListing("live-lifecycle\tstopped\t" + tracerPort + "\tvolume\tnone\t-\t3\t-\n")},
 					{Output: tracerListing(running("live-lifecycle", "none"))}, {Output: tracerListing()},
 					{Output: tracerListing(running("live-update", "none"))}, {Output: tracerListing(running("live-update", "none"))},
@@ -136,7 +140,7 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				"shell live-update":                        {Output: tracerAuthorized + "\n"},
 				"up live-agent":                            {},
 				"agents enable live-agent opencode":        {},
-				"agents status live-agent opencode": {Sequence: []lifecycleResponse{
+				"agents status live-agent opencode": {Sequence: []scriptedAnswer{
 					{Output: "opencode: enabled; version 1.2.3; pin none; session false; signed in unknown\n"},
 					{Output: "opencode: enabled; version 1.2.3; pin none; session true; signed in unknown\n"},
 					{Output: "opencode: enabled; version 1.2.3; pin none; session false; signed in unknown\n"},
@@ -145,7 +149,7 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				"agents session live-agent opencode":        {Output: "opencode session screen\n", ExitOnInput: "\x02d"},
 				"agents session live-agent opencode --stop": {Output: "stopped session opencode\n"},
 				"agents disable live-agent opencode":        {},
-				"build":                                     {Output: "built image " + image.Tag(tracerAssetHash, nil) + "\nexisting sandboxes keep their image until update; list marks them as outdated\n"},
+				"build":                                     {Output: "built image " + tracerTag("none") + "\nexisting sandboxes keep their image until update; list marks them as outdated\n"},
 			}
 			podmanResponses := map[string]lifecycleResponse{
 				"* exists *":                        {Exit: 1},
@@ -155,10 +159,10 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				"ps --all --format {{.Names}}":                                                   {},
 				"volume ls --format {{.Name}}":                                                   {},
 				"container inspect " + cli.DerivedNames(tracerGroup, "live-lifecycle").Container: {Output: tracerContainer("none", 1)},
-				"container inspect " + cli.DerivedNames(tracerGroup, "live-update").Container: {Sequence: []lifecycleResponse{
+				"container inspect " + cli.DerivedNames(tracerGroup, "live-update").Container: {Sequence: []scriptedAnswer{
 					{Output: tracerContainer("native", 1)}, {Output: tracerContainer("none", 1)}, {Output: tracerContainer("none", 1)},
 				}},
-				"image save --format docker-archive " + image.Tag(tracerAssetHash, nil): {Output: tracerArchive(t)},
+				"image save --format docker-archive " + tracerTag("none"): {Output: tracerArchive(t)},
 			}
 			for _, name := range []string{"live-lifecycle", "live-update", "live-agent"} {
 				executableResponses["remove "+name+" --volumes"] = lifecycleResponse{}
@@ -170,11 +174,7 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				executableResponses["remove image-"+set+" --volumes"] = lifecycleResponse{}
 				executableResponses["remove image-"+set+" --volumes --force"] = lifecycleResponse{}
 				podmanResponses["container inspect "+cli.DerivedNames(tracerGroup, "image-"+set).Container] = lifecycleResponse{Output: tracerContainer(set, 1)}
-				tag := image.Tag(tracerAssetHash, nil)
-				if set != "none" {
-					tag = image.Tag(tracerAssetHash, []string{set})
-				}
-				podmanResponses["image inspect "+tag] = lifecycleResponse{Sequence: []lifecycleResponse{{Output: tracerImage(set, 1)}, {Output: tracerImage(set, 2)}}}
+				podmanResponses["image inspect "+tracerTag(set)] = lifecycleResponse{Sequence: []scriptedAnswer{{Output: tracerImage(set, 1)}, {Output: tracerImage(set, 2)}}}
 			}
 			executableScript, err := json.Marshal(executableResponses)
 			if err != nil {

@@ -601,7 +601,14 @@ type lifecycleResponse struct {
 	HoldOutputUntil    string
 	EchoLine           bool
 	ExitOnInput        string
-	Sequence           []lifecycleResponse
+	Sequence           []scriptedAnswer
+}
+
+// scriptedAnswer is one answer of a sequence for the same argv.
+type scriptedAnswer struct {
+	Output string
+	Stderr string
+	Exit   int
 }
 
 func lifecycleHarness(t *testing.T, responses map[string]lifecycleResponse) testutil.Fakes {

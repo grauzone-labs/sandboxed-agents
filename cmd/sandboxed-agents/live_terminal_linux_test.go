@@ -138,7 +138,9 @@ func (terminal *liveTerminal) Close() {
 	select {
 	case <-terminal.done:
 	default:
-		terminal.command.Process.Kill()
+		// The command leads its own session, so its group covers the podman
+		// exec it may have started; ending the whole group frees the terminal.
+		unix.Kill(-terminal.command.Process.Pid, unix.SIGKILL)
 		<-terminal.done
 	}
 	terminal.master.Close()
