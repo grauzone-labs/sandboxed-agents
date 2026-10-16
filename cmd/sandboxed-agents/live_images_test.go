@@ -4,8 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,16 +19,14 @@ import (
 	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
-	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
 // Image coverage has a separate opt-in because build renews images for every
 // controller group on the selected Podman host. The generic live opt-in is not
-// enough. Select with SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1 go test
-// ./cmd/sandboxed-agents -run '^TestLiveImages$' -timeout 90m -v.
+// enough: the suite's images case runs only with SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1.
 const liveImagesEnv = "SANDBOXED_AGENTS_LIVE_IMAGES_TESTS"
 
-type liveImageHost struct {
+type liveHost struct {
 	binary, group string
 	environment   []string
 	connection    []string
@@ -46,37 +42,10 @@ type liveImage struct {
 	}
 }
 
-// TestLiveImages proves the base and four toolchains work as agent, run root sshd with persistent host keys and an Ed25519 key exchange, share base layers, carry image labels, become outdated after one rebuild, and preserve keys across update and forced rollback at the real CLI, Podman, and SSH seams, only with the separate image opt-in.
-func TestLiveImages(t *testing.T) {
-	if os.Getenv(liveImagesEnv) != "1" {
-		t.Skip("set " + liveImagesEnv + "=1 to select host-wide image rebuild coverage")
-	}
-	t.Log("live test body selected (images; build renews images across controller groups)")
-	host := liveImageHost{binary: executable, environment: os.Environ()}
-	// Check the prerequisites before compiling the embedded manager or creating
-	// anything. An opted-in run on an unsupported host fails rather than claiming
-	// image coverage from a skip.
-	host.mustCLI(t, "", "check")
-	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
-		t.Fatal("live image coverage requires Linux amd64 or Windows 11 x64")
-	}
-	host.selectConnection(t)
-	host.binary = buildLiveImageExecutable(t)
-	var nonce [12]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		t.Fatal(err)
-	}
-	host.group = "live-images-" + hex.EncodeToString(nonce[:])
-	host.environment = testutil.Env(host.environment, map[string]string{"SANDBOXED_AGENTS_GROUP": host.group})
-	// Keep the host's Podman configuration, including Windows LOCALAPPDATA,
-	// intact. Only this newly generated group's lifecycle locks are removed.
-	host.removeGroupStateOnCleanup(t)
-	version := host.mustCLI(t, "", "version")
-	hashes := regexp.MustCompile(`(?m)^asset-sha256 ([a-f0-9]{64})\r?$`).FindStringSubmatch(version)
-	if len(hashes) != 2 {
-		t.Fatalf("version omitted the asset hash: %s", version)
-	}
-	assetHash := hashes[1]
+// liveImageCoverage proves the base and four toolchains work as agent, run root sshd with persistent host keys and an Ed25519 key exchange, share base layers, carry image labels, and become outdated after the suite's one build at the real CLI, Podman, and SSH seams.
+func liveImageCoverage(t *testing.T, suite *liveSuite) {
+	host := suite.host
+	assetHash := suite.assetHash
 	sets := []string{"none", "dotnet", "playwright", "azure", "native"}
 	images := make(map[string]liveImage)
 	tags := make(map[string]string)
@@ -109,9 +78,10 @@ func TestLiveImages(t *testing.T) {
 		assertLiveImage(t, set, assetHash, images[set], images["none"])
 	}
 	host.assertNoBakedSSHKeys(t, tags["none"])
-	// This is the image coverage's sole build command. up may build a missing
+	// This is the live suite's sole build command. up may build a missing
 	// image, but must not renew an existing image. All five now exist.
 	output := host.mustCLI(t, "", "build")
+	suite.imagesRan = true
 	for _, fragment := range []string{"keep", "image", "update", "list"} {
 		if !strings.Contains(strings.ToLower(output), fragment) {
 			t.Fatalf("build omitted %q from its keep-images/update/list guidance:\n%s", fragment, output)
@@ -148,13 +118,16 @@ func TestLiveImages(t *testing.T) {
 			t.Errorf("list omitted %s:\n%s", name, listing)
 		}
 	}
-	verifyLiveUpdates(t, host, images, rebuilt)
+	for _, set := range sets {
+		host.mustCLI(t, "", "remove", "image-"+set, "--volumes")
+		host.assertNoSandboxObjects(t, "image-"+set)
+	}
 	t.Logf("image coverage complete on %s: base and four toolchains, one build; controller group %s", runtime.GOOS, host.group)
 }
 
 // assertSSHServer checks PID 1 and its identity, then completes an unauthenticated
 // exchange with the recorded loopback port and compares its key with server state.
-func (host liveImageHost) assertSSHServer(t *testing.T, name, hostKey string) {
+func (host liveHost) assertSSHServer(t *testing.T, name, hostKey string) {
 	t.Helper()
 	container := host.inspectContainer(t, name)
 	if !container.State.Running || container.Config.User != "0:0" {
@@ -209,7 +182,7 @@ func (host liveImageHost) assertSSHServer(t *testing.T, name, hostKey string) {
 }
 
 // sshHostKey exercises the same administrative query used by SSH setup immediately after startup.
-func (host liveImageHost) sshHostKey(t *testing.T, name string) string {
+func (host liveHost) sshHostKey(t *testing.T, name string) string {
 	t.Helper()
 	args, err := cli.ManagerQueryArgs(cli.DerivedNames(host.group, name).Container, "/usr/local/bin/sandboxed-agents-manager", "ssh-host-key")
 	if err != nil {
@@ -227,9 +200,10 @@ func (host liveImageHost) sshHostKey(t *testing.T, name string) string {
 	return key
 }
 
-func buildLiveImageExecutable(t *testing.T) string {
+// buildLiveExecutable compiles the host executable with the embedded manager
+// into directory, as the documented development build does.
+func buildLiveExecutable(t *testing.T, directory string) string {
 	t.Helper()
-	directory := t.TempDir()
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -255,7 +229,7 @@ func buildLiveImageExecutable(t *testing.T) string {
 	return binary
 }
 
-func (host liveImageHost) cli(input string, args ...string) (string, error) {
+func (host liveHost) cli(input string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer cancel()
 	command := exec.CommandContext(ctx, host.binary, args...)
@@ -265,7 +239,7 @@ func (host liveImageHost) cli(input string, args ...string) (string, error) {
 	return string(output), err
 }
 
-func (host liveImageHost) mustCLI(t *testing.T, input string, args ...string) string {
+func (host liveHost) mustCLI(t *testing.T, input string, args ...string) string {
 	t.Helper()
 	t.Logf("sandboxed-agents %s", strings.Join(args, " "))
 	output, err := host.cli(input, args...)
@@ -276,7 +250,7 @@ func (host liveImageHost) mustCLI(t *testing.T, input string, args ...string) st
 	return output
 }
 
-func (host liveImageHost) podman(args ...string) (string, error) {
+func (host liveHost) podman(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	command := host.podmanCommand(ctx, args...)
@@ -284,7 +258,7 @@ func (host liveImageHost) podman(args ...string) (string, error) {
 	return string(output), err
 }
 
-func (host liveImageHost) podmanCommand(ctx context.Context, args ...string) *exec.Cmd {
+func (host liveHost) podmanCommand(ctx context.Context, args ...string) *exec.Cmd {
 	command := exec.CommandContext(ctx, "podman", append(slices.Clone(host.connection), args...)...)
 	command.Env = host.environment
 	if runtime.GOOS == "windows" {
@@ -300,7 +274,7 @@ func (host liveImageHost) podmanCommand(ctx context.Context, args ...string) *ex
 	return command
 }
 
-func (host liveImageHost) assertNoBakedSSHKeys(t *testing.T, tag string) {
+func (host liveHost) assertNoBakedSSHKeys(t *testing.T, tag string) {
 	t.Helper()
 	// Saving the image reads its actual layers. Looking inside the running
 	// sandbox would instead read its /etc/ssh volume and could mistake freshly
@@ -362,7 +336,7 @@ func (host liveImageHost) assertNoBakedSSHKeys(t *testing.T, tag string) {
 	}
 }
 
-func (host *liveImageHost) selectConnection(t *testing.T) {
+func (host *liveHost) selectConnection(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "windows" {
 		return
@@ -405,7 +379,7 @@ type liveImageContainer struct {
 	}
 }
 
-func (host liveImageHost) inspectContainer(t *testing.T, name string) liveImageContainer {
+func (host liveHost) inspectContainer(t *testing.T, name string) liveImageContainer {
 	t.Helper()
 	output, err := host.podman("container", "inspect", cli.DerivedNames(host.group, name).Container)
 	var records []liveImageContainer
@@ -415,7 +389,7 @@ func (host liveImageHost) inspectContainer(t *testing.T, name string) liveImageC
 	return records[0]
 }
 
-func (host liveImageHost) inspectImage(t *testing.T, tag string) liveImage {
+func (host liveHost) inspectImage(t *testing.T, tag string) liveImage {
 	t.Helper()
 	output, err := host.podman("image", "inspect", tag)
 	var records []liveImage
@@ -454,28 +428,83 @@ func assertLiveImage(t *testing.T, set, assetHash string, actual, base liveImage
 	}
 }
 
-func (host liveImageHost) cleanupSandbox(t *testing.T, name string) {
+func (host liveHost) cleanupSandbox(t *testing.T, name string) {
 	t.Helper()
 	t.Cleanup(func() {
 		output, err := host.cli("", "remove", name, "--volumes", "--force")
-		if err != nil && !strings.Contains(output, "unknown sandbox") {
+		if err != nil && !strings.Contains(output, "does not exist in this controller group") {
 			t.Errorf("cleanup sandbox %s: %v\n%s", name, err, output)
 		}
-		names := cli.DerivedNames(host.group, name)
-		for _, resource := range []struct{ kind, name string }{
-			{"container", names.Container}, {"container", names.Backup},
-			{"volume", names.Workspace}, {"volume", names.Home}, {"volume", names.SSH},
-		} {
-			output, err := host.podman(resource.kind, "exists", resource.name)
-			if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
-				continue
+		host.assertNoSandboxObjects(t, name)
+	})
+}
+
+// assertNoSandboxObjects checks with Podman that no container, backup
+// container, or volume of the sandbox remains.
+func (host liveHost) assertNoSandboxObjects(t *testing.T, name string) {
+	t.Helper()
+	names := cli.DerivedNames(host.group, name)
+	for _, resource := range []struct{ kind, name string }{
+		{"container", names.Container}, {"container", names.Backup},
+		{"volume", names.Workspace}, {"volume", names.Home}, {"volume", names.SSH},
+	} {
+		output, err := host.podman(resource.kind, "exists", resource.name)
+		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+			continue
+		}
+		t.Errorf("left or could not verify %s %s: %v %s", resource.kind, resource.name, err, output)
+	}
+}
+
+// assertNoGroupObjectsOnCleanup checks after every case that the controller
+// group holds no container, backup container, or volume at all.
+func (host liveHost) assertNoGroupObjectsOnCleanup(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() {
+		var leftovers []string
+		for _, query := range [][]string{{"ps", "--all", "--format", "{{.Names}}"}, {"volume", "ls", "--format", "{{.Name}}"}} {
+			output, err := host.podman(query...)
+			if err != nil {
+				t.Errorf("inventory of the controller group's objects: podman %v: %v\n%s", query, err, output)
+				return
 			}
-			t.Errorf("cleanup left or could not verify %s %s: %v %s", resource.kind, resource.name, err, output)
+			for _, name := range strings.Fields(output) {
+				for _, prefix := range []string{"sandboxed-agents." + host.group + ".", "sandboxed-agents-backup." + host.group + "."} {
+					if strings.HasPrefix(name, prefix) {
+						leftovers = append(leftovers, name)
+					}
+				}
+			}
+		}
+		if len(leftovers) != 0 {
+			t.Errorf("the live suite left objects of controller group %s behind: %v", host.group, leftovers)
 		}
 	})
 }
 
-func (host liveImageHost) removeGroupStateOnCleanup(t *testing.T) {
+// assertListed checks the sandbox's state in list, or its absence when state is empty.
+func (host liveHost) assertListed(t *testing.T, name, state string) {
+	t.Helper()
+	listing := host.mustCLI(t, "", "list")
+	for _, row := range strings.Split(listing, "\n") {
+		fields := strings.Fields(row)
+		if len(fields) < 2 || fields[0] != name {
+			continue
+		}
+		if state == "" {
+			t.Fatalf("list still shows removed sandbox %s: %s", name, row)
+		}
+		if fields[1] != state {
+			t.Fatalf("list shows %s as %s; want %s: %s", name, fields[1], state, row)
+		}
+		return
+	}
+	if state != "" {
+		t.Fatalf("list omitted %s:\n%s", name, listing)
+	}
+}
+
+func (host liveHost) removeGroupStateOnCleanup(t *testing.T) {
 	t.Helper()
 	root := os.Getenv("XDG_STATE_HOME")
 	if runtime.GOOS == "windows" {
