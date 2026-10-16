@@ -16,15 +16,17 @@ import (
 // liveTerminal runs one command whose standard streams are a pseudo console
 // (ConPTY) the test owns, as a user's terminal would.
 type liveTerminal struct {
-	console    windows.Handle
-	process    windows.Handle
-	attributes *windows.ProcThreadAttributeListContainer
-	input      *os.File
-	output     *os.File
-	mutex      sync.Mutex
-	buffer     bytes.Buffer
-	done       chan struct{}
-	exit       int
+	console      windows.Handle
+	process      windows.Handle
+	attributes   *windows.ProcThreadAttributeListContainer
+	input        *os.File
+	output       *os.File
+	mutex        sync.Mutex
+	buffer       bytes.Buffer
+	done         chan struct{}
+	readerDone   chan struct{}
+	closeConsole sync.Once
+	exit         int
 }
 
 // startLiveTerminal starts program attached to a fresh pseudo console of 120
@@ -79,9 +81,10 @@ func startLiveTerminal(t *testing.T, environment []string, program string, args 
 	terminal := &liveTerminal{
 		console: console, process: information.Process, attributes: attributes,
 		input: os.NewFile(uintptr(inputWrite), "pseudo-console-input"), output: os.NewFile(uintptr(outputRead), "pseudo-console-output"),
-		done: make(chan struct{}),
+		done: make(chan struct{}), readerDone: make(chan struct{}),
 	}
 	go func() {
+		defer close(terminal.readerDone)
 		buffer := make([]byte, 4096)
 		for {
 			n, err := terminal.output.Read(buffer)
@@ -122,14 +125,23 @@ func (terminal *liveTerminal) Output() string {
 	return terminal.buffer.String()
 }
 
-// Wait returns the exit status once the command has ended within timeout.
+// Wait returns the exit status once the command has ended within timeout and
+// its output has been drained. The pseudo console renders output after the
+// command exits, so Wait closes it once the command is gone, which makes the
+// console flush what remains and end the output pipe for the reader.
 func (terminal *liveTerminal) Wait(timeout time.Duration) (int, bool) {
+	deadline := time.After(timeout)
 	select {
 	case <-terminal.done:
-		return terminal.exit, true
-	case <-time.After(timeout):
+	case <-deadline:
 		return 0, false
 	}
+	terminal.closeConsole.Do(func() { windows.ClosePseudoConsole(terminal.console) })
+	select {
+	case <-terminal.readerDone:
+	case <-deadline:
+	}
+	return terminal.exit, true
 }
 
 // Close ends a still running command and releases the pseudo console.
@@ -140,7 +152,8 @@ func (terminal *liveTerminal) Close() {
 		windows.TerminateProcess(terminal.process, 1)
 		<-terminal.done
 	}
-	windows.ClosePseudoConsole(terminal.console)
+	terminal.closeConsole.Do(func() { windows.ClosePseudoConsole(terminal.console) })
+	<-terminal.readerDone
 	terminal.input.Close()
 	terminal.output.Close()
 	terminal.attributes.Delete()
