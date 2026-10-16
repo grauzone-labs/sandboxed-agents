@@ -50,7 +50,7 @@ $Machine = 'MACHINE_NAME'   # the name of the machine with Default true, without
 function pm { podman --connection $Machine @args }
 ```
 
-Wherever a block below writes `podman ...` for Linux, write `pm ...` on Windows. Capture the state an item needs to see unchanged with these helpers, which write one file each. The files go in a directory outside the inspected trees (`$SNAP` or `$Snap` of the install check, or any scratch directory):
+Wherever a block below writes `podman ...` for Linux, write `pm ...` on Windows. Capture the state an item needs to see unchanged with these helpers, which write one file each. The files go in a directory outside the install root (any scratch directory):
 
 ```sh
 capture_state() {
@@ -450,7 +450,7 @@ Identifier `nuget-install-clean`, platform `windows-11`. Use a clean Windows 11 
 
 ### Installers issue no Podman call
 
-Identifier `installers-no-podman`, platform `windows-11`. Install, reinstall, and remove through **each** of three methods, and show two things: no Podman call happens, and the installers change no file and no registry value outside the install location and the user `PATH`. The methods are the downloaded binary, the npm package, and the NuGet package. NuGet exists only on Windows, so the item is run on Windows 11, covers all three methods there, and is recorded with the platform `windows-11`. A Linux run of methods 1 and 2 is optional supplemental coverage ([below](#optional-supplemental-linux-snapshots)); it does **not** replace the Windows run, and the item does not pass on Linux alone.
+Identifier `installers-no-podman`, platform `windows-11`. Install, reinstall, and remove through **each** of three methods, and show two things: no Podman call happens, and the installers change no file and no registry value outside the install location and the user `PATH`. The methods are the downloaded binary, the npm package, and the NuGet command package. NuGet exists only on Windows, so the item is run on Windows 11, covers all three methods there, and is recorded with the platform `windows-11`. A Linux run of methods 1 and 2 is optional supplemental coverage ([below](#optional-supplemental-linux-snapshots)); it does **not** replace the Windows run, and the item does not pass on Linux alone.
 
 **Why a trace and not a comparison of the whole profile.** A signed-in Windows profile always holds files that system processes keep open and rewrite (the registry hives, the browser and shell caches), so hashing the whole profile before and after cannot finish and would blame the installers for other programs' writes. The Windows run therefore records every file system and registry write of the **installer's own process tree** with Process Monitor from Microsoft Sysinternals, and attributes each write to a process. Unrelated background processes are excluded by that attribution, not by exempting paths: **no write by the item shell or its descendants outside the allowed locations is tolerated**, whoever the writing program is.
 
@@ -465,17 +465,9 @@ Official sources: the [Process Monitor page](https://learn.microsoft.com/en-us/s
 
 **The evidence directory.** A standard user cannot create folders in the root of the system drive. So arrange **before the run** an existing directory that you can write to and that lies **outside your user profile**: for example a folder on a test volume that was prepared for you, or a shared scratch location your account has write access to. Do not assume a particular drive or the ACLs of a public folder; if you have no such directory, the item cannot be run yet. The Process Monitor logs, the fake Podman, and the notes go beneath it. These log files can hold user names, paths, and environment details, so they are kept **locally only**, are never uploaded, and are deleted at the end of the item; the record has no field for them.
 
-**The item shell.** In the normal, non-elevated terminal, start a fresh PowerShell 7 and use it for the whole item, so that its process ID and the processes it starts form one process tree:
+**Parent terminal setup.** In an ordinary, non-elevated terminal, the parent terminal, do all of this **before** you start the item shell. The item shell inherits this environment when it starts, and PowerShell reads some of these settings only at startup: the [about_Environment_Variables](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_environment_variables?view=powershell-7.5) page of Microsoft Learn says that `PSModuleAnalysisCachePath` must name a full path including the file name and is set before starting PowerShell (the cache is written on a background thread some time after a module is imported), and that `POWERSHELL_TELEMETRY_OPTOUT` and a non-default `POWERSHELL_UPDATECHECK` must be set before starting the PowerShell process. All of these are process-only settings; the commands change no user or machine setting.
 
 ```powershell
-pwsh -NoProfile
-$PID
-```
-
-Write the printed process ID down as `SHELL_PID`. Run everything below that is not marked "observer" in this shell. In it, set the variables of the item. The commands check that the evidence directory exists, is a directory, lies outside the profile, does not contain it, and is writable, and stop otherwise:
-
-```powershell
-Set-PSReadLineOption -HistorySaveStyle SaveNothing
 $Evidence = Read-Host 'Existing writable evidence directory outside your user profile'
 if (-not (Test-Path -LiteralPath $Evidence -PathType Container)) { throw 'the evidence directory does not exist' }
 $Evidence = (Resolve-Path -LiteralPath $Evidence).ProviderPath.TrimEnd('\')
@@ -484,24 +476,38 @@ $Ignore = [StringComparison]::OrdinalIgnoreCase
 if ($Evidence.Equals($ProfileRoot, $Ignore) -or $Evidence.StartsWith($ProfileRoot + '\', $Ignore) -or $ProfileRoot.StartsWith($Evidence + '\', $Ignore)) { throw 'the evidence directory must be outside the user profile and must not contain it' }
 $Probe = Join-Path $Evidence "probe-$PID.tmp"
 try { Set-Content -LiteralPath $Probe -Value 'x' -ErrorAction Stop; Remove-Item -LiteralPath $Probe -ErrorAction Stop } catch { throw "the evidence directory is not writable: $Evidence" }
+$InstallRoot = Join-Path $HOME 'chk-install'
+if (Test-Path -LiteralPath $InstallRoot) { throw "$InstallRoot already exists; start from a fresh machine, or remove it first" }
 $Pml = Join-Path $Evidence "pml-$PID"
 $Fake = Join-Path $Evidence "chk-fake-podman-$PID"
 New-Item -ItemType Directory -ErrorAction Stop $Pml, $Fake | Out-Null
-$InstallRoot = Join-Path $HOME 'chk-install'
-New-Item -ItemType Directory -Force $InstallRoot | Out-Null
-foreach ($Name in 'bin', 'prefix', 'cache', 'logs', 'tmp') { New-Item -ItemType Directory -Force (Join-Path $InstallRoot $Name) | Out-Null }
+foreach ($Name in 'bin', 'prefix', 'cache', 'logs', 'tmp') { New-Item -ItemType Directory -ErrorAction Stop (Join-Path $InstallRoot $Name) | Out-Null }
+Set-Content (Join-Path $Fake 'podman.cmd') "@echo off`r`necho %* >> `"$Fake\calls`"`r`nexit /b 1"
+$env:Path = "$Fake;$env:Path"
+$env:TEMP = Join-Path $InstallRoot 'tmp'; $env:TMP = $env:TEMP
+$env:PSModuleAnalysisCachePath = Join-Path $InstallRoot 'cache\ModuleAnalysisCache'
+$env:POWERSHELL_TELEMETRY_OPTOUT = '1'; $env:POWERSHELL_UPDATECHECK = 'Off'
+$env:npm_config_update_notifier = 'false'
+$env:CHK_EVIDENCE = $Evidence; $env:CHK_INSTALL_ROOT = $InstallRoot; $env:CHK_PML = $Pml; $env:CHK_FAKE = $Fake
 $Pml
 ```
 
-The last line prints the log directory; the observer uses it.
+The last line prints the log directory; the observer uses it. The block creates the **install root** `$InstallRoot` as a new directory and stops if it already exists, so the run starts from a directory it made. Every file the methods write must land inside it, **including npm's prefix, cache, temporary files, and logs**; the commands below point them there, and `TEMP` and `TMP` point into it too. The default location of the NuGet command package in method 3b is the one other allowed location. The **fake Podman** is a `podman.cmd` in the evidence directory that appends its arguments to a `calls` file and exits with 1; the block puts it first on `PATH`.
 
-**The install root.** The install root is the new directory `$InstallRoot`. Every file the methods write must land inside it, **including npm's prefix, cache, temporary files, and logs**; the commands below point them there. The NuGet default location of method 3b is the one other allowed location.
-
-**A fake Podman that records its calls**, in the evidence directory, first on `PATH` of the item shell. It appends its arguments to a `calls` file and exits with 1:
+**The item shell.** From the same parent terminal, start a fresh PowerShell 7 and use it for the whole item, so that its process ID and the processes it starts form one process tree. Start it only now, after the settings above:
 
 ```powershell
-Set-Content (Join-Path $Fake 'podman.cmd') "@echo off`r`necho %* >> `"$Fake\calls`"`r`nexit /b 1"
-$env:Path = "$Fake;$env:Path"
+pwsh -NoProfile
+```
+
+In the item shell, set it up as follows. `$PID` is the process ID to write down as `SHELL_PID`. The commands stop if the shell was not started from the prepared parent terminal:
+
+```powershell
+Set-PSReadLineOption -HistorySaveStyle SaveNothing
+$PID
+$Evidence = $env:CHK_EVIDENCE; $InstallRoot = $env:CHK_INSTALL_ROOT; $Pml = $env:CHK_PML; $Fake = $env:CHK_FAKE
+foreach ($Value in $Evidence, $InstallRoot, $Pml, $Fake) { if (-not $Value) { throw 'start this shell from the prepared parent terminal' } }
+if ($env:PSModuleAnalysisCachePath -ne (Join-Path $InstallRoot 'cache\ModuleAnalysisCache')) { throw 'the module analysis cache path is not redirected' }
 ```
 
 **The logical environment, recorded in memory.** The user `PATH` is a registry value of `HKCU:\Environment`. The helper records every value of that key with its kind and its raw, unexpanded content. It keeps the result in memory, so that the item shell writes no file while a trace runs:
@@ -511,19 +517,26 @@ function Get-EnvSnapshot {
   $Key = Get-Item HKCU:\Environment
   $Key.GetValueNames() | Sort-Object | ForEach-Object { "$_ [$($Key.GetValueKind($_))] = $($Key.GetValue($_, '', 'DoNotExpandEnvironmentNames'))" }
 }
-$EnvSnap = [ordered]@{}
 ```
 
-**Prime the tools before any trace.** The first start of PowerShell and npm can write their own caches, which are the tools' first-run state, not changes made by an installer. Start each of them once, with the redirections the methods use, before the first capture:
+**Prepare everything the captured steps will use, before any trace.** The captured steps run **inside this shell** and start no new PowerShell. To keep the shell's own startup and module caches out of the trace, load what the steps need now, extract the NuGet command package now, and let the background cache write finish:
 
 ```powershell
-$env:TEMP = Join-Path $InstallRoot 'tmp'; $env:TMP = $env:TEMP; $env:npm_config_update_notifier = 'false'
-pwsh -NoProfile -Command 'exit 0'
+Get-EnvSnapshot | Out-Null
+Get-Command Copy-Item, Remove-Item, Get-Item, Get-ChildItem, Set-Content, Unblock-File, Compare-Object, Expand-Archive | Out-Null
+Copy-Item .\SandboxedAgents.VERSION.nupkg "$InstallRoot\package.zip"
+Expand-Archive -LiteralPath "$InstallRoot\package.zip" -DestinationPath "$InstallRoot\package"
+$Tools = Join-Path $InstallRoot 'package\tools'
+Get-ChildItem -LiteralPath $Tools -Filter *.ps1 | Unblock-File
 node --version
 npm --version --cache "$InstallRoot\cache" --logs-dir "$InstallRoot\logs"
+$Deadline = (Get-Date).AddSeconds(60)
+while (-not (Test-Path -LiteralPath $env:PSModuleAnalysisCachePath) -and (Get-Date) -lt $Deadline) { Start-Sleep -Seconds 2 }
+Start-Sleep -Seconds 10
+Test-Path -LiteralPath $env:PSModuleAnalysisCachePath
 ```
 
-Priming does not hide anything from the trace: if a child of an installer still writes outside the allowed locations while it runs, that write is a failure of the criterion and the item fails. Do not remove the finding by priming more, redirecting more, or exempting the path.
+`SandboxedAgents.VERSION.nupkg` is the verified `.nupkg` of the preview in the current directory. The last line prints whether the module analysis cache file exists. The node and npm start-ups run here, outside the capture, so their first-run state is not part of an installer's window. Keep this shell **alive past the end of the last capture**: PowerShell may write its startup profile data when a session ends, and that belongs to the end of the shell, not to an installer. None of this hides anything from the trace. If an installer or a child of an installer still writes outside the allowed locations while a capture runs, that write is a failure of the criterion and the item fails; do not remove the finding by priming more, redirecting more, or exempting the path.
 
 **The capture procedure, for each method.** Each method has its own log, `$Pml\METHOD.pml`, and three steps (install, reinstall, remove) inside it. Run the methods one after the other, in the order `binary`, `npm`, `nuget-root`, `nuget-default`. For each method, do these steps in order. The commands of a method are separate lines to run **one at a time**, never as one pasted block:
 
@@ -574,29 +587,24 @@ Priming does not hide anything from the trace: if a child of an installer still 
 - `REINSTALL` = the same `npm install` command again (a same-version reinstall).
 - `REMOVE` = `npm uninstall -g --prefix "$InstallRoot\prefix" --cache "$InstallRoot\cache" --logs-dir "$InstallRoot\logs" sandboxed-agents`.
 
-**Method 3a, `nuget-root` (NuGet package into the install root).** The input is the `.nupkg`. Before the capture, extract it under `$InstallRoot\package`, then run:
+**Method 3a, `nuget-root` (NuGet command package into the install root).** The input is the `.nupkg`, extracted and unblocked during the preparation. Before the capture: nothing. The scripts run in the item shell itself with the call operator; no new PowerShell is started inside a capture.
 
-```powershell
-$Tools = Join-Path $InstallRoot 'package\tools'
-Get-ChildItem -LiteralPath $Tools -Filter *.ps1 | Unblock-File
-```
-
-- `INSTALL` = `pwsh -File "$Tools\install-command.ps1" -InstallDirectory "$InstallRoot\nuget" -NoPathUpdate`
+- `INSTALL` = `& "$Tools\install-command.ps1" -InstallDirectory "$InstallRoot\nuget" -NoPathUpdate`
 - `REINSTALL` = the same command again (a same-version reinstall).
-- `REMOVE` = `pwsh -File "$Tools\remove-command.ps1" -InstallDirectory "$InstallRoot\nuget" -NoPathUpdate`
+- `REMOVE` = `& "$Tools\remove-command.ps1" -InstallDirectory "$InstallRoot\nuget" -NoPathUpdate`
 
-**Method 3b, `nuget-default` (NuGet package to its default location and `PATH`, the separate default-path test).** Uses the same extracted package and `$Tools`, with the default arguments, so the installer uses `%LOCALAPPDATA%\Programs\sandboxed-agents` and the user `PATH`. The allowed locations of this method are the install root, `%LOCALAPPDATA%\Programs\sandboxed-agents` (and its `Programs` parent if the installer has to create it), and the user `PATH` value. Before the capture: nothing.
+**Method 3b, `nuget-default` (NuGet command package to its default location and `PATH`, the separate default-path test).** Uses the same extracted package and `$Tools`, with the default arguments, so the installer uses `%LOCALAPPDATA%\Programs\sandboxed-agents` and the user `PATH`. The allowed locations of this method are the install root, `%LOCALAPPDATA%\Programs\sandboxed-agents` (and its `Programs` parent if the installer has to create it), and the user `PATH` value. Before the capture: nothing. Run the scripts in the item shell with the call operator as in method 3a.
 
-- `INSTALL` = `pwsh -File "$Tools\install-command.ps1"`
+- `INSTALL` = `& "$Tools\install-command.ps1"`
 - `REINSTALL` = the same command again (a same-version reinstall).
-- `REMOVE` = `pwsh -File "$Tools\remove-command.ps1"`
+- `REMOVE` = `& "$Tools\remove-command.ps1"`
 
 #### Inspecting a log
 
 In the observer's Process Monitor, open the saved log (**File**, **Open**). The Process Monitor page describes the tools used here: filters can be set on any field without losing data, and the Process Tree tool shows the relationship of all processes in a trace.
 
-1. **Select the process tree.** Open **Tools**, **Process Tree**. Find the process whose PID is `SHELL_PID` (`pwsh.exe`) and write down it and **every descendant**, including the ones that have already exited (they stay in the tree): `pwsh.exe` children for the NuGet scripts, `node.exe` and `cmd.exe` for npm, the installed executable for `version`. This is the set of attributed processes. If `SHELL_PID` is not in the tree, you opened the wrong log or the capture did not run, and the item fails for that method. Note the total event count of the log; zero or very few events means the capture was not complete.
-2. **Filter to the attributed events.** Open the filter dialog (**Filter**, **Filter...**, or Ctrl+L) and press **Reset** first. Add **Include** conditions `PID is N` for the shell and for each descendant. Conditions on the same field are alternatives, so the view shows the events of any of them. Add `Result is SUCCESS`, and **Include** conditions `Event Class is File System` and `Event Class is Registry`. Set **no** `Operation` and **no** `Detail` condition for the review below. The view now holds every successful file system and registry event of the attributed processes.
+1. **Select the process tree.** Open **Tools**, **Process Tree**. Find the process whose PID is `SHELL_PID` (`pwsh.exe`) and write down it and **every descendant**, including the ones that have already exited (they stay in the tree): `node.exe` and `cmd.exe` for npm, the installed executable for `version`. The NuGet scripts run inside the shell itself, so they add no child. This is the set of attributed processes. **Assert that no process in this set is `podman` or `podman.exe` (or has `podman` in its image path or command line), whatever the `PATH` was**: the fake Podman only catches calls that go through `PATH`, and a call by absolute path would otherwise pass unnoticed. Any such process fails the method. If `SHELL_PID` is not in the tree, you opened the wrong log or the capture did not run, and the item fails for that method. Note the total event count of the log; zero or very few events means the capture was not complete.
+2. **Filter to the attributed events.** Open the filter dialog (**Filter**, **Filter...**, or Ctrl+L) and press **Reset** first. Add **Include** conditions `PID is N` for the shell and for each descendant. Conditions on the same field are alternatives, so the view shows the events of any of them. Add **Include** conditions `Event Class is File System` and `Event Class is Registry`. Set **no** `Result`, **no** `Operation`, and **no** `Detail` condition for the review below. The view now holds every file system and registry event of the attributed processes, whatever its result.
 3. **Navigation aids, not a definition.** To find the likely changes first, you may temporarily add `Operation is X` conditions for `WriteFile`, `SetEndOfFileInformationFile`, `SetAllocationInformationFile`, `SetDispositionInformationFile`, `SetRenameInformationFile`, `RegCreateKey`, `RegSetValue`, `RegDeleteKey`, `RegDeleteValue`, `RegSetInfoKey`, or look at `CreateFile` rows with `Detail contains OpenResult: Created` and similar. **These lists are finite and incomplete.** They leave out, for example, `SetBasicInformationFile` (times and attributes), `SetSecurityFile`, `SetEAFile`, `SetLinkInformationFile` (hard links), reparse-point and other `FileSystemControl` requests, and the registry operations that load, restore, replace, rename, or secure a key. Remove the aids before step 4; they never replace it.
 4. **Required review of ALL remaining events.** With the aids removed, list the distinct values of the **Operation** column in the view (sort by the column and scroll, or use **Tools**, **Count Occurrences...** on **Operation**). Classify **every** operation value that occurs, using the table below. An operation not in the table, or one you cannot classify, is **unknown**.
 
@@ -611,9 +619,10 @@ In the observer's Process Monitor, open the saved log (**File**, **Open**). The 
    - `RegCreateKey` with a created-new-key disposition is a change; one that opened an existing key is not.
    - `CreateFileMapping` is classified by the rows around it: mapping an image or a file for reading changes nothing; a mapping that is followed by writes to the file is already covered by `WriteFile`.
    - `FileSystemControl` and `DeviceIoControl` are classified by the control code in **Detail**: a reparse point, hard link, sparse, compression, object-id, or encryption setting is a change; a query is not.
-   - **An operation or a row that you cannot resolve prevents a pass.** Do not guess "probably harmless". Also, for the second and third class, look at rows with a result other than `SUCCESS`: a plain failure (`ACCESS DENIED`, `NAME NOT FOUND`, `PATH NOT FOUND`, `NAME COLLISION`, `SHARING VIOLATION`) changed nothing, and any other result code is unknown until you resolve it.
+   - **Results, for every row.** Also list the distinct values of the **Result** column. For the first class any result is fine; queries end with codes such as `NO MORE ENTRIES`, `BUFFER OVERFLOW`, or `END OF FILE`. For the second class, `SUCCESS` means the change happened, a plain failure (`ACCESS DENIED`, `NAME NOT FOUND`, `PATH NOT FOUND`, `NAME COLLISION`, `SHARING VIOLATION`) means nothing changed, and any other result is unknown until you resolve it. For the third class the result is part of the resolution: a failed open changed nothing, and an open that ended in `REPARSE` continues on another path, which you check as its own row.
+   - **An operation or a row that you cannot resolve prevents a pass.** Do not guess "probably harmless".
 5. **Apply the allowed locations to every change.** For every row that is a change (the second class, and the rows of the third class that you resolved as changes), look at the **Path** column. A row is allowed only if its path is inside `$InstallRoot` (all methods) or, in method 3b, inside `%LOCALAPPDATA%\Programs\sandboxed-agents` (or is the `Programs` directory itself), or is the registry value `HKCU\Environment\Path` in method 3b. Rows for a named pipe (`\Device\NamedPipe\...`) are communication between the processes, not a change of a file; list them and accept that class only. **Every other row is a change outside the allowed locations, and the method fails.** Do not exclude a path in the filter to make a row go away.
-6. **Write down the verdict.** For each method, note the number of events reviewed, the operations you saw and their class, the number of changes, why each accepted change is allowed, and every unknown. The `Path` value of method 3b must be written by the NuGet install script (`pwsh.exe` running `install-command.ps1`) and removed by `remove-command.ps1`, and `HKCU\Environment\Path` must be the only registry value changed.
+6. **Write down the verdict.** For each method, note the number of events reviewed, the operations and results you saw and their class, the number of changes, why each accepted change is allowed, and every unknown. The `Path` value of method 3b must be written by the NuGet install script (`pwsh.exe` running `install-command.ps1`) and removed by `remove-command.ps1`, and `HKCU\Environment\Path` must be the only registry value changed.
 
 **Keep nothing but the verdict.** Keep the logs locally until you have the verdict for every method. Do not upload them or paste their content into the record or a ticket. Delete them at the end of the item.
 
@@ -639,17 +648,17 @@ export PATH="/tmp/chk-fake-podman:$PATH"
 ```
 
 ```sh
-snapshot() {
+snapshot() (
   set -o pipefail
   : > "$SNAP/$1.errors"
-  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type f -print0 2>>"$SNAP/$1.errors" | sort -z 2>>"$SNAP/$1.errors" | xargs -0 -r sha256sum > "$SNAP/$1.files" 2>>"$SNAP/$1.errors" || return 1
-  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type l -printf '%p -> %l\n' 2>>"$SNAP/$1.errors" | sort > "$SNAP/$1.links" 2>>"$SNAP/$1.errors" || return 1
-  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type d -print 2>>"$SNAP/$1.errors" | sort > "$SNAP/$1.dirs" 2>>"$SNAP/$1.errors" || return 1
+  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type f -print0 2>>"$SNAP/$1.errors" | sort -z 2>>"$SNAP/$1.errors" | xargs -0 -r sha256sum > "$SNAP/$1.files" 2>>"$SNAP/$1.errors" || exit 1
+  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type l -printf '%p -> %l\n' 2>>"$SNAP/$1.errors" | sort > "$SNAP/$1.links" 2>>"$SNAP/$1.errors" || exit 1
+  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type d -print 2>>"$SNAP/$1.errors" | sort > "$SNAP/$1.dirs" 2>>"$SNAP/$1.errors" || exit 1
   test ! -s "$SNAP/$1.errors"
-}
+)
 ```
 
-Take `snapshot before`, run a method, take `snapshot after`, and compare each pair with `diff "$SNAP/before.files" "$SNAP/after.files"` and the same for `.links` and `.dirs`. A failing `snapshot` or a non-empty `.errors` file means the snapshot is not usable. The npm commands of method 2 on Linux, with the prefix, cache, logs, and temporary directory under `$INSTALL_ROOT`:
+Take `snapshot before`, run a method, take `snapshot after`, and compare each pair with `diff "$SNAP/before.files" "$SNAP/after.files"` and the same for `.links` and `.dirs`. A failing `snapshot` or a non-empty `.errors` file means the snapshot is not usable. The function body is a subshell, so `set -o pipefail` does not stay on in your interactive shell. The npm commands of method 2 on Linux, with the prefix, cache, logs, and temporary directory under `$INSTALL_ROOT`:
 
 ```sh
 export TMPDIR="$INSTALL_ROOT/tmp" npm_config_update_notifier=false
