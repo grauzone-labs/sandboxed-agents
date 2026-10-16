@@ -33,3 +33,19 @@ func TestLiveTerminalWaitDrainsOutput(t *testing.T) {
 		}
 	}
 }
+
+// TestLiveTerminalWaitReportsUndrainedOutputAsUnfinished proves Wait does not report a command finished while a descendant still holds the terminal open, and reports it once the terminal drains, through the pseudo-terminal helper and a shell that exits while a child ignoring hangups keeps its terminal.
+func TestLiveTerminalWaitReportsUndrainedOutputAsUnfinished(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the lingering descendant uses a POSIX shell and SIGHUP semantics")
+	}
+	terminal := startLiveTerminal(t, os.Environ(), "sh", "-c", `trap "" HUP; sleep 2 & echo "shell done"; exit 0`)
+	defer terminal.Close()
+	if exit, finished := terminal.Wait(500 * time.Millisecond); finished {
+		t.Fatalf("Wait reported the command finished (exit %d) while its descendant still held the terminal", exit)
+	}
+	exit, finished := terminal.Wait(10 * time.Second)
+	if !finished || exit != 0 || !strings.Contains(terminal.Output(), "shell done") {
+		t.Fatalf("after the descendant ended: finished=%v exit=%d output=%q", finished, exit, terminal.Output())
+	}
+}
