@@ -37,7 +37,7 @@ jobs:
         if: steps.tag.outputs.preview != 'true'
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
       - name: Build stable binaries
         if: steps.tag.outputs.preview != 'true'
         shell: bash

@@ -2,9 +2,13 @@ name: Release reproducibility
 
 'on':
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -16,26 +20,41 @@ jobs:
   linux:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
+      run_checks: ${{ steps.changes.outputs.run_checks }}
       linux_asset_hash: ${{ steps.version.outputs.linux_asset_hash }}
       linux_sha256: ${{ steps.version.outputs.linux_sha256 }}
       windows_sha256: ${{ steps.version.outputs.windows_sha256 }}
       npm_sha256: ${{ steps.version.outputs.npm_sha256 }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Decide whether full checks are required
+        id: changes
+        shell: bash
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/ci-checks-required.sh >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v7
+        if: steps.changes.outputs.run_checks == 'true'
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
       - uses: actions/setup-node@v7
+        if: steps.changes.outputs.run_checks == 'true'
         with:
           node-version: '24'
           package-manager-cache: false
       - name: Tag the runner checkout
+        if: steps.changes.outputs.run_checks == 'true'
         shell: bash
         run: git tag "v$RELEASE_VERSION" HEAD
       - name: Run the offline suite
+        if: steps.changes.outputs.run_checks == 'true'
         run: go test ./... -count=1
       - name: Build releases and report Linux version
+        if: steps.changes.outputs.run_checks == 'true'
         id: version
         shell: bash
         run: |
@@ -60,6 +79,7 @@ jobs:
 
   windows:
     needs: linux
+    if: needs.linux.outputs.run_checks == 'true'
     runs-on: blacksmith-2vcpu-windows-2025
     env:
       SANDBOXED_AGENTS_RELEASE_BASH: 'C:\Program Files\Git\bin\bash.exe'
@@ -72,7 +92,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
