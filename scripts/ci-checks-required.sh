@@ -32,6 +32,9 @@ while IFS= read -r -d '' path; do
   case "$path" in
     # Go packages can live below documentation directories too.
     *.go) printf 'run_checks=true\n'; exit 0 ;;
+    # These pages are executable inputs to the offline consistency tests.
+    docs/command-reference.md|docs/quick-guide-linux.md|docs/quick-guide-windows.md)
+      printf 'run_checks=true\n'; exit 0 ;;
     docs/*|.agents/*|AGENTS.md) ;;
     *) printf 'run_checks=true\n'; exit 0 ;;
   esac

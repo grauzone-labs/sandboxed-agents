@@ -21,6 +21,28 @@ func TestCIChecksSkipDocumentationPR(t *testing.T) {
 	assertCIChecks(t, checkout, "pull_request", base, head, false)
 }
 
+// TestCIChecksRequireDocumentationConsistency proves changes, deletion, and renaming of executable documentation retain its offline consistency checks through the CI script's real Git diff.
+func TestCIChecksRequireDocumentationConsistency(t *testing.T) {
+	for _, path := range []string{"docs/command-reference.md", "docs/quick-guide-linux.md", "docs/quick-guide-windows.md"} {
+		for _, operation := range []string{"change", "delete", "rename"} {
+			t.Run(path+"/"+operation, func(t *testing.T) {
+				checkout := ciRepository(t)
+				ciWrite(t, checkout, path, "original executable documentation\n")
+				base := ciCommit(t, checkout)
+				switch operation {
+				case "change":
+					ciWrite(t, checkout, path, "changed executable documentation\n")
+				case "delete":
+					runGit(t, checkout, "rm", path)
+				case "rename":
+					runGit(t, checkout, "mv", path, "docs/renamed.md")
+				}
+				assertCIChecks(t, checkout, "pull_request", base, ciCommit(t, checkout), true)
+			})
+		}
+	}
+}
+
 // TestCIChecksRequireFullValidation proves manual, main-push, and uncertain PR comparisons retain full checks through the CI script's event and Git inputs.
 func TestCIChecksRequireFullValidation(t *testing.T) {
 	checkout := ciRepository(t)

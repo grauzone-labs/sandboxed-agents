@@ -285,3 +285,55 @@ func TestManagerUsageListsDeliveredGitHubLogin(t *testing.T) {
 		t.Fatalf("status=%d output=%s", status, &out)
 	}
 }
+
+// TestGitIdentityAppliesToCommitsInMultipleRepositories proves configured global identity supplies real commit authors and committers in separate repositories through RunWithEffects and real Git in a temporary home.
+func TestGitIdentityAppliesToCommitsInMultipleRepositories(t *testing.T) {
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("real Git is unavailable for commit identity verification")
+	}
+	home := t.TempDir()
+	environment := []string{
+		"HOME=" + home, "USERPROFILE=" + home,
+		"PATH=" + os.Getenv("PATH"), "SYSTEMROOT=" + os.Getenv("SYSTEMROOT"),
+		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
+		"GIT_CONFIG_GLOBAL=" + filepath.Join(home, ".gitconfig"), "GIT_CONFIG_NOSYSTEM=1",
+	}
+	effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
+	effects.Start = func(p manager.Process) error {
+		if p.Program != "git" || p.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
+			t.Fatalf("unexpected process=%+v", p)
+		}
+		command := exec.Command(git, p.Args...)
+		command.Env, command.Dir = environment, home
+		command.Stdin, command.Stdout, command.Stderr = p.Stdin, p.Stdout, p.Stderr
+		return command.Run()
+	}
+	var output bytes.Buffer
+	if status := manager.RunWithEffects([]string{"integrations", "config", "git", "identity", "--name", "A Person", "--email", "a@example.com"}, &output, &output, effects); status != 0 {
+		t.Fatalf("status=%d output=%s", status, &output)
+	}
+	for _, name := range []string{"first repository", "second repository"} {
+		t.Run(name, func(t *testing.T) {
+			repository := filepath.Join(t.TempDir(), name)
+			run := func(args ...string) string {
+				t.Helper()
+				command := exec.Command(git, args...)
+				command.Env = environment
+				data, err := command.CombinedOutput()
+				if err != nil {
+					t.Fatalf("git %q: %v\n%s", args, err, data)
+				}
+				return string(data)
+			}
+			run("-c", "init.templateDir=", "init", repository)
+			run("-C", repository, "-c", "core.hooksPath="+filepath.Join(home, "no-hooks"), "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Verify configured identity")
+			if got := run("-C", repository, "log", "-1", "--format=%an <%ae>%n%cn <%ce>"); got != "A Person <a@example.com>\nA Person <a@example.com>\n" {
+				t.Errorf("commit identity=%q", got)
+			}
+			if got := run("-C", repository, "config", "--local", "--list"); strings.Contains(got, "user.name=") || strings.Contains(got, "user.email=") {
+				t.Errorf("repository has local identity override: %s", got)
+			}
+		})
+	}
+}
