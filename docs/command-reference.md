@@ -36,7 +36,7 @@ sandboxed-agents integrations login NAME github
 sandboxed-agents integrations login NAME azure device-code
 sandboxed-agents integrations login NAME azure browser
 sandboxed-agents integrations login NAME azdo --organization URL
-sandboxed-agents integrations config NAME git identity [--name NAME] [--email EMAIL]
+sandboxed-agents integrations config NAME git identity [--name PERSON] [--email EMAIL]
 sandboxed-agents integrations config NAME git credentials
 ```
 
@@ -59,7 +59,9 @@ Names:
 
 ## Lifecycle commands
 
-`up`, `start`, `stop`, `restart`, `remove`, and `update` never act on the same sandbox at the same time ([ADR 0007](adr/0007-serialize-sandbox-lifecycle-commands.md)). A second command that finds the sandbox's lock taken exits non-zero, names the sandbox, and tells you to retry.
+`up`, `start`, `stop`, `restart`, `remove`, and `update`, and the SSH setup mutations `ssh-config NAME --install` and `ssh-config NAME --remove`, never act on the same sandbox at the same time ([ADR 0007](adr/0007-serialize-sandbox-lifecycle-commands.md)). Each takes an exclusive, nonblocking lock for its sandbox in host state. A second command that finds the sandbox's lock taken exits non-zero, names the sandbox, says that another lifecycle or SSH setup command is in progress, and tells you to retry. The preview `ssh-config NAME` takes no lock. `update --all` takes the lock of each sandbox it acts on, and passes over a sandbox whose lock is taken and counts it as not updated.
+
+**The lock coordinates, it does not protect.** It covers only these commands, run by the same host user with the same host state root. It does not cover commands of other host users, which have their own Podman and host state. It does not cover commands that resolve a different host state root (for example another `XDG_STATE_HOME` on Linux or another `LOCALAPPDATA` on Windows), because they lock a different file. It does not cover writers that use Podman directly, such as your own `podman` calls or scripts, which hold the same authority over Podman as the executable and are not held back by the lock. Image builds and loopback port allocation are shared across sandboxes and controller groups and are not serialized by it either.
 
 | Command | What it does |
 |---|---|
@@ -126,10 +128,10 @@ All `agents` commands need a running sandbox with an answering manager; see [Age
 | `integrations login NAME azure device-code` | Signs in to Azure with a device code. |
 | `integrations login NAME azure browser` | Signs in to Azure with a browser on your machine, through an SSH tunnel. It needs the SSH setup. |
 | `integrations login NAME azdo --organization URL` | Stores an Azure DevOps personal access token for the organization. The token is read from standard input only. |
-| `integrations config NAME git identity` | Sets `user.name` and `user.email` of `agent` for every repository in the sandbox. `--name NAME` and `--email EMAIL` supply the values; an omitted one is prompted for and needs a terminal. |
+| `integrations config NAME git identity` | Sets `user.name` and `user.email` of `agent` for every repository in the sandbox. `--name PERSON` and `--email EMAIL` supply your name and email address (not the sandbox name); an omitted one is prompted for and needs a terminal. |
 | `integrations config NAME git credentials` | Configures Git's `credential-store` helper with a file in the home volume. |
 
-The config options belong to their workflow: `--name` and `--email` exist only for `git identity`, and `--organization` only for `azdo`. A workflow that takes no options refuses any. `azure` and `azdo` need the `azure` toolchain. On a sandbox without it, the command fails, names the toolchain, prints the complete `update NAME --with ...` command for the recorded toolchain set plus `azure` (the printed set never contains `none`), and changes nothing. `integrations login github`, `integrations login azure`, and the Azure browser and device-code workflows need an interactive terminal and fail without one. See [Integrations](integrations.md).
+The options belong to their workflow. `--name` and `--email` are options of the `git identity` config workflow, and `--organization` is an option of the `azdo` login workflow. A workflow that takes no options refuses any. `azure` and `azdo` need the `azure` toolchain. On a sandbox without it, the command fails, names the toolchain, prints the complete `update NAME --with ...` command for the recorded toolchain set plus `azure` (the printed set never contains `none`), and changes nothing. `integrations login github`, `integrations login azure`, and the Azure browser and device-code workflows need an interactive terminal and fail without one. See [Integrations](integrations.md).
 
 Credentials live in the sandbox's home volume. They survive `update` and are removed by `remove NAME --volumes`.
 
@@ -143,7 +145,7 @@ Checks run in a fixed order and the first failure is reported. The order is bind
 
 1. Usage, invalid names, unknown agent, integration, workflow, and toolchain names, and path errors (a `WORKSPACE` that does not exist or is not a directory, and a workspace bind that contains or lies inside a protected host path, also through an alias). This step calls no Podman and comes before the preflight.
 2. The preflight, for the commands that run it (`build`, `up`, `update`). On Windows it also reads the machine's automount root, and a workspace under a custom root is refused here, before any call that builds or creates.
-3. A taken lifecycle lock, for the lifecycle commands `up`, `start`, `stop`, `restart`, `remove`, and `update`.
+3. A taken lifecycle lock, for the lifecycle commands `up`, `start`, `stop`, `restart`, `remove`, and `update`, and for `ssh-config NAME --install` and `ssh-config NAME --remove`.
 4. An unknown sandbox name, or a sandbox of which only volumes remain when the command needs a container. When one of those volumes has a missing or different owner, that owner conflict is reported here instead.
 5. A missing or different owner of the container or of one of the sandbox's volumes.
 6. An interrupted update, which every command except `update NAME`, `check NAME`, and `list` refuses, naming `update NAME`. `update --all` handles such a sandbox as `update NAME` does.
