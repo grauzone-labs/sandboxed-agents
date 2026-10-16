@@ -12,7 +12,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
-// TestLiveUpdateFailurePreservesMachineSSH proves the image suite's readiness injection preserves nested Podman machine SSH through liveImageHost.cli and executable process fixtures.
+// TestLiveUpdateFailurePreservesMachineSSH proves the live suite's readiness injection preserves nested Podman machine SSH through liveHost.cli and executable process fixtures.
 func TestLiveUpdateFailurePreservesMachineSSH(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "transport path with spaces")
 	if err := os.Mkdir(dir, 0700); err != nil {
@@ -36,7 +36,7 @@ func TestLiveUpdateFailurePreservesMachineSSH(t *testing.T) {
 	for _, platform := range []string{"windows", "linux"} {
 		t.Run(platform, func(t *testing.T) {
 			log := filepath.Join(t.TempDir(), "real-ssh.jsonl")
-			host := liveImageHost{binary: driver, environment: testutil.Env(os.Environ(), map[string]string{"TEST_TRANSPORT_LOG": log})}
+			host := liveHost{binary: driver, environment: testutil.Env(os.Environ(), map[string]string{"TEST_TRANSPORT_LOG": log})}
 			failing := failingLiveUpdateHost(t, host, "2222")
 			out, err := failing.cli("", platform)
 			if err != nil || !strings.Contains(out, "readiness-failed-after-preflight") {

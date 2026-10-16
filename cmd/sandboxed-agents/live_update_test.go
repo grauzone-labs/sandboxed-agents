@@ -12,49 +12,67 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
-// verifyLiveUpdates extends the separately opted-in image suite on both hosts:
-// real replacement and real Podman rollback, with only the failing SSH probe faked.
-func verifyLiveUpdates(t *testing.T, host liveImageHost, old, newImages map[string]liveImage) {
-	t.Helper()
+// update performs one successful update and one forced rollback on a sandbox
+// of the native toolchain set: the update moves it to the existing base image,
+// and the forced rollback, with only the readiness probe's ssh faked to fail,
+// restores that state. Host key and SSH authorization must survive both.
+func (suite *liveSuite) update(t *testing.T) {
+	host := suite.host
+	const name = "live-update"
 	const authorized = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	for _, set := range []string{"none", "native"} {
-		name := "image-" + set
-		args, err := cli.ManagerQueryArgs(cli.DerivedNames(host.group, name).Container, "/usr/local/bin/sandboxed-agents-manager", "ssh-authorize", authorized)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if output, err := host.podman(args...); err != nil {
-			t.Fatalf("authorize test key: %v %s", err, output)
-		}
-		key := host.sshHostKey(t, name)
-		host.mustCLI(t, "", "stop", name)
-		host.mustCLI(t, "", "start", name)
-		if set == "none" {
-			host.mustCLI(t, "", "update", name)
-			if !sameImageID(host.inspectContainer(t, name).Image, newImages[set].ID) {
-				t.Fatal("successful update did not select new image")
-			}
-		} else {
-			failing := failingLiveUpdateHost(t, host, host.inspectContainer(t, name).Config.Labels[cli.SSHPortLabel])
-			output, err := failing.cli("", "update", name, "--force")
-			if err == nil || !strings.Contains(output, "readiness wait failed") || !strings.Contains(output, "restored sandbox") {
-				t.Fatalf("forced rollback: %v %s", err, output)
-			}
-			if !sameImageID(host.inspectContainer(t, name).Image, old[set].ID) {
-				t.Fatal("rollback did not restore old image")
-			}
-		}
-		if current := host.sshHostKey(t, name); current != key {
-			t.Fatalf("update changed host key: before=%s after=%s", key, current)
-		}
-		if output := host.mustCLI(t, "cat /etc/ssh/authorized_keys\n", "shell", name); strings.TrimSpace(output) != authorized {
-			t.Fatalf("authorization changed: %s", output)
-		}
+	host.cleanupSandbox(t, name)
+	host.mustCLI(t, "", "up", name, "--with", "native")
+	native := host.inspectContainer(t, name)
+	if native.Config.Labels[cli.ToolchainsLabel] != "native" {
+		t.Fatalf("sandbox %s does not record the native toolchain set: %+v", name, native.Config.Labels)
 	}
+	args, err := cli.ManagerQueryArgs(cli.DerivedNames(host.group, name).Container, "/usr/local/bin/sandboxed-agents-manager", "ssh-authorize", authorized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output, err := host.podman(args...); err != nil {
+		t.Fatalf("authorize test key: %v %s", err, output)
+	}
+	key := host.sshHostKey(t, name)
+	output := host.mustCLI(t, "", "update", name, "--with", "none")
+	if !strings.Contains(output, "updated") {
+		t.Fatalf("update did not report the replacement:\n%s", output)
+	}
+	base := host.inspectContainer(t, name)
+	if sameImageID(base.Image, native.Image) || base.Config.Labels[cli.ToolchainsLabel] != "none" {
+		t.Fatalf("successful update did not select the base image: image=%s labels=%v", base.Image, base.Config.Labels)
+	}
+	host.assertListed(t, name, "running")
+	host.assertSSHServer(t, name, key)
+	failing := failingLiveUpdateHost(t, host, base.Config.Labels[cli.SSHPortLabel])
+	output, err = failing.cli("", "update", name, "--with", "native", "--force")
+	if err == nil || !strings.Contains(output, "readiness wait failed") || !strings.Contains(output, "restored sandbox") {
+		t.Fatalf("forced rollback: %v %s", err, output)
+	}
+	restored := host.inspectContainer(t, name)
+	if !sameImageID(restored.Image, base.Image) || restored.Config.Labels[cli.ToolchainsLabel] != "none" {
+		t.Fatalf("rollback did not restore the base image: image=%s labels=%v", restored.Image, restored.Config.Labels)
+	}
+	if output, err := host.podman("container", "exists", cli.DerivedNames(host.group, name).Backup); err == nil {
+		t.Fatalf("rollback left the backup container behind: %s", output)
+	}
+	host.assertListed(t, name, "running")
+	host.mustCLI(t, "", "check", name)
+	if current := host.sshHostKey(t, name); current != key {
+		t.Fatalf("update changed host key: before=%s after=%s", key, current)
+	}
+	if output := host.mustCLI(t, "cat /etc/ssh/authorized_keys\n", "shell", name); strings.TrimSpace(output) != authorized {
+		t.Fatalf("authorization changed: %s", output)
+	}
+	host.assertSSHServer(t, name, key)
+	host.mustCLI(t, "", "remove", name, "--volumes")
+	host.assertNoSandboxObjects(t, name)
 }
 
-// failingLiveUpdateHost prepares the image suite's forced readiness failure.
-func failingLiveUpdateHost(t *testing.T, host liveImageHost, port string) liveImageHost {
+// failingLiveUpdateHost prepares the suite's forced readiness failure: ssh
+// fails only for the readiness probe of the given port and otherwise runs the
+// real program, so Podman's own machine transport keeps working.
+func failingLiveUpdateHost(t *testing.T, host liveHost, port string) liveHost {
 	t.Helper()
 	realSSH, err := exec.LookPath("ssh")
 	if err != nil {

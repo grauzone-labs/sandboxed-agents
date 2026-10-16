@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -93,6 +94,7 @@ func main() {
 			HoldOutputUntil    string
 			ExpectedStdin      string
 			EchoStdin          bool
+			EchoLine           bool
 		}
 		if err := json.Unmarshal([]byte(script), &responses); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -185,6 +187,15 @@ func main() {
 					fmt.Fprintln(os.Stderr, err)
 					os.Exit(125)
 				}
+			}
+			if response.EchoLine {
+				// One typed line proves a terminal forwards input without needing an end of file.
+				line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+				if err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					os.Exit(125)
+				}
+				fmt.Fprintf(os.Stdout, "line: %s\n", strings.TrimRight(line, "\r\n"))
 			}
 			code = response.Exit
 		} else {

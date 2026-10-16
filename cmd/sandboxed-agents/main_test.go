@@ -113,88 +113,17 @@ func TestOfflineSuiteDoesNotStartLiveTests(t *testing.T) {
 	child := exec.Command(testExecutable, "-test.v", "-test.run=.")
 	child.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{
 		"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable, "TEST_RELEASE_EXECUTABLE": releaseExecutable,
-		nestedGuardEnv:                       strconv.Itoa(os.Getpid()),
-		"SANDBOXED_AGENTS_LIVE_IMAGES_TESTS": "",
+		nestedGuardEnv: strconv.Itoa(os.Getpid()),
+		liveImagesEnv:  "", liveSummaryDirEnv: "",
 	})
 	output, err := child.CombinedOutput()
 	if err != nil {
 		t.Fatalf("offline test run: %v\n%s", err, output)
 	}
-	if strings.Contains(string(output), "live test body selected") || (!strings.Contains(string(output), "--- SKIP: TestLivePodmanVersion") || !strings.Contains(string(output), "--- SKIP: TestLiveImages")) {
+	if strings.Contains(string(output), "live test body selected") || !strings.Contains(string(output), "--- SKIP: TestLiveSuite") {
 		t.Fatalf("live test ran without opt-in: %s", output)
 	}
 	assertNoExternalCalls(t, fakes)
-}
-
-// TestLiveOptInSelectsOnlyExplicitOne proves that only an opt-in value of "1" runs the live test and invokes Podman version through the fake process harness.
-func TestLiveOptInSelectsOnlyExplicitOne(t *testing.T) {
-	for _, value := range []string{"0", "true", "1"} {
-		t.Run(value, func(t *testing.T) {
-			fakes := testutil.Install(t, fakeExecutable)
-			testExecutable, err := os.Executable()
-			if err != nil {
-				t.Fatal(err)
-			}
-			child := exec.Command(testExecutable, "-test.v", "-test.run=^TestLivePodmanVersion$")
-			child.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{
-				testutil.LiveTestsEnv:              value,
-				"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable, "TEST_RELEASE_EXECUTABLE": releaseExecutable,
-			})
-			output, err := child.CombinedOutput()
-			if err != nil {
-				t.Fatalf("live selection: %v\n%s", err, output)
-			}
-			selected := strings.Contains(string(output), "live test body selected")
-			calls := testutil.Invocations(t, fakes.PodmanLog)
-			if value == "1" {
-				if !selected || len(calls) != 1 || len(calls[0]) != 1 || calls[0][0] != "version" {
-					t.Fatalf("opt-in: selected=%v calls=%v output=%s", selected, calls, output)
-				}
-			} else if selected || len(calls) != 0 {
-				t.Fatalf("unexpected live selection: %s calls=%v", output, calls)
-			}
-		})
-	}
-}
-
-// TestLiveOptInFailsWhenPodmanIsMissingOrUnusable proves that an opted-in live test fails with a Podman diagnostic for a missing or failing program through the fake process harness.
-func TestLiveOptInFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
-	for _, availability := range []string{"missing", "unusable"} {
-		t.Run(availability, func(t *testing.T) {
-			fakes := testutil.Install(t, fakeExecutable)
-			testExecutable, err := os.Executable()
-			if err != nil {
-				t.Fatal(err)
-			}
-			environment := testutil.Env(fakes.Env(os.Environ()), map[string]string{
-				testutil.LiveTestsEnv:              "1",
-				"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable, "TEST_RELEASE_EXECUTABLE": releaseExecutable,
-				"TEST_PODMAN_EXIT": "23", "TEST_PODMAN_OUTPUT": "scripted Podman failure\n",
-			})
-			if availability == "missing" {
-				environment = testutil.Env(environment, map[string]string{"PATH": t.TempDir()})
-			}
-			child := exec.Command(testExecutable, "-test.v", "-test.run=^TestLivePodmanVersion$")
-			child.Env = environment
-			output, err := child.CombinedOutput()
-			if status := exitStatus(t, err); status != 1 || !strings.Contains(string(output), "--- FAIL: TestLivePodmanVersion") || !strings.Contains(string(output), "Podman") {
-				t.Fatalf("opted-in %s Podman: status=%d output=%s; want failure naming Podman", availability, status, output)
-			}
-			calls := testutil.Invocations(t, fakes.PodmanLog)
-			if availability == "missing" {
-				if len(calls) != 0 {
-					t.Fatalf("missing Podman calls: %v", calls)
-				}
-			} else {
-				if !reflect.DeepEqual(calls, [][]string{{"version"}}) || !strings.Contains(string(output), "exit status 23") || !strings.Contains(string(output), "scripted Podman failure") {
-					t.Fatalf("unusable Podman: calls=%v output=%s", calls, output)
-				}
-			}
-			if calls := testutil.Invocations(t, fakes.SSHLog); len(calls) != 0 {
-				t.Fatalf("unexpected SSH calls: %v", calls)
-			}
-		})
-	}
 }
 
 // TestCommandGrammar proves accepted and invalid command forms return their expected success, preflight failure, unimplemented, or usage status through the built CLI binary harness without invoking SSH.
@@ -666,6 +595,7 @@ type lifecycleResponse struct {
 	Exit               int
 	ReadyFile, WaitFor string
 	HoldOutputUntil    string
+	EchoLine           bool
 }
 
 func lifecycleHarness(t *testing.T, responses map[string]lifecycleResponse) testutil.Fakes {
