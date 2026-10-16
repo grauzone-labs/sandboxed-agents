@@ -127,8 +127,9 @@ func (terminal *liveTerminal) Output() string {
 
 // Wait returns the exit status once the command has ended within timeout and
 // its output has been drained: the master reads everything the command wrote
-// and then fails with EIO once no process holds the slave any more. A
-// descendant that keeps the slave open bounds the drain to the timeout.
+// and then fails with EIO once no process holds the slave any more. While a
+// descendant keeps the slave open the output may still grow, so Wait reports
+// the command as unfinished until the terminal has drained.
 func (terminal *liveTerminal) Wait(timeout time.Duration) (int, bool) {
 	deadline := time.After(timeout)
 	select {
@@ -138,9 +139,10 @@ func (terminal *liveTerminal) Wait(timeout time.Duration) (int, bool) {
 	}
 	select {
 	case <-terminal.readerDone:
+		return terminal.exit, true
 	case <-deadline:
+		return 0, false
 	}
-	return terminal.exit, true
 }
 
 // Close ends a still running command and releases the terminal.

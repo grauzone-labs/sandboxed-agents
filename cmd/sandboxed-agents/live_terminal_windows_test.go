@@ -134,7 +134,8 @@ func (terminal *liveTerminal) Output() string {
 // Wait returns the exit status once the command has ended within timeout and
 // its output has been drained. The pseudo console renders output after the
 // command exits, so Wait closes it once the command is gone, which makes the
-// console flush what remains and end the output pipe for the reader.
+// console flush what remains and end the output pipe for the reader. Until
+// the reader has seen that end, Wait reports the command as unfinished.
 func (terminal *liveTerminal) Wait(timeout time.Duration) (int, bool) {
 	deadline := time.After(timeout)
 	select {
@@ -145,9 +146,10 @@ func (terminal *liveTerminal) Wait(timeout time.Duration) (int, bool) {
 	terminal.closeConsole.Do(func() { windows.ClosePseudoConsole(terminal.console) })
 	select {
 	case <-terminal.readerDone:
+		return terminal.exit, true
 	case <-deadline:
+		return 0, false
 	}
-	return terminal.exit, true
 }
 
 // Close ends a still running command and releases the pseudo console.
