@@ -205,7 +205,7 @@ The live image coverage is the `images` case of the live suite ([releases](relea
 ```sh
 SANDBOXED_AGENTS_LIVE_TESTS=1 \
 SANDBOXED_AGENTS_GROUP=live \
-SANDBOXED_AGENTS_LIVE_SUMMARY_DIR="$HOME/live-suite-records" \
+SANDBOXED_AGENTS_LIVE_RECORD_DIR="$HOME/live-suite-records" \
 SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1 \
   go test ./cmd/sandboxed-agents -run '^TestLiveSuite$' -timeout 120m -v
 ```

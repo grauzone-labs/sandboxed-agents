@@ -16,6 +16,34 @@ import (
 	"time"
 )
 
+// scriptedResponse is one scripted answer of the fake for an argv key.
+type scriptedResponse struct {
+	FailOnce           bool
+	Output             string
+	Stderr             string
+	Exit               int
+	ReadyFile, WaitFor string
+	HoldOutputUntil    string
+	ExpectedStdin      string
+	EchoStdin          bool
+	EchoLine           bool
+	ExitOnInput        string
+	Sequence           []scriptedResponse
+}
+
+// priorInvocations counts how often this exact argv was logged, this call included.
+func priorInvocations(prefix string) int {
+	data, _ := os.ReadFile(os.Getenv(prefix + "_LOG"))
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		var args []string
+		if json.Unmarshal([]byte(line), &args) == nil && slices.Equal(args, os.Args[1:]) {
+			count++
+		}
+	}
+	return count
+}
+
 func main() {
 	// A bounded child deliberately keeps the parent's inherited output open.
 	if len(os.Args) == 3 && os.Args[1] == "--test-hold-output" {
@@ -85,17 +113,7 @@ func main() {
 		code = 0
 	}
 	if script := os.Getenv(prefix + "_RESPONSES"); script != "" {
-		var responses map[string]struct {
-			FailOnce           bool
-			Output             string
-			Stderr             string
-			Exit               int
-			ReadyFile, WaitFor string
-			HoldOutputUntil    string
-			ExpectedStdin      string
-			EchoStdin          bool
-			EchoLine           bool
-		}
+		var responses map[string]scriptedResponse
 		if err := json.Unmarshal([]byte(script), &responses); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(125)
@@ -121,19 +139,13 @@ func main() {
 			}
 		}
 		if ok {
-			if response.FailOnce {
-				data, _ := os.ReadFile(os.Getenv(prefix + "_LOG"))
-				count := 0
-				for _, line := range strings.Split(string(data), "\n") {
-					var args []string
-					if json.Unmarshal([]byte(line), &args) == nil && slices.Equal(args, os.Args[1:]) {
-						count++
-					}
-				}
-				if count > 1 {
-					response.Exit = 0
-					response.Output = ""
-				}
+			if response.FailOnce && priorInvocations(prefix) > 1 {
+				response.Exit = 0
+				response.Output = ""
+			}
+			if len(response.Sequence) > 0 {
+				// The same argv answers differently over time; the last answer repeats.
+				response = response.Sequence[min(priorInvocations(prefix)-1, len(response.Sequence)-1)]
 			}
 			if response.HoldOutputUntil != "" {
 				executable, err := os.Executable()
@@ -196,6 +208,19 @@ func main() {
 					os.Exit(125)
 				}
 				fmt.Fprintf(os.Stdout, "line: %s\n", strings.TrimRight(line, "\r\n"))
+			}
+			if response.ExitOnInput != "" {
+				// Model a terminal program that returns on a key sequence, such as a tmux detach.
+				reader := bufio.NewReader(os.Stdin)
+				var typed []byte
+				for !strings.HasSuffix(string(typed), response.ExitOnInput) {
+					next, err := reader.ReadByte()
+					if err != nil {
+						fmt.Fprintln(os.Stderr, "fake input ended before", strconv.Quote(response.ExitOnInput))
+						os.Exit(125)
+					}
+					typed = append(typed, next)
+				}
 			}
 			code = response.Exit
 		} else {

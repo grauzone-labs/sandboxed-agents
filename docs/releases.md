@@ -62,12 +62,12 @@ The three gates are separate. An offline result is never presented as a live or 
 
 ### Live suite
 
-The live suite is the test `TestLiveSuite` in `cmd/sandboxed-agents`. It runs only with `SANDBOXED_AGENTS_LIVE_TESTS=1`; without that exact value the offline suite skips it and calls no real Podman. It takes its controller group from `SANDBOXED_AGENTS_GROUP`, which must name a dedicated group other than `default` that matches `^[a-z0-9][a-z0-9-]*$`, and the directory for its record from `SANDBOXED_AGENTS_LIVE_SUMMARY_DIR`. With the `default` group, an unset or invalid group, or no record directory, the suite exits non-zero before it calls Podman. The suite's sandboxes are `live-lifecycle`, `live-update`, `live-agent`, and, in the image coverage, `image-none`, `image-dotnet`, `image-playwright`, `image-azure`, and `image-native`; because the group is a namespace of its own, these names cannot collide with sandboxes of another group.
+The live suite is the test `TestLiveSuite` in `cmd/sandboxed-agents`. It runs only with `SANDBOXED_AGENTS_LIVE_TESTS=1`; without that exact value the offline suite skips it and calls no real Podman. It takes its controller group from `SANDBOXED_AGENTS_GROUP`, which must name a dedicated group other than `default` that matches `^[a-z0-9][a-z0-9-]*$`, and the directory for its record from `SANDBOXED_AGENTS_LIVE_RECORD_DIR`. With the `default` group, an unset or invalid group, or no record directory, the suite exits non-zero before it calls Podman, and writes no record. The suite's sandboxes are `live-lifecycle`, `live-update`, `live-agent`, and, in the image coverage, `image-none`, `image-dotnet`, `image-playwright`, `image-azure`, and `image-native`; because the group is a namespace of its own, these names cannot collide with sandboxes of another group.
 
 ```sh
 SANDBOXED_AGENTS_LIVE_TESTS=1 \
 SANDBOXED_AGENTS_GROUP=live \
-SANDBOXED_AGENTS_LIVE_SUMMARY_DIR="$HOME/live-suite-records" \
+SANDBOXED_AGENTS_LIVE_RECORD_DIR="$HOME/live-suite-records" \
   go test ./cmd/sandboxed-agents -run '^TestLiveSuite$' -timeout 120m -v
 ```
 
@@ -85,7 +85,7 @@ The suite writes its record before it calls any program, as a failing record wit
 
 Every case removes its sandbox and volumes at its end; at the end of the run the suite checks that no container, backup container, or volume of its controller group remains, and it removes the group's host state. It leaves every image it built; the host agent of the `live-validation` skill removes the run's unused images afterwards ([Image cleanup](../.agents/skills/live-validation/SKILL.md#image-cleanup)).
 
-The offline suite covers the suite's own rules against fake Podman: the refusal of the `default` group and of invalid group names before any Podman call, the record written before the first Podman use with the checkout's commit and no host detail, the image selection recorded as given, the absence of `build` when the image coverage is not selected, and the pseudo-terminal counting as an interactive terminal for `agents session`. No run of the full suite is recorded yet; the live runs recorded under [live proof](images.md#live-proof) ran the image coverage of the earlier test alone.
+The offline suite covers the suite's own rules without real Podman. Against fake Podman, whose preflight answers fail `check`: the refusal of the `default` group and of invalid group names before any Podman call, the record written before the first Podman use with the checkout's commit, the host's platform, every later check `not-run`, and no host detail, and the image selection recorded as given. Against a scripted executable, fake Podman, and fake `ssh`, on Linux: the whole suite runs through every case with and without the image selection, writes a passing record only with `image_part_ran` and `image_coverage_complete` true when the image coverage was selected, issues `build` exactly once with the selection and never without it, and removes every sandbox it created. The pseudo-terminal it provides counts as an interactive terminal for `agents session` on Linux and Windows. None of this is live evidence: no run of the full suite is recorded yet, and the live runs recorded under [live proof](images.md#live-proof) ran the image coverage of the earlier test alone.
 
 ### Validation records
 

@@ -21,12 +21,21 @@ import (
 
 // The live suite is one opt-in entry point. SANDBOXED_AGENTS_LIVE_TESTS=1 selects
 // it, SANDBOXED_AGENTS_GROUP names its dedicated controller group, and
-// SANDBOXED_AGENTS_LIVE_SUMMARY_DIR receives the platform's validation record.
+// SANDBOXED_AGENTS_LIVE_RECORD_DIR receives the platform's validation record.
 // Run it with SANDBOXED_AGENTS_LIVE_TESTS=1 SANDBOXED_AGENTS_GROUP=live
-// SANDBOXED_AGENTS_LIVE_SUMMARY_DIR=DIR go test ./cmd/sandboxed-agents
+// SANDBOXED_AGENTS_LIVE_RECORD_DIR=DIR go test ./cmd/sandboxed-agents
 // -run '^TestLiveSuite$' -timeout 120m -v, adding
 // SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1 to select the image coverage.
-const liveSummaryDirEnv = "SANDBOXED_AGENTS_LIVE_SUMMARY_DIR"
+const liveRecordDirEnv = "SANDBOXED_AGENTS_LIVE_RECORD_DIR"
+
+// livePreparedExecutableEnv lets the offline tracer hand the suite a scripted
+// executable instead of compiling the prepared one. A live run leaves it unset.
+const livePreparedExecutableEnv = "TEST_LIVE_PREPARED_EXECUTABLE"
+
+// livePlatform names the record's platform for the test host, or "" elsewhere.
+func livePlatform() string {
+	return map[string]string{"linux": "linux", "windows": "windows-11"}[runtime.GOOS]
+}
 
 // controllerGroupPattern repeats the controller group rule of ADR-0005.
 var controllerGroupPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -37,7 +46,7 @@ var liveCheckNames = []string{"preflight", "lifecycle", "update", "agent", "imag
 // liveSuite carries one run's inputs, host, and check results.
 type liveSuite struct {
 	host                                      liveHost
-	buildDirectory, summaryDirectory          string
+	buildDirectory, recordDirectory           string
 	commit, platform, assetHash               string
 	imagesSelected, imagesRan, imagesComplete bool
 	results                                   map[string]string
@@ -73,7 +82,7 @@ func newLiveSuite(t *testing.T) *liveSuite {
 	for _, name := range liveCheckNames {
 		suite.results[name] = "not-run"
 	}
-	suite.platform = map[string]string{"linux": "linux", "windows": "windows-11"}[runtime.GOOS]
+	suite.platform = livePlatform()
 	if suite.platform == "" {
 		t.Fatalf("the live suite runs on Linux amd64 or Windows 11 x64, not %s", runtime.GOOS)
 	}
@@ -82,12 +91,12 @@ func newLiveSuite(t *testing.T) *liveSuite {
 		t.Fatalf("the live suite needs SANDBOXED_AGENTS_GROUP set to a dedicated controller group matching ^[a-z0-9][a-z0-9-]*$ other than default; got %q", group)
 	}
 	suite.host.group = group
-	suite.summaryDirectory = os.Getenv(liveSummaryDirEnv)
-	if suite.summaryDirectory == "" {
-		t.Fatalf("the live suite needs %s set to the directory that receives its validation record", liveSummaryDirEnv)
+	suite.recordDirectory = os.Getenv(liveRecordDirEnv)
+	if suite.recordDirectory == "" {
+		t.Fatalf("the live suite needs %s set to the directory that receives its validation record", liveRecordDirEnv)
 	}
-	if err := os.MkdirAll(suite.summaryDirectory, 0o700); err != nil {
-		t.Fatalf("%s: %v", liveSummaryDirEnv, err)
+	if err := os.MkdirAll(suite.recordDirectory, 0o700); err != nil {
+		t.Fatalf("%s: %v", liveRecordDirEnv, err)
 	}
 	suite.imagesSelected = os.Getenv(liveImagesEnv) == "1"
 	root, err := filepath.Abs("../..")
@@ -128,7 +137,7 @@ func (suite *liveSuite) writeRecord(t *testing.T, final bool) {
 	if passed {
 		record.Result = "pass"
 	}
-	path, err := release.WriteLiveSuiteRecord(suite.summaryDirectory, record)
+	path, err := release.WriteLiveSuiteRecord(suite.recordDirectory, record)
 	if err != nil {
 		t.Fatalf("write the live-suite record: %v", err)
 	}
@@ -205,7 +214,11 @@ func (suite *liveSuite) preflight(t *testing.T) {
 	// coverage from a skip.
 	suite.host.mustCLI(t, "", "check")
 	suite.host.selectConnection(t)
-	suite.host.binary = buildLiveExecutable(t, suite.buildDirectory)
+	if prepared := os.Getenv(livePreparedExecutableEnv); prepared != "" {
+		suite.host.binary = prepared
+	} else {
+		suite.host.binary = buildLiveExecutable(t, suite.buildDirectory)
+	}
 	version := suite.host.mustCLI(t, "", "version")
 	hashes := regexp.MustCompile(`(?m)^asset-sha256 ([a-f0-9]{64})\r?$`).FindStringSubmatch(version)
 	if len(hashes) != 2 {
@@ -253,22 +266,18 @@ func liveSuiteChild(t *testing.T, fakes testutil.Fakes, values map[string]string
 	if err != nil {
 		t.Fatal(err)
 	}
-	environment := map[string]string{
-		testutil.LiveTestsEnv: "1", liveImagesEnv: "", liveSummaryDirEnv: "",
-		"TEST_SANDBOXED_AGENTS_EXECUTABLE": executable, "TEST_FAKE_EXECUTABLE": fakeExecutable, "TEST_RELEASE_EXECUTABLE": releaseExecutable,
-	}
+	environment := map[string]string{testutil.LiveTestsEnv: "1", liveImagesEnv: "", liveRecordDirEnv: ""}
 	maps.Copy(environment, values)
 	command := exec.Command(testExecutable, "-test.v", "-test.run=^TestLiveSuite$")
-	command.Env = testutil.Env(fakes.Env(os.Environ()), environment)
+	command.Env = testutil.Env(testutil.Env(fakes.Env(os.Environ()), nestedExecutables()), environment)
 	output, err := command.CombinedOutput()
 	return string(output), err
 }
 
-// liveSummaryFilename is the record file name of the test host's platform.
-func liveSummaryFilename(t *testing.T) string {
+// liveRecordFilename is the record file name of the test host's platform.
+func liveRecordFilename(t *testing.T) string {
 	t.Helper()
-	platform := map[string]string{"linux": "linux", "windows": "windows-11"}[runtime.GOOS]
-	filename, err := release.LiveSuiteRecordFilename(platform)
+	filename, err := release.LiveSuiteRecordFilename(livePlatform())
 	if err != nil {
 		t.Skipf("no live-suite record for %s", runtime.GOOS)
 	}
@@ -281,7 +290,7 @@ func TestLiveSuiteOptInSelectsOnlyExplicitOne(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
 			summaries := t.TempDir()
-			output, err := liveSuiteChild(t, fakes, map[string]string{testutil.LiveTestsEnv: value, "SANDBOXED_AGENTS_GROUP": "live-offline", liveSummaryDirEnv: summaries})
+			output, err := liveSuiteChild(t, fakes, map[string]string{testutil.LiveTestsEnv: value, "SANDBOXED_AGENTS_GROUP": "live-offline", liveRecordDirEnv: summaries})
 			selected := strings.Contains(output, "live test body selected")
 			calls := testutil.Invocations(t, fakes.PodmanLog)
 			if value != "1" {
@@ -308,7 +317,7 @@ func TestLiveSuiteFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
 		t.Run(availability, func(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
 			summaries := t.TempDir()
-			values := map[string]string{"SANDBOXED_AGENTS_GROUP": "live-offline", liveSummaryDirEnv: summaries, "TEST_PODMAN_EXIT": "23", "TEST_PODMAN_OUTPUT": "scripted Podman failure\n"}
+			values := map[string]string{"SANDBOXED_AGENTS_GROUP": "live-offline", liveRecordDirEnv: summaries, "TEST_PODMAN_EXIT": "23", "TEST_PODMAN_OUTPUT": "scripted Podman failure\n"}
 			if availability == "missing" {
 				values["PATH"] = t.TempDir()
 			}
@@ -324,7 +333,7 @@ func TestLiveSuiteFailsWhenPodmanIsMissingOrUnusable(t *testing.T) {
 				t.Fatalf("unusable Podman: calls=%v output=%s", calls, output)
 			}
 			assertOnlyPreflightQueries(t, fakes)
-			if _, err := os.Stat(filepath.Join(summaries, liveSummaryFilename(t))); err != nil {
+			if _, err := os.Stat(filepath.Join(summaries, liveRecordFilename(t))); err != nil {
 				t.Fatalf("failing record was not written before the first Podman use: %v", err)
 			}
 		})
@@ -342,7 +351,7 @@ func TestLiveSuiteRefusesDefaultAndInvalidControllerGroups(t *testing.T) {
 		}, group), func(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
 			summaries := t.TempDir()
-			output, err := liveSuiteChild(t, fakes, map[string]string{"SANDBOXED_AGENTS_GROUP": group, liveSummaryDirEnv: summaries})
+			output, err := liveSuiteChild(t, fakes, map[string]string{"SANDBOXED_AGENTS_GROUP": group, liveRecordDirEnv: summaries})
 			if status := exitStatus(t, err); status != 1 || !strings.Contains(output, "SANDBOXED_AGENTS_GROUP") || !strings.Contains(output, "--- FAIL: TestLiveSuite") {
 				t.Fatalf("group %q: status=%d output=%s; want refusal naming the variable", group, status, output)
 			}
@@ -354,18 +363,18 @@ func TestLiveSuiteRefusesDefaultAndInvalidControllerGroups(t *testing.T) {
 	}
 }
 
-// TestLiveSuiteRequiresSummaryDirectory proves the suite exits non-zero naming SANDBOXED_AGENTS_LIVE_SUMMARY_DIR when no record directory is given, before Podman is called, through the nested test process and fake Podman.
-func TestLiveSuiteRequiresSummaryDirectory(t *testing.T) {
+// TestLiveSuiteRequiresRecordDirectory proves the suite exits non-zero naming SANDBOXED_AGENTS_LIVE_RECORD_DIR when no record directory is given, before Podman is called, through the nested test process and fake Podman.
+func TestLiveSuiteRequiresRecordDirectory(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	output, err := liveSuiteChild(t, fakes, map[string]string{"SANDBOXED_AGENTS_GROUP": "live-offline"})
-	if status := exitStatus(t, err); status != 1 || !strings.Contains(output, liveSummaryDirEnv) {
-		t.Fatalf("status=%d output=%s; want refusal naming %s", status, output, liveSummaryDirEnv)
+	if status := exitStatus(t, err); status != 1 || !strings.Contains(output, liveRecordDirEnv) {
+		t.Fatalf("status=%d output=%s; want refusal naming %s", status, output, liveRecordDirEnv)
 	}
 	assertNoExternalCalls(t, fakes)
 }
 
-// TestLiveSuiteWritesRedactedFailingSummary proves a run that fails at the preflight leaves one record with the gate's exact fields, the checkout's commit, the host's platform, every later check as not-run, the image selection as given, no build call, and no host detail, and that the gate refuses it only for its result, through the nested test process, fake Podman, and EvaluateStableGate.
-func TestLiveSuiteWritesRedactedFailingSummary(t *testing.T) {
+// TestLiveSuiteWritesRedactedFailingRecord proves a run that fails at the preflight leaves one record with the gate's exact fields, the checkout's commit, the host's platform, every later check as not-run, the image selection as given, no build call, and no host detail, and that the gate refuses it only for its result, through the nested test process, fake Podman, and EvaluateStableGate.
+func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 	if os.Getenv(nestedGuardEnv) == strconv.Itoa(os.Getppid()) {
 		t.Skip("nested offline guard isolates PATH to fake programs; the outer suite compares the record's commit with git")
 	}
@@ -381,7 +390,7 @@ func TestLiveSuiteWritesRedactedFailingSummary(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
 			summaries := t.TempDir()
 			const group = "live-offline-redaction"
-			output, err := liveSuiteChild(t, fakes, map[string]string{"SANDBOXED_AGENTS_GROUP": group, liveSummaryDirEnv: summaries, liveImagesEnv: selection})
+			output, err := liveSuiteChild(t, fakes, map[string]string{"SANDBOXED_AGENTS_GROUP": group, liveRecordDirEnv: summaries, liveImagesEnv: selection})
 			if err == nil {
 				t.Fatalf("offline live run passed:\n%s", output)
 			}
@@ -392,7 +401,7 @@ func TestLiveSuiteWritesRedactedFailingSummary(t *testing.T) {
 					}
 				}
 			}
-			filename := liveSummaryFilename(t)
+			filename := liveRecordFilename(t)
 			entries, err := os.ReadDir(summaries)
 			if err != nil || len(entries) != 1 || entries[0].Name() != filename {
 				t.Fatalf("record directory holds %v (err=%v); want only %s", entries, err, filename)

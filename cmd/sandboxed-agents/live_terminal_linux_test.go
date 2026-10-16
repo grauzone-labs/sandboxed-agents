@@ -52,6 +52,25 @@ func startLiveTerminal(t *testing.T, environment []string, program string, args 
 		master.Close()
 		t.Fatal(err)
 	}
+	// Raw mode, as an attached session puts its terminal into: keystrokes such
+	// as the tmux detach prefix reach the command at once, without a line end.
+	settings, err := unix.IoctlGetTermios(int(slave.Fd()), unix.TCGETS)
+	if err != nil {
+		slave.Close()
+		master.Close()
+		t.Fatal(err)
+	}
+	settings.Iflag &^= unix.IGNBRK | unix.BRKINT | unix.PARMRK | unix.ISTRIP | unix.INLCR | unix.IGNCR | unix.ICRNL | unix.IXON
+	settings.Oflag &^= unix.OPOST
+	settings.Lflag &^= unix.ECHO | unix.ECHONL | unix.ICANON | unix.ISIG | unix.IEXTEN
+	settings.Cflag &^= unix.CSIZE | unix.PARENB
+	settings.Cflag |= unix.CS8
+	settings.Cc[unix.VMIN], settings.Cc[unix.VTIME] = 1, 0
+	if err := unix.IoctlSetTermios(int(slave.Fd()), unix.TCSETS, settings); err != nil {
+		slave.Close()
+		master.Close()
+		t.Fatal(err)
+	}
 	command := exec.Command(program, args...)
 	command.Env = environment
 	command.Stdin, command.Stdout, command.Stderr = slave, slave, slave
