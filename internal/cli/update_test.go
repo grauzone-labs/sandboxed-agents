@@ -521,7 +521,7 @@ func TestUpdateRefusesUnavailableSandboxBeforeBuild(t *testing.T) {
 				owner := "foreign"
 				if state == "interrupted" {
 					owner = "default"
-					want = "recovery is not delivered yet"
+					want = "backup running state is missing"
 				}
 				f.responses["container inspect sandboxed-agents-backup.default.demo"] = response{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"` + owner + `"}}}]`}
 			}

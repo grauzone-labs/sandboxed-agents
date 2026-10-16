@@ -174,8 +174,11 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			}
 			return 0
 		}
-		fmt.Fprintln(stderr, "update: not implemented")
-		return 1
+		if err := updateAllSandboxes(request, target, stateRoot, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "shell":
 		target, err := selectedTarget()
 		if err != nil {
