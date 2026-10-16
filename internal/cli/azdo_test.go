@@ -13,6 +13,7 @@ func TestAzureDevOpsLoginReadsStdin(t *testing.T) {
 	for _, outputTerminal := range []bool{false, true} {
 		t.Run(fmt.Sprint(outputTerminal), func(t *testing.T) {
 			f := sandboxStateFixture(t)
+			f.responses[shellInspect] = response{Output: containerInspectAnswer(`{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.toolchains":"azure"}`, "true")}
 			f.host.Stdin = strings.NewReader("pat-host-sentinel\n")
 			f.host.IsInputTerminal = func(io.Reader) bool { return false }
 			f.host.IsOutputTerminal = func(io.Writer) bool { return outputTerminal }
@@ -102,6 +103,7 @@ func (r unreadableToken) Read([]byte) (int, error) {
 func TestAzureDevOpsRejectsEmptyToken(t *testing.T) {
 	for _, input := range []string{"", "\n", "  \r\n"} {
 		f := sandboxStateFixture(t)
+		f.responses[shellInspect] = response{Output: containerInspectAnswer(`{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.toolchains":"azure"}`, "true")}
 		f.host.Stdin = strings.NewReader(input)
 		f.responses[integrationProbe] = response{}
 		status, output, calls := f.run(t, "integrations", "login", "agent01", "azdo", "--organization", "https://dev.azure.com/contoso")
@@ -135,5 +137,26 @@ func TestAzureDevOpsRejectsWorkflowWithDeliveredGrammar(t *testing.T) {
 	status, output, calls := f.run(t, "integrations", "login", "agent01", "azdo", "bogusflow", "--organization", "https://dev.azure.com/contoso")
 	if status != 2 || len(calls) != 0 || !strings.Contains(output, "azdo requires --organization URL and no workflow") || strings.Contains(output, "no valid names are available yet") {
 		t.Fatalf("status=%d output=%s calls=%q", status, output, calls)
+	}
+}
+
+// TestAzureDevOpsMissingToolchainDoesNotReadToken proves missing Azure prerequisites print the additive update command before inspecting or reading PAT input through RunWithHost and injected input/process boundaries.
+func TestAzureDevOpsMissingToolchainDoesNotReadToken(t *testing.T) {
+	for _, tc := range []struct{ recorded, command string }{
+		{"none", "update agent01 --with azure"},
+		{"dotnet,native", "update agent01 --with azure,dotnet,native"},
+	} {
+		t.Run(tc.recorded, func(t *testing.T) {
+			f := sandboxStateFixture(t)
+			f.responses[shellInspect] = response{Output: containerInspectAnswer(`{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.toolchains":"`+tc.recorded+`"}`, "true")}
+			f.responses[integrationProbe] = response{}
+			f.host.Stdin = unreadableToken{t}
+			f.host.IsInputTerminal = func(io.Reader) bool { t.Error("token input inspected before missing toolchain refusal"); return false }
+			status, output, calls := f.run(t, "integrations", "login", "agent01", "azdo", "--organization", "https://dev.azure.com/contoso")
+			want := append(sandboxQueryCalls(), strings.Fields(integrationProbe))
+			if status != 1 || !strings.Contains(output, "azure toolchain") || !strings.HasSuffix(strings.TrimSpace(output), tc.command) || !reflect.DeepEqual(calls, want) {
+				t.Fatalf("status=%d output=%s calls=%v; want missing toolchain with %q and queries %v", status, output, calls, tc.command, want)
+			}
+		})
 	}
 }
