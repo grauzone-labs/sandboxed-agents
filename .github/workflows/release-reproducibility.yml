@@ -17,7 +17,26 @@ env:
   RELEASE_VERSION: 0.0.0-ci-${{ github.sha }}
 
 jobs:
+  # The decision runs once, so the Linux and Windows jobs can start together.
+  changes:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    outputs:
+      run_checks: ${{ steps.changes.outputs.run_checks }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Decide whether full checks are required
+        id: changes
+        shell: bash
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/ci-checks-required.sh >> "$GITHUB_OUTPUT"
+
   linux:
+    needs: changes
     runs-on: blacksmith-2vcpu-ubuntu-2404
     outputs:
       run_checks: ${{ steps.changes.outputs.run_checks }}
@@ -79,15 +98,16 @@ jobs:
           printf 'npm_sha256=%s\n' "$npm_sha256" >> "$GITHUB_OUTPUT"
 
   windows:
-    needs: linux
-    if: needs.linux.outputs.run_checks == 'true'
+    needs: changes
+    if: needs.changes.outputs.run_checks == 'true'
     runs-on: blacksmith-2vcpu-windows-2025
+    outputs:
+      windows_asset_hash: ${{ steps.version.outputs.windows_asset_hash }}
+      linux_sha256: ${{ steps.version.outputs.linux_sha256 }}
+      windows_sha256: ${{ steps.version.outputs.windows_sha256 }}
+      npm_sha256: ${{ steps.version.outputs.npm_sha256 }}
     env:
       SANDBOXED_AGENTS_RELEASE_BASH: 'C:\Program Files\Git\bin\bash.exe'
-      EXPECTED_ASSET_HASH: ${{ needs.linux.outputs.linux_asset_hash }}
-      EXPECTED_LINUX_SHA256: ${{ needs.linux.outputs.linux_sha256 }}
-      EXPECTED_WINDOWS_SHA256: ${{ needs.linux.outputs.windows_sha256 }}
-      EXPECTED_NPM_SHA256: ${{ needs.linux.outputs.npm_sha256 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -123,10 +143,8 @@ jobs:
       - name: Run CLI and stable gate tests
         shell: pwsh
         run: |
-          go test ./cmd/sandboxed-agents -count=1
-          if ($LASTEXITCODE -ne 0) { throw 'Windows command tests failed' }
-          go test ./internal/cli ./internal/release/cmd/stable-gate -count=1
-          if ($LASTEXITCODE -ne 0) { throw 'Windows CLI or stable gate tests failed' }
+          go test ./cmd/sandboxed-agents ./internal/cli ./internal/release/cmd/stable-gate -count=1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows command, CLI, or stable gate tests failed' }
       - name: Run image and release tests with Git for Windows Bash
         shell: pwsh
         env:
@@ -134,7 +152,8 @@ jobs:
         run: |
           go test ./image ./scripts -count=1 -v
           if ($LASTEXITCODE -ne 0) { throw 'Windows image or release tests failed' }
-      - name: Build releases and compare asset hash and both executable digests
+      - name: Build releases and report Windows version
+        id: version
         shell: pwsh
         run: |
           $outputDirectory = "$env:RUNNER_TEMP/release-output".Replace('\', '/')
@@ -145,13 +164,39 @@ jobs:
           $versionOutput
           if ($versionOutput[0] -ne "sandboxed-agents $env:RELEASE_VERSION") { throw 'Injected Windows version differs' }
           $assetHash = ($versionOutput | Where-Object { $_ -match '^asset-sha256 ' }) -replace '^asset-sha256 ', ''
-          if ($assetHash -ne $env:EXPECTED_ASSET_HASH) { throw 'Windows and Linux asset hashes differ' }
+          if ($assetHash -notmatch '^[0-9a-f]{64}$') { throw 'Windows asset hash missing' }
           $windowsSHA256 = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP/release-output/sandboxed-agents-windows-amd64.exe").Hash.ToLowerInvariant()
           "Windows executable SHA256: $windowsSHA256"
-          if ($windowsSHA256 -ne $env:EXPECTED_WINDOWS_SHA256) { throw 'Windows-built and Linux-cross-compiled Windows executables differ' }
           $linuxSHA256 = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP/release-output/sandboxed-agents-linux-amd64").Hash.ToLowerInvariant()
           "Linux executable SHA256: $linuxSHA256"
-          if ($linuxSHA256 -ne $env:EXPECTED_LINUX_SHA256) { throw 'Windows-cross-compiled and Linux-built Linux executables differ' }
           $npmSHA256 = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP/release-output/sandboxed-agents-$env:RELEASE_VERSION.tgz").Hash.ToLowerInvariant()
           "npm tarball SHA256: $npmSHA256"
-          if ($npmSHA256 -ne $env:EXPECTED_NPM_SHA256) { throw 'Windows-built and Linux-built npm tarballs differ' }
+          "windows_asset_hash=$assetHash" >> $env:GITHUB_OUTPUT
+          "windows_sha256=$windowsSHA256" >> $env:GITHUB_OUTPUT
+          "linux_sha256=$linuxSHA256" >> $env:GITHUB_OUTPUT
+          "npm_sha256=$npmSHA256" >> $env:GITHUB_OUTPUT
+
+  compare:
+    needs: [linux, windows]
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    env:
+      LINUX_ASSET_HASH: ${{ needs.linux.outputs.linux_asset_hash }}
+      LINUX_LINUX_SHA256: ${{ needs.linux.outputs.linux_sha256 }}
+      LINUX_WINDOWS_SHA256: ${{ needs.linux.outputs.windows_sha256 }}
+      LINUX_NPM_SHA256: ${{ needs.linux.outputs.npm_sha256 }}
+      WINDOWS_ASSET_HASH: ${{ needs.windows.outputs.windows_asset_hash }}
+      WINDOWS_LINUX_SHA256: ${{ needs.windows.outputs.linux_sha256 }}
+      WINDOWS_WINDOWS_SHA256: ${{ needs.windows.outputs.windows_sha256 }}
+      WINDOWS_NPM_SHA256: ${{ needs.windows.outputs.npm_sha256 }}
+    steps:
+      - name: Compare asset hash and both executable digests
+        shell: bash
+        run: |
+          compare() {
+            printf '%s: Linux %s, Windows %s\n' "$1" "$2" "$3"
+            [[ $2 =~ ^[0-9a-f]{64}$ && $2 == "$3" ]] || { printf '%s differs between the runners\n' "$1" >&2; exit 1; }
+          }
+          compare 'asset hash' "$LINUX_ASSET_HASH" "$WINDOWS_ASSET_HASH"
+          compare 'Windows executable SHA256' "$LINUX_WINDOWS_SHA256" "$WINDOWS_WINDOWS_SHA256"
+          compare 'Linux executable SHA256' "$LINUX_LINUX_SHA256" "$WINDOWS_LINUX_SHA256"
+          compare 'npm tarball SHA256' "$LINUX_NPM_SHA256" "$WINDOWS_NPM_SHA256"
