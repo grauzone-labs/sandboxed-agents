@@ -21,7 +21,7 @@ func TestBaseRecipeSuppliesRuntimeContents(t *testing.T) {
 	for _, required := range []string{
 		"FROM debian:trixie-slim", "openssh-server", "openssh-client", "git", "gh", "tmux", "curl", "jq", "ripgrep", "less", "unzip", "ca-certificates",
 		"groupadd --gid 1000 agent", "useradd --uid 1000 --gid 1000", "rm -f /etc/ssh/ssh_host_*",
-		"COPY manager.bin /usr/local/bin/sandboxed-agents-manager", "chmod 0755 /usr/local/bin/sandboxed-agents-manager",
+		"COPY --chmod=0755 manager.bin /usr/local/bin/sandboxed-agents-manager",
 		"/usr/local/share/sandboxed-agents/versions.txt", "dpkg-query", "node --version", "npm --version",
 	} {
 		if !strings.Contains(recipe, required) {
@@ -32,6 +32,10 @@ func TestBaseRecipeSuppliesRuntimeContents(t *testing.T) {
 		if strings.Contains(recipe, toolchain) {
 			t.Errorf("base recipe unexpectedly installs %q", toolchain)
 		}
+	}
+	// The manager changes with every executable; the package layers above it stay cached across those changes.
+	if strings.Index(recipe, "COPY --chmod=0755 manager.bin") < strings.Index(recipe, "deb.nodesource.com/node_24.x") {
+		t.Error("base recipe copies the manager before the Node.js layer, so a manager change invalidates the package layers")
 	}
 }
 
