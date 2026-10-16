@@ -18,7 +18,7 @@ func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
 		return err
 	}
 	if objects.backup {
-		return fmt.Errorf("sandbox %q has an interrupted update; recovery is not delivered yet", request.Name)
+		return cleanupUpdate(request, p, objects, output)
 	}
 	if objects.container.State.Running == nil {
 		return fmt.Errorf("sandbox %q: running state is missing", request.Name)
@@ -109,7 +109,52 @@ func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
 	if err = readySandbox(p, names.Container, port); err != nil {
 		return rollback(err)
 	}
-	if _, err = p.query("rm", names.Backup); err != nil {
+	if err := finishUpdate(request, p, running); err != nil {
+		return err
+	}
+	fmt.Fprintf(output, "sandbox %s updated\n", request.Name)
+	return nil
+}
+
+// cleanupUpdate completes only the ready-replacement case; other recovery retains the backup.
+func cleanupUpdate(request Request, p podmanTarget, objects sandboxObjects, output io.Writer) error {
+	deferred := func(reason string) error {
+		return fmt.Errorf("sandbox %q: %s; backup retained; general recovery is not delivered yet", request.Name, reason)
+	}
+	if !objects.exists || objects.container.State.Running == nil || objects.backupContainer.State.Running == nil {
+		return deferred("replacement or running state is missing")
+	}
+	if *objects.backupContainer.State.Running {
+		return deferred("backup is still running")
+	}
+	previous := objects.container.Config.Labels[updateWasRunningLabel]
+	if previous != "true" && previous != "false" {
+		return deferred("previous running state is unknown")
+	}
+	port, err := parseSSHPort(objects.container.Config.Labels[SSHPortLabel])
+	if err != nil {
+		return deferred("recorded SSH port is missing or invalid")
+	}
+	names := DerivedNames(request.Group, request.Name)
+	if !*objects.container.State.Running {
+		if _, err := p.query("start", names.Container); err != nil {
+			return deferred(fmt.Sprintf("could not start replacement: %v", err))
+		}
+	}
+	if err := readySandbox(p, names.Container, port); err != nil {
+		return deferred(fmt.Sprintf("replacement readiness was not established (it may still be running): %v", err))
+	}
+	if err := finishUpdate(request, p, previous == "true"); err != nil {
+		return err
+	}
+	fmt.Fprintf(output, "sandbox %s interrupted update cleaned up\n", request.Name)
+	return nil
+}
+
+// finishUpdate removes the superseded backup before restoring a previously stopped state.
+func finishUpdate(request Request, p podmanTarget, running bool) error {
+	names := DerivedNames(request.Group, request.Name)
+	if _, err := p.query("rm", names.Backup); err != nil {
 		state := ""
 		if !running {
 			state = "; sandbox is still running"
@@ -120,14 +165,13 @@ func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
 			command = "podman --connection '" + strings.ReplaceAll(p.connection, "'", "''") + "' rm " + names.Backup
 			shell = " in PowerShell"
 		}
-		return fmt.Errorf("sandbox %s: update succeeded%s, but backup removal failed: %w; state is update interrupted and other commands refuse it; remove the stopped backup%s: %s; cleanup via update %s is not available in this version", request.Name, state, err, shell, command, request.Name)
+		return fmt.Errorf("sandbox %s: update succeeded%s, but backup removal failed: %w; state is update interrupted and other commands refuse it; remove the stopped backup%s: %s; update %s cleans up", request.Name, state, err, shell, command, request.Name)
 	}
 	if !running {
-		if _, err = p.query("stop", names.Container); err != nil {
+		if _, err := p.query("stop", names.Container); err != nil {
 			return fmt.Errorf("sandbox %s: update succeeded but sandbox is still running: %w; use stop %s", request.Name, err, request.Name)
 		}
 	}
-	fmt.Fprintf(output, "sandbox %s updated\n", request.Name)
 	return nil
 }
 

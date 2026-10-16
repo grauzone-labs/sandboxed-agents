@@ -35,12 +35,13 @@ func inspectContainer(p podmanTarget, name string) (sandboxContainer, error) {
 }
 
 type sandboxObjects struct {
-	container      sandboxContainer
-	exists, backup bool
-	volumes        []string
-	foreignVolumes []string
-	volumeOwners   map[string]string
-	conflicts      []string
+	container       sandboxContainer
+	backupContainer sandboxContainer
+	exists, backup  bool
+	volumes         []string
+	foreignVolumes  []string
+	volumeOwners    map[string]string
+	conflicts       []string
 }
 
 // readSandbox collects Podman facts without deciding which states a command accepts.
@@ -95,11 +96,11 @@ func readSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 		return objects, err
 	}
 	if objects.backup {
-		backup, err := inspectContainer(p, names.Backup)
+		objects.backupContainer, err = inspectContainer(p, names.Backup)
 		if err != nil {
 			return objects, err
 		}
-		checkOwner(names.Backup, backup.Config.Labels)
+		checkOwner(names.Backup, objects.backupContainer.Config.Labels)
 	}
 	return objects, nil
 }

@@ -698,7 +698,7 @@ func TestListResponsiveSandboxShowsContainerDetails(t *testing.T) {
 	assertStateQueriesOnly(t, fakes)
 }
 
-// TestUpdateAndCheckPermitOwnedBackupState proves update NAME reaches its deferred action and check NAME reports the owned backup without restoring it through the CLI boundary.
+// TestUpdateAndCheckPermitOwnedBackupState proves update NAME defers general recovery when only an owned backup remains and check NAME reports it without mutation through the CLI boundary.
 func TestUpdateAndCheckPermitOwnedBackupState(t *testing.T) {
 	for _, verb := range []string{"update", "check"} {
 		t.Run(verb, func(t *testing.T) {
@@ -708,7 +708,7 @@ func TestUpdateAndCheckPermitOwnedBackupState(t *testing.T) {
 			fakes := lifecycleHarness(t, responses)
 			status, output := runWithHost(lifecycleLinuxHost(t, fakes), verb, "demo")
 			if verb == "update" {
-				if status != 1 || !strings.Contains(output, "interrupted update; recovery is not delivered yet") {
+				if status != 1 || (!strings.Contains(output, "backup retained") || !strings.Contains(output, "general recovery is not delivered yet")) {
 					t.Fatalf("status=%d output=%s", status, output)
 				}
 			} else if status != 1 || !strings.Contains(output, "sandboxed-agents-backup.default.demo") || !strings.Contains(output, "update demo") {

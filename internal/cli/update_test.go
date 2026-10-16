@@ -155,7 +155,7 @@ func TestUpdateCleanupFailuresAreNotRolledBack(t *testing.T) {
 					}
 				}
 				if tc.stage == "backup removal" {
-					for _, want := range []string{"update interrupted", "other commands refuse", "remove the stopped backup: podman rm sandboxed-agents-backup.default.demo", "cleanup via update demo is not available in this version"} {
+					for _, want := range []string{"update interrupted", "other commands refuse", "remove the stopped backup: podman rm sandboxed-agents-backup.default.demo", "update demo cleans up"} {
 						if !strings.Contains(output, want) {
 							t.Errorf("output lacks %q: %s", want, output)
 						}
@@ -405,11 +405,14 @@ func TestUpdatePreservesSSHFilesAndAuthorization(t *testing.T) {
 	}
 }
 
-// TestWindowsUpdateUsesPreflightTarget proves image, replacement, rollback, readiness and manual cleanup guidance keep the selected connection through RunWithHost and fake Podman.
+// TestWindowsUpdateUsesPreflightTarget proves image, replacement, rollback, readiness, retry cleanup and manual cleanup guidance keep the selected connection through RunWithHost and fake Podman.
 func TestWindowsUpdateUsesPreflightTarget(t *testing.T) {
-	for _, failure := range []string{"", "start", "backup removal"} {
+	for _, failure := range []string{"", "start", "backup removal", "cleanup"} {
 		t.Run(fmt.Sprint(failure), func(t *testing.T) {
 			f := replacementFixture(t)
+			if failure == "cleanup" {
+				f = cleanupFixture(t, false, false)
+			}
 			win := windowsHost(t)
 			for key, value := range f.responses {
 				if key != "--version" && key != "info --format json" {
@@ -429,7 +432,7 @@ func TestWindowsUpdateUsesPreflightTarget(t *testing.T) {
 			t.Setenv("TEST_SSH_EXIT", "255")
 			status, output, calls := win.run(t, "update", "demo")
 			wantStatus := 0
-			if failure != "" {
+			if failure != "" && failure != "cleanup" {
 				wantStatus = 1
 			}
 			if status != wantStatus {
@@ -447,42 +450,49 @@ func TestWindowsUpdateUsesPreflightTarget(t *testing.T) {
 	}
 }
 
-// TestUpdateHoldsLockThroughReplacement proves a competing stop is refused before lookup while update waits for a new container to start through concurrent CLI processes.
+// TestUpdateHoldsLockThroughReplacement proves a competing stop is refused before lookup while replacement or retry cleanup waits for a container to start through concurrent CLI processes.
 func TestUpdateHoldsLockThroughReplacement(t *testing.T) {
-	f := replacementFixture(t)
-	ready := filepath.Join(t.TempDir(), "starting")
-	release := ready + ".release"
-	f.responses["start sandboxed-agents.default.demo"] = response{ReadyFile: ready, WaitFor: release}
-	done := make(chan string, 1)
-	go func() {
-		status, output, _ := runUpExecutable(t, f, "update", "demo")
-		done <- fmt.Sprintf("%d:%s", status, output)
-	}()
-	defer os.WriteFile(release, nil, 0600)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, err := os.Stat(ready); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("update did not reach start")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	status, output, _ := runUpExecutable(t, f, "stop", "demo")
-	if status != 1 || !strings.Contains(output, "step 3:") || !strings.Contains(output, "retry") {
-		t.Fatalf("competing stop=%d %s", status, output)
-	}
-	if err := os.WriteFile(release, nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case result := <-done:
-		if !strings.HasPrefix(result, "0:") {
-			t.Fatal(result)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("update did not finish")
+	for _, cleanup := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cleanup=%t", cleanup), func(t *testing.T) {
+			f := replacementFixture(t)
+			if cleanup {
+				f = cleanupFixture(t, false, false)
+			}
+			ready := filepath.Join(t.TempDir(), "starting")
+			release := ready + ".release"
+			f.responses["start sandboxed-agents.default.demo"] = response{ReadyFile: ready, WaitFor: release}
+			done := make(chan string, 1)
+			go func() {
+				status, output, _ := runUpExecutable(t, f, "update", "demo")
+				done <- fmt.Sprintf("%d:%s", status, output)
+			}()
+			defer os.WriteFile(release, nil, 0600)
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				if _, err := os.Stat(ready); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("update did not reach start")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			status, output, _ := runUpExecutable(t, f, "stop", "demo")
+			if status != 1 || !strings.Contains(output, "step 3:") || !strings.Contains(output, "retry") {
+				t.Fatalf("competing stop=%d %s", status, output)
+			}
+			if err := os.WriteFile(release, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case result := <-done:
+				if !strings.HasPrefix(result, "0:") {
+					t.Fatal(result)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("update did not finish")
+			}
+		})
 	}
 }
 
