@@ -59,6 +59,12 @@ func startLiveTerminal(t *testing.T, environment []string, program string, args 
 	var startup windows.StartupInfoEx
 	startup.Cb = uint32(unsafe.Sizeof(startup))
 	startup.ProcThreadAttributeList = attributes.List()
+	// Without this flag Windows hands the command the parent's standard
+	// handles, pipes under go test, and the command never sees a terminal.
+	// With the flag and null handles, the command's standard handles are
+	// still unset when it attaches to the pseudo console, so the attach fills
+	// them with the console's own input and output handles.
+	startup.Flags = windows.STARTF_USESTDHANDLES
 	commandLine, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(append([]string{program}, args...)))
 	if err != nil {
 		t.Fatal(err)
