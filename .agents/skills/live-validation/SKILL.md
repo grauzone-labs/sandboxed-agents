@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires an SSH client with host aliases in the user's SSH configuration, the live test suite documented in docs/images.md on both hosts, a way to ask the user a question and wait for the answer, and a delegation tool that starts a subagent with a chosen model and returns a task handle.
 metadata:
   author: "Sascha Grau"
-  version: "1.2.1"
+  version: "1.2.2"
   category: "engineering"
 ---
 
@@ -93,6 +93,6 @@ The suite removes its sandboxes, volumes, and group state and leaves every image
 
 **Eligible for removal.** An image is eligible when all of these hold: it is absent from the before inventory; its full ID is in this invocation's build record; it carries this invocation's asset hash where the build labels one; no container on the engine, in any group, references it after the suite's own cleanup; and the user has not asked to keep it. That holds for every eligible image, an untagged image the rebuild superseded or an intermediate ancestor included: its full ID must be traced to this invocation's build output. The engine's verified parent chain only corroborates ownership or supersession of an ID already in the record; an ancestor seen only in a chain, or tied only by a matching hash or creation time, stays, even when that skips an image this invocation did create. An image present before the run, shared by other sandboxes, created by a concurrent workflow, matched by more than one candidate, or whose provenance the record cannot show stays, named as skipped. A query that fails leaves the image unverified, never absent.
 
-**Removal.** Remove eligible images one by one by ID, toolchain images before the base image they depend on, with `podman rmi <id>` and no `--force`; on Windows through the selected `--connection`. Never run `podman image prune`, `podman system prune`, `podman system reset`, or any host-wide removal, and never delete, compact, or reconfigure a machine, its virtual disk, or WSL: those are host configuration changes with their own authorization. Keep the host's logs, checkouts, and evidence files. When the engine is unreachable, report `cleanup: pending (engine unreachable: <message>)` and stop.
+**Removal.** Remove eligible images one by one by ID, toolchain images before the base image they depend on, with `podman rmi --no-prune <id>` and no `--force`; on Windows through the selected `--connection`. `--no-prune` keeps the dangling parents of the removed image, so an ancestor the build record does not prove stays in place instead of being removed by the engine's cascade; a proven parent is removed by its own ID after its children. Never run `podman image prune`, `podman system prune`, `podman system reset`, or any host-wide removal, and never delete, compact, or reconfigure a machine, its virtual disk, or WSL: those are host configuration changes with their own authorization. Keep the host's logs, checkouts, and evidence files. When the engine is unreachable, report `cleanup: pending (engine unreachable: <message>)` and stop.
 
 **Reporting.** List removed IDs with their tags and sizes, skipped IDs with the reason, unverified items with the failing query, and the before and after measurements. A retention the user asked for is honoured and its disk cost reported. This cleanup is part of the authorized invocation and opens no new checkpoint.
