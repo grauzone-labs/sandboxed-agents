@@ -14,13 +14,22 @@ import (
 	"testing"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/releasetest"
+	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
-// TestNuGetCommandScripts proves verified install, upgrade, removal, and raw user PATH preservation through the actual PowerShell command scripts and registry boundary.
+// TestNuGetCommandScripts proves verified install, upgrade, removal, and raw user PATH preservation without Podman, SSH, or sandbox-data changes through actual PowerShell scripts and recorded process boundaries.
 func TestNuGetCommandScripts(t *testing.T) {
 	pwsh, err := exec.LookPath("pwsh")
 	if err != nil {
 		t.Skip("NuGet command script tests require PowerShell 7 (pwsh)")
+	}
+	fake := filepath.Join(t.TempDir(), "process-fake")
+	if runtime.GOOS == "windows" {
+		fake += ".exe"
+	}
+	build := exec.Command("go", "build", "-o", fake, filepath.Join(repositoryRoot(t), "internal", "testutil", "testdata", "fake.go"))
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build process fake: %v\n%s", err, output)
 	}
 	for _, scenario := range []string{"install", "upgrade", "checksum", "copied-checksum", "remove", "path", "default-no-path", "path-aliases", "path-errors", "relative-path", "empty-path", "preexisting-path", "owned-path", "path-during-copy", "path-registry-kind", "path-write-failure", "replacement-failure", "locked-upgrade", "windows-registry"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -30,9 +39,38 @@ func TestNuGetCommandScripts(t *testing.T) {
 			if scenario == "windows-registry" && !hkcuIntegrationEnabled(runtime.GOOS, os.Getenv("SANDBOXED_AGENTS_TEST_HKCU")) {
 				t.Skip("real user PATH registry integration requires Windows and SANDBOXED_AGENTS_TEST_HKCU=1")
 			}
+			fakes := testutil.Install(t, fake)
+			state, home := t.TempDir(), t.TempDir()
+			directories := []string{filepath.Join(state, "sandboxed-agents", "group-default"), filepath.Join(home, ".ssh")}
+			for _, directory := range directories {
+				if err := os.MkdirAll(directory, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(directory, "sentinel"), []byte("host data must survive\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			command := exec.Command(pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", filepath.Join(repositoryRoot(t), "scripts", "test-nuget-command.ps1"), "-Scenario", scenario, "-Repository", repositoryRoot(t), "-TestDirectory", t.TempDir())
+			command.Env = testutil.Env(fakes.Env(os.Environ()), map[string]string{
+				"TEST_PODMAN_EXIT": "91", "TEST_SSH_EXIT": "91",
+				"XDG_STATE_HOME": state, "LOCALAPPDATA": state, "HOME": home, "USERPROFILE": home,
+			})
 			if output, err := command.CombinedOutput(); err != nil {
 				t.Fatalf("PowerShell %s: %v\n%s", scenario, err, output)
+			}
+			for _, log := range []string{fakes.PodmanLog, fakes.SSHLog} {
+				if calls := testutil.Invocations(t, log); len(calls) != 0 {
+					t.Errorf("NuGet lifecycle made external calls: %v", calls)
+				}
+			}
+			for _, directory := range directories {
+				entries, err := os.ReadDir(directory)
+				if err != nil || len(entries) != 1 || entries[0].Name() != "sentinel" {
+					t.Fatalf("NuGet lifecycle changed host data: entries=%v error=%v", entries, err)
+				}
+				if data, err := os.ReadFile(filepath.Join(directory, "sentinel")); err != nil || string(data) != "host data must survive\n" {
+					t.Errorf("NuGet lifecycle changed host sentinel: data=%q error=%v", data, err)
+				}
 			}
 		})
 	}

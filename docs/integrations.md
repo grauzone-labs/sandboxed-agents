@@ -441,9 +441,12 @@ DevOps accepts any username with a PAT). Other HTTPS hosts, such as the older
 of the host as the username, but only the `dev.azure.com` form is tested.
 
 The sandbox needs the `azure` toolchain (`az` with the `azure-devops`
-extension, see [`images.md`](images.md)). The command does not check for it yet
-(issue #35): without it, the `az` step fails and nothing is stored. Add it with
-`update NAME --with SET`, where `SET` is the sandbox's toolchain set plus `azure`.
+extension, see [`images.md`](images.md)). The command checks for it after the
+manager answers and before it reads the token. Without it, the command fails,
+names the `azure` toolchain, prints the complete `update NAME --with SET`
+command, where `SET` is the sandbox's recorded toolchain set plus `azure` in
+canonical sorted order (never `none`), reads no token, and changes nothing.
+Azure login does the same.
 
 ### How the token is read
 

@@ -1,0 +1,99 @@
+package cli
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
+)
+
+// TestCommandReferenceMatchesCommandTree proves the documented command grammar covers exactly the executable's commands and value/switch options at the parser definition seam.
+func TestCommandReferenceMatchesCommandTree(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "command-reference.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := commandReferenceError(string(data)); err != nil {
+		t.Fatal(err)
+	}
+	for name, document := range map[string]string{
+		"missing-command": strings.ReplaceAll(string(data), "sandboxed-agents version", "OMITTED version"),
+		"extra-command":   string(data) + "\nsandboxed-agents nonexistent\n",
+		"extra-argument":  strings.ReplaceAll(string(data), "sandboxed-agents version", "sandboxed-agents version NAME"),
+		"extra-option":    string(data) + "\nsandboxed-agents start NAME [--unknown-option]\n",
+		"option-value":    strings.ReplaceAll(string(data), "--force", "--force VALUE"),
+	} {
+		if err := commandReferenceError(document); err == nil {
+			t.Errorf("reference check accepted %s drift", name)
+		}
+	}
+}
+
+func commandReferenceError(document string) error {
+	documented := map[string]map[string]bool{}
+	optionPattern := regexp.MustCompile(`--([a-z][a-z-]*)(?:[ =]([A-Z][A-Z_]*))?`)
+	optionalPattern := regexp.MustCompile(`\[[^\]]*\]`)
+	for _, line := range strings.Split(document, "\n") {
+		if !strings.HasPrefix(line, "sandboxed-agents ") {
+			continue
+		}
+		words := strings.Fields(strings.TrimPrefix(line, "sandboxed-agents "))
+		if len(words) == 0 {
+			return fmt.Errorf("incomplete command grammar: %s", line)
+		}
+		command := words[0]
+		if command == "agents" || command == "integrations" {
+			if len(words) < 2 {
+				return fmt.Errorf("incomplete command grammar: %s", line)
+			}
+			command += " " + words[1]
+		}
+		if documented[command] == nil {
+			documented[command] = map[string]bool{}
+		}
+		for _, match := range optionPattern.FindAllStringSubmatch(line, -1) {
+			if previous, exists := documented[command][match[1]]; exists && previous != (match[2] != "") {
+				return fmt.Errorf("command reference gives conflicting value/switch forms for %s --%s", command, match[1])
+			}
+			documented[command][match[1]] = match[2] != ""
+		}
+		// The mandatory form of every grammar line must also be a real
+		// invocation. This catches positional and fixed workflow drift that
+		// a command/option inventory alone cannot find.
+		example := strings.Fields(optionalPattern.ReplaceAllString(strings.TrimPrefix(line, "sandboxed-agents "), ""))
+		for index, word := range example {
+			switch word {
+			case "NAME":
+				example[index] = "agent01"
+			case "AGENT":
+				example[index] = "claude"
+			case "URL":
+				example[index] = "https://dev.azure.com/contoso"
+			}
+		}
+		if _, err := Parse(example, "default"); err != nil {
+			return fmt.Errorf("command reference grammar %q is rejected by the parser: %w", line, err)
+		}
+	}
+	want := map[string]map[string]bool{}
+	for command, definition := range commands {
+		options := map[string]bool{}
+		for name, takesValue := range definition.options {
+			options[name] = takesValue
+		}
+		want[command] = options
+	}
+	want["update"]["all"] = false
+	for _, name := range catalog.Default.ConfigOptionNames() {
+		want["integrations config"][name] = true
+	}
+	if !reflect.DeepEqual(documented, want) {
+		return fmt.Errorf("command reference grammar differs from command tree\ndocumented: %#v\nexecutable: %#v", documented, want)
+	}
+	return nil
+}
