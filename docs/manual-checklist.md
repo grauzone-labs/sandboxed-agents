@@ -40,6 +40,47 @@ Run the whole checklist for one **preview commit**: the full 40-character SHA of
 
 Platforms are `linux` (Linux amd64, rootless Podman 4.4.0 or newer) and `windows-11` (Windows 11 x64, Podman 4.7.0 or newer with a rootless WSL2 machine); see [host prerequisites](host-prerequisites.md). Each item says where it runs. For an item that allows either platform, the record names the one you used.
 
+### Podman on Windows, and capturing state
+
+Some items compare Podman and `sandboxed-agents` state before and after a command, and some call `podman` directly. On Windows every direct `podman` call in this document names the Podman machine the executable works on, with `--connection`. Find the machine whose `Default` column is `true` and use it through a helper, so that the calls cannot reach another machine; on Linux call `podman` as written:
+
+```powershell
+podman machine list --format '{{.Name}} {{.Default}}'
+$Machine = 'MACHINE_NAME'   # the name of the machine with Default true, without a trailing *
+function pm { podman --connection $Machine @args }
+```
+
+Wherever a block below writes `podman ...` for Linux, write `pm ...` on Windows. Capture the state an item needs to see unchanged with these helpers, which write one file each. The files go in a directory outside the inspected trees (`$SNAP` or `$Snap` of the install check, or any scratch directory):
+
+```sh
+capture_state() {
+  out="$1"; shift
+  { sandboxed-agents list 2>&1
+    podman ps --all --format '{{.Names}} {{.ID}} {{.Image}} {{.State}}' | sort
+    podman volume ls --format '{{.Name}}' | sort
+    for name in "$@"; do
+      podman inspect "sandboxed-agents.manual-check.$name" 2>&1
+      podman inspect "sandboxed-agents-backup.manual-check.$name" 2>&1
+    done
+  } > "$out"
+}
+```
+
+```powershell
+function Capture-State($File, [string[]]$Sandboxes = @()) {
+  $Out = @(sandboxed-agents list 2>&1)
+  $Out += pm ps --all --format '{{.Names}} {{.ID}} {{.Image}} {{.State}}' | Sort-Object
+  $Out += pm volume ls --format '{{.Name}}' | Sort-Object
+  foreach ($Name in $Sandboxes) {
+    $Out += pm inspect "sandboxed-agents.manual-check.$Name" 2>&1
+    $Out += pm inspect "sandboxed-agents-backup.manual-check.$Name" 2>&1
+  }
+  $Out | Set-Content $File
+}
+```
+
+An item that expects "nothing changes" captures the state **before** the command, runs it, captures the state **after** it, and compares the two files with `diff before.txt after.txt` or `Compare-Object (Get-Content before.txt) (Get-Content after.txt)`. Any difference fails the item. A missing object makes `inspect` print an error; both captures print the same error, so the comparison still means something.
+
 ## Order of the run
 
 Several items share one long-lived sandbox, `chk-persist`, so that a login done early is still there when the update is observed. Run them in this order:
@@ -79,7 +120,7 @@ Each item has a fixed identifier. The identifier is the `name` of its check in t
 | `azure-toolchain-required` | [Toolchain requirement](#toolchain-requirement-and-no-terminal-refusals) | either |
 | `login-needs-terminal` | [No-terminal refusal](#toolchain-requirement-and-no-terminal-refusals) | either |
 | `no-image-removal` | [No command removes an image](#no-command-removes-an-image) | either |
-| `installers-no-podman` | [Installers issue no Podman call](#installers-issue-no-podman-call) | either |
+| `installers-no-podman` | [Installers issue no Podman call](#installers-issue-no-podman-call) | `windows-11` |
 | `preview-attestation` | [Release files and attestations](#release-files-and-attestations) | either |
 
 ## Items
@@ -93,7 +134,17 @@ sandboxed-agents up chk-persist --with azure --agents opencode
 sandboxed-agents list
 ```
 
-The first `up` builds the images, which takes a while. For the update observations later, create `chk-persist` with the **previous** preview's executable if one exists, and use the current one from [Persistence and update](#persistence-and-update) on. The logins below work with either.
+The first `up` builds the images, which takes a while.
+
+**Every login, workflow, and observation below runs with the current executable**, the one built from the commit under test. A result observed with any other executable does not count for that commit.
+
+The [update](#persistence-and-update) needs a sandbox whose image is older than the executable. If a previous preview's executable exists, you may use it for this one `up` command only:
+
+1. Put the previous executable first on `PATH` and run the `up` command above with it.
+2. **Immediately** put the current executable back first on `PATH`, before any login, config, or agent command. In the same terminal, run `sandboxed-agents version` and check that it prints the version of the preview under test and the `asset-sha256` that the preview's build prints.
+3. Continue with the logins.
+
+If no previous executable exists, run the `up` command with the current executable; the update then uses `--with azure,native` as described there.
 
 ### Agent logins
 
@@ -172,7 +223,7 @@ Identifiers `selection-pins-persist`, `git-identity-persist`, `credentials-persi
    ```sh
    printf 'protocol=https\nhost=example.invalid\nusername=chk\npassword=not-a-secret\n' | git credential approve
    ```
-5. Record the configuration the update must keep (add `--connection MACHINE` before `inspect` on Windows, with the name of the default Podman machine):
+5. Record the configuration the update must keep, redirecting both outputs to `config-before.txt` (on Windows write `pm inspect`, see [Podman on Windows](#podman-on-windows-and-capturing-state)):
 
    ```sh
    podman inspect --format '{{.Image}} {{.HostConfig.Memory}} {{.HostConfig.NanoCpus}} {{.HostConfig.PidsLimit}} {{.HostConfig.ShmSize}} {{index .Config.Labels "io.sandboxed-agents.toolchains"}} {{index .Config.Labels "io.sandboxed-agents.port"}}' sandboxed-agents.manual-check.chk-persist
@@ -201,9 +252,9 @@ Identifiers `selection-pins-persist`, `git-identity-persist`, `credentials-persi
 
 1. Round 0: the observation set, as the baseline.
 2. `sandboxed-agents stop chk-persist`, then `sandboxed-agents start chk-persist`. Round 1.
-3. Update. The sandbox needs an older image than the installed executable. Prefer to have created `chk-persist` with the previous preview's executable, then install the current one and run `sandboxed-agents update chk-persist`. If no earlier executable exists, run `sandboxed-agents update chk-persist --with azure,native` instead. That changes the toolchain set on purpose, keeps `azure`, is slower, and makes the toolchain observation below expect `azure,native`. Before the update, record the image IDs for the [image check](#no-command-removes-an-image): `podman images --all --format '{{.ID}} {{.Repository}}:{{.Tag}}'`.
+3. Update, with the current executable. If `chk-persist` was created with the previous preview's executable, run `sandboxed-agents update chk-persist`. If it was created with the current one, run `sandboxed-agents update chk-persist --with azure,native` instead. That changes the toolchain set on purpose, keeps `azure`, is slower, and makes the toolchain observation below expect `azure,native`. Before the update, record the image IDs for the [image check](#no-command-removes-an-image): `podman images --all --format '{{.ID}} {{.Repository}}:{{.Tag}}'`.
 4. Round 2.
-5. Repeat the `podman inspect` commands of the setup.
+5. Repeat the `podman inspect` commands of the setup into `config-after.txt` and compare it with `config-before.txt`; only the image ID (and the toolchain set, if `--with` named another) may differ.
 6. Run `ssh chk-persist.manual-check true`.
 
 **Expected after the update (`update-complete`):** the update ends with exit status zero; the image ID differs from the one recorded; the volumes (the mount names), the port, the memory, CPU, process, and shared-memory limits, the workspace, and the toolchain set (or the one `--with` named) are the same as recorded; the agent selection and the credentials are the same, as round 2 shows; and `ssh chk-persist.manual-check true` connects without a host key prompt.
@@ -237,7 +288,7 @@ sandboxed-agents up chk-base
 sandboxed-agents up chk-native --with native
 ```
 
-For each, run the three commands below with an organization URL that does not exist (replace `SANDBOX` with `chk-base`, then `chk-native`):
+For each, capture the state **before** (`capture_state before-SANDBOX.txt SANDBOX`, or `Capture-State` on Windows), then run the three commands below with an organization URL that does not exist (replace `SANDBOX` with `chk-base`, then `chk-native`), then capture the state **after** (`after-SANDBOX.txt`) and compare the two files:
 
 ```sh
 sandboxed-agents integrations login SANDBOX azure device-code
@@ -245,7 +296,7 @@ sandboxed-agents integrations login SANDBOX azure browser
 sandboxed-agents integrations login SANDBOX azdo --organization https://dev.azure.com/example-organization
 ```
 
-**Expected:** each fails non-zero before anything is stored and before a token is read; the message names the `azure` toolchain and prints the complete command: `update chk-base --with azure` for `chk-base`, and `update chk-native --with azure,native` for `chk-native`. The printed set never contains `none`. Nothing changes: `sandboxed-agents list` and `podman inspect` of the sandbox are the same before and after, and `git config --global --get-regexp '^credential\.'` in `shell` prints nothing. Remove both when done:
+**Expected:** each fails non-zero before anything is stored and before a token is read; the message names the `azure` toolchain and prints the complete command: `update chk-base --with azure` for `chk-base`, and `update chk-native --with azure,native` for `chk-native`. The printed set never contains `none`. Nothing changes: the `before` and `after` files, which hold `list`, `ps`, `volume ls`, and `inspect` of the sandbox, are identical, and `git config --global --get-regexp '^credential\.'` in `shell` prints nothing. Remove both when done:
 
 ```sh
 sandboxed-agents remove chk-base --volumes
@@ -269,7 +320,7 @@ sandboxed-agents remove chk-vs --volumes
 
 ### An interrupted update
 
-Identifier `update-interrupted`. This needs a sandbox `chk-int` that an `update` can replace: create it with the previous preview's executable and install the current one, or use `update chk-int --with native` as the replacement in the steps below. The goal is to stop the `update` process after the old container was renamed to the backup and before the update finished, killing **only that process**.
+Identifier `update-interrupted`. This needs a sandbox `chk-int` that an `update` can replace: create it with the previous preview's executable and put the current executable back first on `PATH` immediately afterwards, or use `update chk-int --with native` as the replacement in the steps below. The `update` and every check command run with the current executable. The goal is to stop the `update` process after the old container was renamed to the backup and before the update finished, killing **only that process**.
 
 1. Create it: `sandboxed-agents up chk-int`.
 2. Start the update in the background and keep its process ID, poll for the backup for at most two minutes, and kill that one process ID:
@@ -299,12 +350,12 @@ Identifier `update-interrupted`. This needs a sandbox `chk-int` that an `update`
    ```
 
    The commands name the process ID of the one `update` they started and nothing else. They never match processes by name. Use `--with native` after `update chk-int` in both blocks if you take that route. A `podman` call that was already running when the process was killed may still finish; that is part of a real interruption. If the update finished before the kill, or the backup never appears, the item cannot be observed that time: repeat with a fresh sandbox, and it does not pass until it is observed.
-3. Run `sandboxed-agents check chk-int`, `sandboxed-agents list`, `sandboxed-agents start chk-int`, and `sandboxed-agents shell chk-int`.
+3. Capture the state **before** the commands that must change nothing: `capture_state before-int.txt chk-int` (`Capture-State before-int.txt @('chk-int')` on Windows). Then run `sandboxed-agents check chk-int`, `sandboxed-agents list`, `sandboxed-agents start chk-int`, and `sandboxed-agents shell chk-int`. Capture again as `after-int.txt` and compare the two files.
 4. Run `sandboxed-agents update chk-int`.
 
 **Expected:**
 
-- `check chk-int` reports the leftover backup container, exits non-zero, and changes nothing (`podman ps --all` is the same before and after).
+- `check chk-int` reports the leftover backup container and exits non-zero. It and the refused commands change nothing: `before-int.txt` and `after-int.txt` are identical, so `list`, `ps`, `volume ls`, and the `inspect` of the container and of the backup are the same.
 - `list` shows the sandbox as `update interrupted`.
 - Every other command except `update chk-int` refuses and names `update chk-int`.
 - `update chk-int` recovers instead of updating, builds no image, and exits as the state determines: zero when the replacement is ready and the update completes; non-zero when it restores the old sandbox ("restored" in its output). Either way the volumes are unchanged, no backup remains, and the next `update chk-int` updates normally. See [Updating a sandbox](images.md#updating-a-sandbox) for the cases.
@@ -343,67 +394,89 @@ Identifier `nuget-install-clean`, platform `windows-11`. Use a clean Windows 11 
 
 ### Installers issue no Podman call
 
-Identifier `installers-no-podman`. Install, upgrade, and remove through **each** of three methods, and show that no Podman call happens and that nothing outside the install location and the user `PATH` changes: the downloaded binary, the npm package, and on Windows the NuGet package. Use a machine where a snapshot is meaningful: a fresh disposable virtual machine, with shell history off.
+Identifier `installers-no-podman`, platform `windows-11`. Install, upgrade, and remove through **each** of three methods, and show that no Podman call happens and that nothing outside the install location and the user `PATH` changes: the downloaded binary, the npm package, and the NuGet package. NuGet exists only on Windows, so the item is run on Windows 11, covers all three methods there, and is recorded with the platform `windows-11`. A run of methods 1 and 2 on Linux with the same commands (the shell blocks below) is welcome extra coverage; it does **not** replace the Windows run, and the item does not pass on Linux alone. Use a fresh disposable virtual machine, so that a snapshot is meaningful, with shell history off.
+
+**The evidence directory.** The installers must run in a normal, non-elevated session, and a standard user cannot create folders in the root of the system drive. So arrange **before the run** an existing directory that you can write to and that lies **outside your user profile**: for example a folder on a test volume that was prepared for you, or a shared scratch location your account has write access to. Do not assume a particular drive or the ACLs of a public folder; if you have no such directory, the item cannot be run yet. The snapshots and the fake Podman go beneath it. On Windows, give its path when asked; the commands check that it exists, is a directory, lies outside the profile, does not contain the profile, and is writable, and stop otherwise:
+
+```powershell
+$Evidence = Read-Host 'Existing writable evidence directory outside your user profile'
+if (-not (Test-Path -LiteralPath $Evidence -PathType Container)) { throw 'the evidence directory does not exist' }
+$Evidence = (Resolve-Path -LiteralPath $Evidence).ProviderPath.TrimEnd('\')
+$ProfileRoot = (Resolve-Path -LiteralPath $env:USERPROFILE).ProviderPath.TrimEnd('\')
+$Ignore = [StringComparison]::OrdinalIgnoreCase
+if ($Evidence.Equals($ProfileRoot, $Ignore) -or $Evidence.StartsWith($ProfileRoot + '\', $Ignore) -or $ProfileRoot.StartsWith($Evidence + '\', $Ignore)) { throw 'the evidence directory must be outside the user profile and must not contain it' }
+$Probe = Join-Path $Evidence "probe-$PID.tmp"
+try { Set-Content -LiteralPath $Probe -Value 'x' -ErrorAction Stop; Remove-Item -LiteralPath $Probe -ErrorAction Stop } catch { throw "the evidence directory is not writable: $Evidence" }
+$Snap = Join-Path $Evidence "chk-snapshot-$PID"
+$Fake = Join-Path $Evidence "chk-fake-podman-$PID"
+New-Item -ItemType Directory -ErrorAction Stop $Snap, $Fake | Out-Null
+```
+
+On Linux the examples use `/tmp`, which is outside the home directory. The shell blocks in this item need Bash, because they use `set -o pipefail`; run them in Bash, not in a plain POSIX shell.
 
 **The install root.** Choose a new, empty directory as the install root, and keep every file the methods write inside it, **including npm's prefix, cache, temporary files, and logs**. Do not exempt any other location. The snapshots live outside the inspected tree, so taking them causes no drift:
-
-```sh
-INSTALL_ROOT="$HOME/chk-install"; mkdir -p "$INSTALL_ROOT"/{bin,prefix,cache,logs,tmp}
-SNAP="$(mktemp -d /tmp/chk-snapshot.XXXXXX)"
-unset HISTFILE
-```
 
 ```powershell
 $InstallRoot = Join-Path $HOME 'chk-install'
 New-Item -ItemType Directory -Force $InstallRoot | Out-Null
-$Snap = Join-Path $env:SystemDrive "chk-snapshot-$PID"
-New-Item -ItemType Directory -Force $Snap | Out-Null
+foreach ($Name in 'bin', 'prefix', 'cache', 'logs', 'tmp') { New-Item -ItemType Directory -Force (Join-Path $InstallRoot $Name) | Out-Null }
 Set-PSReadLineOption -HistorySaveStyle SaveNothing
 ```
 
-On Windows the snapshot directory lies outside the user profile, so it cannot appear in the comparison.
+```sh
+INSTALL_ROOT="$HOME/chk-install"; mkdir -p "$INSTALL_ROOT"/bin "$INSTALL_ROOT"/prefix "$INSTALL_ROOT"/cache "$INSTALL_ROOT"/logs "$INSTALL_ROOT"/tmp
+SNAP="$(mktemp -d /tmp/chk-snapshot.XXXXXX)"
+unset HISTFILE
+```
 
-**A fake Podman that records its calls**, outside the inspected tree, first on `PATH` for the whole item:
+**A fake Podman that records its calls**, outside the inspected tree, first on `PATH` for the whole item. On Windows it is a `podman.cmd` that appends its arguments to a `calls` file and exits with 1:
+
+```powershell
+Set-Content (Join-Path $Fake 'podman.cmd') "@echo off`r`necho %* >> `"$Fake\calls`"`r`nexit /b 1"
+$env:Path = "$Fake;$env:Path"
+```
 
 ```sh
 mkdir -p /tmp/chk-fake-podman && printf '#!/bin/sh\necho "$@" >> /tmp/chk-fake-podman/calls\nexit 1\n' > /tmp/chk-fake-podman/podman && chmod +x /tmp/chk-fake-podman/podman
 export PATH="/tmp/chk-fake-podman:$PATH"
 ```
 
-On Windows, create `podman.cmd` in `$env:SystemDrive\chk-fake-podman` that appends `%*` to a `calls` file there and exits with 1, and put that directory first in `$env:Path` for the session.
+**The snapshot.** It records every path under the user profile (the home directory) except the install root and the exclusions named for one step: files with their SHA-256 hashes, directories, and links with their targets, plus the user environment variables as stored. A changed, added, or removed file, directory, or link fails the comparison, and so does any read error: the snapshot stops instead of skipping what it cannot read. That is intended: a profile file or directory that cannot be read (for example a junction the account may not enter) fails the snapshot, and the item does not pass until you can take a clean snapshot, for instance on a fresh profile. Nothing in the snapshot hides read errors.
 
-**The snapshot.** It compares paths and content hashes of everything under the home directory except the install root, plus symbolic links and directories, so a changed, added, or removed file fails the comparison:
+```powershell
+function Test-Excluded($Path, $Prefixes) {
+  foreach ($Prefix in $Prefixes) { if ($Path -eq $Prefix -or $Path.StartsWith($Prefix + '\')) { return $true } }
+  return $false
+}
+function Take-Snapshot($Label, [string[]]$Exclude = @()) {
+  $Prefixes = @($InstallRoot) + $Exclude
+  Get-ChildItem $env:USERPROFILE -Recurse -Force -ErrorAction Stop |
+    Where-Object { -not (Test-Excluded $_.FullName $Prefixes) } | Sort-Object FullName |
+    ForEach-Object {
+      if ($_.LinkType) { "link $($_.FullName) -> $($_.Target)" }
+      elseif ($_.PSIsContainer) { "dir  $($_.FullName)" }
+      else { "file $((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256 -ErrorAction Stop).Hash) $($_.FullName)" }
+    } | Set-Content (Join-Path $Snap "$Label.tree")
+  $Key = Get-Item HKCU:\Environment
+  $Key.GetValueNames() | Sort-Object | ForEach-Object { "$_ = $($Key.GetValue($_, '', 'DoNotExpandEnvironmentNames'))" } | Set-Content (Join-Path $Snap "$Label.environment")
+}
+```
 
 ```sh
 snapshot() {
-  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type f -print0 | sort -z | xargs -0 -r sha256sum > "$SNAP/$1.files"
-  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type l -printf '%p -> %l\n' | sort > "$SNAP/$1.links"
-  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type d -print | sort > "$SNAP/$1.dirs"
+  set -o pipefail
+  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type f -print0 2>"$SNAP/$1.errors" | sort -z | xargs -0 -r sha256sum > "$SNAP/$1.files"
+  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type l -printf '%p -> %l\n' 2>>"$SNAP/$1.errors" | sort > "$SNAP/$1.links"
+  find "$HOME" -xdev -path "$INSTALL_ROOT" -prune -o -type d -print 2>>"$SNAP/$1.errors" | sort > "$SNAP/$1.dirs"
+  test ! -s "$SNAP/$1.errors"
 }
 ```
 
-```powershell
-function Take-Snapshot($Label) {
-  Get-ChildItem $env:USERPROFILE -Recurse -Force -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -notlike "$InstallRoot*" -and $_.FullName -notlike "$env:LOCALAPPDATA\Programs\sandboxed-agents*" } |
-    Get-FileHash -Algorithm SHA256 | Sort-Object Path | ForEach-Object { "$($_.Hash)  $($_.Path)" } | Set-Content (Join-Path $Snap "$Label.files")
-  (Get-Item HKCU:\Environment).GetValueNames() | Sort-Object | ForEach-Object { "$_ = $((Get-Item HKCU:\Environment).GetValue($_, '', 'DoNotExpandEnvironmentNames'))" } | Set-Content (Join-Path $Snap "$Label.environment")
-}
-```
+Take a snapshot before each method (`Take-Snapshot before` and `snapshot before`), run the method, take an `after` snapshot, and compare: `Compare-Object (Get-Content "$Snap\before.tree") (Get-Content "$Snap\after.tree")` and the same for `.environment`, or `diff "$SNAP/before.files" "$SNAP/after.files"` and the `.links` and `.dirs` files. A non-empty `.errors` file, or a snapshot function that returns a failure, fails the item. Take a new `before` snapshot for the next method.
 
-**Take a snapshot** (`snapshot before` on Linux, `Take-Snapshot before` on Windows), then run each method, then take `after` snapshots and compare with `diff "$SNAP/before.files" "$SNAP/after.files"` (and `.links`, `.dirs`), or `Compare-Object (Get-Content "$Snap\before.files") (Get-Content "$Snap\after.files")` on Windows.
+**Method 1, downloaded binary:** copy the verified binary to `$InstallRoot\bin\sandboxed-agents.exe` (`$INSTALL_ROOT/bin/sandboxed-agents` on Linux), run it by its full path with `version`, copy the next build over it as an upgrade, and delete it. Exclusions: none.
 
-**Method 1, downloaded binary:** copy the verified binary to `$INSTALL_ROOT/bin/sandboxed-agents` (`$InstallRoot\bin\sandboxed-agents.exe` on Windows), run it by its full path with `version`, copy the next build over it as an upgrade, and delete it.
-
-**Method 2, npm package:** install the tarball with the prefix, cache, logs, and temporary directory all under the install root, and with the update notifier off:
-
-```sh
-export TMPDIR="$INSTALL_ROOT/tmp" npm_config_update_notifier=false
-npm install --offline --no-audit --no-fund -g --prefix "$INSTALL_ROOT/prefix" --cache "$INSTALL_ROOT/cache" --logs-dir "$INSTALL_ROOT/logs" ./sandboxed-agents-VERSION.tgz
-"$INSTALL_ROOT/prefix/bin/sandboxed-agents" version
-npm install --offline --no-audit --no-fund -g --prefix "$INSTALL_ROOT/prefix" --cache "$INSTALL_ROOT/cache" --logs-dir "$INSTALL_ROOT/logs" ./sandboxed-agents-VERSION.tgz
-npm uninstall -g --prefix "$INSTALL_ROOT/prefix" --cache "$INSTALL_ROOT/cache" --logs-dir "$INSTALL_ROOT/logs" sandboxed-agents
-```
+**Method 2, npm package:** install the tarball with the prefix, cache, logs, and temporary directory all under the install root, and with the update notifier off. Exclusions: none.
 
 ```powershell
 $env:TEMP = Join-Path $InstallRoot 'tmp'; $env:TMP = $env:TEMP; $env:npm_config_update_notifier = 'false'
@@ -413,11 +486,45 @@ npm install --offline --no-audit --no-fund -g --prefix "$InstallRoot\prefix" --c
 npm uninstall -g --prefix "$InstallRoot\prefix" --cache "$InstallRoot\cache" --logs-dir "$InstallRoot\logs" sandboxed-agents
 ```
 
-**Method 3, NuGet package (Windows only):** extract the `.nupkg` under `$InstallRoot\package`, then run `install-command.ps1` from its `tools` directory (installing to `%LOCALAPPDATA%\Programs\sandboxed-agents`, the install location of this method, which the snapshot excludes, together with the `Programs` parent directory if the installer has to create it), run it again as an upgrade, and then `remove-command.ps1`. The user `Path` may change by the one install directory entry and nothing else; the `.environment` snapshots show it.
+```sh
+export TMPDIR="$INSTALL_ROOT/tmp" npm_config_update_notifier=false
+npm install --offline --no-audit --no-fund -g --prefix "$INSTALL_ROOT/prefix" --cache "$INSTALL_ROOT/cache" --logs-dir "$INSTALL_ROOT/logs" ./sandboxed-agents-VERSION.tgz
+"$INSTALL_ROOT/prefix/bin/sandboxed-agents" version
+npm install --offline --no-audit --no-fund -g --prefix "$INSTALL_ROOT/prefix" --cache "$INSTALL_ROOT/cache" --logs-dir "$INSTALL_ROOT/logs" ./sandboxed-agents-VERSION.tgz
+npm uninstall -g --prefix "$INSTALL_ROOT/prefix" --cache "$INSTALL_ROOT/cache" --logs-dir "$INSTALL_ROOT/logs" sandboxed-agents
+```
 
-**Expected:** `$env:SystemDrive\chk-fake-podman\calls` or `/tmp/chk-fake-podman/calls` is empty or does not exist, so no Podman call was issued. The `files`, `links`, `dirs`, and `environment` comparisons show **no difference** outside the install root and the install location, except the one user `Path` entry for NuGet. Any other difference fails the item, whatever wrote it. If background activity of the machine itself writes a file during the run, repeat the run on a quiescent machine; do not exempt the file. Sandboxes that exist keep running across the upgrade of any method.
+**Method 3a, NuGet package into the install root (files and Podman):** extract the `.nupkg` under `$InstallRoot\package`, then install into the install root and leave `PATH` alone, so the only location in play is the install root. Run the installer, run it again as an upgrade, and then the remover, each with the same arguments. Exclusions: none; the environment snapshots must show no difference at all.
 
-After the item, delete the install root and the snapshot directories.
+```powershell
+$Tools = Join-Path $InstallRoot 'package\tools'
+Get-ChildItem -LiteralPath $Tools -Filter *.ps1 | Unblock-File
+pwsh -File "$Tools\install-command.ps1" -InstallDirectory "$InstallRoot\nuget" -NoPathUpdate
+pwsh -File "$Tools\install-command.ps1" -InstallDirectory "$InstallRoot\nuget" -NoPathUpdate
+pwsh -File "$Tools\remove-command.ps1" -InstallDirectory "$InstallRoot\nuget" -NoPathUpdate
+```
+
+**Method 3b, NuGet package to its default location and `PATH` (the separate default-path test):** run the installer and the remover with their default arguments, so they use `%LOCALAPPDATA%\Programs\sandboxed-agents` and the user `PATH`. Take the snapshots with the install location excluded, and no other exclusion:
+
+```powershell
+$Default = Join-Path $env:LOCALAPPDATA 'Programs\sandboxed-agents'
+Take-Snapshot before @($Default)
+pwsh -File "$Tools\install-command.ps1"
+pwsh -File "$Tools\install-command.ps1"
+pwsh -File "$Tools\remove-command.ps1"
+Take-Snapshot after @($Default)
+```
+
+The `Programs` parent directory counts as part of the install location when the installer had to create it: the one `dir` line for it may differ. Nothing else may.
+
+**Expected:**
+
+- The `calls` file (`$Fake\calls`, inside the evidence directory, or `/tmp/chk-fake-podman/calls` on Linux) is empty or does not exist, so no Podman call was issued by any method.
+- For methods 1, 2, and 3a, the `.tree` and `.environment` comparisons (on Linux the `.files`, `.links`, and `.dirs` comparisons) show **no difference**, and no snapshot reported an error.
+- For method 3b, the `.tree` comparison shows no difference apart from the `Programs` parent line, and the `.environment` comparison shows only that the user `Path` value gained the install directory entry after the installer and lost it after the remover. Entries that were already there, including unexpanded ones such as `%USERPROFILE%\bin`, are byte-for-byte unchanged.
+- Any other difference fails the item, whatever wrote it. If background activity of the machine itself writes a file during the run, repeat the run on a quiescent machine; do not exempt the file. Sandboxes that exist keep running across the upgrade of any method.
+
+After the item, delete the install root, `$Snap`, and `$Fake` (on Linux `$SNAP`, `$INSTALL_ROOT`, and `/tmp/chk-fake-podman`). Leave the evidence directory itself as you found it.
 
 ### No command removes an image
 
@@ -499,11 +606,31 @@ The shape, with placeholders that are not values to copy (`FULL_COMMIT_SHA` stan
 }
 ```
 
-Before you upload, check that the file has exactly these fields and holds no credential. With `jq`:
+Before you upload, check the file against the schema with `jq`. The check requires exactly the fields above, a `result` of `pass` or `fail` at both levels, only the 23 identifiers of this document, each at most once, the fixed platform of the platform-bound identifiers, and, for a record that says `pass`, all 23 identifiers present and every check passed. It also requires the top-level `result` to be `fail` when any check failed:
 
 ```sh
-jq -e '(keys == ["checks","commit","kind","result","schema_version"]) and .schema_version == 1 and .kind == "manual-checklist" and (.commit | test("^[0-9a-f]{40}$")) and (.checks | length > 0) and all(.checks[]; (keys == ["date","name","platform","result"]) and (.result == "pass" or .result == "fail") and (.platform == "linux" or .platform == "windows-11") and (.date | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))' manual-checklist.json
+IDS='["agent-login-copilot","agent-login-claude","agent-login-codex","agent-login-opencode","github-login","azure-login-device-code","azure-login-browser","azdo-token","vscode-remote-ssh","npm-install-clean","nuget-install-clean","quick-guide-linux","quick-guide-windows","selection-pins-persist","git-identity-persist","credentials-persist","update-complete","update-interrupted","azure-toolchain-required","login-needs-terminal","no-image-removal","installers-no-podman","preview-attestation"]'
+jq -e --argjson ids "$IDS" '
+  (keys == ["checks","commit","kind","result","schema_version"])
+  and .schema_version == 1 and .kind == "manual-checklist"
+  and (.commit | test("^[0-9a-f]{40}$"))
+  and (.result == "pass" or .result == "fail")
+  and (.checks | type == "array" and length > 0)
+  and all(.checks[];
+        (keys == ["date","name","platform","result"])
+        and (.result == "pass" or .result == "fail")
+        and (.platform == "linux" or .platform == "windows-11")
+        and (.date | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
+        and (.name | IN($ids[]))
+        and (if (.name == "nuget-install-clean" or .name == "installers-no-podman" or .name == "quick-guide-windows") then .platform == "windows-11"
+             elif .name == "quick-guide-linux" then .platform == "linux" else true end))
+  and (([.checks[].name] | length) == ([.checks[].name] | unique | length))
+  and (([.checks[] | select(.result == "fail")] | length) == 0 or .result == "fail")
+  and (if .result == "pass" then (([.checks[].name] | sort) == ($ids | sort)) and all(.checks[]; .result == "pass") else true end)
+' manual-checklist.json
 ```
+
+`jq -e` exits non-zero when the check fails. The check validates the shape and the rules of this document; the date is checked for its form, and the stable release check parses it as a calendar date. A record that fails the check must be fixed before upload, or must not be uploaded.
 
 Open the file and read it once before upload. It must contain nothing but the fields above.
 

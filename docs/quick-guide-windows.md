@@ -101,7 +101,7 @@ sandboxed-agents check
 sandboxed-agents up agent01
 ```
 
-The first `up` builds the base image, which takes a while and needs network access. It creates the sandbox `agent01` with a workspace volume of its own, starts it, and publishes SSH on `127.0.0.1` only. Choose toolchains with `--with`, for example `--with dotnet`; the [command reference](command-reference.md) lists them. To work on an existing project directory instead, give `up` the directory as a second argument. It must lie under the machine's default WSL automount root; a custom root is refused.
+The first `up` builds the base image, which takes a while and needs network access. It creates the sandbox `agent01` with a workspace volume of its own, starts it, and publishes SSH on `127.0.0.1` only. Choose toolchains with `--with`, for example `--with dotnet`; the [command reference](command-reference.md) lists them. To use an existing host directory as the workspace instead, give `up` that directory as a second argument. It must lie under the machine's default WSL automount root; a custom root is refused.
 
 ```text
 sandboxed-agents list
