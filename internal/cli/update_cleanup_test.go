@@ -205,8 +205,8 @@ func TestUpdateCleanupReadinessFailureRestoresBackup(t *testing.T) {
 	}
 }
 
-// TestUpdateCleanupRejectsWrongOwnedVolume proves recovery restores the old sandbox without starting or probing a replacement attached to another sandbox's home volume through the executable CLI seam.
-func TestUpdateCleanupRejectsWrongOwnedVolume(t *testing.T) {
+// TestUpdateRecoveryRestoresAfterWrongOwnedVolume proves recovery restores the old sandbox without starting or probing a replacement attached to another sandbox's home volume through the executable CLI seam.
+func TestUpdateRecoveryRestoresAfterWrongOwnedVolume(t *testing.T) {
 	f := cleanupFixture(t, false, false)
 	key := "container inspect sandboxed-agents.default.demo"
 	r := f.responses[key]
@@ -230,8 +230,8 @@ func TestUpdateCleanupRejectsWrongOwnedVolume(t *testing.T) {
 	}
 }
 
-// TestUpdateCleanupRejectsMalformedStorage proves wrong, missing, duplicate and extra mounts restore the old stopped sandbox without readiness probes or volume changes through the executable CLI seam.
-func TestUpdateCleanupRejectsMalformedStorage(t *testing.T) {
+// TestUpdateRecoveryRestoresAfterMalformedStorage proves wrong, missing, duplicate and extra mounts restore the old stopped sandbox without readiness probes or volume changes through the executable CLI seam.
+func TestUpdateRecoveryRestoresAfterMalformedStorage(t *testing.T) {
 	workspace := `{"Type":"volume","Name":"sandboxed-agents.default.demo.workspace","Destination":"/workspace"}`
 	home := `{"Type":"volume","Name":"sandboxed-agents.default.demo.home","Destination":"/home/agent"}`
 	ssh := `{"Type":"volume","Name":"sandboxed-agents.default.demo.ssh","Destination":"/etc/ssh"}`
