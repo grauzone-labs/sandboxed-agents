@@ -22,6 +22,9 @@ type readinessRuntime struct {
 	run  func(context.Context, *exec.Cmd) ([]byte, error)
 }
 
+// readinessDeadline bounds the whole readiness wait, probes included (ADR 0007).
+var readinessDeadline = 60 * time.Second
+
 func readySandbox(p podmanTarget, container string, port uint16) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -40,7 +43,7 @@ func waitContext(ctx context.Context, d time.Duration) error {
 }
 
 func waitReadiness(ctx context.Context, p podmanTarget, container string, port uint16, r readinessRuntime) error {
-	deadline := r.now().Add(60 * time.Second)
+	deadline := r.now().Add(readinessDeadline)
 	type readinessProbe struct {
 		name    string
 		run     func(context.Context, time.Duration) error
@@ -63,7 +66,7 @@ func waitReadiness(ctx context.Context, p podmanTarget, container string, port u
 		for _, probe := range probes {
 			failures = append(failures, fmt.Sprintf("%s: %v", probe.name, probe.failure))
 		}
-		return fmt.Errorf("readiness wait failed: 60s deadline exceeded (%s)", strings.Join(failures, "; "))
+		return fmt.Errorf("readiness wait failed: %gs deadline exceeded (%s)", readinessDeadline.Seconds(), strings.Join(failures, "; "))
 	}
 	for {
 		for i := range probes {

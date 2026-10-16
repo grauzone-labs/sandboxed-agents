@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
@@ -114,6 +115,9 @@ func runUpExecutable(t *testing.T, f *fixture, args ...string) (int, string, [][
 }
 
 // TestUpExecutableBoundary proves up's create and bind outcomes reach the subprocess exit status and output through RunWithHost against fake Podman and SSH.
+// readinessDeadlineEnv shortens the readiness deadline of the TestUpExecutableBoundary driver.
+const readinessDeadlineEnv = "TEST_UP_READINESS_DEADLINE"
+
 func TestUpExecutableBoundary(t *testing.T) {
 	if os.Getenv("TEST_UP_EXECUTABLE") != "1" {
 		t.Skip("subprocess driver only")
@@ -125,6 +129,14 @@ func TestUpExecutableBoundary(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(os.Getenv("TEST_UP_FILES")), &files); err != nil {
 		t.Fatal(err)
+	}
+	// A readiness failure is proven through this boundary without waiting out the 60s production deadline.
+	if value := os.Getenv(readinessDeadlineEnv); value != "" {
+		deadline, err := time.ParseDuration(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cli.SetReadinessDeadline(deadline)
 	}
 	host := cli.Host{Platform: os.Getenv("TEST_UP_PLATFORM"), Architecture: "amd64", PortAvailable: func(uint16) error { return nil }, CurrentUser: func() (*user.User, error) { return &user.User{Username: "tester", Uid: "1000"}, nil }, ReadFile: func(path string) ([]byte, error) {
 		value, ok := files[path]
