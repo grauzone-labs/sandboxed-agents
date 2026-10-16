@@ -18,12 +18,13 @@ import (
 // liveTerminal runs one command whose standard streams are a pseudo-terminal
 // the test owns, as a user's terminal would.
 type liveTerminal struct {
-	master  *os.File
-	command *exec.Cmd
-	mutex   sync.Mutex
-	output  bytes.Buffer
-	done    chan struct{}
-	exit    int
+	master     *os.File
+	command    *exec.Cmd
+	mutex      sync.Mutex
+	output     bytes.Buffer
+	done       chan struct{}
+	readerDone chan struct{}
+	exit       int
 }
 
 // startLiveTerminal starts program under a new session whose controlling
@@ -83,8 +84,9 @@ func startLiveTerminal(t *testing.T, environment []string, program string, args 
 	// The child holds the only remaining slave descriptor, so reads on the
 	// master end when the child and its descendants have exited.
 	slave.Close()
-	terminal := &liveTerminal{master: master, command: command, done: make(chan struct{})}
+	terminal := &liveTerminal{master: master, command: command, done: make(chan struct{}), readerDone: make(chan struct{})}
 	go func() {
+		defer close(terminal.readerDone)
 		buffer := make([]byte, 4096)
 		for {
 			n, err := master.Read(buffer)
@@ -123,14 +125,22 @@ func (terminal *liveTerminal) Output() string {
 	return terminal.output.String()
 }
 
-// Wait returns the exit status once the command has ended within timeout.
+// Wait returns the exit status once the command has ended within timeout and
+// its output has been drained: the master reads everything the command wrote
+// and then fails with EIO once no process holds the slave any more. A
+// descendant that keeps the slave open bounds the drain to the timeout.
 func (terminal *liveTerminal) Wait(timeout time.Duration) (int, bool) {
+	deadline := time.After(timeout)
 	select {
 	case <-terminal.done:
-		return terminal.exit, true
-	case <-time.After(timeout):
+	case <-deadline:
 		return 0, false
 	}
+	select {
+	case <-terminal.readerDone:
+	case <-deadline:
+	}
+	return terminal.exit, true
 }
 
 // Close ends a still running command and releases the terminal.
