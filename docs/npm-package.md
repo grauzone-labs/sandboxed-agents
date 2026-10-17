@@ -4,7 +4,7 @@ This page tells you how to install, upgrade, and remove the `sandboxed-agents` c
 
 ## Where the package comes from
 
-A stable release is published to the npm registry as `sandboxed-agents`, and every release, preview or stable, carries the tarball `sandboxed-agents-X.Y.Z.tgz` among its [release files](releases.md#release-files). Previews are not published to the registry; install a preview from its tarball. Registry versions below 1.0.0 belong to the earlier implementation in `grauzone-git/sandboxed-ai-agents`, not to this repository: the shared package and command name alone does not identify a release of `grauzone-labs/sandboxed-agents`. If the command is already installed on your machine, identify its source before you replace it.
+Every release carries the tarball `sandboxed-agents-X.Y.Z.tgz` among its [release files](releases.md#release-files); which releases exist, and which of them the npm registry holds, is stated on the [releases page](releases.md#status). Earlier registry versions such as `sandboxed-agents@0.2.0` come from the earlier implementation in `grauzone-git/sandboxed-ai-agents`: the shared package and command name alone does not identify a release of `grauzone-labs/sandboxed-agents`, its attestation does. If the command is already installed on your machine, identify its source before you replace it.
 
 ## Requirements
 
@@ -31,7 +31,7 @@ npm install --offline --no-audit --no-fund -g ./sandboxed-agents-X.Y.Z.tgz
 sandboxed-agents version
 ```
 
-`version` prints `sandboxed-agents X.Y.Z` and `asset-sha256 <hash>`, the hash of the embedded build assets. This install needs no network access once the file is on the machine. A stable release can also be installed from the registry with `npm install -g sandboxed-agents@X.Y.Z`.
+`version` prints `sandboxed-agents X.Y.Z` and `asset-sha256 <hash>`, the hash of the embedded build assets. This install needs no network access once the file is on the machine.
 
 ## Upgrade
 

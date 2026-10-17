@@ -4,7 +4,7 @@ This page tells you how to install, upgrade, and remove the `sandboxed-agents` c
 
 ## Where the package comes from
 
-A stable release is published to the NuGet registry as `SandboxedAgents`, and every release, preview or stable, carries `SandboxedAgents.X.Y.Z.nupkg` among its [release files](releases.md#release-files). Previews are not published to the registry; install a preview from its `.nupkg`. The package is a command package, not a library: nothing references it as a dependency.
+Every release carries `SandboxedAgents.X.Y.Z.nupkg` among its [release files](releases.md#release-files); which releases exist, and which of them the NuGet registry holds, is stated on the [releases page](releases.md#status). The package is a command package, not a library: nothing references it as a dependency.
 
 ## Install
 

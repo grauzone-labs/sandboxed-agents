@@ -4,7 +4,7 @@ This page shows you how to set up Git identity and credentials in a sandbox and 
 
 Every integration command needs a running sandbox. A stopped sandbox fails and names `start NAME`; a sandbox with only volumes names `up NAME`. If the manager does not answer, the command names `check NAME` for diagnosis and `restart NAME` as the next step. Nothing starts automatically and there is no fallback around the manager. Invalid integration or workflow names list the available choices before any Podman call.
 
-Every workflow runs as `agent` (UID and GID 1000) in the sandbox, copies no host credential, host configuration, or host environment value into the sandbox, and adds no mount; the executable passes only the values you give it. Whatever a workflow stores lives in the home volume, survives `stop`, `start`, and `update`, is readable by every agent in the sandbox, and is deleted only by `sandboxed-agents remove NAME --volumes`. Removing the sandbox alone keeps its volumes. This is why separate sandboxes, not separate agents, separate accounts.
+Every workflow runs as `agent` (UID and GID 1000) in the sandbox. No host credential, host configuration, or host environment value is copied into the sandbox. The executable adds no mount for a workflow and passes only the values you give it. Whatever a workflow stores lives in the home volume. It survives `stop`, `start`, and `update`. Every agent in the sandbox can read it. Only `sandboxed-agents remove NAME --volumes` deletes it; removing the sandbox alone keeps its volumes. This is why separate sandboxes, not separate agents, separate accounts.
 
 ## Git
 
@@ -16,7 +16,7 @@ Git has two config workflows, `identity` and `credentials`; choose one explicitl
 sandboxed-agents integrations config agent01 git identity --name 'A Person' --email 'a@example.com'
 ```
 
-This sets `user.name` and `user.email` in the global Git configuration of `agent`, `/home/agent/.gitconfig`, in the home volume. It applies to every repository and agent in the sandbox unless a repository overrides it. Both options together need no terminal. When either is omitted, terminal input and output are required and the command prompts only for missing values; without a terminal it fails before writing either value. Both values are collected before Git starts; an empty response or input failure changes nothing. Git writes its global configuration in the fixed agent home even if the sandbox has ambient Git configuration overrides.
+This sets `user.name` and `user.email` in the global Git configuration of `agent`, `/home/agent/.gitconfig`, in the home volume. It applies to every repository and agent in the sandbox unless a repository overrides it. Both options together need no terminal. When either is omitted, terminal input and output are required and the command prompts only for missing values; without a terminal it fails before writing either value. Both values are collected before Git starts; an empty response or input failure changes nothing. The manager passes Git a fixed home, `/home/agent`, so Git writes its global configuration there even if the sandbox has ambient Git configuration overrides.
 
 ### Git credential helper
 
