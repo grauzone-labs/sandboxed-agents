@@ -68,6 +68,8 @@ func literalSSHPath(path string) string {
 	return `"` + strings.ReplaceAll(path, `"`, `\"`) + `"`
 }
 
+// clientIncludeLine selects the Include spelling the installed OpenSSH client
+// needs, querying its version only when the path contains a percent sign.
 func (s sshSetup) clientIncludeLine() (string, error) {
 	if !strings.Contains(s.config, "%") {
 		return s.includeLine(false), nil
@@ -147,6 +149,8 @@ func configureSSH(request Request, p podmanTarget, stdout, stderr io.Writer) err
 	return err
 }
 
+// removeHostSetup deletes this sandbox's host files and refreshes the group's
+// managed configuration, removing its Include when no host entries remain.
 func (s sshSetup) removeHostSetup() error {
 	if err := os.RemoveAll(s.dir); err != nil {
 		return err
@@ -161,6 +165,8 @@ func requireSSHManager(request Request, p podmanTarget) error {
 	return nil
 }
 
+// installSSHSetup authorizes a dedicated key, pins the sandbox's host key, and
+// publishes the opt-in host configuration after checking for conflicts.
 func installSSHSetup(request Request, p podmanTarget, objects sandboxObjects, s sshSetup, stdout io.Writer) error {
 	if err := requireSSHManager(request, p); err != nil {
 		return err
