@@ -11,7 +11,7 @@ import (
 // TestParsedUpKeepsDefaultsAndEmptyToolchainSet proves that the public cli.Parse function retains default resource limits and the explicit empty toolchain selection for up --with none.
 func TestParsedUpKeepsDefaultsAndEmptyToolchainSet(t *testing.T) {
 	request, err := cli.Parse([]string{"up", "demo", "--with", "none"}, "default")
-	want := cli.Resources{Memory: 8589934592, CPUs: 4, PIDsLimit: 2048, ShmSize: 1073741824}
+	want := cli.Resources{Memory: 8589934592, MemorySwap: 8589934592, CPUs: 4, PIDsLimit: 2048, ShmSize: 1073741824}
 	if err != nil || request.Resources != want || len(request.Toolchains) != 0 || request.Options["with"] != "none" {
 		t.Fatalf("request=%+v error=%v; want resources=%+v and an explicit empty toolchain set", request, err, want)
 	}

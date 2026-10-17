@@ -49,7 +49,7 @@ func tracerContainer(set string, generation int) string {
 		"Config": map[string]any{"Image": tracerTag(set), "User": "0:0", "Labels": map[string]string{
 			cli.OwnerLabel: tracerGroup, cli.SSHPortLabel: tracerPort, cli.ToolchainsLabel: set,
 		}},
-		"HostConfig": map[string]any{"PortBindings": map[string]any{"22/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": tracerPort}}}},
+		"HostConfig": map[string]any{"Memory": 8589934592, "MemorySwap": 8589934592, "PortBindings": map[string]any{"22/tcp": []map[string]string{{"HostIp": "127.0.0.1", "HostPort": tracerPort}}}},
 	}
 	data, _ := json.Marshal([]any{record})
 	return string(data)
@@ -156,6 +156,7 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				"exec --user=0:0 * ssh-host-key":    {Output: tracerHostKey + "\n"},
 				"exec --user=0:0 * ssh-authorize *": {},
 				"exec --user=0:0 * sh -c cat /proc/1/comm; cat /proc/1/status":                   {Output: "sshd\nName:\tsshd\nUid:\t0\t0\t0\t0\n"},
+				"exec --user=1000:1000 * cat /sys/fs/cgroup/memory.swap.max":                     {Output: "0\n"},
 				"ps --all --format {{.Names}}":                                                   {},
 				"volume ls --format {{.Name}}":                                                   {},
 				"container inspect " + cli.DerivedNames(tracerGroup, "live-lifecycle").Container: {Output: tracerContainer("none", 1)},

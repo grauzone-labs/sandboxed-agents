@@ -12,14 +12,15 @@ var decimal = regexp.MustCompile(`^[0-9]+(\.[0-9]{1,3})?$`)
 
 // Resources holds up's resource limits; sizes are in bytes.
 type Resources struct {
-	Memory    int64
-	CPUs      float64
-	PIDsLimit int64
-	ShmSize   int64
+	Memory     int64
+	MemorySwap int64 // Combined memory and swap ceiling; new sandboxes disable swap.
+	CPUs       float64
+	PIDsLimit  int64
+	ShmSize    int64
 }
 
 func DefaultResources() Resources {
-	return Resources{Memory: 8 * 1024 * 1024 * 1024, CPUs: 4, PIDsLimit: 2048, ShmSize: 1024 * 1024 * 1024}
+	return Resources{Memory: 8 * 1024 * 1024 * 1024, MemorySwap: 8 * 1024 * 1024 * 1024, CPUs: 4, PIDsLimit: 2048, ShmSize: 1024 * 1024 * 1024}
 }
 
 func positiveInteger(value string) (int64, error) {
@@ -100,5 +101,6 @@ func (r *Resources) parse(options map[string]string) error {
 			return fmt.Errorf("--%s: %w", option, err)
 		}
 	}
+	r.MemorySwap = r.Memory
 	return nil
 }

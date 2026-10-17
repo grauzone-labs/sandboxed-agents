@@ -223,7 +223,21 @@ type liveContainer struct {
 		Labels      map[string]string
 	}
 	HostConfig struct {
-		PortBindings map[string][]struct{ HostIP, HostPort string }
+		Memory, MemorySwap int64
+		PortBindings       map[string][]struct{ HostIP, HostPort string }
+	}
+}
+
+// assertNoSwap checks both Podman's recorded ceiling and the kernel's cgroup
+// swap limit for a newly created sandbox or its replacement.
+func (host liveHost) assertNoSwap(t *testing.T, name string, container liveContainer) {
+	t.Helper()
+	if container.HostConfig.Memory <= 0 || container.HostConfig.MemorySwap != container.HostConfig.Memory {
+		t.Fatalf("sandbox %s does not record a no-swap memory limit: %+v", name, container.HostConfig)
+	}
+	output, err := host.podman("exec", "--user=1000:1000", cli.DerivedNames(host.group, name).Container, "cat", "/sys/fs/cgroup/memory.swap.max")
+	if err != nil || strings.TrimSpace(output) != "0" {
+		t.Fatalf("sandbox %s swap is not disabled in its cgroup: %v %s", name, err, output)
 	}
 }
 

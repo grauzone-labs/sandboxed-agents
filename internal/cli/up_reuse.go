@@ -50,9 +50,13 @@ func checkReusedUp(request Request, p podmanTarget, container sandboxContainer) 
 
 // checkReusedResources compares explicitly supplied limits with Podman's recorded values.
 func checkReusedResources(request Request, container sandboxContainer) error {
-	requested := map[string]int64{"memory": request.Resources.Memory, "pids-limit": request.Resources.PIDsLimit, "shm-size": request.Resources.ShmSize}
+	requested := map[string]int64{"memory": request.Resources.Memory, "memory-swap": request.Resources.MemorySwap, "pids-limit": request.Resources.PIDsLimit, "shm-size": request.Resources.ShmSize}
 	for _, limit := range container.integerLimits() {
-		if request.Options[limit.option] == "" {
+		option := limit.option
+		if option == "memory-swap" {
+			option = "memory" // --memory also selects the no-swap policy.
+		}
+		if request.Options[option] == "" {
 			continue
 		}
 		recorded, err := limit.read()

@@ -23,6 +23,7 @@ func (suite *liveSuite) update(t *testing.T) {
 	host.cleanupSandbox(t, name)
 	host.mustCLI(t, "", "up", name, "--with", "native")
 	native := host.inspectContainer(t, name)
+	host.assertNoSwap(t, name, native)
 	if native.Config.Labels[cli.ToolchainsLabel] != "native" {
 		t.Fatalf("sandbox %s does not record the native toolchain set: %+v", name, native.Config.Labels)
 	}
@@ -39,6 +40,7 @@ func (suite *liveSuite) update(t *testing.T) {
 		t.Fatalf("update did not report the replacement:\n%s", output)
 	}
 	base := host.inspectContainer(t, name)
+	host.assertNoSwap(t, name, base)
 	if sameImageID(base.Image, native.Image) || base.Config.Labels[cli.ToolchainsLabel] != "none" {
 		t.Fatalf("successful update did not select the base image: image=%s labels=%v", base.Image, base.Config.Labels)
 	}
@@ -50,6 +52,7 @@ func (suite *liveSuite) update(t *testing.T) {
 		t.Fatalf("forced rollback: %v %s", err, output)
 	}
 	restored := host.inspectContainer(t, name)
+	host.assertNoSwap(t, name, restored)
 	if !sameImageID(restored.Image, base.Image) || restored.Config.Labels[cli.ToolchainsLabel] != "none" {
 		t.Fatalf("rollback did not restore the base image: image=%s labels=%v", restored.Image, restored.Config.Labels)
 	}
