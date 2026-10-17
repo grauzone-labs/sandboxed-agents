@@ -1,6 +1,6 @@
 # Quick guide: Windows
 
-**Goal:** a signed-in agent running in a sandbox on your Windows 11 machine, installed from the downloaded binary. **Expected duration:** 30 to 60 minutes, most of it the image build in step 6, which runs unattended. The [NuGet package](nuget-package.md) and the [npm package](npm-package.md) are the other install methods; what a sandbox protects and what it does not is in the [security policy](../SECURITY.md).
+**Goal:** a signed-in agent running in a sandbox on your Windows 11 machine, installed from the downloaded binary. **Expected duration:** 30 to 60 minutes, most of it the image build in step 6, which runs unattended. For a stable release, the [NuGet package](nuget-package.md) and the [npm package](npm-package.md) are the other install methods; what a sandbox protects and what it does not is in the [security policy](../SECURITY.md).
 
 ## Prerequisites
 
@@ -21,7 +21,7 @@ Open the [releases page](https://github.com/grauzone-labs/sandboxed-agents/relea
 $Tag = 'v1.0.0-preview.YYYYMMDD.N'
 ```
 
-**Expected:** `$Tag` prints the tag you chose.
+**Expected:** entering `$Tag` on a line of its own prints the tag you chose.
 
 **If it fails:** the variable is empty in a new terminal; set it again there.
 
@@ -115,7 +115,7 @@ sandboxed-agents agents status agent01 claude
 
 **Expected:** `enable` prints `claude enabled: version ...`, and `status` prints `claude: enabled; version ...; pin none; session false; signed in unknown`.
 
-**If it fails:** the output names the cause and, when the manager does not answer, the `check agent01` and `restart agent01` commands to run first. Fix the cause, for example missing network access in the sandbox, and run the `enable` command again.
+**If it fails:** the output names the cause and, when the manager does not answer, `check agent01` for diagnosis; then run `restart agent01 --force`, because `restart` cannot rule out running sessions while the manager is silent. Fix the cause, for example missing network access in the sandbox, and run the `enable` command again.
 
 ## 8. Sign in
 
