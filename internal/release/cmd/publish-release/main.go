@@ -12,9 +12,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/release"
+)
+
+// Fixed release filenames identify the two executables and their checksum manifest.
+const (
+	linuxBinaryName   = "sandboxed-agents-linux-amd64"
+	windowsBinaryName = "sandboxed-agents-windows-amd64.exe"
+	checksumsName     = "SHA256SUMS"
 )
 
 // main reports publication failures without publishing a partial success.
@@ -27,9 +35,25 @@ func main() {
 
 // publication holds the immutable tag, commit, notes and five build outputs being published.
 type publication struct {
-	tag, repository, commit, directory, version, notes, hash string
-	preview                                                  bool
-	files                                                    []string
+	tag, repository, commit, directory string
+	baseVersion, taggedVersion         string
+	notes, hash                        string
+	preview                            bool
+}
+
+// npmFilename returns the npm archive name for the complete tagged version.
+func (p publication) npmFilename() string {
+	return "sandboxed-agents-" + p.taggedVersion + ".tgz"
+}
+
+// nugetFilename returns the NuGet command package name for the complete tagged version.
+func (p publication) nugetFilename() string {
+	return "SandboxedAgents." + p.taggedVersion + ".nupkg"
+}
+
+// releaseFilenames returns the five release files in their publication order.
+func (p publication) releaseFilenames() []string {
+	return []string{linuxBinaryName, windowsBinaryName, checksumsName, p.npmFilename(), p.nugetFilename()}
 }
 
 // publishedRelease describes the metadata and assets needed to resume an interrupted publication.
@@ -79,7 +103,7 @@ func publish(args []string) error {
 			p.notes += fmt.Sprintf("- %s: `%s`\n", gate, p.commit)
 		}
 	}
-	for _, name := range p.files {
+	for _, name := range p.releaseFilenames() {
 		if _, err := command("gh", "attestation", "verify", filepath.Join(p.directory, name), "--repo", p.repository,
 			"--signer-workflow", p.repository+"/.github/workflows/release.yml", "--source-digest", p.commit,
 			"--source-ref", "refs/tags/"+p.tag, "--deny-self-hosted-runners"); err != nil {
@@ -106,15 +130,16 @@ func publish(args []string) error {
 
 // validate refuses untagged or dirty checkouts, uncommitted notes, missing files and mismatched executable checksums.
 func (p *publication) validate() error {
-	p.version = release.PreviewTagVersion(p.tag)
-	p.preview = p.version != ""
+	p.baseVersion = release.PreviewTagVersion(p.tag)
+	p.preview = p.baseVersion != ""
 	if !p.preview {
 		var err error
-		p.version, err = release.StableTagVersion(p.tag)
+		p.baseVersion, err = release.StableTagVersion(p.tag)
 		if err != nil {
 			return err
 		}
 	}
+	p.taggedVersion = strings.TrimPrefix(p.tag, "v")
 	if !regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`).MatchString(p.repository) || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(p.commit) {
 		return fmt.Errorf("repository and full commit SHA are required")
 	}
@@ -128,28 +153,27 @@ func (p *publication) validate() error {
 	if err != nil || len(status) != 0 {
 		return fmt.Errorf("publication requires a clean Git worktree")
 	}
-	data, err := command("git", "show", p.commit+":docs/release-notes/"+p.version+".md")
+	data, err := command("git", "show", p.commit+":docs/release-notes/"+p.baseVersion+".md")
 	if err != nil || len(bytes.TrimSpace(data)) == 0 {
-		return fmt.Errorf("release notes docs/release-notes/%s.md must be committed before the preview", p.version)
+		return fmt.Errorf("release notes docs/release-notes/%s.md must be committed before the preview", p.baseVersion)
 	}
 	p.notes = string(data)
 	p.directory, err = filepath.Abs(p.directory)
 	if err != nil {
 		return err
 	}
-	p.files = []string{"sandboxed-agents-linux-amd64", "sandboxed-agents-windows-amd64.exe", "SHA256SUMS", "sandboxed-agents-" + strings.TrimPrefix(p.tag, "v") + ".tgz", "SandboxedAgents." + strings.TrimPrefix(p.tag, "v") + ".nupkg"}
-	for _, name := range p.files {
+	for _, name := range p.releaseFilenames() {
 		info, err := os.Lstat(filepath.Join(p.directory, name))
 		if err != nil || !info.Mode().IsRegular() {
 			return fmt.Errorf("release file %s must be a regular file", name)
 		}
 	}
-	manifest, err := os.ReadFile(filepath.Join(p.directory, "SHA256SUMS"))
+	manifest, err := os.ReadFile(filepath.Join(p.directory, checksumsName))
 	if err != nil {
 		return err
 	}
 	var want strings.Builder
-	for _, name := range p.files[:2] {
+	for _, name := range []string{linuxBinaryName, windowsBinaryName} {
 		data, err := os.ReadFile(filepath.Join(p.directory, name))
 		if err != nil {
 			return err
@@ -159,8 +183,8 @@ func (p *publication) validate() error {
 	if string(manifest) != want.String() {
 		return fmt.Errorf("SHA256SUMS does not match both rebuilt executables")
 	}
-	version, err := command(filepath.Join(p.directory, p.files[0]), "version")
-	pattern := regexp.MustCompile(`^sandboxed-agents ` + regexp.QuoteMeta(strings.TrimPrefix(p.tag, "v")) + `\nasset-sha256 ([0-9a-f]{64})\n$`)
+	version, err := command(filepath.Join(p.directory, linuxBinaryName), "version")
+	pattern := regexp.MustCompile(`^sandboxed-agents ` + regexp.QuoteMeta(p.taggedVersion) + `\nasset-sha256 ([0-9a-f]{64})\n$`)
 	match := pattern.FindSubmatch(version)
 	if err != nil || match == nil {
 		return fmt.Errorf("rebuilt executable version or asset hash differs from the tag")
@@ -201,22 +225,17 @@ func (p publication) existingRelease() (*publishedRelease, error) {
 
 // compareAssets refuses foreign release metadata or different bytes and returns only the missing build outputs.
 func (p publication) compareAssets(state *publishedRelease) ([]string, error) {
+	filenames := p.releaseFilenames()
 	if state == nil {
-		return append([]string(nil), p.files...), nil
+		return filenames, nil
 	}
 	if state.Commit != p.commit || state.Body != p.notes || state.Preview != p.preview {
 		return nil, fmt.Errorf("existing release metadata differs from the validated tag, notes or release kind; recovery requires maintainer inspection")
 	}
 	found := map[string]bool{}
 	for _, asset := range state.Assets {
-		expected := false
-		for _, name := range p.files {
-			if asset.Name == name {
-				expected = true
-			}
-		}
-		if !expected {
-			if p.preview && (asset.Name == "live-suite-linux.json" || asset.Name == "live-suite-windows-11.json" || asset.Name == "manual-checklist.json") {
+		if !slices.Contains(filenames, asset.Name) {
+			if p.preview && slices.Contains(release.ValidationRecordFilenames(), asset.Name) {
 				continue
 			}
 			return nil, fmt.Errorf("unexpected release asset %s", asset.Name)
@@ -234,7 +253,7 @@ func (p publication) compareAssets(state *publishedRelease) ([]string, error) {
 		}
 	}
 	var missing []string
-	for _, name := range p.files {
+	for _, name := range filenames {
 		if !found[name] {
 			missing = append(missing, name)
 		}
@@ -245,49 +264,54 @@ func (p publication) compareAssets(state *publishedRelease) ([]string, error) {
 // compareRegistries reads exact immutable versions, comparing npm bytes and verifying NuGet's signed package contents.
 func (p publication) compareRegistries() (map[string]bool, error) {
 	existing := map[string]bool{}
-	urls := []string{"https://registry.npmjs.org/sandboxed-agents/-/sandboxed-agents-" + p.version + ".tgz", "https://api.nuget.org/v3-flatcontainer/sandboxedagents/" + p.version + "/sandboxedagents." + p.version + ".nupkg"}
-	for i, url := range urls {
-		name := p.files[i+3]
-		file, err := os.CreateTemp("", "sandboxed-agents-registry-*."+filepath.Ext(name)[1:])
+	packages := []struct{ name, url string }{
+		{p.npmFilename(), "https://registry.npmjs.org/sandboxed-agents/-/sandboxed-agents-" + p.baseVersion + ".tgz"},
+		{p.nugetFilename(), "https://api.nuget.org/v3-flatcontainer/sandboxedagents/" + p.baseVersion + "/sandboxedagents." + p.baseVersion + ".nupkg"},
+	}
+	for _, pkg := range packages {
+		exists, err := p.registryPackageExists(pkg.name, pkg.url)
 		if err != nil {
 			return nil, err
 		}
-		path := file.Name()
-		if err := file.Close(); err != nil {
-			os.Remove(path)
-			return nil, err
+		if exists {
+			existing[pkg.name] = true
 		}
-		status, err := command("curl", "--silent", "--show-error", "--location", "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "30", "--max-time", "300", "--output", path, "--write-out", "%{http_code}", url)
-		data, readErr := os.ReadFile(path)
-		if err != nil {
-			os.Remove(path)
-			return nil, fmt.Errorf("%s registry lookup: %w", name, err)
-		}
-		switch string(status) {
-		case "404":
-		case "200":
-			if readErr != nil {
-				os.Remove(path)
-				return nil, readErr
-			}
-			var compareErr error
-			if i == 1 {
-				compareErr = p.compareNuGet(name, path, data)
-			} else {
-				compareErr = p.compareBytes(name, data)
-			}
-			if compareErr != nil {
-				os.Remove(path)
-				return nil, compareErr
-			}
-			existing[name] = true
-		default:
-			os.Remove(path)
-			return nil, fmt.Errorf("%s registry lookup returned HTTP %s; absence is not proven", name, status)
-		}
-		os.Remove(path)
 	}
 	return existing, nil
+}
+
+// registryPackageExists downloads one immutable version and compares its contents, cleaning up its temporary file on every return path.
+func (p publication) registryPackageExists(name, url string) (bool, error) {
+	file, err := os.CreateTemp("", "sandboxed-agents-registry-*."+filepath.Ext(name)[1:])
+	if err != nil {
+		return false, err
+	}
+	path := file.Name()
+	defer os.Remove(path)
+	if err := file.Close(); err != nil {
+		return false, err
+	}
+	status, err := command("curl", "--silent", "--show-error", "--location", "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "30", "--max-time", "300", "--output", path, "--write-out", "%{http_code}", url)
+	if err != nil {
+		return false, fmt.Errorf("%s registry lookup: %w", name, err)
+	}
+	switch string(status) {
+	case "404":
+		return false, nil
+	case "200":
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return false, err
+		}
+		if name == p.nugetFilename() {
+			err = p.compareNuGet(name, path, data)
+		} else {
+			err = p.compareBytes(name, data)
+		}
+		return err == nil, err
+	default:
+		return false, fmt.Errorf("%s registry lookup returned HTTP %s; absence is not proven", name, status)
+	}
 }
 
 // compareBytes refuses to replace a previously published artifact with different rebuilt bytes.
@@ -337,13 +361,13 @@ func (p publication) createAndPublish(state *publishedRelease, missing []string,
 		}
 	}
 	if !p.preview {
-		if !existing[p.files[3]] {
+		if !existing[p.npmFilename()] {
 			if err := p.publishNPM(); err != nil {
 				return fmt.Errorf("npm publication: %w", err)
 			}
 		}
-		if !existing[p.files[4]] {
-			if _, err := command("dotnet", "nuget", "push", filepath.Join(p.directory, p.files[4]), "--api-key", os.Getenv("NUGET_OIDC_KEY"), "--source", "https://api.nuget.org/v3/index.json"); err != nil {
+		if !existing[p.nugetFilename()] {
+			if _, err := command("dotnet", "nuget", "push", filepath.Join(p.directory, p.nugetFilename()), "--api-key", os.Getenv("NUGET_OIDC_KEY"), "--source", "https://api.nuget.org/v3/index.json"); err != nil {
 				return fmt.Errorf("NuGet publication: %w", err)
 			}
 		}
@@ -368,7 +392,7 @@ func (p publication) publishNPM() error {
 			return err
 		}
 	}
-	process := exec.Command("npm", "publish", filepath.Join(p.directory, p.files[3]), "--registry", "https://registry.npmjs.org", "--access", "public", "--provenance", "--ignore-scripts", "--userconfig", user, "--globalconfig", global)
+	process := exec.Command("npm", "publish", filepath.Join(p.directory, p.npmFilename()), "--registry", "https://registry.npmjs.org", "--access", "public", "--provenance", "--ignore-scripts", "--userconfig", user, "--globalconfig", global)
 	// A directory with no project .npmrc also excludes configuration in the checkout.
 	process.Dir = directory
 	for _, entry := range os.Environ() {
