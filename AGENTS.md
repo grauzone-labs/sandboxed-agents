@@ -26,9 +26,11 @@ Always use Conventional Commits: `type(scope): description`, with scope optional
 
 Omit `Co-authored-by:` trailers and other co-author attribution from commit messages.
 
-## Tests
+## Go documentation
 
-Every Go test function (`func Test...`) has a doc comment directly above it, starting with the function name, that states the behaviour the test proves and the seam it exercises. Docstring coverage is complete when every test function in the repository has one.
+Across every Go package in this repository, including platform-specific source, test helpers, fixtures, and entrypoints, each named function and method, exported or unexported, has a doc comment directly above it that describes its behaviour. Each exported package-level type, constant, and variable has one too; a group of related declarations may share a single comment.
+
+Every test function (`func Test...`) has a comment that starts with the function name and states the behaviour the test proves and the seam it exercises. Documentation is complete when every Go file in the repository meets these rules.
 
 ## Pull request reviews
 
