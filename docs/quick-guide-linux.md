@@ -66,7 +66,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## 5. Check the host
 
-Both commands only read your host and change nothing.
+Both commands only read your host.
 
 ```text
 sandboxed-agents version
@@ -86,7 +86,7 @@ sandboxed-agents up agent01
 sandboxed-agents list
 ```
 
-**Expected:** `up` ends with `sandbox agent01 is running`, and `list` shows `agent01` in state `running`.
+**Expected:** `up` ends with a line `sandbox agent01 running; image ...; --publish 127.0.0.1:PORT:22/tcp`, and `list` shows `agent01` in state `running`.
 
 **If it fails:** the output names the cause. Fix it and run `sandboxed-agents up agent01` again.
 
@@ -101,7 +101,7 @@ sandboxed-agents agents status agent01 claude
 
 **Expected:** `enable` prints `claude enabled: version ...`, and `status` prints `claude: enabled; version ...; pin none; session false; signed in unknown`.
 
-**If it fails:** the output names the failed agent and the command to retry. Check that the sandbox has network access, then run it.
+**If it fails:** the output names the cause. Check that the sandbox has network access, then run the `enable` command again.
 
 ## 8. Sign in
 
@@ -132,7 +132,7 @@ sandboxed-agents agents session agent01 claude
 - **Git identity.** Set your name and email for commits in the sandbox: `sandboxed-agents integrations config agent01 git identity --name "A Person" --email "a@example.com"` ([integrations](integrations.md#commit-identity)).
 - **SSH setup for an editor.** `sandboxed-agents ssh-config agent01 --install` creates a dedicated key and a host entry, which VS Code Remote SSH and other desktop UIs use ([SSH access](ssh.md#connect-with-vs-code-remote-ssh)).
 - **Stop and start.** A running agent session makes `stop` refuse: end it with `sandboxed-agents agents session agent01 claude --stop`, then run `sandboxed-agents stop agent01` and `sandboxed-agents start agent01`; the login and the agent selection survive ([agents](agents.md#keep-an-agent-running-in-a-session), [command reference](command-reference.md#lifecycle-commands)).
-- **Update.** After you install a newer executable, `sandboxed-agents update agent01` moves the sandbox to the new image and keeps its volumes, port, limits, toolchains, agents, and credentials ([images](images.md#updating-a-sandbox)).
-- **Clean up.** `sandboxed-agents remove agent01` deletes the container and keeps the volumes, so a later `up agent01` adopts them ([command reference](command-reference.md#lifecycle-commands)).
+- **Update.** After you install a newer executable, `sandboxed-agents update agent01` moves the sandbox to the new image and keeps its volumes, port, limits, toolchain set, agent selection, and credentials ([images](images.md#updating-a-sandbox)).
+- **Clean up.** `sandboxed-agents remove agent01` removes the sandbox's container and keeps the volumes, so a later `up agent01` adopts them ([command reference](command-reference.md#lifecycle-commands)).
 
-> **Warning:** `sandboxed-agents remove agent01 --volumes` also deletes the home data and the credentials stored there, for good.
+> **Warning:** `sandboxed-agents remove agent01 --volumes` also deletes the sandbox's three volumes for good: the home data with the credentials stored there, the SSH server state, and the workspace volume with the files in it.
