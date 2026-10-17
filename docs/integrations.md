@@ -72,7 +72,7 @@ The GitHub CLI keeps its configuration and the stored token under `/home/agent/.
 
 ### Manual GitHub login check
 
-The offline tests run no real `gh` and contact no GitHub server, so a working device login, a private clone, and a push are proven only by this check, run on a real sandbox with a browser and an account that can push to a private test repository. The [manual checklist](manual-checklist.md#github-login) runs it before a stable release.
+The offline tests run no real `gh` and contact no GitHub server, so a working device login, a private clone, and a push are proven only by this check. Run it once for each change to the workflow, on a real sandbox with a browser and an account that can push to a private test repository; the [manual checklist](manual-checklist.md#github-login) runs it before a stable release.
 
 1. Use a new, clean test sandbox; `gh auth logout` does not undo Git helper entries, so an earlier login leaves it unclean. Run `sandboxed-agents integrations login agent01 github`, wait for the code, and press Ctrl+C. Confirm the status is non-zero and that, in `shell agent01`, `gh auth status` reports no login. Note any `git config --global --get-regexp '^credential\.'` entries; a cancelled login may leave some.
 2. Run the command again and complete the device flow in your browser. Confirm it exits zero and prints no error.
@@ -152,7 +152,7 @@ The Azure CLI keeps its configuration and its token cache under `/home/agent/.az
 
 ### Manual Azure login check
 
-The offline tests run no real `az`, open no tunnel, and contact no Microsoft server, so a working login is proven only by this check, run on a real sandbox built with the `azure` toolchain, with a browser and an Azure account that can select a subscription. Steps 6 and 7 need an installed SSH setup. The [manual checklist](manual-checklist.md#azure-login-device-code) runs it before a stable release.
+The offline tests run no real `az`, open no tunnel, and contact no Microsoft server, so a working login is proven only by this check. Run it once for each change to the workflows, on a real sandbox built with the `azure` toolchain, with a browser and an Azure account that can select a subscription; steps 6 and 7 need an installed SSH setup. The [manual checklist](manual-checklist.md#azure-login-device-code) runs it before a stable release.
 
 1. Use a new, clean test sandbox. Run `sandboxed-agents integrations login agent01 azure device-code`, wait for the code, and press Ctrl+C. Confirm the status is non-zero, that no account was printed, and that, in `shell agent01`, `az account show` reports no login.
 2. Run the command again and complete the device flow in your browser. Confirm it exits zero and ends by printing the selected account and subscription.
@@ -220,7 +220,7 @@ The only credential in play is the PAT you supply on standard input. It is store
 
 ### Manual Azure DevOps login check
 
-The offline tests run real Git against a stub `az` and contact no Azure DevOps server: after the login, `git credential fill` resolves the stored token for `https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO` with and without an `ORGANIZATION@` user prefix, and a repository-level helper is never called. A live private clone and an `az devops` query are proven only by this check, run on a real sandbox built with `--with azure`, with a PAT that has `Code (Read)` and `Project and Team (Read)` for an organization holding a private test repository. The [manual checklist](manual-checklist.md#azure-devops-token) runs it before a stable release.
+The offline tests run real Git against a stub `az` and contact no Azure DevOps server: after the login, `git credential fill` resolves the stored token for `https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO` with and without an `ORGANIZATION@` user prefix, and a repository-level helper is never called. A live private clone and an `az devops` query are proven only by this check. Run it once for each change to the workflow, on a real sandbox built with `--with azure`, with a PAT that has `Code (Read)` and `Project and Team (Read)` for an organization holding a private test repository; the [manual checklist](manual-checklist.md#azure-devops-token) runs it before a stable release.
 
 1. In a new sandbox, confirm in `shell agent01` that `az devops --help` works and `git config --global --get-regexp '^credential\.'` prints nothing.
 2. Run the command with `</dev/null`. Confirm it fails with a token message, exits non-zero, and left no `credential.` entries.
