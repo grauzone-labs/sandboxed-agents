@@ -1,6 +1,6 @@
 # Command reference
 
-This page lists every command and option of `sandboxed-agents`, the exit status rule, the order in which a command checks its preconditions, and the way the executable treats objects it does not own. The topic pages named under [More documentation](#more-documentation) give the detail behind each area.
+This page gives you every command and option of `sandboxed-agents`, the exit status rule, the order in which a command checks its preconditions, and the way the executable treats objects it does not own. Each area links to the topic page with the detail behind it.
 
 Terms such as sandbox, workspace, agent, integration, toolchain, image, controller group, and owner are defined in [`CONTEXT.md`](../CONTEXT.md). Architecture decisions are recorded in [`docs/adr/`](adr/0004-command-first-cli-grammar.md).
 
@@ -168,16 +168,8 @@ Loopback ports belong to the host, not to a controller group. Port allocation re
 
 ## Limitation: old images stay
 
-No command of the first version removes an image. Old images accumulate in Podman's storage after `build` and after new executable versions. Remove unused ones yourself, for example with `podman image prune`, which cannot remove an image that a sandbox still uses. See [Images](images.md#no-image-removal).
+No command of the first version removes an image; remove unused ones yourself with Podman ([images](images.md#no-image-removal)).
 
 ## More documentation
 
-- [README](../README.md) and the quick guides for [Linux](quick-guide-linux.md) and [Windows](quick-guide-windows.md)
-- [Host prerequisites](host-prerequisites.md)
-- [Images](images.md): toolchains, builds, and updates
-- [SSH access](ssh.md)
-- [Agents](agents.md)
-- [Integrations](integrations.md)
-- [Releases](releases.md), [npm package](npm-package.md), and [NuGet package](nuget-package.md)
-- [Security policy](../SECURITY.md)
-- [Manual checklist](manual-checklist.md)
+The [README](../README.md#documentation) lists every page: the quick guides, the topic pages behind each command area, the release and package pages, the manual checklist, and the security policy.
