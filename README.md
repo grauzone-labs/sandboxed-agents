@@ -27,7 +27,7 @@ Follow a quick guide from installation to a signed-in agent session:
 - [Linux quick guide](docs/quick-guide-linux.md)
 - [Windows quick guide](docs/quick-guide-windows.md)
 
-Install methods: the downloaded binary (both quick guides show download, checksum comparison, attestation verification, and placing the binary on `PATH`), the [npm package](docs/npm-package.md), and on Windows the [NuGet package](docs/nuget-package.md). Installing, upgrading, or removing the executable never calls Podman and never touches sandboxes, SSH configuration, or sandbox data. [Releases](docs/releases.md) lists the release files, how to verify one, and which releases exist.
+Install methods: the downloaded binary (both quick guides show download, checksum comparison, attestation verification, and placing the binary on `PATH`), the [npm package](docs/npm-package.md), and on Windows the [NuGet package](docs/nuget-package.md). [Releases](docs/releases.md) lists the release files, how to verify one, which releases exist, and what installing never touches.
 
 ## Documentation
 

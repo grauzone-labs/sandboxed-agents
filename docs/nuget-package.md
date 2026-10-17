@@ -4,7 +4,7 @@ This page tells you how to install, upgrade, and remove the `sandboxed-agents` c
 
 ## Where the package comes from
 
-Every release carries `SandboxedAgents.X.Y.Z.nupkg` among its [release files](releases.md#release-files); which releases exist, and which of them the NuGet registry holds, is stated on the [releases page](releases.md#status). The package is a command package, not a library: nothing references it as a dependency.
+Every release carries `SandboxedAgents.X.Y.Z.nupkg` among its [release files](releases.md#release-files); the [releases page](releases.md#versions) says which kind of release the NuGet registry also holds. The package is a command package, not a library: nothing references it as a dependency.
 
 ## Install
 
@@ -70,6 +70,4 @@ It deletes `sandboxed-agents.exe` and deletes the install directory if that leav
 
 Removing the command does not delete the extracted package directory. Delete that yourself.
 
-## What installing, upgrading, and removing touch
-
-The scripts never call Podman and never touch sandboxes, SSH configuration, or sandbox data. They change only the install directory and, unless `-NoPathUpdate` is given, the user `PATH`.
+The scripts change only the install directory and, unless `-NoPathUpdate` is given, the user `PATH`; what installing never touches is stated under [Installing](releases.md#installing).
