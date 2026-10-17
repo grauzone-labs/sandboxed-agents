@@ -39,7 +39,8 @@ gh attestation verify FILE --repo grauzone-labs/sandboxed-agents
 - A **preview** is a maintainer test build, tagged `vX.Y.Z-preview.YYYYMMDD.N` (for example `v1.0.0-preview.20261101.1`) and published as a GitHub prerelease. It is **not** published to the npm or NuGet registry; install it from its release files.
 - A **stable release** is tagged `vX.Y.Z` on the same commit as a validated preview and published as a GitHub release, as `sandboxed-agents` on npm, and as `SandboxedAgents` on NuGet. Version 1.0.0 is the first one.
 - The stable release is rebuilt from the validated commit. Only the version string differs from the preview binaries; the release checks that `version` prints the same asset hash for both.
-- Release notes are committed per version, before the preview tag, and belong to the validated commit.
+- Release notes are committed per version in `docs/release-notes/X.Y.Z.md`, before the preview tag, and belong to the validated commit. A preview uses the notes of its base version `X.Y.Z`. The notes of version 1.0.0 are [`release-notes/1.0.0.md`](release-notes/1.0.0.md); they state what the version contains and no gate result.
+- Previews and stable releases are made by one workflow, `.github/workflows/release.yml`, which runs when a tag matching `v*` is pushed. [Publishing a stable release](maintainers.md#publishing-a-stable-release) in the maintainer notes records what it relies on and how a maintainer recovers an interrupted publication.
 
 ## Gates
 
@@ -99,7 +100,13 @@ On a stable tag, the release workflow checks that:
 - the offline suite is green on the commit;
 - the asset hash printed by `version` is the same for the preview and the stable binaries.
 
-When a check fails, the workflow fails with a message that names the missing preview, file, or gate, and publishes nothing. The decision logic is covered by offline tests without network or credentials; publication itself is observed on a real stable release and recorded as such, never as an offline result.
+When a check fails, the workflow fails with a message that names the missing preview, file, or gate, and publishes nothing, neither a GitHub release nor a registry package. The decision logic is covered by offline tests without network or credentials; publication itself is observed on a real stable release and recorded as such, never as an offline result.
+
+### Stable release publication
+
+When the check passes, the workflow rebuilds the tagged commit, attests all five release files, and publishes them as a GitHub release that is not a prerelease. The same run publishes the npm package as `sandboxed-agents` and the NuGet package as `SandboxedAgents` through trusted publishing: the run identifies itself to each registry by OIDC and receives a short-lived token, so the repository holds no long-lived registry token. The text of the GitHub release states, for the offline suite, the live suite on Linux, the live suite on Windows 11, and the manual checklist, the commit each passed on. A preview tag runs the same build and attestation and ends in a GitHub prerelease; it publishes to neither registry.
+
+The release files, the trusted publisher settings, the tag ruleset that keeps `v*` tags from being created by others, moved, or deleted, and the recovery from an interrupted publication are described for maintainers in [Publishing a stable release](maintainers.md#publishing-a-stable-release).
 
 ## Installing
 
