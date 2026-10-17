@@ -1,8 +1,6 @@
 # Agents
 
-Agents are the coding CLIs of the agent catalog. The catalog names four: `copilot`, `claude`, `codex`, and `opencode`. A sandbox installs an agent into its home data and enables it there. The agents enabled in a sandbox, each with its pin if it has one, are the sandbox's agent selection.
-
-This page covers installing, pinning, updating, and removing agents, signing in to an agent, running an agent once, and keeping an agent running in an agent session.
+This page shows you how to enable, pin, update, and disable an agent in a sandbox, sign in to it, run it once, and keep it running in an agent session you can detach from. Agents are the coding CLIs of the agent catalog: `copilot`, `claude`, `codex`, and `opencode`. A sandbox installs an agent into its home data and enables it there; the agents enabled in a sandbox, each with its pin if it has one, are the sandbox's agent selection.
 
 ## Requirements
 
@@ -186,14 +184,8 @@ sandboxed-agents list
 
 ## Limits
 
-`agents login` runs only the workflows the catalog records; it cannot pass options to an agent's login command. Use `agents run NAME AGENT ...` to start any other command of the agent, including other authentication commands, but `agents run` does not guard a running session or take the manager lock.
-
-No delivered agent has a status probe, so `agents status` cannot tell whether an agent is signed in.
-
-The sandbox publishes no port beyond SSH, so a login that waits for a browser callback inside the sandbox needs a port forward over SSH.
-
-Installation changes are not crash-consistent. `--force` repairs a missing or mismatched managed command link as described under [Recover from an interrupted change](#recover-from-an-interrupted-change), but the manager has no complete recovery protocol for interrupted changes.
-
-The base image now runs sshd as the container's main process ([#49](https://github.com/grauzone-labs/sandboxed-agents/issues/49)), ships the manager, and has the `agent` account, so the image no longer rules these commands out. The manager places the key that SSH setup installs in `/etc/ssh/authorized_keys`, the file the server accepts logins from. The server's configuration and policy are described in [images](images.md#ssh-server). Linux and Windows runs of the live image suite on 2026-10-15 started that image in live containers with root sshd as PID 1, completed an unauthenticated SSH key exchange against it, and ran its smoke checks as `agent` through a Podman `exec`; the record is in [images](images.md#live-proof). Those runs installed no agent and ran no `agents` command, and no host has yet logged in over SSH as `agent`. This page describes the intended behaviour of the commands; it has not been verified against a live sandbox.
-
-Real agent logins, runs, and sessions in a live Podman sandbox are unverified. The tests replace Podman, npm, and the agents with injected processes and never contact a provider. One optional test runs the session commands against a local tmux with a dummy agent when `tmux` is installed on the test host; it only shows that a detached host process survives its caller and ends with its agent, not that a login works or that a session survives detaching inside a sandbox. The live suite's `agent` case ([releases](releases.md#live-suite)) enables `opencode` in a live sandbox through npm, starts its session through a pseudo-terminal, detaches, and checks the session, its stop, and the disable through `agents status`; no run of it is recorded yet, so it proves nothing until a recorded live run exists. Logins stay with the manual checklist, which belongs to distribution and release verification, not to this page.
+- `agents login` runs only the workflows the catalog records; it cannot pass options to an agent's login command. Use `agents run NAME AGENT ...` to start any other command of the agent, including other authentication commands, but `agents run` does not guard a running session or take the manager lock.
+- No delivered agent has a status probe, so `agents status` cannot tell whether an agent is signed in.
+- The sandbox publishes no port beyond SSH, so a login that waits for a browser callback inside the sandbox needs a port forward over SSH ([SSH access](ssh.md)).
+- Installation changes are not crash-consistent. `--force` repairs a missing or mismatched managed command link as described under [Recover from an interrupted change](#recover-from-an-interrupted-change), but the manager has no complete recovery protocol for interrupted changes.
+- Sign-ins are checked by hand only: the live suite enables an agent, starts, detaches, and stops its session, but signs in nowhere ([releases](releases.md#live-suite)), and the logins are items of the [manual checklist](manual-checklist.md).

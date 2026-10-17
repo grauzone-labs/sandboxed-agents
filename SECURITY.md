@@ -1,12 +1,10 @@
 # Security policy
 
-This policy states what `sandboxed-agents` protects against, which Podman options every sandbox is created with, and where its protection ends. It states the limits as plainly as the protections.
-
-Nothing here has been proven by a manual or live check unless the page says so. The offline test suite checks that `SECURITY.md` names every option that `up` passes to Podman create; it does not prove that the options isolate anything on a real host. Evidence from manual and live runs is described in the [manual checklist](docs/manual-checklist.md) and the [releases page](docs/releases.md), and no stable release exists yet.
+This policy tells you how to report a vulnerability, what `sandboxed-agents` protects against, which Podman options every sandbox is created with, and where its protection ends. The limits are stated as plainly as the protections.
 
 ## Reporting a vulnerability
 
-GitHub private vulnerability reporting is not enabled on `grauzone-labs/sandboxed-agents`, so there is no private form on the repository today. Do not put exploit details, account names, or credentials into a public issue. Open an issue in the repository that only asks for a private contact for a security report, with no description of the flaw. Report the details once a private channel exists.
+GitHub private vulnerability reporting is not enabled on `grauzone-labs/sandboxed-agents`, so the repository has no private form. Do not put exploit details, account names, or credentials into a public issue. Open an issue that only asks for a private contact for a security report, with no description of the flaw, and report the details once a private channel exists.
 
 When you report, include the version from `sandboxed-agents version`, your platform, and the steps to reproduce.
 
@@ -35,7 +33,7 @@ It is **not** built against code that actively tries to escape. A sandbox shares
 | `--publish` | `127.0.0.1:PORT:22/tcp` | The only published port: SSH, on host loopback. The default port is the first free one from 2222 upward. |
 | `--mount` | one `/workspace` mount, one volume at `/home/agent`, one volume at `/etc/ssh` | The only mounts. See [Mounts](#mounts). |
 
-The resource limits are enforced by cgroups v2 with delegated controllers, which the preflight checks. The command reference lists the accepted value ranges.
+The resource limits are enforced by cgroups v2 with delegated controllers, which the preflight checks. The [command reference](docs/command-reference.md#lifecycle-commands) lists the accepted value ranges.
 
 ### Users and root
 
@@ -53,8 +51,8 @@ Only SSH is published, and only on `127.0.0.1`. Other computers on your network 
 
 ## Limits
 
-- **Shared kernel.** The sandbox is a container, and a container shares the kernel of the system it runs on. On Linux that is the host's own kernel. On Windows 11 it is the kernel of the WSL2 machine that Podman runs in, which all sandboxes on that machine share, not a kernel dedicated to one sandbox; the WSL2 virtual machine sits between the sandbox and Windows, but it still belongs to your account and is not a boundary between sandboxes. A kernel or container-runtime vulnerability can break out of a sandbox, so this is weaker isolation than a dedicated virtual machine.
-- **Outbound networking is open.** The first version has no egress control and no network allowlist. An agent can send anything it can read to any server it can reach, including the files of its workspace and the credentials in its home data.
+- **Shared kernel.** A container shares the kernel of the system it runs on. On Linux that is the host's own kernel. On Windows 11 it is the kernel of the WSL2 machine that Podman runs in, which all sandboxes on that machine share; the WSL2 virtual machine sits between the sandbox and Windows, but it belongs to your account and is not a boundary between sandboxes. A kernel or container-runtime vulnerability can break out of a sandbox, so this is weaker isolation than a dedicated virtual machine.
+- **Outbound networking is open.** There is no egress control and no network allowlist. An agent can send anything it can read to any server it can reach, including the files of its workspace and the credentials in its home data.
 - **Agents in one sandbox share everything.** They share the user `agent`, the home data, the credentials, and the workspace. Separation means separate sandboxes. A login of one agent, a GitHub or Azure login, and the Git credential file are readable by every agent in the same sandbox.
 - **Credentials are stored in plaintext in the home volume.** The Git `credential-store` helper writes `/home/agent/.git-credentials` as plaintext. Credentials survive `update` and are removed only by `remove NAME --volumes`.
 - **The workspace is writable by the agent.** A host directory bound as workspace can be changed or deleted by an agent. Commit or back up work you care about.
@@ -66,8 +64,8 @@ Only SSH is published, and only on `127.0.0.1`. Other computers on your network 
 - **The lifecycle lock coordinates, it does not protect.** It serializes `up`, `start`, `stop`, `restart`, `remove`, `update`, and the SSH setup mutations of one sandbox, for the same host user and the same host state root ([ADR 0007](docs/adr/0007-serialize-sandbox-lifecycle-commands.md)). It does not hold back other host users, commands that use a different host state root, or your own direct `podman` calls and scripts. Anyone with your Podman authority can change a sandbox while a command runs.
 - **Owner conflicts are reported, not repaired.** The executable never touches an object it cannot prove to be its own, but this protects against name collisions, not against another user of your Podman.
 - **Podman is trusted.** The executable calls the Podman on your `PATH` (on Windows, the Podman machine chosen by the executable) and trusts what it reports.
-- **Checksums prove the file, not the author.** The `SHA256SUMS` in a download or package detect corruption. [Build provenance attestations](docs/releases.md#verify-a-download) show where a release file was built, and only for files published by a release process that creates them.
+- **Checksums prove the file, not the author.** The `SHA256SUMS` in a download or package detect corruption. [Build provenance attestations](docs/releases.md#verify-a-download) show where a release file was built.
 
-## What was and was not verified
+## What proves these statements
 
-The offline tests replace Podman, SSH, and the agents with fakes. They show that the executable passes the options above and refuses what it should; they do not show that Podman, the kernel, or the network enforce them. The live and manual checks that exercise a real host are listed in the [manual checklist](docs/manual-checklist.md), and a check counts only when a record exists for it.
+The offline test suite checks that this page names every option `up` passes to Podman create, with Podman replaced by a fake; it does not show that Podman, the kernel, or the network enforce the options on a real host. That is the job of the [live suite and the manual checklist](docs/releases.md#gates), and a check counts only when a record exists for it.

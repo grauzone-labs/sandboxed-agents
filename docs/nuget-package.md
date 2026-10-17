@@ -1,10 +1,10 @@
 # NuGet command package
 
-This document describes how to install the `sandboxed-agents` command on Windows from the `SandboxedAgents` NuGet package, and how to upgrade and remove it. The package carries the Windows AMD64 executable, its `SHA256SUMS` manifest, and PowerShell 7 install and remove scripts under `tools/`.
+This page tells you how to install, upgrade, and remove the `sandboxed-agents` command on Windows from the `SandboxedAgents` NuGet package. The package carries the Windows AMD64 executable, its `SHA256SUMS` manifest, and PowerShell 7 install and remove scripts under `tools/`.
 
-## Publication status
+## Where the package comes from
 
-`bash scripts/release.sh VERSION OUTPUT_DIRECTORY` builds `SandboxedAgents.VERSION.nupkg` and `SHA256SUMS` next to the executables, as described in [Images](images.md). It does not publish anything. Publishing the package to a NuGet registry is a separate release step. Until a version is published, take the `.nupkg` from the release output directory and extract it yourself, as in the second step below.
+A stable release is published to the NuGet registry as `SandboxedAgents`, and every release, preview or stable, carries `SandboxedAgents.X.Y.Z.nupkg` among its [release files](releases.md#release-files). Previews are not published to the registry; install a preview from its `.nupkg`. The package is a command package, not a library: nothing references it as a dependency.
 
 ## Install
 
@@ -21,18 +21,18 @@ You need Windows x64 and PowerShell 7 (`pwsh`). The scripts refuse to run on an 
    ```powershell
    $tools = 'C:\Temp\sandboxed-agents-package\SandboxedAgents.1.2.3\tools'
    ```
-2. For a local `.nupkg`, which is a zip archive, extract it to an empty directory and use its `tools` directory. If you extract it to `C:\Temp\sandboxed-agents-local`, the scripts are in:
+2. For a downloaded `.nupkg`, which is a zip archive, extract it to an empty directory and use its `tools` directory. If you extract it to `C:\Temp\sandboxed-agents-local`, the scripts are in:
 
    ```powershell
    $tools = 'C:\Temp\sandboxed-agents-local\tools'
    ```
 
-   If the `.nupkg` was downloaded, unblock the package scripts first. This needs no administrator rights; run it in PowerShell 7 before running the scripts:
+   Unblock the downloaded scripts first. This needs no administrator rights; run it in PowerShell 7 before running the scripts:
 
    ```powershell
    Get-ChildItem -LiteralPath $tools -Filter *.ps1 | Unblock-File
    ```
-3. Run the installer from the `tools` directory with PowerShell 7, using the `$tools` path from the step above:
+3. Run the installer with PowerShell 7, using the `$tools` path from the step above:
 
    ```powershell
    pwsh -File "$tools\install-command.ps1"
@@ -51,9 +51,9 @@ sandboxed-agents version
 
 ## Upgrade
 
-The package has no separate upgrade step. Get the newer package as above and run `pwsh -File "$tools\install-command.ps1"` again, with `$tools` pointing at the newer package. It replaces `sandboxed-agents.exe` in the install directory and leaves an existing `PATH` entry unchanged. If you installed with `-InstallDirectory`, pass the same directory again. Otherwise the new version goes to the default destination and the old one stays where it was.
+The package has no separate upgrade step. Get the newer package as above and run `pwsh -File "$tools\install-command.ps1"` again, with `$tools` pointing at the newer package. It replaces `sandboxed-agents.exe` in the install directory and leaves an existing `PATH` entry unchanged. If you installed with `-InstallDirectory`, pass the same directory again; otherwise the new version goes to the default destination and the old one stays where it was.
 
-Close any running `sandboxed-agents.exe` process before rerunning the installer. Windows cannot replace an executable that is in use, so the installer fails if the old one is still running. A failed replacement leaves the previous executable intact. Close the process and run the installer again.
+Close any running `sandboxed-agents.exe` process before rerunning the installer. Windows cannot replace an executable that is in use, so the installer fails if the old one is still running, and a failed replacement leaves the previous executable intact. Close the process and run the installer again.
 
 ## Remove
 
@@ -69,3 +69,7 @@ It deletes `sandboxed-agents.exe` and deletes the install directory if that leav
 - **`-NoPathUpdate`.** Removal leaves `PATH` untouched and does not delete the state file. If the installer had added a `PATH` entry, the state file stays in the install directory, so that directory can remain even though `sandboxed-agents.exe` is gone.
 
 Removing the command does not delete the extracted package directory. Delete that yourself.
+
+## What installing, upgrading, and removing touch
+
+The scripts never call Podman and never touch sandboxes, SSH configuration, or sandbox data. They change only the install directory and, unless `-NoPathUpdate` is given, the user `PATH`.

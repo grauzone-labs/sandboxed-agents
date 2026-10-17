@@ -1,8 +1,8 @@
 # Manual checklist
 
-This checklist covers what no automated suite can reach: real logins with real accounts, a real editor, installs on clean machines, the quick guides followed by a person, and behavior that spans several features on a real host. It is the third release gate ([Releases](releases.md#gates)). Each item states what to do and what to observe.
+This checklist is what you run by hand on a preview before a stable release: real logins with real accounts, a real editor, installs on clean machines, the quick guides followed by a person, and behavior that spans several features on a real host. It is the third release gate ([Releases](releases.md#gates)). Each item states what to do and what to observe, and the run ends in one record uploaded to the preview.
 
-**Nothing in this document has been run.** No manual run is recorded in the repository, no preview exists to run it on, and so no item counts as passed. The steps and expected observations come from the documented behavior of the executable and its offline tests. If an observation differs, the item fails and the defect is filed as its own issue.
+An item counts as passed only when a record of a run on the commit under test says so. The steps and expected observations come from the documented behavior of the executable. If an observation differs, the item fails and the defect is filed as its own issue.
 
 ## Manual checks and release evidence are different things
 
@@ -429,7 +429,7 @@ Export the dedicated group before the first `sandboxed-agents` command of the gu
 
 ### npm install on a clean machine
 
-Identifier `npm-install-clean`. Use a machine on which `sandboxed-agents` has never been installed, with Node.js 18 or newer, Podman, and OpenSSH. Download `sandboxed-agents-VERSION.tgz` from the preview prerelease. The npm registry holds no package from this repository, so the install uses the file ([npm package](npm-package.md#install)). Use the contained npm commands of [the install check](#installers-issue-no-podman-call) (Windows) or of its [Linux supplement](#optional-supplemental-linux-snapshots), so that npm writes its prefix, cache, temporary files, and logs only under the install root.
+Identifier `npm-install-clean`. Use a machine on which `sandboxed-agents` has never been installed, with Node.js 18 or newer, Podman, and OpenSSH. Download `sandboxed-agents-VERSION.tgz` from the preview prerelease; a preview is never published to the registry, so the install uses the file ([npm package](npm-package.md#install)). Use the contained npm commands of [the install check](#installers-issue-no-podman-call) (Windows) or of its [Linux supplement](#optional-supplemental-linux-snapshots), so that npm writes its prefix, cache, temporary files, and logs only under the install root.
 
 1. Install the tarball with the contained commands.
 2. Run the installed command: `sandboxed-agents version`, `sandboxed-agents check`, and `sandboxed-agents list`.
@@ -682,7 +682,7 @@ Identifier `no-image-removal`. Compare the images before and after the one `buil
 
 ### Release files and attestations
 
-Identifier `preview-attestation`. This item needs a **tagged preview** and fails while none exists, or while the release process does not produce attestations. No workflow in the repository publishes releases or attestations yet ([Releases](releases.md#status)).
+Identifier `preview-attestation`. This item needs a **tagged preview** and fails while none exists, or while the release process does not produce attestations ([Releases](releases.md#release-files)).
 
 1. `gh release view TAG --repo grauzone-labs/sandboxed-agents --json assets --jq '.assets[].name'` for the preview tag `TAG`.
 2. Download every file of the list and, for each, run `gh attestation verify FILE --repo grauzone-labs/sandboxed-agents`.
