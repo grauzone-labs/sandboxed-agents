@@ -1,36 +1,30 @@
 # Quick guide: Linux
 
-This guide takes you from a clean Linux machine to a signed-in agent running in a sandbox. It uses the downloaded binary, which needs only Podman and OpenSSH on the host. For another install method see the [npm package](npm-package.md).
+**Goal:** a signed-in agent running in a sandbox on your Linux machine, installed from the downloaded binary. **Expected duration:** 30 to 60 minutes, most of it the image build in step 6, which runs unattended. The [npm package](npm-package.md) is the other install method; what a sandbox protects and what it does not is in the [security policy](../SECURITY.md).
 
-It was written from the project's design and tests. Whether a new user can follow it on a clean machine without other documentation is item `quick-guide-linux` of the [manual checklist](manual-checklist.md), and no recorded run exists yet.
+## Prerequisites
 
-## Before you start
+Check each item in a terminal before you start. `sandboxed-agents` never runs with `sudo` and never installs or configures Podman or OpenSSH for you.
 
-You need:
-
-- Linux on amd64 and a user account without `sudo` for everything below. `sandboxed-agents` never runs with `sudo` and never installs or configures Podman for you.
-- Rootless Podman 4.4.0 or newer, with cgroups v2, subordinate UID and GID ranges (`newuidmap`, `newgidmap`), and `pasta`. [Host prerequisites](host-prerequisites.md) gives the reasons and the exact floors.
-- OpenSSH: `ssh` and `ssh-keygen`.
-- `curl` and `sha256sum`, to download and check the file.
-- Optional: the GitHub CLI, `gh`, to verify the build attestation. See [Releases](releases.md#verify-a-download). Without it, step 3 compares checksums only.
-
-Check Podman first:
-
-```text
-podman --version
-```
+- [ ] **Linux on amd64**, with a user account that needs no `sudo` for anything below. Check: `uname -m` prints `x86_64`.
+- [ ] **Rootless Podman 4.4.0 or newer**, with cgroups v2, subordinate ID ranges, and `pasta` ([host prerequisites](host-prerequisites.md#linux-amd64)). Check: `podman --version` prints `4.4.0` or higher.
+- [ ] **OpenSSH client.** Check: `command -v ssh ssh-keygen` prints two paths.
+- [ ] **curl and sha256sum.** Check: `command -v curl sha256sum` prints two paths.
+- [ ] **Optional: the GitHub CLI**, to verify the build attestation ([releases](releases.md#verify-a-download)). Check: `gh attestation verify --help` prints the command's help.
 
 ## 1. Choose a release tag
 
-A release is identified by its tag. The tag names below are placeholders: open the [releases page](https://github.com/grauzone-labs/sandboxed-agents/releases) of `grauzone-labs/sandboxed-agents` and use the tag of a release that is there. A preview tag looks like `v1.0.0-preview.YYYYMMDD.N`, and a stable tag like `v1.0.0`. This guide does not claim that any particular release exists; see [Releases](releases.md#status) for the current state. Put the tag you chose in a variable, replacing the placeholder:
+Open the [releases page](https://github.com/grauzone-labs/sandboxed-agents/releases) of `grauzone-labs/sandboxed-agents` and take the tag of a release that is listed there; the tag below is a placeholder ([releases](releases.md#status)). Put it in a variable:
 
 ```text
 TAG=v1.0.0-preview.YYYYMMDD.N
 ```
 
+**Expected:** `echo "$TAG"` prints the tag you chose.
+
 ## 2. Download
 
-Download the Linux binary and the checksum file into a directory that does not exist yet. The command below stops at the first problem: it refuses a directory that is already there, and it does not start the next download after a failed one.
+Download the Linux binary and the checksum file into a new directory. The command stops at the first problem and refuses a directory that already exists.
 
 ```text
 test -n "$TAG" && \
@@ -40,30 +34,27 @@ curl -fLO "https://github.com/grauzone-labs/sandboxed-agents/releases/download/$
 curl -fLO "https://github.com/grauzone-labs/sandboxed-agents/releases/download/$TAG/SHA256SUMS"
 ```
 
-If any part fails (the tag is not set, the directory already exists, or either download fails), **stop**. Do not go on to step 3, and do not use the files that are there. Open a new terminal, set `TAG` again, and run the command again with a different, unused directory name, for example `~/sandboxed-agents-download-2` in both places. Never reuse a directory from a failed attempt, because the checksum check in step 3 could then look at old files.
+**Expected:** both downloads finish without an error, and `ls` shows `sandboxed-agents-linux-amd64` and `SHA256SUMS`.
+
+**If it fails:** do not use the files that are there. Open a new terminal, set `TAG` again, and run the command with an unused directory name, for example `~/sandboxed-agents-download-2` in both places.
 
 ## 3. Verify
 
-Compare the checksum. `SHA256SUMS` also lists the Windows binary, so the command ignores lines for files you did not download:
+Compare the checksum, then verify the build attestation of both files. `SHA256SUMS` also lists the Windows binary, so the first command ignores files you did not download; without `gh`, run the first command only ([releases](releases.md#verify-a-download)).
 
 ```text
 sha256sum --check --ignore-missing SHA256SUMS
-```
-
-It must print `sandboxed-agents-linux-amd64: OK`. A checksum shows that the file matches the checksum file. It does not show who built it.
-
-If you have `gh`, also verify the build attestation of both files. The command must report a successful verification:
-
-```text
 gh attestation verify sandboxed-agents-linux-amd64 --repo grauzone-labs/sandboxed-agents
 gh attestation verify SHA256SUMS --repo grauzone-labs/sandboxed-agents
 ```
 
-Stop here if either check fails, and do not run the file.
+**Expected:** `sandboxed-agents-linux-amd64: OK`, and each `gh` command reports a successful verification.
+
+> **Warning:** if the checksum or an attestation check fails, do not run the file. Delete the download directory and start again at step 2 with a new directory name.
 
 ## 4. Install
 
-Put the binary in a directory on your `PATH`. The `export` below changes `PATH` for the current terminal only. If `~/.local/bin` is not on your `PATH` in new terminals, add the same `export` line to your shell profile (for example `~/.profile` or `~/.bashrc`) yourself; the executable never edits your profile.
+Put the binary on your `PATH`. The `export` line applies to the current terminal only; for new terminals, add the same line to your shell profile (`~/.profile` or `~/.bashrc`) yourself, because the executable never edits it. Do not use a directory you plan to bind as a workspace: a workspace that contains the executable is refused.
 
 ```text
 mkdir -p ~/.local/bin
@@ -71,101 +62,77 @@ install -m 0755 sandboxed-agents-linux-amd64 ~/.local/bin/sandboxed-agents
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Do not install it into a directory you plan to use as a sandbox workspace: a workspace that contains the executable is refused.
+**Expected:** `command -v sandboxed-agents` prints `$HOME/.local/bin/sandboxed-agents` with your home directory filled in.
 
 ## 5. Check the host
+
+Both commands only read your host and change nothing.
 
 ```text
 sandboxed-agents version
 sandboxed-agents check
 ```
 
-`version` prints the version and an `asset-sha256` line. `check` reports every missing host prerequisite and exits non-zero when one is missing. Fix those with your distribution's tools and run it again; the executable only reads your host.
+**Expected:** `version` prints the version and an `asset-sha256` line; `check` prints `host prerequisites satisfied`.
+
+**If it fails:** `check` names each missing prerequisite. Fix it with your distribution's tools ([host prerequisites](host-prerequisites.md#linux-amd64)) and run `sandboxed-agents check` again.
 
 ## 6. Create a sandbox
 
+The first `up` builds the base image, which takes a while and needs network access. It creates the sandbox `agent01` with a workspace volume of its own, starts it, and publishes SSH on `127.0.0.1` only. Toolchains (`--with`) and a host directory as the workspace are options described in [Images](images.md#toolchains) and the [command reference](command-reference.md#lifecycle-commands).
+
 ```text
 sandboxed-agents up agent01
-```
-
-The first `up` builds the base image, which takes a while and needs network access. It creates the sandbox `agent01` with a workspace volume of its own, starts it, and publishes SSH on `127.0.0.1` only. Choose toolchains with `--with`, for example `--with dotnet`; the [command reference](command-reference.md) lists them. To use an existing host directory as the workspace instead, give `up` that directory as a second argument.
-
-```text
 sandboxed-agents list
 ```
 
+**Expected:** `up` ends with `sandbox agent01 is running`, and `list` shows `agent01` in state `running`.
+
+**If it fails:** the output names the cause. Fix it and run `sandboxed-agents up agent01` again.
+
 ## 7. Enable an agent
 
-The agents are `copilot`, `claude`, `codex`, and `opencode`. This guide uses `claude`:
+The agents are `copilot`, `claude`, `codex`, and `opencode`; this guide uses `claude`. `enable` installs the agent into the sandbox with npm, so the sandbox needs network access ([agents](agents.md#enable-an-agent)).
 
 ```text
 sandboxed-agents agents enable agent01 claude
 sandboxed-agents agents status agent01 claude
 ```
 
-`enable` installs the agent into the sandbox with npm, so the sandbox needs network access. You can also pass `--agents claude` to `up`.
+**Expected:** `enable` prints `claude enabled: version ...`, and `status` prints `claude: enabled; version ...; pin none; session false; signed in unknown`.
+
+**If it fails:** the output names the failed agent and the command to retry. Check that the sandbox has network access, then run it.
 
 ## 8. Sign in
+
+The command needs an interactive terminal. It prints a URL; open it in a browser on your machine, sign in, and follow the agent's prompts, because the sandbox has no browser. The login is stored in the sandbox's home data and survives `stop`, `start`, and `update` ([agents](agents.md#sign-in-to-an-agent) lists the workflows of the other agents).
 
 ```text
 sandboxed-agents agents login agent01 claude
 ```
 
-The command needs an interactive terminal. It prints a URL; open it in a browser on your machine, sign in, and follow the agent's prompts. The sandbox has no browser and publishes nothing but SSH. The login is stored in the sandbox's home volume and survives `stop`, `start`, and `update`. [Agents](agents.md#sign-in-to-an-agent) lists the login workflows of the other agents.
+**Expected:** the agent confirms the sign-in, and the command exits without `agents login failed`.
+
+**If it fails:** the command prints `agents login failed` after the agent's own output. Read that output, then run the command again.
 
 ## 9. Start an agent session
+
+This attaches to a persistent terminal session running the agent in `/workspace`. Detach with `Ctrl+b` then `d`; the agent keeps running, and the same command reattaches. The session ends when the agent exits ([agents](agents.md#keep-an-agent-running-in-a-session)).
 
 ```text
 sandboxed-agents agents session agent01 claude
 ```
 
-This attaches to a persistent terminal session running the agent in `/workspace`. Detach with `Ctrl+b` then `d`; the agent keeps running. Run the same command to reattach. The session ends when the agent exits.
+**Expected:** the agent's prompt appears and answers without asking you to sign in. You have reached a signed-in agent session.
 
-You have now reached a signed-in agent session.
+**If it fails:** the output names what is missing: `start agent01` for a stopped sandbox, `agents enable agent01 claude` for an agent that is not enabled, or an interactive terminal.
 
-## Afterwards
+## Next steps
 
-Set your Git identity for commits in the sandbox, with your own name and email:
+- **Git identity.** Set your name and email for commits in the sandbox: `sandboxed-agents integrations config agent01 git identity --name "A Person" --email "a@example.com"` ([integrations](integrations.md#commit-identity)).
+- **SSH setup for an editor.** `sandboxed-agents ssh-config agent01 --install` creates a dedicated key and a host entry, which VS Code Remote SSH and other desktop UIs use ([SSH access](ssh.md#connect-with-vs-code-remote-ssh)).
+- **Stop and start.** A running agent session makes `stop` refuse: end it with `sandboxed-agents agents session agent01 claude --stop`, then run `sandboxed-agents stop agent01` and `sandboxed-agents start agent01`; the login and the agent selection survive ([agents](agents.md#keep-an-agent-running-in-a-session), [command reference](command-reference.md#lifecycle-commands)).
+- **Update.** After you install a newer executable, `sandboxed-agents update agent01` moves the sandbox to the new image and keeps its volumes, port, limits, toolchains, agents, and credentials ([images](images.md#updating-a-sandbox)).
+- **Clean up.** `sandboxed-agents remove agent01` deletes the container and keeps the volumes, so a later `up agent01` adopts them ([command reference](command-reference.md#lifecycle-commands)).
 
-```text
-sandboxed-agents integrations config agent01 git identity --name "A Person" --email "a@example.com"
-```
-
-For VS Code Remote SSH, install the opt-in SSH setup and follow [SSH access](ssh.md):
-
-```text
-sandboxed-agents ssh-config agent01 --install
-```
-
-Detaching leaves the agent running, and a running agent session makes `stop` refuse. End the session first with `--stop`, which needs no terminal. Then stop and start the sandbox; the login and the agent selection survive:
-
-```text
-sandboxed-agents agents session agent01 claude --stop
-sandboxed-agents stop agent01
-sandboxed-agents start agent01
-```
-
-Alternatively `stop agent01 --force` ends the sessions itself and names them. After `start`, no session runs; `agents session agent01 claude` starts a fresh one.
-
-When a newer executable is installed, `update` moves the sandbox to its image and keeps the volumes, the port, the limits, the toolchain set, the agent selection, and the credentials. It refuses while an agent session runs, in the same way as `stop`, unless you pass `--force`:
-
-```text
-sandboxed-agents update agent01
-```
-
-Old images stay in Podman's storage; no command removes them. See the [README](../README.md#limitations).
-
-### Clean up
-
-This step is optional and last. `remove` deletes the container and keeps the volumes, so a later `up agent01` adopts them. It also refuses while an agent session runs. Add `--volumes` only when you want to delete the home data and the credentials stored there for good:
-
-```text
-sandboxed-agents remove agent01
-sandboxed-agents remove agent01 --volumes
-```
-
-Run the first, the second, or both in this order. After the first, only the volumes remain, and the second deletes them; run alone, `remove agent01 --volumes` removes the container and the volumes together.
-
-## More
-
-[Command reference](command-reference.md), [Images](images.md), [SSH access](ssh.md), [Agents](agents.md), [Integrations](integrations.md), [Security policy](../SECURITY.md).
+> **Warning:** `sandboxed-agents remove agent01 --volumes` also deletes the home data and the credentials stored there, for good.
