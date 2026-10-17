@@ -86,7 +86,7 @@ No command removes an image, and the executable keeps no list of them. Old image
 
 ## Updating a sandbox
 
-`update NAME` moves one sandbox to the image of the installed executable. It keeps the workspace, home data, SSH server state, loopback port, resource limits, and toolchain set. `update NAME --with dotnet,native` replaces the set; `--with none` selects the base image. An explicit `--with` also replaces a recorded set that cannot be read; without `--with`, an unreadable recorded set refuses the update, and an invalid `--with` set fails before Podman is called. A current image prints `already up to date` without asking about agent sessions or replacing the sandbox.
+`update NAME` moves one sandbox to the image of the installed executable. It keeps the workspace, home data, SSH server state, loopback port, resource limits (the recorded `memory-swap` included, unchanged), and toolchain set. `update NAME --with dotnet,native` replaces the set; `--with none` selects the base image. An explicit `--with` also replaces a recorded set that cannot be read; without `--with`, an unreadable recorded set refuses the update, and an invalid `--with` set fails before Podman is called. A current image prints `already up to date` without asking about agent sessions or replacing the sandbox.
 
 The command checks prerequisites, takes the sandbox's lifecycle lock, checks ownership and state, and builds any missing image before changing the sandbox; a toolchain image based on an older base image is rebuilt first. A running agent session blocks replacement unless `--force` is given. When the manager cannot answer, the command also requires `--force`, since it cannot rule out sessions.
 
