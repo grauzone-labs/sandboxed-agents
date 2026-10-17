@@ -137,6 +137,35 @@ The SSH setup needs no administrator rights.
 - **Linux:** the installation creates the directories and files of the controller group's host state with private permissions. If it creates `~/.ssh` or `~/.ssh/config`, they are private too. An existing `~/.ssh` keeps its mode, and a rewritten `~/.ssh/config` keeps the mode of the file it replaces.
 - **Windows:** the key files and the managed configuration get permissions that OpenSSH for Windows accepts, under a standard account. A `.ssh` directory or SSH configuration file that `--install` creates gets them as well; rewriting an existing SSH configuration keeps its DACL and inheritance settings. The replacement file is owned by the account running the CLI, so installing does not need permission to reassign an owner such as SYSTEM or Administrators.
 
+## SSH client compatibility
+
+The `Include` line points at the group's managed configuration in host state. How that line must be spelled depends on your SSH client, and only when the host state path contains a percent sign (`%`):
+
+- **OpenSSH before 9.9** reads `Include` paths literally, so the line holds the path as it is.
+- **OpenSSH 9.9 and later**, including OpenSSH 10, expands percent tokens and environment variables in `Include` paths ([OpenSSH 9.9 release notes](https://www.openssh.org/txt/release-9.9), [`readconf.c` in V_10_0_P2](https://github.com/openssh/openssh-portable/blob/V_10_0_P2/readconf.c)). A literal `%` can expand to something else, and the client then silently includes a path that does not exist, so none of the group's host entries resolve. These clients need every `%` written as `%%`.
+
+When the host state path contains `%`, `--install` asks the SSH client for its version with `ssh -V` and writes the spelling that client needs; this includes the `OpenSSH_for_Windows` version format. Without `%` in the path, both spellings are identical and no version query happens. The `IdentityFile` and `UserKnownHostsFile` lines of the host entry escape `%` for every client version. Removing an SSH setup recognizes either spelling of the `Include` line, so `--remove` cleans up a line written for an older or newer client.
+
+The `Include` line is written once per group, when the group's first SSH setup is installed. Running `ssh-config NAME --install` again with an unchanged host key changes nothing, so it does not rewrite the line. If you upgrade your SSH client across 9.9 (in either direction) and the host state path contains `%`, regenerate the line: remove every SSH setup of the controller group, which also removes the group's `Include` line, then install them again.
+
+```text
+sandboxed-agents ssh-config agent01 --remove
+sandboxed-agents ssh-config agent01 --install
+```
+
+Removal deletes each sandbox's key pair and pinned host key, and `--install` creates new ones, as in [Changed host key](#changed-host-key).
+
+### What was verified
+
+On 2026-10-17 the existing offline test `TestSSHSetupRealOpenSSHResolvesIncludesAndPreservesConfigAlias` ran against two real SSH clients, with a host state path containing a literal `%literal`:
+
+| SSH client | Result before the fix | Result after the fix |
+|---|---|---|
+| `OpenSSH_9.2p1 Debian-2+deb12u10` (`/usr/bin/ssh`, Debian 12) | all cases passed | all cases pass |
+| `OpenSSH_10.0p2 Debian-7~bpo12+1` (isolated Debian backport) | 4 of 6 cases failed | all 6 cases pass |
+
+The test resolves the SSH configuration offline with `ssh -G`, against a fake Podman. It made no connection to a live sandbox. This verification covers Linux clients only; it does not cover Windows.
+
 ## When a command refuses
 
 Every command of the SSH setup checks the sandbox in the fixed order of the product, and the first failure is reported:
