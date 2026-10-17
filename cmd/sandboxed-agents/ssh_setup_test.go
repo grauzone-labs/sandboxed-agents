@@ -218,6 +218,11 @@ func TestSSHSetupRealOpenSSHResolvesIncludesAndPreservesConfigAlias(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	version, err := exec.Command(realSSH, "-V").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("SSH client: %s", strings.TrimSpace(string(version)))
 	for _, kind := range []string{"alias-path-spaces", "manual", "wildcard-keepalive", "wildcard-identity-agent", "wildcard-hostname", "other-group"} {
 		t.Run(kind, func(t *testing.T) {
 			fakes := sshSetupHarness(t, installResponses())
@@ -294,6 +299,90 @@ func TestSSHSetupRealOpenSSHResolvesIncludesAndPreservesConfigAlias(t *testing.T
 			data, err := os.ReadFile(target)
 			if err != nil || !strings.HasSuffix(string(data), string(original)) || strings.Count(string(data), "Include ") != 1 {
 				t.Fatalf("target bytes=%q %v", data, err)
+			}
+			if status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo", "--remove"); status != 0 {
+				t.Fatalf("remove=%d %q %q", status, stdout, stderr)
+			}
+			if data, err := os.ReadFile(target); err != nil || string(data) != string(original) {
+				t.Fatalf("removal changed user config=%q error=%v", data, err)
+			}
+		})
+	}
+}
+
+// TestSSHSetupPercentIncludeUsesClientSyntax proves installation selects the
+// client's literal-percent spelling and removal preserves user bytes through
+// the built CLI with scripted OpenSSH version responses.
+func TestSSHSetupPercentIncludeUsesClientSyntax(t *testing.T) {
+	for _, version := range []string{"OpenSSH_9.8p1", "OpenSSH_9.9p1", "OpenSSH_10.0p2 Debian-7+deb13u4", "OpenSSH_for_Windows_9.5p2"} {
+		t.Run(version, func(t *testing.T) {
+			sshSetupHarness(t, installResponses())
+			state := filepath.Join(t.TempDir(), "state %literal")
+			t.Setenv("XDG_STATE_HOME", state)
+			t.Setenv("LOCALAPPDATA", state)
+			script, err := json.Marshal(map[string]lifecycleResponse{"-V": {Stderr: version + "\n"}, "-G -F none demo": {}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("TEST_SSH_RESPONSES", string(script))
+			if status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo", "--install"); status != 0 {
+				t.Fatalf("install=%d %q %q", status, stdout, stderr)
+			}
+			config := filepath.Join(os.Getenv("HOME"), ".ssh", "config")
+			data, err := os.ReadFile(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "state %literal"
+			if version == "OpenSSH_9.9p1" || strings.HasPrefix(version, "OpenSSH_10.") {
+				want = "state %%literal"
+			}
+			if !strings.Contains(string(data), want) || strings.Count(string(data), "Include ") != 1 {
+				t.Fatalf("Include=%q; want path containing %q", data, want)
+			}
+			// Removal must not require a working client or depend on its current version.
+			t.Setenv("TEST_SSH_RESPONSES", "")
+			t.Setenv("TEST_SSH_EXIT", "23")
+			if status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo", "--remove"); status != 0 {
+				t.Fatalf("remove=%d %q %q", status, stdout, stderr)
+			}
+			if data, err := os.ReadFile(config); err != nil || len(data) != 0 {
+				t.Fatalf("Include remains=%q error=%v", data, err)
+			}
+		})
+	}
+}
+
+// TestSSHSetupPercentIncludeVersionFailuresWriteNothing proves an unavailable
+// or unrecognized SSH client refuses installation before key generation or
+// authorization through the built CLI and fake process seams.
+func TestSSHSetupPercentIncludeVersionFailuresWriteNothing(t *testing.T) {
+	for _, response := range []lifecycleResponse{{Exit: 23, Stderr: "version query unavailable"}, {Output: "unrecognized client"}} {
+		t.Run(response.Output+response.Stderr, func(t *testing.T) {
+			fakes := sshSetupHarness(t, installResponses())
+			state := filepath.Join(t.TempDir(), "state %literal")
+			t.Setenv("XDG_STATE_HOME", state)
+			t.Setenv("LOCALAPPDATA", state)
+			script, err := json.Marshal(map[string]lifecycleResponse{"-V": response, "-G -F none demo": {}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("TEST_SSH_RESPONSES", string(script))
+			before := setupFiles(t)
+			status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo", "--install")
+			if status == 0 || stdout != "" || !strings.Contains(stderr, "version") {
+				t.Fatalf("version failure=%d %q %q", status, stdout, stderr)
+			}
+			if after := setupFiles(t); !reflect.DeepEqual(before, after) {
+				t.Fatalf("version failure changed files: before=%v after=%v", before, after)
+			}
+			if calls := testutil.Invocations(t, filepath.Join(fakes.Dir, "keygen.jsonl")); len(calls) != 0 {
+				t.Fatalf("version failure generated keys: %v", calls)
+			}
+			for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
+				if strings.Contains(strings.Join(call, " "), "ssh-authorize") {
+					t.Fatalf("version failure authorized key: %v", call)
+				}
 			}
 		})
 	}

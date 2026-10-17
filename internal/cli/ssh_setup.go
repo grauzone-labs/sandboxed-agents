@@ -60,7 +60,7 @@ func tokenExpandedSSHPath(path string) string {
 	return literalSSHPath(strings.ReplaceAll(path, "%", "%%"))
 }
 
-// literalSSHPath quotes an Include path without percent-token escaping.
+// literalSSHPath quotes a path without percent-token escaping.
 func literalSSHPath(path string) string {
 	if filepath.Separator == '\\' {
 		path = filepath.ToSlash(path)
@@ -132,7 +132,7 @@ func (s sshSetup) removeHostSetup() error {
 	if err := os.RemoveAll(s.dir); err != nil {
 		return err
 	}
-	return s.updateConfiguration()
+	return s.updateConfiguration("")
 }
 
 func requireSSHManager(request Request, p podmanTarget) error {
@@ -173,6 +173,10 @@ func installSSHSetup(request Request, p podmanTarget, objects sandboxObjects, s 
 		return err
 	}
 	if err := s.checkConflict(sshHostName(request)); err != nil {
+		return err
+	}
+	include, err := s.clientIncludeLine()
+	if err != nil {
 		return err
 	}
 	if err := createSSHDirectory(s.groupDir); err != nil {
@@ -221,7 +225,7 @@ func installSSHSetup(request Request, p podmanTarget, objects sandboxObjects, s 
 	if err := os.Rename(stage, s.dir); err != nil {
 		return err
 	}
-	if err := s.updateConfiguration(); err != nil {
+	if err := s.updateConfiguration(include); err != nil {
 		os.RemoveAll(s.dir)
 		return err
 	}

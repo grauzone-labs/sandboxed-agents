@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -70,9 +71,34 @@ func writeSSHFile(path string, data []byte, mode os.FileMode, preserve bool) err
 	return os.Rename(file.Name(), resolved)
 }
 
-func (s sshSetup) includeLine() string { return "Include " + literalSSHPath(s.config) + "\n" }
+func (s sshSetup) includeLine(expandTokens bool) string {
+	path := literalSSHPath(s.config)
+	if expandTokens {
+		path = tokenExpandedSSHPath(s.config)
+	}
+	return "Include " + path + "\n"
+}
 
-func (s sshSetup) updateConfiguration() error {
+func (s sshSetup) clientIncludeLine() (string, error) {
+	if !strings.Contains(s.config, "%") {
+		return s.includeLine(false), nil
+	}
+	output, err := exec.Command("ssh", "-V").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("SSH client version query: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	version, ok := strings.CutPrefix(strings.TrimSpace(string(output)), "OpenSSH_")
+	version = strings.TrimPrefix(version, "for_Windows_")
+	var major, minor int
+	if n, _ := fmt.Sscanf(version, "%d.%d", &major, &minor); !ok || n != 2 || major < 1 || minor < 0 {
+		return "", fmt.Errorf("cannot determine SSH Include syntax from client version %q", strings.TrimSpace(string(output)))
+	}
+	// OpenSSH 9.9 added percent expansion to Include; older clients treat
+	// both percent signs in %% literally and would miss the managed file.
+	return s.includeLine(major > 9 || major == 9 && minor >= 9), nil
+}
+
+func (s sshSetup) updateConfiguration(line string) error {
 	entries, err := os.ReadDir(s.groupDir)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -95,11 +121,11 @@ func (s sshSetup) updateConfiguration() error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	line := []byte(s.includeLine())
 	var withoutInclude bytes.Buffer
 	hasInclude := false
 	for _, existing := range bytes.SplitAfter(user, []byte("\n")) {
-		if bytes.Equal(bytes.TrimSuffix(existing, []byte("\r\n")), bytes.TrimSuffix(line, []byte("\n"))) || bytes.Equal(existing, line) {
+		text := strings.TrimSuffix(strings.TrimSuffix(string(existing), "\n"), "\r")
+		if text == strings.TrimSuffix(s.includeLine(false), "\n") || text == strings.TrimSuffix(s.includeLine(true), "\n") {
 			hasInclude = true
 			continue
 		}
@@ -114,6 +140,12 @@ func (s sshSetup) updateConfiguration() error {
 		}
 		return nil
 	}
+	if !hasInclude && line == "" {
+		line, err = s.clientIncludeLine()
+		if err != nil {
+			return err
+		}
+	}
 	if err := writeSSHFile(s.config, managed.Bytes(), 0600, false); err != nil {
 		return err
 	}
@@ -123,5 +155,5 @@ func (s sshSetup) updateConfiguration() error {
 	if err := createSSHDirectory(filepath.Dir(s.userConfig)); err != nil {
 		return err
 	}
-	return writeSSHFile(s.userConfig, append(line, user...), 0600, true)
+	return writeSSHFile(s.userConfig, append([]byte(line), user...), 0600, true)
 }
