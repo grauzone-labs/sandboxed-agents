@@ -45,7 +45,7 @@ npm uninstall -g sandboxed-agents
 
 ## What installing, upgrading, and removing touch
 
-Installing, upgrading, or removing the package never calls Podman. It does not touch sandboxes, SSH configuration, or sandbox data. Sandboxes keep running and keep their data across an upgrade or a removal.
+The package changes only npm's prefix: the installed package and the link that puts the command on your `PATH`. What installing never touches is stated under [Installing](releases.md#installing).
 
 ## Checksums
 
