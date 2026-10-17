@@ -1,6 +1,6 @@
 # Maintainer notes
 
-This page is for the maintainers of `sandboxed-agents`. Here you find how the Podman version floors were confirmed, the live runs and source checks on record, the provenance and rotation of the NodeSource signing key, how release builds and CI work, and how to build a development executable whose images work. The user pages link here wherever a statement rests on this evidence.
+This page is for the maintainers of `sandboxed-agents`. Here you find how the Podman version floors were confirmed, the live runs and source checks on record, the provenance and rotation of the NodeSource signing key, how release builds and CI work, what the stable release publication relies on and how to recover an interrupted one, and how to build a development executable whose images work. The user pages link here wherever a statement rests on this evidence.
 
 ## How the version floors were confirmed
 
@@ -147,7 +147,254 @@ Checked on 2026-10-14; every toolchain's packages are available for Debian 13:
 - In a full run, the `linux` and `windows` jobs run side by side. Each restores the Go caches, creates a local CI tag at its checkout's commit (never pushed), runs the offline suite, builds the release files under a throwaway version (`0.0.0-ci-` and the commit), and prints the asset hash of its executable. The Windows job runs the Windows binary with Git for Windows Bash.
 - The `compare` job checks that the asset hash and the SHA256 digests of both executables and the npm tarball are identical on both runners.
 
-`.github/workflows/stable-release-gate.yml` runs when a tag matching `v*` is pushed. A preview tag passes without further checks; a stable tag is checked for the evidence under [Stable release check](releases.md#stable-release-check), and the workflow fails when evidence is missing.
+`.github/workflows/stable-release-gate.yml` runs when a tag matching `v*` is pushed. A preview tag passes without further checks; a stable tag is checked for the evidence under [Stable release check](releases.md#stable-release-check), and the workflow fails when evidence is missing. `.github/workflows/release.yml` runs on the same tags, calls that gate for a stable tag, and publishes; see [Publishing a stable release](#publishing-a-stable-release).
+
+## Publishing a stable release
+
+This section records what the publication of a stable release relies on, what a maintainer sets up once by hand, and how to recover when a publication stops half-way. It states what is installed today and what is still absent. Where a fact comes from an external page, the page and the date it was read are named in [Sources](#publication-sources); nothing here was observed on a real publication, because none has happened.
+
+### State on record
+
+Read on 2026-10-17. A row says "absent" when the thing does not exist yet, and "installed" only where it was read back from GitHub.
+
+| Item | State | Evidence |
+|---|---|---|
+| Tag ruleset `Stable tag creation (v*)` | installed, active | ID 25318428; read back through the rulesets API on 2026-10-17 ([rule page](https://github.com/grauzone-labs/sandboxed-agents/rules/25318428)) |
+| Tag ruleset `Stable tag immutability (v*)` | installed, active | ID 25318430; read back the same way ([rule page](https://github.com/grauzone-labs/sandboxed-agents/rules/25318430)) |
+| Repository variable `NUGET_USER` | set to `grauzone` | read back through the Actions variables API on 2026-10-17 |
+| Immutable releases repository setting | off | read through the repository API on 2026-10-17; keep it off, see [Immutable releases](#immutable-releases) |
+| Branch protection of `main` | required checks `linux`, `windows`, and `compare`, strict, applied to administrators | read on 2026-10-17 |
+| Publication workflow `.github/workflows/release.yml` | added by the change that adds this section; no run on record | none |
+| npm trusted publisher for `sandboxed-agents` | **absent**: the maintainer confirmed on 2026-10-17 that none is configured | none |
+| NuGet trusted publishing policy for `SandboxedAgents` | **absent**: the same confirmation | none |
+| Any `v*` tag, preview, or GitHub release | **absent** | no tag and no release on 2026-10-17 |
+| Validation records and a manual-checklist run | **absent** | there is no preview to hold them |
+| Registry OIDC publication | **never observed** | npm and NuGet hold only `0.2.0` of the earlier implementation (read 2026-10-17) |
+
+The acceptance criteria of issue #36 that need a real publication, a real preview, or a manual run stay open until their evidence exists. This page is not that evidence.
+
+### What the publication relies on
+
+`.github/workflows/release.yml` runs when a tag matching `v*` is pushed. The workflow has two jobs.
+
+- **`stable_gate`** runs only for a stable tag. It calls `stable-release-gate.yml` as a reusable workflow with the tag: the tag must point to the workflow commit, the release is rebuilt, and the [stable release check](releases.md#stable-release-check) runs against the preview and its records.
+- **`publish`** runs on a GitHub-hosted runner after `stable_gate` succeeded, or for a preview tag, for which `stable_gate` is skipped. It rebuilds the tagged commit with `scripts/release.sh` and, for a stable tag, runs the `stable-gate` command again on that rebuild before anything else. It then attests the five release files in one step and runs `go run ./internal/release/cmd/publish-release`. That command checks again that the rebuilt executables match `SHA256SUMS` and print the tag's version, runs the `stable-gate` command a third time for a stable tag, verifies each file's attestation, and creates or resumes the GitHub release as a draft. For a stable tag it also publishes the npm package and then the NuGet package, and only then makes the GitHub release public.
+
+A preview tag takes the same path without the gate and without any registry step, and ends in a published GitHub prerelease. Concurrency is per tag and never cancels a running publication. The release text is the notes file; for a stable release the command appends, under "Validation gates (passed on this release commit)", one line each for the offline suite, the live suite on Linux and Windows 11, and the manual checklist, each naming the commit of the release, which the gate has just checked each record and the CI result against.
+
+| Prerequisite | Value | Why |
+|---|---|---|
+| Runner | GitHub-hosted `ubuntu-24.04` | npm trusted publishing supports cloud-hosted runners and not self-hosted ones. The CI workflows run on Blacksmith runners, so the publication does not reuse them. Whether a Blacksmith runner counts as self-hosted is not stated by npm; reports from other projects say it does, and nothing here depends on that. |
+| Workflow file name | `release.yml` | Both registries bind the trust to the file name. Renaming the file breaks both policies until they are recreated. |
+| Job permissions | `contents: write`, `actions: read`, `id-token: write`, `attestations: write` | `id-token: write` lets the job request the OIDC token that both registries and the attestation signing need; `attestations: write` stores the attestation; `contents: write` writes the release; `actions: read` reads the CI result. `artifact-metadata: write` is not granted and not needed: the attest step sets `push-to-registry: false` and `create-storage-record: false`, and the action creates a storage record only for a single OCI image pushed to a registry, which these five files are not ([`actions/attest` v4 source](https://github.com/actions/attest/blob/v4/src/attest.ts), [README on storage records](https://github.com/actions/attest/blob/v4/README.md#artifact-metadata-storage-records)). |
+| Node.js and npm | Node.js 24; `npm install --global npm@11.5.1` | Trusted publishing needs npm 11.5.1 or newer and Node.js 22.14.0 or newer. The GitHub-hosted Ubuntu 24.04 image 20261012.334.1 carries npm 10.9.9, which is too old, so the job installs the floor version. |
+| .NET SDK | 8.0.x through `actions/setup-dotnet@v5` | `dotnet nuget push` and `dotnet nuget verify`. |
+| NuGet login | `NuGet/login@v1` with `user: ${{ vars.NUGET_USER }}` | Exchanges the OIDC token for an API key that is valid for one hour. `NUGET_USER` holds the nuget.org profile name `grauzone`, not an email address, and is not a secret. |
+| Attestation | `actions/attest@v4` over the five files in one step | A single attestation covers all five subjects. |
+| `gh` | exactly 2.83.2, installed by the job | See [The `gh` version](#the-gh-version). |
+| Release notes | `docs/release-notes/X.Y.Z.md` in the tagged commit | See [Release notes](#release-notes). |
+
+The workflow reads no long-lived registry token, and the repository holds no registry secret (the repository's Actions secrets list was empty on 2026-10-17). The only registry credentials are short-lived: the identity of the run for npm and the one-hour key from `NuGet/login` for NuGet. For npm the publication command removes `NODE_AUTH_TOKEN`, `NPM_TOKEN`, and `NPM_CONFIG_*` from its environment, runs `npm publish` from an empty directory, and gives it empty user and global `.npmrc` files, so no token can be inherited. A stable publication refuses to start without the run's OIDC request variables and the NuGet key.
+
+#### The `gh` version
+
+The job downloads the upstream archive `gh_2.83.2_linux_amd64.tar.gz` from the `v2.83.2` release of `cli/cli`, checks it against the SHA-256 `ca6e7641214fbd0e21429cec4b64a7ba626fd946d8f9d6d191467545b092015e` (taken from that release's `gh_2.83.2_checksums.txt`), and puts it first on `PATH`. It does not use the `gh` of the runner image. The publication step relies on `gh attestation verify` with `--signer-workflow`, `--source-digest`, `--source-ref`, and `--deny-self-hosted-runners`, on `gh release create --draft --verify-tag`, and on `gh api`.
+
+- `gh attestation` first shipped in 2.49.0. Releases from 2.49.0 to 2.66.1 can make `gh attestation verify` exit with status zero when no attestation exists (CVE-2025-25204, fixed in 2.67.0), which would pass a file that has none. 2.67.0 is therefore the lowest version this project accepts for verification, and the job uses a newer pinned one.
+- On your own machine use 2.67.0 or newer; `gh --version` shows yours. Version 2.23.0, as the Debian package on the maintainers' development machine, has no `attestation` command.
+- Changing the pin means choosing a new upstream release, reading its checksum file, and changing both values in the workflow together; update this section in the same commit.
+
+#### Release notes
+
+Release notes live in `docs/release-notes/X.Y.Z.md`, one file per version, committed before the preview tag so that they belong to the validated commit. A preview `vX.Y.Z-preview.YYYYMMDD.N` uses the notes of its base version `X.Y.Z`. The publication fails before it builds anything when the file is missing or empty at the tagged commit. The workflow publishes the file as the release text; for a stable release it appends, for each gate, the commit it passed on. The notes of 1.0.0 are [`docs/release-notes/1.0.0.md`](release-notes/1.0.0.md); they claim no gate result.
+
+Nothing may be committed between the validated preview and the stable tag, so a correction to the notes after the preview means a new preview and new validation.
+
+### Tag ruleset
+
+The check that "a prerelease exists on the same commit" holds only while a published tag cannot be moved, or deleted and created again. Two active tag rulesets on `grauzone-labs/sandboxed-agents` target `refs/tags/v*` (GitHub's `fnmatch` syntax, so they cover every tag that starts with `v`: previews, stable tags, and a mistyped one alike). They were applied on 2026-10-17, before any tag existed, and are in place before the first publication beyond GitHub prereleases.
+
+| Ruleset | ID | Rules | Bypass |
+|---|---|---|---|
+| `Stable tag creation (v*)` | 25318428 | Restrict creations | the repository Admin role (role ID 5), always |
+| `Stable tag immutability (v*)` | 25318430 | Restrict updates, Restrict deletions | none |
+
+GitHub describes the rules as: only users with bypass permission can create, push to (update), or delete a matching tag ([available rules](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets), read 2026-10-17). With an empty bypass list nobody can move or delete a matching tag, administrators included, until a maintainer with the ruleset permission removes or changes the ruleset itself. Consequences that matter for a release:
+
+- **A tag is permanent once pushed.** Check the tag name and the commit before `git push`. A preview tag that was pushed on a wrong commit stays; the next preview gets the next `N` or a new date.
+- **A defect in a workflow or a notes file at the tagged commit cannot be fixed under the same tag.** The fix is a new commit, so a new preview, new validation, and a new version. A rerun of a run (see [Recovery](#recovery-from-an-interrupted-publication)) uses the workflow file of the tagged commit.
+- **Only an administrator can create a `v*` tag.** The release workflow does not create tags; a maintainer with the Admin role pushes them.
+- **Weakening either ruleset is a change to the release guarantee.** Record any change here, with its reason and date, in the same commit as a documentation change.
+
+Settings to read back (they need administrator read access):
+
+```sh
+gh api repos/grauzone-labs/sandboxed-agents/rulesets --jq '[.[] | {id, name, target, enforcement}]'
+gh api repos/grauzone-labs/sandboxed-agents/rulesets/25318428 --jq '{name, target, enforcement, bypass_actors, conditions, rules: [.rules[].type]}'
+gh api repos/grauzone-labs/sandboxed-agents/rulesets/25318430 --jq '{name, target, enforcement, bypass_actors, conditions, rules: [.rules[].type]}'
+```
+
+To recreate them in the web interface, follow GitHub's [tag ruleset steps](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository) (Settings, Rules, Rulesets, New ruleset, New tag ruleset) with these values, or send the two bodies with `gh api --method POST repos/grauzone-labs/sandboxed-agents/rulesets --input FILE`:
+
+```json
+{
+  "name": "Stable tag creation (v*)",
+  "target": "tag",
+  "enforcement": "active",
+  "bypass_actors": [{ "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }],
+  "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
+  "rules": [{ "type": "creation" }]
+}
+```
+
+```json
+{
+  "name": "Stable tag immutability (v*)",
+  "target": "tag",
+  "enforcement": "active",
+  "bypass_actors": [],
+  "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
+  "rules": [{ "type": "update" }, { "type": "deletion" }]
+}
+```
+
+Release tags are not protected by the branch protection of `main`, which is a separate setting.
+
+#### Immutable releases
+
+GitHub's own "immutable releases" repository setting locks a published release's tag and assets. It is off, and the project does not depend on it. Leave it off: validation records are uploaded to a preview's prerelease after it is published ([manual checklist](manual-checklist.md#upload)), and the recovery of a public release adds a missing file. GitHub states that the protections start at publication ([immutable releases](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/immutable-releases)), so turning the setting on would block both. That consequence is inferred from the page; it has not been tried here.
+
+### One-time registry setup
+
+Neither registry trusts the workflow yet. A maintainer sets this up by hand, once per registry, signed in as the account that owns the package. The values are exact; both registries compare them with the claims in the OIDC token of the run, and npm does not check the entries when you save them, so a mistake shows only at the first publication.
+
+Timing matters. npm gives a new trusted publisher **two days** to complete its first successful publish, and then it expires and can no longer be used or edited; a NuGet policy for a private repository can also start with a temporary activation window. Create both entries after the preview is validated and just before the stable tag is pushed, not weeks ahead.
+
+#### npm
+
+Package `sandboxed-agents` on npmjs.com, as the maintainer account `grauzone` (which needs write access to the package and two-factor authentication). In the package settings, section Trusted Publisher, choose GitHub Actions:
+
+| Field | Value |
+|---|---|
+| Organization or user | `grauzone-labs` |
+| Repository | `sandboxed-agents` |
+| Workflow filename | `release.yml` (the file name only, with its extension) |
+| Environment name | empty (the workflow uses no GitHub environment) |
+| Allowed actions | `npm publish` selected. The workflow publishes directly; `npm stage publish` is always allowed and is not what the workflow runs. |
+
+All fields are case-sensitive. The `repository.url` in the published `package.json` must match the GitHub repository; `packages/npm/package.json` carries `https://github.com/grauzone-labs/sandboxed-agents.git`, and the registry's record of `0.2.0` shows npm stores such a URL in the form `git+https://github.com/OWNER/REPO.git`. npm generates provenance for a package published through OIDC from a public repository on its own; the repository is public.
+
+After the first successful publish the entry is validated and bound to the repository's identity. If it expired before that, delete it, create it again, and rerun the publication.
+
+#### NuGet
+
+On nuget.org, signed in as `grauzone`, open the user menu, Trusted Publishing, and add a policy:
+
+| Field | Value |
+|---|---|
+| Policy owner | the individual user `grauzone`, who owns `SandboxedAgents` |
+| Repository Owner | `grauzone-labs` |
+| Repository | `sandboxed-agents` |
+| Workflow File | `release.yml` (the file name only, without `.github/workflows/`) |
+| Environment | empty |
+| Scope | publishing new versions of an existing package, limited by the glob `SandboxedAgents` |
+
+The values are case-insensitive. A policy applies to the packages the chosen owner owns, and the scope with its glob narrows it. The Microsoft page describes scopes and the glob but not the labels of the form, so choose the scope that matches the table when you see the form. A policy can start as temporarily active for seven days, which happens usually with private repositories; if no publish happens in that time it becomes inactive, and the window can be restarted. A successful publish makes it permanent.
+
+The workflow gets the one-hour API key from `NuGet/login@v1` and `NUGET_USER`. The repository variable is set (see [State on record](#state-on-record)); it is a variable and not a secret because the name is not sensitive.
+
+#### What exists before the first stable publication
+
+Read on 2026-10-17, without publishing anything:
+
+- **npm.** The package `sandboxed-agents` exists: one version, `0.2.0`, created 2026-09-30, maintainer `grauzone`, repository `grauzone-git/sandboxed-ai-agents`. npm's `npm trust` page says the package must already exist before a trusted publisher is configured ([npm trust](https://docs.npmjs.com/cli/v11/commands/npm-trust), page edited 2026-06-02), and the trusted-publishers page does not describe configuring one for a name that does not exist. Because the package exists, no separate first-publish step is needed, and none is documented here.
+- **NuGet.** The package `SandboxedAgents` exists: one version, `0.2.0`, owner `grauzone`. The Microsoft page does not describe how a policy behaves for an identifier that does not exist yet, whether a policy can reserve one, or what the first upload of a new identifier needs. That does not matter for this release, because the identifier exists under the owner the policy belongs to.
+- **Both `0.2.0` versions come from the earlier implementation** in `grauzone-git/sandboxed-ai-agents`, as [the npm package page](npm-package.md#where-the-package-comes-from) says. Version 1.0.0 is higher and does not collide.
+
+#### No token fallback
+
+Issue #8 allowed a classic token held as a repository secret, `NPM_TOKEN` or `NUGET_API_KEY`, for a registry whose trusted publishing setup proved not feasible. Neither setup has been tried, so nothing shows that either is infeasible, and no fallback exists: the workflow reads no long-lived registry token and the repository holds no registry secret. If a setup proves infeasible, that is a decision for the maintainers: the workflow, the repository secret, and this page change together and name the registry, and nobody creates a token in advance. Do not add a token to get past a failed OIDC publication. A trusted publishing failure is fixed in the registry settings or the workflow, never with a token.
+
+#### Limits of what can be tested
+
+Previews are not published to the registries, so neither OIDC exchange can run before the first stable tag. Everything above about the registries comes from their documentation; the first real stable run is the first observation, and it is recorded as such. Because the tag cannot be moved, a bug in the workflow found at that point cannot be fixed under `v1.0.0`.
+
+### Recovery from an interrupted publication
+
+A run can stop between creating the GitHub release and finishing it: the runner is lost, a registry or the network fails, or someone cancels the run. Three states result, and the recovery for all of them is the same operation: **rerun the publication of the same tag**. The command behind the `publish` job is built to resume, and it fails closed: on an API or network error, on metadata or file bytes it does not recognize, or on a mismatch, it stops and changes nothing further.
+
+Rules that hold for every recovery:
+
+- **Never move, delete, or recreate the tag**, and never create another tag for the same version. The rulesets forbid it, and it is the evidence the gates rest on.
+- **Never overwrite a release file or a registry version.** The command uploads only files that are missing, never with `--clobber`, and publishes only a registry version that does not exist.
+- **Never add a token**, and never publish by hand with a personal credential. A hand-made package is not the artifact the attestations describe.
+- **Re-verify before trusting a recovery.** A rerun rebuilds the tagged commit with `scripts/release.sh`, which is reproducible, so the rebuilt files must have the same hashes as the ones already published; it repeats the gate on the same evidence, attests again, and checks each file's attestation against the repository, `release.yml`, the commit, and the tag. A rerun that cannot match something does not repair it.
+- **Registries have no rollback.** An npm version cannot be reused after an unpublish ([npm unpublish policy](https://docs.npmjs.com/policies/unpublish)); nuget.org does not delete packages and offers unlisting only ([deleting packages](https://learn.microsoft.com/en-us/nuget/nuget-org/policies/deleting-packages)). A published registry version stays visible even when the GitHub release is incomplete.
+
+To rerun:
+
+```sh
+gh run list --repo grauzone-labs/sandboxed-agents --workflow release.yml --limit 5
+gh run view RUN_ID --repo grauzone-labs/sandboxed-agents --log-failed
+gh run rerun RUN_ID --repo grauzone-labs/sandboxed-agents
+```
+
+Rerun all jobs, as above, and not only the failed one, so that the gate and the build run again. If the failure came from something outside the workflow (a registry outage, a missing record on the prerelease, a missing registry policy), correct that first.
+
+Look at the state before and after a rerun, read-only:
+
+```sh
+gh release view vX.Y.Z --repo grauzone-labs/sandboxed-agents --json tagName,isDraft,isPrerelease,targetCommitish,assets
+npm view sandboxed-agents@X.Y.Z version dist.integrity dist.tarball
+curl -fsS https://api.nuget.org/v3-flatcontainer/sandboxedagents/index.json
+```
+
+#### An abandoned draft
+
+The run stopped after the draft release was created, with some or all files uploaded, and possibly after one registry. `gh release view` shows `isDraft: true`. Only the GitHub release is private: a draft is not visible to users, but a registry version that was pushed before the run stopped is already public and permanent (see the rules above). Check `npm view` and the nuget.org lookup before you decide anything. Rerun. The command finds the draft by its tag, rejects it if its target commit, release text, or prerelease flag is not what the tagged commit and its notes imply (so do not edit the release text by hand), compares every file already on it with the rebuilt file, uploads the missing ones, and continues with the registries. Do not delete the draft first. Delete a draft only after you know why its files differ from the rebuilt ones: a difference means the build is not reproducible, which is a defect to file, not a nuisance to clear. Deleting a draft does not touch the tag, and the next rerun creates a new draft from the same commit.
+
+#### A public release with missing files
+
+The release is public and `gh release view` lists fewer than the five release files. Rerun. The command checks the gate again before it adds anything, compares the files that are present with the rebuilt ones, and adds the missing files without replacing any. If a present file differs from the rebuilt bytes, it stops: a public file that differs is a security matter, not a recovery step. Treat it as an incident, report it under [SECURITY.md](../SECURITY.md), and do not replace the file; a corrected build is a new version.
+
+#### A registry package without its GitHub release
+
+A registry holds `X.Y.Z` and the GitHub release is absent, still a draft, or incomplete. The run stopped after a push, or the push succeeded and the report of it was lost. Rerun, and wait for the registry to index the version first if you pushed minutes ago, because a version that is not indexed yet looks absent, and the push would then be refused as a duplicate and fail the run. The command reads the exact version from each registry and compares what it downloads with the rebuilt package. An exact match counts as published and is skipped. The command publishes npm first, then NuGet, and makes the GitHub release public only when both hold their package.
+
+- **npm** is compared by exact bytes against `https://registry.npmjs.org/sandboxed-agents/-/sandboxed-agents-X.Y.Z.tgz`. `npm view` shows `dist.integrity` (SHA-512) and `dist.tarball`. For both registries a 404 counts as absent and any other status except 200 stops the run, because absence is then not proven.
+- **NuGet** is compared by exact bytes first. nuget.org adds a repository signature to every package it hosts ([signed packages](https://learn.microsoft.com/en-us/nuget/reference/signed-packages-reference)), so a downloaded package normally differs from the one pushed. The command then accepts the package when every entry of the rebuilt archive is present in the download with the same name and content, no entry is duplicated or extra, and the only added entry is one non-empty `.signature.p7s`, and `dotnet nuget verify --all` ([reference](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-nuget-verify)) succeeds on the download. The `.nupkg` on the GitHub release stays the exact attested build output.
+
+If a registry holds a version that does not match, the command stops. That version cannot be removed or replaced (see the rules above). Do not push anything else under it; the release moves to a new version with a new validated preview, and the finding is filed as an issue.
+
+#### Check a recovery by hand
+
+A rerun that ends green is not the end of the recovery. Compare against the release itself, in empty scratch directories:
+
+1. `gh release view vX.Y.Z --repo grauzone-labs/sandboxed-agents --json isDraft,isPrerelease,targetCommitish,assets` shows `isDraft` false, `isPrerelease` false for a stable release, the full commit SHA of the tag as `targetCommitish`, and the five files.
+2. Download the five files into one empty directory and run `gh attestation verify FILE --repo grauzone-labs/sandboxed-agents` on each, with `gh` 2.67.0 or newer. Run `sha256sum --check --ignore-missing SHA256SUMS` for the two executables.
+3. The release text names, for the offline suite, the live suite on Linux, the live suite on Windows 11, and the manual checklist, the commit each passed on, and every one of them is the commit of the tag.
+4. For npm, download the tarball named by `npm view sandboxed-agents@X.Y.Z dist.tarball` and compare its SHA-256 with the `.tgz` of the release.
+5. For NuGet, download `https://api.nuget.org/v3-flatcontainer/sandboxedagents/X.Y.Z/sandboxedagents.X.Y.Z.nupkg`, run `dotnet nuget verify --all` on it, extract it and the release's `.nupkg` into two empty directories, delete the one added `.signature.p7s` from the extraction of the downloaded package, and run `diff -r` on the two directories. If the download is byte-identical to the release's `.nupkg`, nuget.org added no signature and nothing needs removing.
+6. `sandboxed-agents version` from the release's executable prints the stable version and the same `asset-sha256` as the preview's.
+
+Recovery proves nothing about the first publication itself. A recovery that happened is recorded with the run it recovered.
+
+#### When a rerun cannot help
+
+- **The gate failed.** Nothing was published. Upload the missing or corrected validation record to the preview's prerelease ([manual checklist](manual-checklist.md#upload)) when the evidence is what was wrong, and rerun.
+- **The workflow or the notes at the tagged commit are wrong.** The tag cannot move. A fix needs a new commit, a new preview, new validation, and a new version.
+- **A registry policy is missing or wrong.** Correct it in the registry (see [One-time registry setup](#one-time-registry-setup)) and rerun. A policy whose two days have passed is deleted and created again.
+
+### Publication sources
+
+Read on 2026-10-17 unless another date is given.
+
+- npm, [Trusted publishing](https://docs.npmjs.com/trusted-publishers): npm 11.5.1 and Node.js 22.14.0 minimums, GitHub-hosted runners only, field names and case sensitivity, `id-token: write`, allowed actions, two-day validation, `repository.url`; page last edited 2026-10-06.
+- npm, [`npm trust`](https://docs.npmjs.com/cli/v11/commands/npm-trust): the package must exist; npm 11.15.0 or newer; page edited 2026-06-02. [Unpublish policy](https://docs.npmjs.com/policies/unpublish): a used `name@version` is never reusable.
+- Microsoft Learn, [Trusted publishing on nuget.org](https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing): policy fields, one-hour key, `NuGet/login@v1`, policy owner, seven-day activation; page updated 2026-09-01. [NuGet/login](https://github.com/NuGet/login): `user` input and `NUGET_API_KEY` output. [Signed packages](https://learn.microsoft.com/en-us/nuget/reference/signed-packages-reference): every package uploaded to nuget.org is repository signed. [Deleting packages](https://learn.microsoft.com/en-us/nuget/nuget-org/policies/deleting-packages): no permanent deletion, unlisting only.
+- GitHub Docs: [available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets), [creating rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository), [immutable releases](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/immutable-releases).
+- GitHub CLI: [`gh attestation verify`](https://cli.github.com/manual/gh_attestation_verify), [`gh release create`](https://cli.github.com/manual/gh_release_create), [CVE-2025-25204 advisory](https://github.com/cli/cli/security/advisories/GHSA-fgw4-v983-mgp8), and the pinned release [v2.83.2](https://github.com/cli/cli/releases/tag/v2.83.2). [actions/attest](https://github.com/actions/attest) for the `v4` action, its permissions, and its [source](https://github.com/actions/attest/blob/v4/src/attest.ts) for when it writes a storage record; [`dotnet nuget verify`](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-nuget-verify). The Ubuntu 24.04 [runner image readme](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md), image 20261012.334.1, for the preinstalled `gh`, Node.js, and npm.
+- Registry state: `npm view sandboxed-agents` and the nuget.org flat-container and search endpoints, read without credentials.
 
 ## Development builds with the manager
 
