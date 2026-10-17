@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-// scriptRecordedSwap changes only the swap field of the fake Podman inspect answer.
-func scriptRecordedSwap(f *fixture, swap string) {
+// scriptSandboxInspection replaces fields in the fake Podman inspect answer.
+func scriptSandboxInspection(f *fixture, replacements ...string) {
 	key := "container inspect sandboxed-agents.default.demo"
 	r := f.responses[key]
-	r.Output = strings.Replace(r.Output, `"MemorySwap":8589934592,`, swap, 1)
+	r.Output = strings.NewReplacer(replacements...).Replace(r.Output)
 	f.responses[key] = r
 }
 
@@ -28,7 +28,7 @@ func TestUpChecksRecordedSwapWithMemory(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := updateFixture(t)
-			scriptRecordedSwap(f, tc.swap)
+			scriptSandboxInspection(f, `"MemorySwap":8589934592,`, tc.swap)
 			args := []string{"up", "demo"}
 			if tc.explicit {
 				args = append(args, "--memory", "8g")
@@ -63,7 +63,7 @@ func TestUpdatePreservesRecordedSwap(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := replacementFixture(t)
-			scriptRecordedSwap(f, tc.swap)
+			scriptSandboxInspection(f, `"MemorySwap":8589934592,`, tc.swap)
 			status, output, calls := runUpExecutable(t, f, "update", "demo")
 			if !tc.valid {
 				if status != 1 || !strings.Contains(output, "memory-swap") || !strings.Contains(output, tc.want) {
@@ -91,7 +91,7 @@ func TestUpdatePreservesRecordedSwap(t *testing.T) {
 	}
 }
 
-// TestCheckReportsRecordedSwap proves diagnostics print the recorded combined memory/swap ceiling, including legacy allowances, and reject missing fields through the executable CLI and fake Podman seam.
+// TestCheckReportsRecordedSwap proves diagnostics print the recorded combined memory/swap ceiling, including legacy allowances, and reject missing or invalid values through the executable CLI and fake Podman seam.
 func TestCheckReportsRecordedSwap(t *testing.T) {
 	for _, tc := range []struct {
 		name, swap, want string
@@ -108,11 +108,7 @@ func TestCheckReportsRecordedSwap(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := updateFixture(t)
-			scriptRecordedSwap(f, tc.swap)
-			key := "container inspect sandboxed-agents.default.demo"
-			r := f.responses[key]
-			r.Output = strings.Replace(r.Output, `"Running":true`, `"Running":false`, 1)
-			f.responses[key] = r
+			scriptSandboxInspection(f, `"MemorySwap":8589934592,`, tc.swap, `"Running":true`, `"Running":false`)
 			status, output, calls := runUpExecutable(t, f, "check", "demo")
 			if (status != 0) != tc.invalid || !strings.Contains(output, tc.want) {
 				t.Fatalf("status=%d output=%s; want %s", status, output, tc.want)
