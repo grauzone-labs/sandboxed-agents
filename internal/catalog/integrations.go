@@ -8,18 +8,30 @@ import (
 )
 
 const (
-	GitIntegration           = "git"
-	GitHubIntegration        = "github"
-	AzureDevOpsIntegration   = "azdo"
-	OrganizationOption       = "organization"
-	GitIdentityWorkflow      = "identity"
-	GitCredentialsWorkflow   = "credentials"
+	// GitIntegration names the integration for global Git configuration.
+	GitIntegration = "git"
+	// GitHubIntegration names the integration for GitHub authentication.
+	GitHubIntegration = "github"
+	// AzureDevOpsIntegration names the integration for Azure DevOps authentication.
+	AzureDevOpsIntegration = "azdo"
+	// OrganizationOption names the Azure DevOps organization URL option.
+	OrganizationOption = "organization"
+	// GitIdentityWorkflow configures the global Git author name and email.
+	GitIdentityWorkflow = "identity"
+	// GitCredentialsWorkflow configures the sandbox's Git credential store.
+	GitCredentialsWorkflow = "credentials"
+	// GitCredentialStoreHelper stores Git credentials in the sandbox's home data.
 	GitCredentialStoreHelper = "store --file=/home/agent/.git-credentials"
-	GitNameOption            = "name"
-	GitEmailOption           = "email"
-	AzureIntegration         = "azure"
-	DeviceCodeWorkflow       = "device-code"
-	BrowserWorkflow          = "browser"
+	// GitNameOption names the Git author name option.
+	GitNameOption = "name"
+	// GitEmailOption names the Git author email option.
+	GitEmailOption = "email"
+	// AzureIntegration names the integration for Azure authentication.
+	AzureIntegration = "azure"
+	// DeviceCodeWorkflow selects authentication using a code entered on the host.
+	DeviceCodeWorkflow = "device-code"
+	// BrowserWorkflow selects authentication using a browser callback.
+	BrowserWorkflow = "browser"
 )
 
 // GitSetting is a global Git value, either fixed or supplied by a workflow option.

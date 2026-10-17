@@ -29,6 +29,8 @@ func TestQuickGuideCommandsParse(t *testing.T) {
 	}
 }
 
+// quickGuideCommandsError checks that every executable quick-guide example is accepted by the
+// public CLI parser.
 func quickGuideCommandsError(document string) error {
 	count := 0
 	for index, line := range strings.Split(document, "\n") {

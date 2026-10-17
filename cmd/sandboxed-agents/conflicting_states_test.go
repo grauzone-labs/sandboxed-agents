@@ -13,6 +13,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
+// newSandboxResponses scripts fake Podman answers for creating an owned sandbox after preflight.
 func newSandboxResponses() map[string]lifecycleResponse {
 	responses := ownedLifecycleResponses(true)
 	responses["--version"] = lifecycleResponse{Output: "podman version 4.4.0"}
@@ -48,6 +49,7 @@ func TestUpAdoptsPartialVolumesBesideWorkspaceBind(t *testing.T) {
 	}
 }
 
+// runWithHost runs the CLI with injected host dependencies and captures its status and combined output.
 func runWithHost(host cli.Host, args ...string) (int, string) {
 	var output bytes.Buffer
 	status := cli.RunWithHost(args, &output, &output, host)
@@ -99,6 +101,7 @@ func TestListShowsPartialVolumesOnly(t *testing.T) {
 	assertStateQueriesOnly(t, fakes)
 }
 
+// assertStateQueriesOnly checks the fake process logs for forbidden Podman mutations and SSH calls.
 func assertStateQueriesOnly(t *testing.T, fakes testutil.Fakes) {
 	t.Helper()
 	for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
@@ -470,6 +473,7 @@ func listWithLaterHealthyResponses() map[string]lifecycleResponse {
 	return responses
 }
 
+// listRow extracts the named sandbox row from CLI table output or fails the test.
 func listRow(t *testing.T, output, name string) []string {
 	t.Helper()
 	for _, line := range strings.Split(output, "\n") {

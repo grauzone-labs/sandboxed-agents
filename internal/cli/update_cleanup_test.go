@@ -9,6 +9,8 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
+// cleanupFixture scripts a replacement and retained backup with the requested prior and current
+// running states.
 func cleanupFixture(t *testing.T, wasRunning, running bool) *fixture {
 	t.Helper()
 	f := replacementFixture(t)

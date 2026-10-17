@@ -109,6 +109,7 @@ func githubEnvironment(environment []string) []string {
 	return append(result, "GH_CONFIG_DIR=/home/agent/.config/gh")
 }
 
+// agentEnvironment fixes agent's home and user variables and removes inherited tmux settings.
 func agentEnvironment(environment []string) []string {
 	result := make([]string, 0, len(environment)+3)
 	for _, entry := range environment {

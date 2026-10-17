@@ -37,6 +37,7 @@ type Host struct {
 	WorkspacePath func(string) (string, error)
 }
 
+// defaults fills missing host facts and query hooks with the current platform defaults.
 func (h Host) defaults() Host {
 	if h.Platform == "" {
 		h.Platform = runtime.GOOS
@@ -89,6 +90,8 @@ func selectTarget(h Host) (podmanTarget, error) {
 	return p, nil
 }
 
+// preflight checks supported host prerequisites and returns the Podman target those checks
+// selected.
 func preflight(h Host) (podmanTarget, error) {
 	p := targetForHost(h)
 	if h.Platform == "windows" {
@@ -100,6 +103,7 @@ func preflight(h Host) (podmanTarget, error) {
 	return p, linuxPreflight(p)
 }
 
+// targetForHost creates a Podman target with the host platform's environment policy.
 func targetForHost(h Host) podmanTarget {
 	p := podmanTarget{host: h, environment: os.Environ}
 	if h.Platform == "windows" {
@@ -110,6 +114,7 @@ func targetForHost(h Host) podmanTarget {
 
 const minimumLinuxPodmanMinor = 4
 
+// linuxPreflight collects failures from read-only Linux prerequisite queries.
 func linuxPreflight(p podmanTarget) error {
 	h := p.host
 	var failures []error
@@ -164,10 +169,12 @@ func linuxPreflight(p podmanTarget) error {
 
 var requiredCgroupControllers = [...]string{"cpu", "memory", "pids"}
 
+// controllerRequirement formats the prerequisite message for one delegated cgroup controller.
 func controllerRequirement(name string) string {
 	return fmt.Sprintf("delegated cgroup %s controller is required", name)
 }
 
+// controllerFailures collects query errors and failures for missing required cgroup controllers.
 func controllerFailures(controllers string, queryErr error) []error {
 	var failures []error
 	if queryErr != nil {
@@ -181,6 +188,8 @@ func controllerFailures(controllers string, queryErr error) []error {
 	return failures
 }
 
+// subordinateRange reports whether the account has a valid nonempty subordinate ID range in the
+// supplied file.
 func subordinateRange(readFile func(string) ([]byte, error), path string, account *user.User) bool {
 	data, err := readFile(path)
 	if err != nil {
@@ -261,6 +270,7 @@ type podmanInfo struct {
 	}
 }
 
+// info decodes rootless and cgroup facts from the selected Podman target.
 func (p podmanTarget) info() (podmanInfo, error) {
 	var info podmanInfo
 	// JSON exposes host.security.rootless and host.cgroupVersion without parsing
@@ -283,6 +293,7 @@ type podmanTarget struct {
 	environment   func() []string
 }
 
+// arguments prepends the selected Podman connection when one is bound.
 func (p podmanTarget) arguments(args []string) []string {
 	if p.connection != "" {
 		return append([]string{"--connection", p.connection}, args...)
@@ -311,10 +322,13 @@ func (p podmanTarget) run(stdin io.Reader, stdout, stderr io.Writer, args ...str
 	return 1, fmt.Errorf("podman %s: %w", strings.Join(args, " "), err)
 }
 
+// query runs a Podman query and returns its standard output with failure diagnostics.
 func (p podmanTarget) query(args ...string) (string, error) {
 	return p.queryContext(context.Background(), 0, args...)
 }
 
+// queryContext runs a context-bound Podman query, keeping standard error out of successful
+// response data.
 func (p podmanTarget) queryContext(ctx context.Context, waitDelay time.Duration, args ...string) (string, error) {
 	command := p.command(ctx, waitDelay, args...)
 	// Only stdout is query data. Preserve both streams in failure diagnostics so
@@ -332,6 +346,8 @@ func (p podmanTarget) queryContext(ctx context.Context, waitDelay time.Duration,
 	return string(output), nil
 }
 
+// command constructs a Podman command with the selected connection, environment, and pipe wait
+// limit.
 func (p podmanTarget) command(ctx context.Context, waitDelay time.Duration, args ...string) *exec.Cmd {
 	command := exec.CommandContext(ctx, "podman", p.arguments(args)...)
 	command.WaitDelay = waitDelay
@@ -356,6 +372,8 @@ func windowsPodmanEnvironment() []string {
 
 var versionPattern = regexp.MustCompile(`(?:^|\s)([0-9]+)\.([0-9]+)\.([0-9]+)(?:[-+\s]|$)`)
 
+// atLeast reports whether the version in the supplied text meets the requested semantic-version
+// floor.
 func atLeast(value string, major, minor, patch int) bool {
 	parts := versionPattern.FindStringSubmatch(value)
 	if len(parts) != 4 {

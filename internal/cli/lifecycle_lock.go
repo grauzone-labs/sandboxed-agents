@@ -29,6 +29,8 @@ func hostStateRoot(platform string) (string, error) {
 	return filepath.Join(root, "sandboxed-agents"), nil
 }
 
+// acquireLifecycleLock opens a regular lock file for the sandbox and acquires its lifecycle lock
+// without waiting.
 func acquireLifecycleLock(root string, request Request) (*os.File, error) {
 	dir := filepath.Join(root, "group-"+request.Group, "locks")
 	if err := os.MkdirAll(dir, 0700); err != nil {

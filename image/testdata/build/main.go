@@ -10,6 +10,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/image"
 )
 
+// main builds the base image through the public API and prints its asset hash and image tags.
 func main() {
 	tag, err := image.Build(context.Background(), nil, func(ctx context.Context, args ...string) error {
 		command := exec.CommandContext(ctx, "podman", args...)

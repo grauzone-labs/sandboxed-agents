@@ -11,6 +11,7 @@ import (
 // InstallKind allows additional installation methods without changing npm entries.
 type InstallKind string
 
+// NPM installs an agent from an npm package into the sandbox's home data.
 const NPM InstallKind = "npm"
 
 // Install declares an agent's package and installation method.

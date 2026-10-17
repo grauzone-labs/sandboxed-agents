@@ -34,6 +34,7 @@ const (
 `
 )
 
+// main builds the requested NuGet command package or exits with a usage or packaging error.
 func main() {
 	if len(os.Args) != 4 {
 		fmt.Fprintln(os.Stderr, "usage: package VERSION REPOSITORY OUTPUT_DIRECTORY")
@@ -45,6 +46,7 @@ func main() {
 	}
 }
 
+// build validates the version, assembles the Windows command package, and writes release checksums.
 func build(version, root, output string) error {
 	pattern := `^` + versionNumber + `\.` + versionNumber + `\.` + versionNumber + `(?:-` + versionIdentifier + `(?:\.` + versionIdentifier + `)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`
 	if !regexp.MustCompile(pattern).MatchString(version) {
@@ -84,6 +86,7 @@ func build(version, root, output string) error {
 	return writeArchive(filepath.Join(output, "SandboxedAgents."+filenameVersion+".nupkg"), files)
 }
 
+// writeArchive writes sorted ZIP entries with fixed metadata and atomically replaces destination.
 func writeArchive(destination string, files map[string][]byte) error {
 	file, err := os.CreateTemp(filepath.Dir(destination), ".nuget-*.tmp")
 	if err != nil {

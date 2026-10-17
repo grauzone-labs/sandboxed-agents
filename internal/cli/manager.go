@@ -43,6 +43,8 @@ func ManagerQueryArgs(container, managerPath, subcommand string, payload ...stri
 	return append([]string{"exec", "--user=0:0", container, managerPath, subcommand}, payload...), nil
 }
 
+// requestManager sends a validated administrative manager request with bounded execution and
+// pipe draining.
 func requestManager(request Request, p podmanTarget, subcommand string, payload ...string) (string, error) {
 	args, err := ManagerQueryArgs(DerivedNames(request.Group, request.Name).Container, "/usr/local/bin/sandboxed-agents-manager", subcommand, payload...)
 	if err != nil {
@@ -70,16 +72,20 @@ func queryManager(p podmanTarget, container, subcommand string) (string, error) 
 	return queryManagerArgs(p, args)
 }
 
+// queryManagerSessions queries the sandbox's agent sessions through the administrative manager
+// interface.
 func queryManagerSessions(request Request, p podmanTarget) (string, error) {
 	return queryManager(p, DerivedNames(request.Group, request.Name).Container, "sessions")
 }
 
+// queryManagerArgs executes prepared manager arguments with bounded execution and pipe draining.
 func queryManagerArgs(p podmanTarget, args []string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	return p.queryContext(ctx, time.Second, args...)
 }
 
+// checkManager requires a successful manager version response with the expected product prefix.
 func checkManager(p podmanTarget, container string) error {
 	answer, err := queryManager(p, container, "version")
 	if err != nil {

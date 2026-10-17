@@ -11,6 +11,8 @@ import (
 	"testing"
 )
 
+// windowsHost creates a passing Windows host fixture with a selected running rootless WSL2
+// machine.
 func windowsHost(t *testing.T) *fixture {
 	t.Helper()
 	f := linuxHost(t)

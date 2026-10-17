@@ -12,6 +12,7 @@ import (
 	"sort"
 )
 
+// main builds the requested npm package or exits with a usage or packaging error.
 func main() {
 	if len(os.Args) != 4 {
 		fmt.Fprintln(os.Stderr, "usage: package VERSION REPOSITORY OUTPUT_DIRECTORY")
@@ -23,6 +24,7 @@ func main() {
 	}
 }
 
+// build assembles versioned npm metadata, launchers, release executables, and checksums into a package.
 func build(version, root, output string) error {
 	files := map[string][]byte{}
 	for _, name := range []string{"package.json", "launcher.cjs", "verify.cjs"} {
@@ -49,6 +51,7 @@ func build(version, root, output string) error {
 	return writeArchive(filepath.Join(output, "sandboxed-agents-"+version+".tgz"), files)
 }
 
+// writeArchive writes sorted package entries with fixed metadata and atomically replaces destination.
 func writeArchive(destination string, files map[string][]byte) error {
 	file, err := os.CreateTemp(filepath.Dir(destination), ".npm-*.tmp")
 	if err != nil {

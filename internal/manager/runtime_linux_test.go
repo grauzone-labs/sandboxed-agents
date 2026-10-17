@@ -31,12 +31,14 @@ func TestProductionEffectsWireRealIdentityReads(t *testing.T) {
 	}
 }
 
+// stubPassingAgentIDReads supplies verified agent IDs and empty groups at the identity-read seam.
 func stubPassingAgentIDReads(effects *Effects) {
 	effects.Groups = func() ([]int, error) { return nil, nil }
 	effects.UIDs = func() (int, int, int) { return 1000, 1000, 1000 }
 	effects.GIDs = func() (int, int, int) { return 1000, 1000, 1000 }
 }
 
+// assertAgentCredentials checks explicit UID, GID, and supplementary-group handling on an exec.Cmd.
 func assertAgentCredentials(t *testing.T, command *exec.Cmd, noSetGroups bool) {
 	t.Helper()
 	if command.SysProcAttr == nil || command.SysProcAttr.Credential == nil {

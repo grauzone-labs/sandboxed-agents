@@ -213,6 +213,7 @@ func TestCommandGrammar(t *testing.T) {
 	assertOnlyPreflightQueries(t, fakes)
 }
 
+// exitStatus extracts a subprocess exit code or fails the test for a process startup error.
 func exitStatus(t *testing.T, err error) int {
 	t.Helper()
 	if err == nil {
@@ -225,6 +226,7 @@ func exitStatus(t *testing.T, err error) int {
 	return -1
 }
 
+// assertNoExternalCalls verifies the fake Podman and SSH process logs are empty.
 func assertNoExternalCalls(t *testing.T, fakes testutil.Fakes) {
 	t.Helper()
 	for _, path := range []string{fakes.PodmanLog, fakes.SSHLog} {
@@ -558,6 +560,7 @@ func TestMalformedArgumentsRemainUsageErrors(t *testing.T) {
 	assertNoExternalCalls(t, fakes)
 }
 
+// assertOnlyPreflightQueries checks fake process logs for only permitted preflight queries and no SSH calls.
 func assertOnlyPreflightQueries(t *testing.T, fakes testutil.Fakes) {
 	t.Helper()
 	for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
@@ -611,6 +614,7 @@ type scriptedAnswer struct {
 	Exit   int
 }
 
+// lifecycleHarness installs fake processes with scripted Podman responses and isolated host state.
 func lifecycleHarness(t *testing.T, responses map[string]lifecycleResponse) testutil.Fakes {
 	t.Helper()
 	fakes := testutil.Install(t, fakeExecutable)
@@ -631,6 +635,7 @@ func lifecycleHarness(t *testing.T, responses map[string]lifecycleResponse) test
 	return fakes
 }
 
+// lifecycleRun runs the CLI through injected Linux host dependencies with an available loopback port.
 func lifecycleRun(args ...string) (int, string) {
 	return runWithHost(cli.Host{Platform: "linux", PortAvailable: func(uint16) error { return nil }}, args...)
 }
@@ -689,6 +694,7 @@ func TestLifecycleLockRefusesBeforeSandboxLookup(t *testing.T) {
 
 }
 
+// lifecycleLinuxHost supplies passing Linux prerequisite data and fake prerequisite executables.
 func lifecycleLinuxHost(t *testing.T, fakes testutil.Fakes) cli.Host {
 	t.Helper()
 	data, err := os.ReadFile(fakeExecutable)
@@ -757,6 +763,7 @@ func TestLifecycleLocksAreEmptyPersistentAndRejectNonregularPaths(t *testing.T) 
 	}
 }
 
+// ownedLifecycleResponses scripts fake Podman lifecycle answers for an owned sandbox with the requested running state.
 func ownedLifecycleResponses(running bool) map[string]lifecycleResponse {
 	return map[string]lifecycleResponse{
 		"container exists sandboxed-agents.default.demo":                                                 {},
@@ -773,6 +780,7 @@ func ownedLifecycleResponses(running bool) map[string]lifecycleResponse {
 	}
 }
 
+// lifecycleMutations selects container start, stop, restart, and removal calls from a fake Podman log.
 func lifecycleMutations(calls [][]string) [][]string {
 	var mutations [][]string
 	for _, call := range calls {

@@ -164,6 +164,7 @@ func TestNpmPackageLifecycle(t *testing.T) {
 	}
 }
 
+// assertInstalledNpmWorkspaceProtected checks an installed launcher refuses a protected workspace before host operations.
 func assertInstalledNpmWorkspaceProtected(t *testing.T, launcher, workspace string) {
 	t.Helper()
 	// Invoke Node directly: the npm shim directory is deliberately absent from PATH.
@@ -324,6 +325,7 @@ func TestNpmRejectsTamperedBinaries(t *testing.T) {
 	})
 }
 
+// fixtureNpmArchive builds a host-native fixture executable and packages it with checksums for npm installation tests.
 func fixtureNpmArchive(t *testing.T) (string, string) {
 	t.Helper()
 	if runtime.GOOS != "linux" && runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
@@ -356,6 +358,7 @@ func fixtureNpmArchive(t *testing.T) (string, string) {
 	return packNpmFixture(t, artifacts), artifacts
 }
 
+// packNpmFixture runs the npm package builder against fixture release artifacts and returns the archive path.
 func packNpmFixture(t *testing.T, artifacts string) string {
 	t.Helper()
 	root := repositoryRoot(t)
@@ -367,6 +370,7 @@ func packNpmFixture(t *testing.T, artifacts string) string {
 	return filepath.Join(artifacts, "sandboxed-agents-"+releasetest.ReleaseVersion+".tgz")
 }
 
+// npmHostArtifact returns the release executable name for the current test host.
 func npmHostArtifact() string {
 	if runtime.GOOS == "windows" {
 		return windowsArtifact
@@ -374,6 +378,7 @@ func npmHostArtifact() string {
 	return linuxArtifact
 }
 
+// npmPackagePath returns the globally installed package directory under an npm prefix.
 func npmPackagePath(prefix string) string {
 	if runtime.GOOS == "windows" {
 		return filepath.Join(prefix, "node_modules", "sandboxed-agents")
@@ -381,6 +386,7 @@ func npmPackagePath(prefix string) string {
 	return filepath.Join(prefix, "lib", "node_modules", "sandboxed-agents")
 }
 
+// appendNpmTamper appends bytes to a fixture artifact to exercise integrity checks.
 func appendNpmTamper(t *testing.T, name string) {
 	t.Helper()
 	file, err := os.OpenFile(name, os.O_APPEND|os.O_WRONLY, 0)
@@ -393,6 +399,7 @@ func appendNpmTamper(t *testing.T, name string) {
 	}
 }
 
+// readNpmArchive reads regular package files from an npm archive and rejects unexpected entries.
 func readNpmArchive(t *testing.T, name string) map[string][]byte {
 	t.Helper()
 	file, err := os.Open(name)
@@ -427,6 +434,7 @@ func readNpmArchive(t *testing.T, name string) map[string][]byte {
 	return files
 }
 
+// npmCommand creates an offline npm command with isolated cache and configuration paths.
 func npmCommand(t *testing.T, prefix string, args ...string) *exec.Cmd {
 	t.Helper()
 	npm, err := exec.LookPath("npm")
@@ -445,6 +453,7 @@ func npmCommand(t *testing.T, prefix string, args ...string) *exec.Cmd {
 	return command
 }
 
+// runNpm executes the isolated npm command and fails the test on an unsuccessful exit.
 func runNpm(t *testing.T, prefix string, args ...string) {
 	t.Helper()
 	if result, err := npmCommand(t, prefix, args...).CombinedOutput(); err != nil {
@@ -452,6 +461,7 @@ func runNpm(t *testing.T, prefix string, args ...string) {
 	}
 }
 
+// npmCommandPath returns the platform-specific installed npm shim path.
 func npmCommandPath(prefix string) string {
 	if runtime.GOOS == "windows" {
 		return filepath.Join(prefix, "sandboxed-agents.cmd")
@@ -459,11 +469,13 @@ func npmCommandPath(prefix string) string {
 	return filepath.Join(prefix, "bin", "sandboxed-agents")
 }
 
+// installedNpmCommand creates a command invoking the installed npm shim under the test prefix.
 func installedNpmCommand(t *testing.T, prefix string, args ...string) *exec.Cmd {
 	t.Helper()
 	return npmShimCommand(npmCommandPath(prefix), args...)
 }
 
+// npmShimCommand creates a platform-appropriate command for an npm shim.
 func npmShimCommand(name string, args ...string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
 		return exec.Command("cmd", append([]string{"/d", "/c", "call", name}, args...)...)

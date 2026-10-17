@@ -12,6 +12,8 @@ import (
 
 const updateWasRunningLabel = "io.sandboxed-agents.update-was-running"
 
+// updateSandbox recovers an interrupted update or replaces an outdated sandbox image while
+// preserving its configuration.
 func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
 	objects, err := requireSandbox(request, p)
 	if err != nil {

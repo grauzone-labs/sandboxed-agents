@@ -12,6 +12,7 @@ import (
 
 var sessionRequests = [][]string{{"sessions"}, {"__worker", "sessions"}}
 
+// noProcesses supplies injected identity reads and fails on unexpected process starts or re-execs.
 func noProcesses(t *testing.T, identity manager.Identity) manager.Effects {
 	t.Helper()
 	return manager.Effects{
@@ -24,6 +25,7 @@ func noProcesses(t *testing.T, identity manager.Identity) manager.Effects {
 	}
 }
 
+// rootToWorker records root's session re-exec and dispatches it to the injected agent worker.
 func rootToWorker(t *testing.T, worker manager.Effects, events *[]string) manager.Effects {
 	t.Helper()
 	workerArgs := []string{"__worker", "sessions"}
@@ -181,7 +183,10 @@ func TestAgentWorkRequiresSafeSupplementaryGroups(t *testing.T) {
 
 type childExit int
 
+// Error identifies the scripted process failure at the injected process seam.
 func (exit childExit) Error() string { return "scripted child failure" }
+
+// ExitCode supplies the process status that the manager must preserve.
 func (exit childExit) ExitCode() int { return int(exit) }
 
 // TestSessionsReportsNoTmuxServerAsEmptyList proves that exit 1 with "no server running" or "error connecting to" followed by "(No such file or directory)" yields an empty list,

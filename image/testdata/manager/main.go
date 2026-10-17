@@ -8,6 +8,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/image"
 )
 
+// main writes the embedded manager binary to standard output for executable-boundary tests.
 func main() {
 	data, err := fs.ReadFile(image.Context(), "base/manager.bin")
 	if err != nil {

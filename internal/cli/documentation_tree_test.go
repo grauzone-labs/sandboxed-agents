@@ -39,6 +39,8 @@ func TestCommandReferenceMatchesCommandTree(t *testing.T) {
 	}
 }
 
+// commandReferenceError compares the documented command grammar, options, and positional ranges
+// with the CLI parser.
 func commandReferenceError(document string) error {
 	type argumentRange struct{ min, max int }
 	ranges := map[string]argumentRange{}

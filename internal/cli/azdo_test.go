@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+// azureIntegrationFixture creates a running sandbox fixture with the Azure toolchain for
+// integration command tests.
 func azureIntegrationFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := sandboxStateFixture(t)
@@ -100,6 +102,7 @@ func TestIntegrationsRejectInvalidSandboxStateInOrder(t *testing.T) {
 
 type unreadableToken struct{ t *testing.T }
 
+// Read reports premature token consumption and returns end of input.
 func (r unreadableToken) Read([]byte) (int, error) {
 	r.t.Error("token read before guard")
 	return 0, io.EOF

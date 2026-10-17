@@ -12,6 +12,7 @@ func WriteContext(source fs.FS, directory string) error {
 	return err
 }
 
+// writeContext writes normalized assets into directory and returns their relative paths.
 func writeContext(source fs.FS, directory string) ([]string, error) {
 	return walkAssets(source, func(name string, data []byte) error {
 		file := filepath.Join(directory, filepath.FromSlash(name))

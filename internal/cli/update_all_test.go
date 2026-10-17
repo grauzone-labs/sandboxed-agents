@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// batchUpdateFixture scripts outdated sandboxes and inventory responses for batch-update CLI
+// tests.
 func batchUpdateFixture(t *testing.T, names ...string) *fixture {
 	t.Helper()
 	f := replacementFixture(t)
@@ -250,6 +252,8 @@ func TestUpdateAllGuardsSessionsPerSandbox(t *testing.T) {
 	}
 }
 
+// waitBatchFile waits up to five seconds for a file signaling progress at the batch-update
+// process seam.
 func waitBatchFile(t *testing.T, path string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

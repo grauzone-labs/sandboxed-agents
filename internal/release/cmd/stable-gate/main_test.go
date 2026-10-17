@@ -22,6 +22,7 @@ func TestStableGateCommandAcceptsGitHubPreview(t *testing.T) {
 	}
 }
 
+// githubFixture builds fake GitHub and preview executables and writes evidence for a passing stable gate.
 func githubFixture(t *testing.T) string {
 	t.Helper()
 	directory := t.TempDir()
@@ -54,6 +55,7 @@ func githubFixture(t *testing.T) string {
 	return directory
 }
 
+// buildFixture compiles a test executable without network dependency resolution.
 func buildFixture(t *testing.T, path, source string) {
 	t.Helper()
 	command := exec.Command("go", "build", "-o", path, source)
@@ -62,6 +64,8 @@ func buildFixture(t *testing.T, path, source string) {
 		t.Fatalf("fixture build: %v\n%s", err, output)
 	}
 }
+
+// writeJSON marshals value into a named fixture file under directory.
 func writeJSON(t *testing.T, directory, name string, value any) {
 	t.Helper()
 	data, err := json.Marshal(value)
@@ -72,6 +76,8 @@ func writeJSON(t *testing.T, directory, name string, value any) {
 		t.Fatal(err)
 	}
 }
+
+// runGitHubGate runs the real gate command against fixture GitHub responses with credentials cleared.
 func runGitHubGate(t *testing.T, directory string, extraArgs ...string) ([]byte, error) {
 	t.Helper()
 	args := append([]string{"run", ".", "--tag", "v1.0.0", "--repository", "owner/repo", "--commit", "0123456789abcdef0123456789abcdef01234567", "--asset-hash", strings.Repeat("a", 64)}, extraArgs...)
@@ -187,6 +193,7 @@ func TestStableGateCommandFindsValidatedPreview(t *testing.T) {
 	}
 }
 
+// readJSON decodes a named fixture JSON file into target.
 func readJSON(t *testing.T, directory, name string, target any) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(directory, name))
@@ -325,6 +332,7 @@ func TestStableTagWorkflowVerifiesTagCommit(t *testing.T) {
 
 }
 
+// stableGateWorkflow reads the stable release gate workflow with normalized line endings.
 func stableGateWorkflow(t *testing.T) string {
 	t.Helper()
 	data, err := os.ReadFile("../../../../.github/workflows/stable-release-gate.yml")
@@ -436,6 +444,7 @@ func TestStableTagWorkflowValidatesCalls(t *testing.T) {
 	}
 }
 
+// workflowGit runs Git in a fixture repository without system or global configuration.
 func workflowGit(t *testing.T, directory string, args ...string) string {
 	t.Helper()
 	command := exec.Command("git", args...)
@@ -534,6 +543,7 @@ func TestStableTagScriptVerifiesRefs(t *testing.T) {
 	}
 }
 
+// stableTagScript returns the absolute path of the stable tag verification script.
 func stableTagScript(t *testing.T) string {
 	t.Helper()
 	path, err := filepath.Abs("../../../../scripts/verify-stable-tag.sh")
@@ -543,6 +553,7 @@ func stableTagScript(t *testing.T) string {
 	return path
 }
 
+// stableTagFixture creates a detached repository with matching annotated and lightweight tags and a later commit.
 func stableTagFixture(t *testing.T) (string, string) {
 	t.Helper()
 	directory := t.TempDir()

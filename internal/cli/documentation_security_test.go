@@ -45,6 +45,8 @@ func TestSecurityPolicyCoversPodmanCreateOptions(t *testing.T) {
 	}
 }
 
+// securityOptionsError checks that SECURITY.md documents every Podman create option supplied by
+// the CLI.
 func securityOptionsError(document string, create []string) error {
 	for _, option := range create {
 		if strings.HasPrefix(option, "--") && !strings.Contains(document, "`"+option+"`") {

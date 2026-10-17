@@ -13,6 +13,8 @@ const (
 	backupPrefix    = "sandboxed-agents-backup."
 )
 
+// validateNames validates the controller group and any nonempty sandbox name against their
+// supported grammar.
 func validateNames(group, name string) error {
 	if !controllerGroupPattern.MatchString(group) {
 		return fmt.Errorf("invalid controller group %q", group)

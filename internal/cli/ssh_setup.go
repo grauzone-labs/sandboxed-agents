@@ -17,6 +17,8 @@ type sshSetup struct {
 	groupDir, dir, config, userConfig, entry, identity, knownHosts string
 }
 
+// installLifecycleSSHSetup installs opt-in SSH setup after a lifecycle action and adds a retry
+// diagnostic on failure.
 func installLifecycleSSHSetup(request Request, p podmanTarget, objects sandboxObjects, stdout io.Writer) error {
 	s, err := sshSetupPaths(request, p.host.Platform)
 	if err == nil {
@@ -28,10 +30,13 @@ func installLifecycleSSHSetup(request Request, p podmanTarget, objects sandboxOb
 	return nil
 }
 
+// lifecycleSSHSetupFailure reports SSH setup failure while explaining that the sandbox remains
+// running.
 func lifecycleSSHSetupFailure(request Request, err error) error {
 	return fmt.Errorf("sandbox %s keeps running; SSH setup failed: %w; retry ssh-config %s --install", request.Name, err, request.Name)
 }
 
+// sshSetupPaths derives this sandbox's managed SSH paths and the user's SSH configuration path.
 func sshSetupPaths(request Request, platform string) (sshSetup, error) {
 	root, err := hostStateRoot(platform)
 	if err != nil {
@@ -47,6 +52,8 @@ func sshSetupPaths(request Request, platform string) (sshSetup, error) {
 	return sshSetup{groupDir: group, dir: dir, config: filepath.Join(group, "config"), userConfig: filepath.Join(home, ".ssh", "config"), entry: filepath.Join(dir, "entry"), identity: filepath.Join(dir, "id_ed25519"), knownHosts: filepath.Join(dir, "known_hosts")}, nil
 }
 
+// sshHostName returns the sandbox's SSH alias, qualifying it with any nondefault controller
+// group.
 func sshHostName(request Request) string {
 	if request.Group == "default" {
 		return request.Name
@@ -89,6 +96,8 @@ func (s sshSetup) clientIncludeLine() (string, error) {
 	return s.includeLine(major > 9 || major == 9 && minor >= 9), nil
 }
 
+// hostEntry renders a pinned SSH host entry using the sandbox's recorded loopback port and
+// dedicated identity.
 func (s sshSetup) hostEntry(request Request, objects sandboxObjects) (string, error) {
 	port, err := parseSSHPort(objects.container.Config.Labels[SSHPortLabel])
 	if err != nil {
@@ -97,6 +106,7 @@ func (s sshSetup) hostEntry(request Request, objects sandboxObjects) (string, er
 	return fmt.Sprintf("Host %s\n    HostName 127.0.0.1\n    Port %d\n    User agent\n    IdentityFile %s\n    UserKnownHostsFile %s\n    GlobalKnownHostsFile none\n    IdentitiesOnly yes\n    IdentityAgent none\n    ForwardAgent no\n    StrictHostKeyChecking yes\n", sshHostName(request), port, tokenExpandedSSHPath(s.identity), tokenExpandedSSHPath(s.knownHosts)), nil
 }
 
+// configureSSH previews, installs, or removes the requested sandbox's opt-in SSH setup.
 func configureSSH(request Request, p podmanTarget, stdout, stderr io.Writer) error {
 	objects, err := requireSandbox(request, p)
 	if err != nil {
@@ -158,6 +168,7 @@ func (s sshSetup) removeHostSetup() error {
 	return s.updateConfiguration("")
 }
 
+// requireSSHManager requires a manager version query to succeed before SSH administration.
 func requireSSHManager(request Request, p podmanTarget) error {
 	if _, err := requestManager(request, p, "version"); err != nil {
 		return fmt.Errorf("sandbox %s: manager does not answer; use check %s and restart %s: %w", request.Name, request.Name, request.Name, err)
@@ -258,6 +269,8 @@ func installSSHSetup(request Request, p podmanTarget, objects sandboxObjects, s 
 	return nil
 }
 
+// checkConflict refuses an SSH alias whose resolved HostName differs from the client's
+// unconfigured default.
 func (s sshSetup) checkConflict(host string) error {
 	config := s.userConfig
 	if _, err := os.Stat(config); os.IsNotExist(err) {

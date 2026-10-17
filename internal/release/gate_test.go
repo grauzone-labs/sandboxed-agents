@@ -10,6 +10,7 @@ import (
 
 const gateCommit = "0123456789abcdef0123456789abcdef01234567"
 
+// validatedEvidence returns matching preview, validation records, CI, and asset hashes for a passing gate.
 func validatedEvidence() release.StableGateEvidence {
 	records := map[string][]byte{}
 	for _, platform := range []string{"linux", "windows-11"} {
@@ -32,6 +33,7 @@ func TestStableGateRequiresValidationFiles(t *testing.T) {
 	}
 }
 
+// changeRecord decodes a fixture validation record, applies change, and stores its updated JSON.
 func changeRecord(t *testing.T, evidence *release.StableGateEvidence, filename string, change func(map[string]any)) {
 	t.Helper()
 	var record map[string]any

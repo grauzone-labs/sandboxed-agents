@@ -32,6 +32,7 @@ func TestMalformedPortsFailBeforeBrokenPreflight(t *testing.T) {
 	}
 }
 
+// portHost prepares a new-sandbox fixture with no recorded SSH ports at the CLI-to-Podman seam.
 func portHost(t *testing.T) *fixture {
 	t.Helper()
 	f := linuxHost(t)

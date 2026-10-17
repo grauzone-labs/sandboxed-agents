@@ -11,6 +11,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/release"
 )
 
+// passingLiveRecord returns a passing live suite record with complete image coverage for platform.
 func passingLiveRecord(platform string) release.LiveSuiteRecord {
 	return release.LiveSuiteRecord{
 		Commit: gateCommit, Platform: platform, Result: "pass",

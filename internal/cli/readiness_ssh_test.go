@@ -149,12 +149,15 @@ func serveTestExchange(c net.Conn, signature string) error {
 	return err
 }
 
+// testSSHString encodes bytes as an SSH length-prefixed string for the readiness test server.
 func testSSHString(data []byte) []byte {
 	out := make([]byte, 4, len(data)+4)
 	binary.BigEndian.PutUint32(out, uint32(len(data)))
 	return append(out, data...)
 }
 
+// writeTestPacket writes an unencrypted SSH transport packet with block-aligned padding for
+// readiness tests.
 func writeTestPacket(w io.Writer, payload []byte) error {
 	padding := 8 - (len(payload)+5)%8
 	if padding < 4 {
@@ -168,6 +171,7 @@ func writeTestPacket(w io.Writer, payload []byte) error {
 	return err
 }
 
+// readTestPacket reads and validates an unencrypted SSH packet and returns its unpadded payload.
 func readTestPacket(r io.Reader) ([]byte, error) {
 	var header [5]byte
 	if _, err := io.ReadFull(r, header[:]); err != nil {

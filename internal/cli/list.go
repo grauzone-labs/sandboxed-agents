@@ -162,6 +162,8 @@ func listSandboxes(request Request, p podmanTarget, output io.Writer) error {
 	return err
 }
 
+// imageToolchains extracts the toolchain portion of a product image tag or returns an
+// unavailable marker.
 func imageToolchains(image string) string {
 	set, ok := strings.CutPrefix(image, "localhost/sandboxed-agents:")
 	if !ok {

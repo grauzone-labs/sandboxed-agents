@@ -248,6 +248,8 @@ func TestSecureSSHPathWindowsOpenSSHAcceptsSetup(t *testing.T) {
 	}
 }
 
+// grantEveryoneSSHPath installs a permissive Everyone ACL as an independent fixture for SSH
+// permission tests.
 func grantEveryoneSSHPath(t *testing.T, path string) {
 	t.Helper()
 	// The independent SDDL fixture deliberately allows Everyone full access.

@@ -39,6 +39,7 @@ func TestWindowsReleaseBuildsAreReproducible(t *testing.T) {
 	assertReproducibleRelease(t, repositoryRoot(t))
 }
 
+// assertReproducibleRelease checks release artifacts match across repeated builds and a CRLF checkout.
 func assertReproducibleRelease(t *testing.T, root string) {
 	t.Helper()
 	baseline := createReleaseRepository(t, root)
@@ -181,6 +182,7 @@ func TestReleaseIsolatesFIPSConfiguration(t *testing.T) {
 	assertReleaseArtifactsEqual(t, baseline, isolated)
 }
 
+// writeIgnoredFile adds an ignored fixture file and verifies the release checkout otherwise stays clean.
 func writeIgnoredFile(t *testing.T, checkout, relative string, data []byte) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(checkout, ".git", "info", "exclude"), []byte(filepath.Base(relative)+"\n"), 0600); err != nil {
@@ -235,11 +237,13 @@ func TestReleaseRefusesMissingGit(t *testing.T) {
 	assertReleaseRefused(t, checkout, "release requires git to verify its worktree")
 }
 
+// tagReleaseRepository creates the annotated version tag used by release integration tests.
 func tagReleaseRepository(t *testing.T, directory string) {
 	t.Helper()
 	runGit(t, directory, "tag", "-a", "v"+releasetest.ReleaseVersion, "-m", "release fixture")
 }
 
+// cloneReleaseRepository creates an independent release fixture clone with automatic CRLF conversion enabled.
 func cloneReleaseRepository(t *testing.T, source string) string {
 	t.Helper()
 	checkout := t.TempDir()
@@ -247,6 +251,7 @@ func cloneReleaseRepository(t *testing.T, source string) string {
 	return checkout
 }
 
+// createReleaseRepository copies release inputs into an isolated committed Git repository.
 func createReleaseRepository(t *testing.T, root string) string {
 	t.Helper()
 	checkout := t.TempDir()
@@ -263,11 +268,13 @@ func createReleaseRepository(t *testing.T, root string) string {
 	return checkout
 }
 
+// runGit executes a Git fixture command and fails the test on error.
 func runGit(t *testing.T, directory string, args ...string) {
 	t.Helper()
 	gitOutput(t, directory, args...)
 }
 
+// gitOutput executes Git in a fixture repository and returns trimmed combined output.
 func gitOutput(t *testing.T, directory string, args ...string) string {
 	t.Helper()
 	command := exec.Command("git", args...)
@@ -279,6 +286,7 @@ func gitOutput(t *testing.T, directory string, args ...string) string {
 	return strings.TrimSpace(string(output))
 }
 
+// assertReleaseRefused checks the release script reports the expected refusal and produces no release artifacts.
 func assertReleaseRefused(t *testing.T, checkout, diagnostic string) {
 	t.Helper()
 	outputDirectory := t.TempDir()
@@ -330,6 +338,7 @@ func releaseRepositoryOrSkip(t *testing.T) string {
 	return repositoryRoot(t)
 }
 
+// repositoryRoot resolves the repository root from the scripts test directory.
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs("..")
@@ -344,11 +353,13 @@ func releaseTestEnvironment() []string {
 	return append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=", "GOPROXY=off", "GOSUMDB=off")
 }
 
+// setReleaseTestDirectoryAndEnvironment selects a subprocess working directory and offline release test environment.
 func setReleaseTestDirectoryAndEnvironment(command *exec.Cmd, directory string) {
 	command.Dir = directory
 	command.Env = releaseTestEnvironment()
 }
 
+// assertReleaseVersion checks the host-native release executable reports the prepared version.
 func assertReleaseVersion(t *testing.T, directory string) {
 	t.Helper()
 	artifact := linuxArtifact
@@ -363,6 +374,7 @@ func assertReleaseVersion(t *testing.T, directory string) {
 	}
 }
 
+// releaseBash selects Bash for release tests, requiring an explicit Git for Windows Bash path on Windows.
 func releaseBash(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS != "windows" {
@@ -386,6 +398,7 @@ func releaseCommand(t *testing.T, root, output string) *exec.Cmd {
 	return command
 }
 
+// buildRelease runs the actual release script against a fixture checkout and fails the test on error.
 func buildRelease(t *testing.T, root, output string) {
 	t.Helper()
 	command := releaseCommand(t, root, output)

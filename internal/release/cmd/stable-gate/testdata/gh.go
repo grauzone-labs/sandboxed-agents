@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 )
 
+// main logs a GitHub API request and serves its configured fixture response without network access.
 func main() {
 	if len(os.Args) < 3 || os.Args[1] != "api" {
 		fmt.Fprintln(os.Stderr, "unexpected gh invocation")

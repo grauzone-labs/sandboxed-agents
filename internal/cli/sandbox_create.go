@@ -25,6 +25,7 @@ func sandboxCreateArgs(request Request, port uint16, workspaceMount, tag string,
 	return append(args, tag)
 }
 
+// sandboxIdentityLabels returns the owner and sandbox-name label arguments for Podman objects.
 func sandboxIdentityLabels(request Request) []string {
 	return []string{"--label", OwnerLabel + "=" + request.Group, "--label", SandboxNameLabel + "=" + request.Name}
 }

@@ -11,6 +11,8 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
 )
 
+// mountBoundaryError checks recorded Podman arguments against the named-volume and single-
+// workspace-bind policy.
 func mountBoundaryError(calls [][]string, prefix, workspace string) error {
 	canonicalWorkspace := ""
 	if workspace != "" {
@@ -73,6 +75,8 @@ func mountBoundaryError(calls [][]string, prefix, workspace string) error {
 	return nil
 }
 
+// canonicalMountDirectory resolves a workspace through the public parser's directory and
+// protected-path checks.
 func canonicalMountDirectory(path string) (string, error) {
 	// Parse uses the product's directory and protected-path checks and native
 	// resolver, including Windows junction and short-name canonicalization.

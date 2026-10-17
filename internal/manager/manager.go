@@ -22,11 +22,17 @@ type Identity struct{ UID, GID int }
 type EnvironmentPolicy uint8
 
 const (
+	// AgentEnvironment selects the environment for agent work and session queries.
 	AgentEnvironment EnvironmentPolicy = iota
+	// GitConfigEnvironment selects the environment for global Git configuration.
 	GitConfigEnvironment
+	// NPMEnvironment selects the environment for agent package installation.
 	NPMEnvironment
+	// GitHubEnvironment selects the environment for GitHub authentication.
 	GitHubEnvironment
+	// AzureDevOpsEnvironment selects the environment for Azure DevOps authentication.
 	AzureDevOpsEnvironment
+	// AzureEnvironment selects the environment for Azure authentication.
 	AzureEnvironment
 )
 
@@ -127,10 +133,12 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 	return 2
 }
 
+// reexecWorker runs the trusted manager worker as agent and reports its exit status.
 func reexecWorker(args []string, stdout, stderr io.Writer, effects Effects) int {
 	return exitStatus(effects.Reexec(Process{Args: args, Identity: agentIdentity, Stdout: stdout, Stderr: stderr}), stderr)
 }
 
+// sessions verifies agent identity before listing running agent sessions.
 func sessions(stdout, stderr io.Writer, effects Effects) int {
 	if !verifyAgent(effects, stderr) {
 		return 1
@@ -138,6 +146,7 @@ func sessions(stdout, stderr io.Writer, effects Effects) int {
 	return exitStatus(writeSessionNames(stdout, stderr, effects), stderr)
 }
 
+// exitStatus reports errors and preserves a positive child status, using one for other failures.
 func exitStatus(err error, stderr io.Writer) int {
 	if err == nil {
 		return 0
@@ -150,6 +159,7 @@ func exitStatus(err error, stderr io.Writer) int {
 	return 1
 }
 
+// verifyAgent requires all user and group IDs to be 1000 with no other supplementary groups.
 func verifyAgent(effects Effects, stderr io.Writer) bool {
 	if effects.UIDs == nil || effects.GIDs == nil {
 		fmt.Fprintln(stderr, "agent work requires verified real, effective, and saved UID and GID 1000")

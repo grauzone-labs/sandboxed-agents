@@ -11,6 +11,7 @@ import (
 	"testing"
 )
 
+// LiveTestsEnv names the explicit opt-in variable for the live suite.
 const LiveTestsEnv = "SANDBOXED_AGENTS_LIVE_TESTS"
 
 // Fakes installs a copy of the test executable as podman and ssh in a fresh directory.
@@ -21,6 +22,7 @@ type Fakes struct {
 	SSHLog    string
 }
 
+// Install copies executable into an isolated directory as the Podman and SSH fakes.
 func Install(t *testing.T, executable string) Fakes {
 	t.Helper()
 	dir := t.TempDir()
@@ -55,6 +57,7 @@ func Env(base []string, values map[string]string) []string {
 	return result
 }
 
+// Env isolates command lookup and host state, resets fake responses, and disables live tests.
 func (f Fakes) Env(base []string) []string {
 	return Env(base, map[string]string{
 		"PATH":            f.Dir,
@@ -68,6 +71,7 @@ func (f Fakes) Env(base []string) []string {
 	})
 }
 
+// Invocations reads recorded argument lists in order, returning nil for a missing log.
 func Invocations(t *testing.T, path string) [][]string {
 	t.Helper()
 	file, err := os.Open(path)
