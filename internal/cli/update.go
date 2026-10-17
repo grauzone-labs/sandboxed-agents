@@ -173,25 +173,26 @@ func replacementArgs(request Request, objects sandboxObjects, set []string, tag 
 	if err != nil {
 		return nil, 0, fmt.Errorf("recorded SSH port is missing or invalid: %w", err)
 	}
-	limits := [4]int64{}
+	limits := [3]int64{}
 	for i, limit := range c.integerLimits() {
 		value, err := limit.read()
 		if err != nil {
 			return nil, 0, err
 		}
-		if limit.option != "memory-swap" && value <= 0 {
+		if value <= 0 {
 			return nil, 0, fmt.Errorf("recorded --%s must be positive", limit.option)
 		}
 		limits[i] = value
 	}
-	if limits[3] != -1 && limits[3] < limits[0] {
-		return nil, 0, fmt.Errorf("recorded --memory-swap must be -1 or at least recorded --memory")
+	swap, err := c.memorySwapLimit()
+	if err != nil {
+		return nil, 0, err
 	}
 	cpu, err := c.cpuLimit()
 	if err != nil {
 		return nil, 0, err
 	}
-	request.Resources = Resources{Memory: limits[0], MemorySwap: limits[3], PIDsLimit: limits[1], ShmSize: limits[2], CPUs: cpu.displayCores()}
+	request.Resources = Resources{Memory: limits[0], MemorySwap: swap, PIDsLimit: limits[1], ShmSize: limits[2], CPUs: cpu.displayCores()}
 	request.Toolchains = set
 	workspaceMount, err := recordedWorkspaceMount(names, objects)
 	if err != nil {

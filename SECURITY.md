@@ -27,7 +27,7 @@ It is **not** built against code that actively tries to escape. A sandbox shares
 | `--security-opt=no-new-privileges` | fixed | A process cannot gain privileges through setuid or similar mechanisms. |
 | `--network=pasta:--no-map-gw` | fixed | Rootless `pasta` networking without mapping the gateway address to the host. |
 | `--memory` | `8g`, at least `6m` | Memory limit; `up --memory SIZE` changes it. It is a ceiling, not a reservation. |
-| `--memory-swap` | equal to `--memory` | The combined memory and swap ceiling. Equal to the memory limit, it leaves a new sandbox no swap. There is no option for it. A sandbox created before this default keeps the allowance it was created with. |
+| `--memory-swap` | equal to `--memory` | The combined memory and swap ceiling. Equal to the memory limit, it leaves a new sandbox no swap. No `sandboxed-agents` option sets it. A sandbox created before this default keeps the allowance it was created with. |
 | `--cpus` | `4` | CPU limit; `up --cpus N` changes it. |
 | `--pids-limit` | `2048` | Limit on processes; `up --pids-limit N` changes it. |
 | `--shm-size` | `1g` | Size of `/dev/shm`; `up --shm-size SIZE` changes it. |
