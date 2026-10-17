@@ -98,15 +98,10 @@ func TestUpdateRollsBackFailures(t *testing.T) {
 				f.responses["start sandboxed-agents.default.demo"] = response{Exit: 125, Output: "start failed", FailOnce: true}
 			case "readiness":
 				t.Setenv("TEST_SSH_KNOWN_HOSTS", "invalid\n")
-				t.Setenv(readinessDeadlineEnv, "2s")
 			}
-			started := time.Now()
-			status, output, calls := runUpExecutable(t, f, "update", "demo")
+			status, output, calls := runUpExecutableWithShortReadiness(t, f, "update", "demo")
 			if status != 1 || !strings.Contains(output, "restored") {
 				t.Fatalf("status=%d output=%s calls=%v", status, output, calls)
-			}
-			if elapsed := time.Since(started); elapsed > 30*time.Second {
-				t.Fatalf("%s failure took %v; the test must not wait out the production readiness deadline", stage, elapsed)
 			}
 			restore := -1
 			for i, call := range calls {

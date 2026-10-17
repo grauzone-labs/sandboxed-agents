@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
@@ -196,14 +195,9 @@ func TestUpdateCleanupReadinessFailureRestoresBackup(t *testing.T) {
 	f.responses["rm --force sandboxed-agents.default.demo"] = response{}
 	f.responses["rename sandboxed-agents-backup.default.demo sandboxed-agents.default.demo"] = response{}
 	t.Setenv("TEST_SSH_KNOWN_HOSTS", "invalid\n")
-	t.Setenv(readinessDeadlineEnv, "2s")
-	started := time.Now()
-	status, output, calls := runUpExecutable(t, f, "update", "demo")
+	status, output, calls := runUpExecutableWithShortReadiness(t, f, "update", "demo")
 	if status != 1 || !strings.Contains(output, "readiness wait failed") || !strings.Contains(output, "restored sandbox demo to its previous state") {
 		t.Fatalf("status=%d output=%s", status, output)
-	}
-	if elapsed := time.Since(started); elapsed > 30*time.Second {
-		t.Fatalf("readiness failure took %v; the test must not wait out the production deadline", elapsed)
 	}
 	want := []string{"start sandboxed-agents.default.demo", "rm --force sandboxed-agents.default.demo", "rename sandboxed-agents-backup.default.demo sandboxed-agents.default.demo"}
 	if got := recoveryActions(t, calls); !reflect.DeepEqual(got, want) {

@@ -34,7 +34,11 @@ func TestBaseRecipeSuppliesRuntimeContents(t *testing.T) {
 		}
 	}
 	// The manager changes with every executable; the package layers above it stay cached across those changes.
-	if strings.Index(recipe, "COPY --chmod=0755 manager.bin") < strings.Index(recipe, "deb.nodesource.com/node_24.x") {
+	manager, node := strings.Index(recipe, "COPY --chmod=0755 manager.bin"), strings.Index(recipe, "deb.nodesource.com/node_24.x")
+	if manager < 0 || node < 0 {
+		t.Fatalf("base recipe anchors missing: manager=%d node=%d", manager, node)
+	}
+	if manager < node {
 		t.Error("base recipe copies the manager before the Node.js layer, so a manager change invalidates the package layers")
 	}
 }

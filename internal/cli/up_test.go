@@ -114,10 +114,23 @@ func runUpExecutable(t *testing.T, f *fixture, args ...string) (int, string, [][
 	return status, string(output), testutil.Invocations(t, f.fakes.PodmanLog)
 }
 
-// TestUpExecutableBoundary proves up's create and bind outcomes reach the subprocess exit status and output through RunWithHost against fake Podman and SSH.
 // readinessDeadlineEnv shortens the readiness deadline of the TestUpExecutableBoundary driver.
 const readinessDeadlineEnv = "TEST_UP_READINESS_DEADLINE"
 
+// runUpExecutableWithShortReadiness runs the executable boundary with a 2s readiness deadline
+// and fails when the run still waited anywhere near the 60s production deadline.
+func runUpExecutableWithShortReadiness(t *testing.T, f *fixture, args ...string) (int, string, [][]string) {
+	t.Helper()
+	t.Setenv(readinessDeadlineEnv, "2s")
+	started := time.Now()
+	status, output, calls := runUpExecutable(t, f, args...)
+	if elapsed := time.Since(started); elapsed > 30*time.Second {
+		t.Fatalf("%v waited %v; the test must not wait out the production readiness deadline", args, elapsed)
+	}
+	return status, output, calls
+}
+
+// TestUpExecutableBoundary proves up's create and bind outcomes reach the subprocess exit status and output through RunWithHost against fake Podman and SSH.
 func TestUpExecutableBoundary(t *testing.T) {
 	if os.Getenv("TEST_UP_EXECUTABLE") != "1" {
 		t.Skip("subprocess driver only")
