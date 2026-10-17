@@ -70,4 +70,6 @@ It deletes `sandboxed-agents.exe` and deletes the install directory if that leav
 
 Removing the command does not delete the extracted package directory. Delete that yourself.
 
-The scripts change only the install directory and, unless `-NoPathUpdate` is given, the user `PATH`; what installing never touches is stated under [Installing](releases.md#installing).
+## What installing, upgrading, and removing touch
+
+The scripts change only the install directory and, unless `-NoPathUpdate` is given, the user `PATH`. What installing never touches is stated under [Installing](releases.md#installing).
