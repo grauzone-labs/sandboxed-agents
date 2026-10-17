@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -14,9 +15,12 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
-// agentEffects fakes npm at the process seam while writing installation artifacts into the test home.
+// agentEffects requires Linux for the real manager lock, then fakes npm at the process seam while writing installation artifacts into the test home.
 func agentEffects(t *testing.T, home string, version *string, installs *int) manager.Effects {
 	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("agent installation tests require the Linux manager lock")
+	}
 	e := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
 	e.HomeDirectory = func() (string, error) { return home, nil }
 	e.Start = func(p manager.Process) error {
