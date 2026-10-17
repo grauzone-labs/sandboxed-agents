@@ -1,0 +1,328 @@
+<!doctype html>
+<!-- THROWAWAY: Does the New sandbox wizard make image choice, agents and optional integrations clear?
+Host /?instance=local-fake|remote-lab; default local-fake. Single Control room; web variants retired. Web-first iteration; terminal layout is deferred. -->
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sandboxed · Control room prototype</title>
+<link rel="stylesheet" href="/assets/xterm.css">
+<style>
+:root{color-scheme:dark;--bg:#101318;--panel:#151a21;--line:#2b333e;--text:#d9e0e8;--dim:#8a98a9;--blue:#95d5ef;--green:#a5d69b;--amber:#dfc184;--red:#f49d98}
+*{box-sizing:border-box}body{margin:0;background:#0b0e12;color:var(--text);font:13px/1.65 ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace}button,input,select{font:inherit}button{border:1px solid var(--line);background:transparent;color:inherit;padding:5px 10px;cursor:pointer;border-radius:3px}button:hover{background:#232d39;border-color:#617488}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--blue);outline-offset:3px}button:disabled{opacity:.45;cursor:wait}button.primary{background:#9cd6e8;color:#0b1b24;border-color:#9cd6e8;font-weight:bold}button.danger{color:var(--red)}input,select{background:#11161d;color:var(--text);border:1px solid #3e4a59;padding:7px 10px;border-radius:3px;min-width:0}input[type=checkbox]{accent-color:var(--blue);width:18px;height:18px}h1,h2,h3,p{margin:0}h1{font-size:16px;font-weight:600}h2{font-size:12px;letter-spacing:.08em;color:var(--blue);font-weight:500}h3{font-size:15px}small,.dim{color:var(--dim)}.green{color:var(--green)}.amber{color:var(--amber)}.blue{color:var(--blue)}.red{color:var(--red)}.eyebrow{letter-spacing:.12em;font-size:11px;text-transform:uppercase}.intro{padding:20px 28px 16px;display:flex;justify-content:space-between;gap:20px;align-items:center;border-bottom:1px solid #252c34}.intro p{color:var(--dim);font-size:12px;margin-top:4px}.intro .tools{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.intro select{padding:4px 8px}main.terminal{margin:24px auto 40px;max-width:1512px;padding:0 28px}.termhead{display:flex;justify-content:space-between;align-items:center;padding:14px 0 18px;gap:16px}.brand{letter-spacing:.07em;color:var(--blue);font-weight:bold}.stats{display:flex;gap:20px;white-space:nowrap}.tabs{display:flex;gap:6px;border-bottom:1px solid var(--line);padding-bottom:10px;overflow:auto}.tabs button{border-color:transparent;color:var(--dim);white-space:nowrap}.tabs button[aria-selected=true]{color:var(--blue);background:#202c38;border-color:#34495a}.toolsrow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0}.toolsrow input{width:270px}.toolsrow>div{display:flex;gap:8px}.layout{display:grid;gap:14px;min-height:430px}.layout.control-room{grid-template-columns:280px minmax(0,1fr)}.panel{border:1px solid var(--line);border-radius:5px;background:var(--panel);min-width:0;overflow:hidden}.panelhead{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px;background:#171e27}.panelbody{padding:17px 18px}.inventory{max-height:385px;overflow:auto;padding:6px 0}.row{display:block;text-align:left;border:0;border-radius:0;width:100%;padding:12px 16px;border-left:2px solid transparent}.row.active{background:#202e3c;border-left-color:var(--blue)}.row .rowtop{display:flex;justify-content:space-between;gap:8px}.row .sub{font-size:11px;margin-top:3px;color:var(--dim)}.row .name{font-weight:600}.row .state{font-size:11px;white-space:nowrap}.tableheader{display:flex;justify-content:space-between;padding:8px 18px;font-size:11px;color:var(--dim);border-bottom:1px solid var(--line)}.details{display:grid;grid-template-columns:118px minmax(0,1fr);gap:10px 18px;margin-top:20px}.details dt{color:var(--dim)}.details dd{margin:0;overflow-wrap:anywhere}.detailtitle{display:flex;justify-content:space-between;gap:15px}.tag{display:inline-block;font-size:11px;color:var(--blue);border:1px solid #344958;padding:1px 7px;margin:0 5px 4px 0;border-radius:3px}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:23px;padding-top:18px;border-top:1px solid var(--line)}.note{border-left:2px solid #536172;padding-left:12px;color:var(--dim);font-size:12px;margin-top:20px}.activity{padding:12px 0;display:flex;gap:18px;color:var(--dim);font-size:11px;min-height:44px}.activity span{overflow-wrap:anywhere}.footkeys{border-top:1px solid var(--line);padding-top:10px;font-size:11px;color:var(--dim)}kbd{font:inherit;color:var(--blue)}.tree{padding:16px 8px}.treeroot{padding:0 10px 10px;color:var(--dim)}.tree button{display:block;width:100%;text-align:left;border:0;padding:8px 10px}.tree button.active{background:#202e3c;color:var(--blue)}.tree .nested{padding-left:28px;font-size:12px}.breadcrumb{color:var(--dim);font-size:12px;margin-bottom:16px}.tasklist{padding:7px 0}.tasklist .row{padding:10px 14px}.tasklist .num{color:var(--dim);margin-right:12px}.C .contextstack{display:grid;gap:14px;grid-template-rows:auto 1fr}.targetbar{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line)}.targetbar select{flex:1}.targetbar label{font-size:11px;color:var(--dim)}.taskhint{margin:16px;color:var(--dim);font-size:12px}.empty{padding:55px 24px;text-align:center;color:var(--dim)}.empty button{margin-top:18px}.notice{min-height:22px;font-size:12px;color:var(--green);overflow-wrap:anywhere}.notice.error{color:var(--red)}dialog{background:#161d26;color:var(--text);border:1px solid #52677e;border-radius:6px;max-width:min(660px,94vw);width:660px;padding:0;max-height:88vh;box-shadow:0 30px 100px #000b}dialog::backdrop{background:#05080dbb;backdrop-filter:blur(2px)}.dialogtop{padding:22px 24px 16px;border-bottom:1px solid var(--line)}.dialogtop p{color:var(--dim);font-size:12px;margin-top:10px}.dialogfields{padding:18px 24px;display:grid;gap:13px}.field{display:grid;grid-template-columns:minmax(180px,1fr) minmax(120px,1fr);align-items:center;gap:16px}.field.bool{display:flex;justify-content:space-between;flex-direction:row-reverse}.field .group{color:var(--dim);font-size:11px}.dialogbottom{padding:16px 24px 22px;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:12px;align-items:center}.dialogbottom .buttons{display:flex;gap:8px}.dialogerror{padding:0 24px;color:var(--red);font-size:12px}#help pre{white-space:pre-wrap;font:inherit;padding:24px;color:var(--dim)}.integration{display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid var(--line)}.integration small{display:block}.variantsummary{color:var(--dim);font-size:12px;margin-bottom:12px}.C .inventory{max-height:210px}a{color:var(--blue)}
+@media(min-width:1450px){.layout{min-height:490px}.inventory{max-height:450px}.panelbody{padding:22px}.row{padding:15px 18px}}
+@media(max-width:900px){.intro{padding:16px;align-items:flex-start}main.terminal{padding:0 16px}.intro .tools{max-width:280px}.layout.control-room{grid-template-columns:230px minmax(0,1fr)}.stats{gap:10px}.details{grid-template-columns:95px 1fr;gap:8px 12px}.tabs{gap:0}.tabs button{padding:5px 7px;font-size:11px}.termhead{align-items:flex-start;flex-direction:column;gap:8px}}
+@media(max-width:650px){.intro{flex-direction:column;gap:12px}.intro .tools{max-width:none;justify-content:flex-start}main.terminal{margin-top:10px}.layout.control-room{grid-template-columns:1fr}.layout.control-room .tree{max-height:230px;overflow:auto}.layout.C .tasklist{display:grid;grid-template-columns:1fr 1fr}.taskhint{display:none}.inventory{max-height:230px}.toolsrow{flex-wrap:wrap}.toolsrow input{width:100%}.toolsrow>div:first-child{flex:1}.field{grid-template-columns:1fr;gap:5px}.dialogfields{padding:16px}.stats{font-size:11px}}
+
+[hidden]{display:none!important}.sandbox-action-area{padding:14px 0 16px;border-bottom:1px solid var(--line);margin:8px 0 12px}.sandbox-actions{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0}.sandbox-actions button{font-size:12px}.sandbox-actions button:disabled{cursor:not-allowed;opacity:.4}.sandbox-actions .primary kbd{color:inherit}.action-reason{font-size:11px;margin-top:7px}.data-tabs{display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:8px}.data-tabs button{font-size:11px;padding:3px 7px;border-color:transparent}.data-tabs button[aria-pressed=true]{background:#202e3c;border-color:#344958}.wizard-shell{max-width:940px;margin:0 auto}.wizard-progress{list-style:none;display:flex;gap:24px;padding:0;margin:0 0 20px;color:var(--dim)}.wizard-progress li{display:flex;gap:8px;align-items:center}.wizard-progress span{border:1px solid var(--line);border-radius:50%;width:25px;height:25px;display:inline-flex;justify-content:center;align-items:center;font-size:11px}.wizard-progress .current{color:var(--blue)}.wizard-progress .complete{color:var(--green)}.wizard-progress .current span{border-color:var(--blue)}.wizard-tasks{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:20px}.wizard-tasks button{padding:15px;text-align:left;display:flex;gap:12px;justify-content:space-between}.wizard-tasks button.active,.wizard-targets button.active{border-color:var(--blue);background:#202e3c}.wizard-targets{display:grid;gap:10px;margin-top:20px;max-height:350px;overflow:auto}.wizard-targets button{text-align:left;padding:14px}.wizard-footer{display:flex;gap:14px;align-items:center;justify-content:space-between;padding:18px;border-top:1px solid var(--line)}.wizard-body{min-height:260px}.wizard-body .dialogfields{padding:18px 0}.wizard-result{padding:25px 0}.wizard-result p{margin-top:15px}.wizard-body .details{grid-template-columns:200px 1fr}@media(max-width:650px){.wizard-tasks{grid-template-columns:1fr}.wizard-progress{gap:8px;font-size:11px;flex-wrap:wrap}.wizard-footer small{display:none}.wizard-body .details{grid-template-columns:1fr;gap:2px}.wizard-body .details dd{margin-bottom:12px}}
+.app-config{margin-left:auto}.data-tabs{margin-top:20px}.sandbox-action-area{border-bottom:0;border-top:1px solid var(--line);margin-top:14px;padding-bottom:0;padding-top:6px;border-top:0}.tool-table{border-collapse:collapse;width:100%;font-size:12px;margin-top:22px}.tool-table caption{text-align:left;color:var(--blue);margin-bottom:8px}.tool-table th{text-align:left;color:var(--dim);font-size:11px;font-weight:400}.tool-table td,.tool-table th{padding:7px 6px;border-bottom:1px solid var(--line)}.linked-boxes{margin-top:24px}.sandbox-link{display:flex;align-items:center;gap:12px;width:100%;text-align:left;margin-top:8px}.sandbox-link span{margin-left:auto}.session-card{border:1px solid var(--line);border-radius:4px;padding:14px;margin-top:18px}.text-link{padding:3px 0;border:0;color:var(--blue)}.impact-review .details{grid-template-columns:160px 1fr}.impact-targets{margin:14px 0}.impact-review .note{color:var(--amber)}@media(max-width:800px){.impact-targets .integration{display:block}.impact-targets .integration span{display:block}.tool-table{font-size:11px}}
+.section-caption{margin:16px 0 12px}.agent-row,.integration-card{border:1px solid var(--line);padding:14px;border-radius:4px;margin-top:12px}.item-header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.item-header small{display:block}.agent-meta{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-top:10px}.agent-meta small{margin-left:auto}.item-actions{margin:12px 0 0}.agent-row .item-actions{justify-content:flex-end}.agent-row .action-reason{margin-top:8px}.integration-card .details{margin:12px 0}.integration-card .item-actions{justify-content:flex-end}.connect-note p{margin-top:8px}.session-detail{border-top:1px solid var(--line);margin-top:14px;padding:0 0 14px}.session-detail .details{margin-top:14px}.session-detail .item-actions{justify-content:flex-end}.agent-sessions>.item-actions{padding-top:10px;border-top:1px solid var(--line)}@media(max-width:650px){.agent-meta small{width:100%;margin-left:0}.item-header{flex-wrap:wrap}.session-detail .details{grid-template-columns:80px minmax(0,1fr)}}
+.instance-picker{display:flex;align-items:center;gap:10px}.instance-picker select{max-width:330px}.termhead{flex-wrap:wrap}#terminal-modal{width:min(1120px,96vw);max-width:1120px;height:min(780px,92vh);max-height:92vh;overflow:hidden}#terminal-modal[open]{display:flex;flex-direction:column}.terminal-dialog-head{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:12px}.terminal-dialog-head>div:last-child{display:flex;align-items:center;gap:12px}.terminal-dialog-head h3{margin-top:4px}#session-terminal{flex:1 1 0;height:0;overflow:hidden;min-height:180px;background:#101318;padding:12px 8px 8px 14px}#terminal-form{display:flex;align-items:center;gap:10px;padding:12px 16px;border-top:1px solid var(--line)}#terminal-input{flex:1}#terminal-form,.terminal-dialog-head,.terminal-note{flex-shrink:0}.terminal-note{padding:0 16px 12px;font-size:11px}#session-terminal .xterm{height:100%}@media(max-width:650px){.instance-picker{width:100%}.instance-picker select{flex:1;max-width:none}.terminal-dialog-head{align-items:flex-start;flex-direction:column;padding:12px}#terminal-form label{display:none}#terminal-form{padding:10px;gap:6px}.terminal-note{padding:0 10px 8px}.terminal-dialog-head h3{font-size:13px}}
+.tree .nav-sandbox{display:flex;align-items:center;justify-content:space-between;gap:12px}.nav-object-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tree .nav-group{font-size:12px;font-weight:600}.nav-instance{font-size:11px;overflow-wrap:anywhere}.nav-empty{padding:10px;font-size:11px}.nav-empty button{margin-top:10px}.tree .nav-image{overflow-wrap:anywhere}
+#create-wizard{width:min(900px,95vw);max-width:900px;overflow:hidden}#create-wizard[open]{display:flex;flex-direction:column}.create-body{overflow:auto;padding:22px 24px;min-height:280px;max-height:62vh}.create-body .dialogfields{padding:18px 0}.create-body .dialogerror{padding:14px 0 0}.create-modes{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px}.create-modes button{text-align:left;padding:14px}.create-modes button[aria-pressed=true],.create-image[aria-pressed=true]{border-color:var(--blue);background:#202e3c}.create-modes small{display:block;margin-top:4px}.create-image-grid{display:grid;grid-template-columns:minmax(200px,.9fr) minmax(0,1.1fr);gap:18px}.create-image-list{display:grid;gap:8px;align-content:start;contain:size;min-height:0;overflow-x:hidden;overflow-y:scroll;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#617488 #11161d}.create-image-list::-webkit-scrollbar{width:10px}.create-image-list::-webkit-scrollbar-track{background:#11161d}.create-image-list::-webkit-scrollbar-thumb{background:#617488;border:2px solid #11161d;border-radius:6px}.create-image{text-align:left;padding:12px}.create-image strong,.create-image small{display:block}.create-preview{border:1px solid var(--line);padding:14px;border-radius:4px;min-width:0}.create-preview .details{grid-template-columns:80px minmax(0,1fr);margin-top:14px;gap:8px}.create-preview .tool-table{margin-top:16px}.create-preview h3{font-size:13px}.create-note{margin-top:14px}.create-body .wizard-progress{gap:18px;font-size:12px}.create-body h3+p{margin-top:6px}#create-wizard .dialogbottom{flex-shrink:0}#create-wizard .dialogbottom .buttons{flex-wrap:wrap;justify-content:flex-end}.create-success{padding:20px 0}.create-review .details{grid-template-columns:140px minmax(0,1fr)}@media(max-width:650px){.create-body{padding:16px;max-height:60vh}.create-modes{grid-template-columns:1fr}.create-image-grid{grid-template-columns:1fr}.create-image-list{contain:none;max-height:35vh}.create-body .wizard-progress{gap:10px;flex-wrap:wrap}.create-review .details{grid-template-columns:1fr;gap:3px}.create-review .details dd{margin-bottom:10px}#create-wizard .dialogbottom{padding:12px;align-items:flex-start;gap:8px}.create-preview .details{grid-template-columns:75px minmax(0,1fr)}}
+</style>
+</head>
+<body>
+<header class="intro"><div><div class="eyebrow dim">Design study / 01</div><h1>Sandbox management / web study</h1><p>Two simulated instances · interactive agent sessions · shared backend state</p><p id="backend-status" class="amber" role="status">Connecting to backend …</p></div><div class="tools"><label class="dim" for="scenario">Fake data</label><select id="scenario"><option value="normal">5 Sandboxes</option><option value="empty">Empty host</option><option value="many">29 Sandboxes</option></select><button id="fault">Simulate error</button><button id="reset">Reset</button><button id="help-open" aria-label="Open help">?</button></div></header>
+<main class="terminal"><div class="termhead"><div><span class="brand">◈ SANDBOXED</span> <span class="dim">/ control room</span><div class="dim" style="font-size:11px" id="instance-context"></div></div><div class="instance-picker"><label for="instance-select" class="dim">Instance</label><select id="instance-select" aria-label="Active instance"><option value="local-fake">Local workstation</option><option value="remote-lab">Remote build lab</option></select></div><div class="stats" id="stats"></div></div><nav class="tabs" id="tabs" aria-label="Management sections"></nav><div class="toolsrow"><div><input id="search" aria-label="Search sandboxes" placeholder="/ Search sandbox or toolchain"><button id="status-filter">All statuses</button></div><div><button data-action="build">+ Build image</button><button class="primary" data-action="create">n New sandbox</button></div></div><div id="workspace"></div><div class="activity" id="activity"></div><div class="notice" id="notice" role="status" aria-live="polite"></div><footer class="footkeys"><kbd>Tab</kbd> Choose action &nbsp; <kbd>Enter</kbd> Run &nbsp; <kbd>↑↓</kbd> Sandbox &nbsp; <kbd>1–2</kbd> Section &nbsp; <kbd>n</kbd> Create &nbsp; <kbd>s/x</kbd> Start/Stop &nbsp; <kbd>t</kbd> Image &nbsp; <kbd>a</kbd> Agents &nbsp; <kbd>i/c</kbd> Integration/Config &nbsp; <kbd>e</kbd> Sessions &nbsp; <kbd>?</kbd> Help<br>Two independent simulated instances · session terminals use WebSocket · all changes stay in memory.</footer></main>
+<dialog id="editor"><form id="edit-form"><div class="dialogtop"><div class="eyebrow blue" id="dialog-target"></div><h3 id="dialog-title"></h3><p id="dialog-hint"></p></div><div class="dialogfields" id="dialog-fields"></div><div class="dialogerror" id="dialog-error" role="alert"></div><div class="dialogbottom"><small>Esc cancel · Ctrl+S apply</small><div class="buttons"><button type="button" id="cancel">Cancel</button><button type="submit" class="primary" id="submit">Apply</button></div></div></form></dialog>
+<dialog id="help"><div class="dialogtop"><h3>Controls &amp; test ideas</h3></div><pre>1. New sandbox → Image → Sandbox → Integrations (optional) → Review.
+   Select an existing image or choose toolchains for a new image.
+   Choose at least one agent. Skip integrations to configure them later.
+   Back keeps the draft. Only Create sandbox changes the fake instance.
+2. Switch Local workstation / Remote build lab: inventories stay separate.
+3. Sessions → Attach: try /help or a prompt; detach and attach again.
+4. Agents: enable/disable each agent. Integrations: connect/disconnect.
+5. Image → Open image → Configure toolchains → Review impact.
+6. Simulate error, then run an action: fake data is preserved on failure.
+
+↑/↓ Selection · 1–2 Sections
+Tab / Shift+Tab: available actions in the selected sandbox tab
+n New sandbox · s Start · x Stop · d Delete · t Image
+a Agents · i Integrations · c Sandbox config · b Build image
+e Sessions · / Search · v Status filter · r Reset
+
+Wizard: Next / Back · Ctrl+S next step · Esc cancel
+All sessions, versions, logins and effects are simulated.
+Esc closes this help.</pre><div class="dialogbottom"><small>Throwaway prototype · no production connection</small><button id="help-close">Close</button></div></dialog>
+<dialog id="create-wizard" aria-labelledby="create-title"><div class="dialogtop"><div class="eyebrow blue" id="create-scope"></div><h3 id="create-title">New sandbox</h3><p>Create a sandbox on this instance. Changes are applied after the final review.</p></div><div class="create-body"><ol id="create-progress" class="wizard-progress" aria-label="Creation steps"></ol><form id="create-form"><div id="create-content"></div><button type="submit" hidden>Next</button></form><div class="dialogerror" id="create-error" role="alert"></div></div><div class="dialogbottom"><button type="button" id="create-cancel">Cancel</button><div class="buttons"><button type="button" id="create-back">← Back</button><button type="button" id="create-skip" hidden>Skip integrations</button><button type="button" id="create-next" class="primary">Next →</button></div></div></dialog>
+<dialog id="terminal-modal"><div class="terminal-dialog-head"><div><div class="eyebrow blue" id="terminal-scope"></div><h3 id="terminal-title">Agent session</h3></div><div><span id="terminal-status" class="dim">Connecting …</span><button id="terminal-detach" type="button">Detach</button></div></div><div id="session-terminal" aria-label="Agent session terminal"></div><form id="terminal-form"><label class="dim" for="terminal-input">Demo prompt</label><input id="terminal-input" maxlength="2048" autocomplete="off" placeholder="Type /help, /status or a request" disabled><button id="terminal-send" class="primary" disabled>Send</button></form><p class="terminal-note dim">Live WebSocket transport · simulated agent responses · Detach preserves the session and its history.</p></dialog>
+<script src="/assets/xterm.js"></script><script src="/assets/addon-fit.js"></script>
+<script>
+'use strict';
+const sections=['Sandboxes','Images'];
+const pages=['Overview','Image','Agents','Integrations','Configuration','Sessions'];
+const $=id=>document.getElementById(id);
+const safe=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const chainLabel=c=>c?.length?c.join(', '):'none (Base image)';
+let instanceID=['local-fake','remote-lab'].includes(new URL(location.href).searchParams.get('instance'))?new URL(location.href).searchParams.get('instance'):'local-fake',instanceRevision=0;
+let attachment=null;
+let section=0,page=0,target='',imageID='',state=null,dialogForm=null,loading=false,statusFilter='all',lastState='';
+let createWizard=null;
+const actionIDs=['start','stop','end-sessions','agents','integration','configure','remove'];
+const images=()=>state?.images??[];
+const image=id=>images().find(i=>i.id===id)??{name:'—',toolchains:[]};
+function boxes(){const q=$('search').value.toLowerCase();return(state?.sandboxes??[]).filter(b=>(statusFilter==='all'||b.status===statusFilter)&&(b.name+' '+chainLabel(image(b.image).toolchains)).toLowerCase().includes(q));}
+function currentBox(){const list=boxes();return list.find(b=>b.name===target)??list[0];}
+function activeImage(){return images().find(i=>i.id===imageID)??images()[0];}
+function currentPage(){return page;}
+function actions(b){return state?.actions?.[b?.name]??[];}
+function actionFor(b,id){return actions(b).find(a=>a.id===id);}
+function users(id){return(state?.sandboxes??[]).filter(b=>b.image===id).map(b=>b.name);}
+function notify(message,error=false){$('notice').textContent=message;$('notice').classList.toggle('error',error);}
+function normalizeURL(){const url=new URL(location.href);url.searchParams.delete('variant');url.searchParams.set('instance',instanceID);history.replaceState(null,'',url);}
+normalizeURL();
+function actionButton(action,label,extra=''){return `<button data-action="${action}" class="${extra}">${label}</button>`;}
+function panel(title,body,extra=''){return `<section class="panel ${extra}"><div class="panelhead"><h2>${title}</h2></div>${body}</section>`;}
+function dl(pairs){return `<dl class="details">${pairs.map(([k,v])=>`<dt>${safe(k)}</dt><dd>${safe(v)}</dd>`).join('')}</dl>`;}
+function row(b){const active=b.name===currentBox()?.name;return `<button class="row ${active?'active':''}" data-target="${safe(b.name)}" aria-pressed="${active}"><span class="rowtop"><span class="name">${safe(b.name)}</span><span class="state ${b.status==='running'?'green':'dim'}">${b.status==='running'?'●':'○'} ${b.status}</span></span><span class="sub">${safe(chainLabel(image(b.image).toolchains))}${b.sessions?' · ◆ '+b.sessions+' session':''}${state.busy[b.name]?' · ◌ '+safe(state.busy[b.name]):''}</span></button>`;}
+function list(){
+ if(section===1)return `<div class="tableheader"><span>TOOLCHAIN SET</span><span>SIZE / USAGE</span></div><div class="inventory">${images().filter(i=>(i.name+' '+i.digest).toLowerCase().includes($('search').value.toLowerCase())).map(i=>`<button class="row ${i.id===activeImage()?.id?'active':''}" data-image="${safe(i.id)}" aria-pressed="${i.id===activeImage()?.id}"><span class="rowtop"><span class="name">${safe(i.name)}</span><span class="dim">${safe(i.size)} · ${users(i.id).length}×</span></span><span class="sub">${safe(i.digest)} · ${safe(i.created)}</span></button>`).join('')}</div>`;
+ const list=boxes();if(!list.length)return `<div class="empty">${state.sandboxes.length?'No matches for this filter.':'No sandboxes yet.'}<br><small>Create a sandbox or load a different fake data set.</small><br>${actionButton('create','+ Create first sandbox','primary')}</div>`;
+ return `<div class="tableheader"><span>SANDBOX / TOOLCHAINS</span><span>${list.length} MATCHES</span></div><div class="inventory">${list.map(row).join('')}</div>`;
+}
+function sandboxActions(b){
+ const allowed={Overview:['start','stop'],Configuration:['configure','remove']}[pages[currentPage()]]??[];
+ const options=actions(b).filter(a=>allowed.includes(a.id));
+ if(!options.length)return '';
+ const reasons=[...new Set(options.map(a=>a.reason).filter(Boolean))];
+ return `<div class="sandbox-action-area"><div class="sandbox-actions" role="toolbar" aria-label="${safe(pages[currentPage()])} actions for ${safe(b.name)}">${options.map(a=>`<button data-action="${a.id}" data-context-action="${a.id}" ${a.reason?'disabled':''} title="${safe(a.reason||a.label+' · '+b.name)}" class="${a.id==='remove'?'danger':a.id==='start'||a.id==='end-sessions'?'primary':''}"><kbd>${a.key}</kbd> ${safe(a.label)}</button>`).join('')}</div>${reasons.map(r=>`<p class="action-reason amber">${safe(r)}</p>`).join('')}${b.sessions&&reasons.length?'<button class="text-link" data-page="5">View open sessions →</button>':''}</div>`;
+}
+function toolTable(img){
+ const tools=state.imageTools?.[img.id]??Object.values(state.imageTools??{}).flat().filter((t,n,all)=>(t.toolchain==='base'||img.toolchains.includes(t.toolchain))&&all.findIndex(x=>x.name===t.name)===n);
+ return `<table class="tool-table"><caption>Included tools <span class="dim">/ illustrative versions</span></caption><thead><tr><th>Tool</th><th>Version</th><th>Toolchain</th></tr></thead><tbody>${tools.map(t=>`<tr><td>${safe(t.name)}</td><td class="blue">${safe(t.version)}</td><td class="dim">${safe(t.toolchain)}</td></tr>`).join('')}</tbody></table>`;
+}
+function itemReason(b,action,key=''){
+ if(loading||state.busy[b.name])return 'Action in progress …';
+ if(b.status!=='running')return 'Start the sandbox first';
+ if(action.startsWith('agent-')&&b.sessions)return 'End agent sessions before changing the agent selection';
+ if(action==='integration-connect'&&['azure','azdo'].includes(key)&&!image(b.image).toolchains.includes('azure'))return 'Requires the azure toolchain in the image';
+ return '';
+}
+function itemButton(b,action,key,label,kind=''){
+ const reason=itemReason(b,action,key),field=action.startsWith('integration-')?'integration':action==='session-start'||action.startsWith('agent-')?'agent':'session';
+ return `<button data-item-action="${safe(action)}" data-item-key="${safe(key)}" data-item-field="${field}" data-context-action="${safe(action+'/'+key)}" aria-label="${safe(label+' / '+key)}" class="${kind}" ${reason?'disabled':''} title="${safe(reason||label+' / '+key)}">${safe(label)}</button>`;
+}
+function itemActions(b,action,key,label,kind=''){
+ const reason=itemReason(b,action,key);
+ return `<div class="sandbox-actions item-actions" role="group" aria-label="Actions for ${safe(key)}">${itemButton(b,action,key,label,kind)}</div>${reason?`<p class="action-reason amber">${safe(reason)}</p>`:''}`;
+}
+function agentRows(b){
+ return `<p class="dim section-caption">All catalog agents / ${safe(b.name)} · illustrative versions</p><div class="agent-rows">${state.agentCatalog.map(agent=>{
+  const enabled=b.agents.includes(agent.id),action=enabled?'agent-disable':'agent-enable';
+  return `<article class="agent-row" data-agent="${safe(agent.id)}"><div class="item-header"><div><strong>${safe(agent.name)}</strong><small>${safe(agent.id)}</small></div><span class="${enabled?'green':'dim'}">${enabled?'● Enabled':'○ Disabled'}</span></div><div class="agent-meta"><span class="dim">${enabled?'Version':'Available version'}</span><span class="blue">${safe(agent.version)}</span><small>${enabled?'Installed in this sandbox':'Not installed / demo catalog'}</small></div>${itemActions(b,action,agent.id,enabled?'Disable':'Enable',enabled?'':'primary')}</article>`;
+ }).join('')}</div>`;
+}
+function integrationRows(b){
+ const reason=itemReason(b,'git-identity');
+ const git=`<article class="integration-card" data-integration="git"><div class="item-header"><strong>Git identity</strong><span class="${b.gitName&&b.gitEmail?'green':'dim'}">${b.gitName&&b.gitEmail?'Configured':'Not configured'}</span></div>${dl([['Git name',b.gitName||'not configured'],['Git email',b.gitEmail||'not configured']])}<div class="sandbox-actions item-actions"><button data-action="git-identity" data-context-action="git-identity" ${reason?'disabled':''} title="${safe(reason||'Edit Git name and email')}">Edit Git identity</button></div>${reason?`<p class="action-reason amber">${safe(reason)}</p>`:''}</article>`;
+ return git+Object.entries(b.integrations).filter(([key])=>key!=='git').map(([key,value])=>{
+  const connected=!value.startsWith('not'),action=connected?'integration-disconnect':'integration-connect';
+  return `<article class="integration-card" data-integration="${safe(key)}"><div class="item-header"><strong>${safe(({github:'GitHub',azure:'Azure',azdo:'Azure DevOps'})[key]??key)}</strong><span class="${connected?'green':'dim'}">${connected?'● Connected':'○ Not connected'}</span></div>${itemActions(b,action,key,connected?'Disconnect':'Connect',connected?'':'primary')}</article>`;
+ }).join('')+`<div class="note connect-note"><strong class="amber">Connect workflow / to be defined</strong><p>Interactive sign-in requires SSH port forwarding. A new workflow must be designed and implemented for this. Connect and Disconnect currently simulate connection state only.</p></div>`;
+}
+function sessionRows(b){
+ const sessions=b.openSessions??[],agentIDs=[...new Set([...(b.agents??[]),...sessions.map(s=>s.agent)])];
+ return `<p class="dim section-caption">${b.sessions} open agent session${b.sessions===1?'':'s'} / ${safe(b.name)}</p>${agentIDs.map(id=>{
+  const agent=state.agentCatalog.find(a=>a.id===id),open=sessions.filter(s=>s.agent===id);
+  return `<article class="session-card agent-sessions" data-session-agent="${safe(id)}"><div class="item-header"><div><strong>${safe(agent?.name??id)}</strong><small>${safe(id)} · ${safe(agent?.version??'unknown version')}</small></div><span class="${open.length?'green':'dim'}">${open.length} open</span></div>${open.map(session=>`<section class="session-detail" data-session="${safe(session.id)}">${dl([['Session',session.id],['Status',session.status+' · '+(session.attached?'attached (demo)':'detached')],['Started',session.started]])}<div class="sandbox-actions item-actions" role="group" aria-label="Actions for ${safe(session.id)}">${itemButton(b,'session-attach',session.id,session.attached?'Open terminal':'Attach')}${itemButton(b,'session-end',session.id,'End session','danger')}</div></section>`).join('')||'<p class="dim section-caption">No open sessions for this agent.</p>'}${b.agents.includes(id)?itemActions(b,'session-start',id,'Start session (demo)','primary'):''}</article>`;
+ }).join('')||'<div class="note">Enable an agent in the Agents tab to start a demo session.</div>'}<div class="note">Attach opens a working terminal connected to this simulated agent session. Agent responses are generated by the Go fake.</div>`;
+}
+function sandboxData(b){
+ const i=image(b.image),active=pages[currentPage()];
+ if(active==='Image')return dl([['Image',i.name],['ID',i.id],['Digest',i.digest],['Asset hash',i.assetHash],['Platform',i.platform],['Size',i.size],['Created',i.created],['Toolchains',chainLabel(i.toolchains)]])+toolTable(i)+`<div class="note">Toolchains belong to the shared image. Configure them in Images to review the effect on every linked sandbox.</div><div class="actions"><button data-image="${safe(i.id)}">Open image / configure toolchains →</button></div>`;
+ if(active==='Agents')return agentRows(b);
+ if(active==='Integrations')return integrationRows(b);
+ if(active==='Configuration')return dl([['CPU limit',b.cpu],['RAM limit',b.memory+' GiB'],['SSH setup',b.ssh?'installed':'not installed'],['Workspace',b.workspace],['Controller group',b.group],['Git name',b.gitName||'not configured'],['Git email',b.gitEmail||'not configured']]);
+ if(active==='Sessions')return sessionRows(b);
+ return dl([['Image',i.name],['Toolchains',chainLabel(i.toolchains)],['Agents',(b.agents??[]).join(', ')||'none'],['Workspace',b.workspace],['Limits',b.cpu+' CPU / '+b.memory+' GiB RAM'],['SSH setup',b.ssh?'installed':'not installed'],['Agent sessions',b.sessions],['Controller group',b.group],['Image restarts',b.restarts??0]]);
+}
+function detail(){
+ if(section===1){const i=activeImage();if(!i)return '<div class="empty">No images</div>';return `<div class="panelbody"><div class="detailtitle"><h3>${safe(i.name)}</h3><span class="tag">${users(i.id).length?'in use':'unused'}</span></div>${dl([['ID',i.id],['Digest',i.digest],['Asset hash',i.assetHash],['Platform',i.platform],['Created',i.created],['Size',i.size],['Toolchains',chainLabel(i.toolchains)]])}${toolTable(i)}<div class="linked-boxes"><h2>LINKED SANDBOXES / ${users(i.id).length}</h2>${users(i.id).map(name=>`<button class="sandbox-link" data-target="${safe(name)}">${safe(name)} <span class="dim">${safe(state.sandboxes.find(b=>b.name===name)?.status)}</span> →</button>`).join('')||'<p class="dim">No linked sandboxes.</p>'}</div><div class="note">Changes apply to every linked sandbox. Review the update and restart impact before confirming.</div><div class="actions">${actionButton('image-toolchains','Configure toolchains','primary')}</div></div>`;}
+ const b=currentBox();if(!b)return '<div class="empty">No sandbox selected.</div>';
+ return `<div class="panelbody"><div class="detailtitle"><div><h3>${safe(b.name)}</h3><small>Data and functions of this sandbox</small></div><span class="${b.status==='running'?'green':'dim'}">${b.status==='running'?'●':'○'} ${b.status}</span></div><nav class="data-tabs" aria-label="Data of ${safe(b.name)}">${pages.map((label,n)=>`<button data-page="${n}" aria-pressed="${currentPage()===n}" class="${currentPage()===n?'blue':''}">${label}</button>`).join('')}</nav><div class="sandbox-data" data-sandbox="${safe(b.name)}">${sandboxActions(b)}${sandboxData(b)}</div></div>`;
+}
+function applicationConfig(){return panel('Application configuration',`<div class="panelbody"><article class="session-card"><h3>Shared backend service</h3>${dl([['Service ID',state.service?.id??'unknown'],['Started',state.service?.started??'unknown'],['State','Shared in service memory']])}<div class="note">Web and TUI use this same backend. The hosting TUI can enable or disable web access in Configuration; disabling keeps its data. In this prototype, quitting the hosting TUI ends its service. A service started with -serve runs independently.</div></article><h3>Sandboxed agents instances</h3><p class="dim">Switch between independent simulated hosts. Each instance owns its sandboxes, images, sessions and activity.</p>${state.instances.map(info=>`<article class="session-card"><div class="item-header"><div><strong>${safe(info.name)}</strong><small>${safe(info.id)}</small></div><span class="${info.id===instanceID?'green':'dim'}">${info.id===instanceID?'● Active':'Connected / simulated'}</span></div>${dl([['Connection',info.kind],['Address',info.address],['Controller group',info.group],['Inventory',info.sandboxCount+' sandboxes / '+info.imageCount+' images']])}<div class="actions"><button data-instance="${safe(info.id)}" ${info.id===instanceID?'disabled':''}>${info.id===instanceID?'Current instance':'Use this instance'}</button></div></article>`).join('')}<div class="note">Both connections are simulated locally. Real remote connections and their authentication workflow are future work.</div><div class="actions"><button disabled title="Future feature">+ Add another instance</button><span class="tag">Planned</span></div></div>`);}
+
+function navigator(){
+ const b=currentBox(),sandboxes=boxes(),q=section===1?$('search').value.toLowerCase():'';
+ const imageList=images().filter(i=>(i.name+' '+i.digest).toLowerCase().includes(q));
+ return `<nav class="tree" aria-label="Instance navigation"><div class="treeroot nav-instance">▾ ${safe(state.instance.group)} / ${safe(state.instance.name)}</div><button data-section="0" class="nav-group ${section===0?'blue':''}" aria-current="${section===0?'page':'false'}">▾ Sandboxes (${state.sandboxes.length})</button>${sandboxes.map(x=>{
+  const selected=x.name===b?.name&&section===0;
+  return `<button data-target="${safe(x.name)}" class="nav-sandbox ${selected?'active':''}" aria-pressed="${selected}" title="${safe(x.name+' / '+x.status)}"><span class="nav-object-name">${safe(x.name)}</span><span class="${x.status==='running'?'green':'dim'}" aria-label="${safe(x.status)}">${x.status==='running'?'●':'○'}</span></button>`;
+ }).join('')}${!sandboxes.length?`<div class="nav-empty dim">${state.sandboxes.length?'No matching sandboxes.':'No sandboxes yet.'}${!state.sandboxes.length?actionButton('create','+ Create sandbox','primary'):''}</div>`:''}<button data-section="1" class="nav-group ${section===1?'active':''}" aria-expanded="${section===1}" style="margin-top:15px">${section===1?'▾':'▸'} Images (${images().length})</button>${section===1?imageList.map(i=>`<button class="nested nav-image ${i.id===activeImage()?.id?'active':''}" data-image="${safe(i.id)}" aria-pressed="${i.id===activeImage()?.id}">└ ${safe(i.name)}</button>`).join('')||'<p class="nav-empty dim">No matching images.</p>':''}</nav>`;
+}
+function ControlRoom(){return `<div class="layout control-room">${panel('01 / Navigation',navigator())}${panel(section===1?'02 / Image details':'02 / Selected sandbox',detail())}</div>`;}
+function fieldsHTML(f,values,prefix){return f.fields.map((field,idx)=>{
+ const id=prefix+idx,value=values[field.key]??field.value;
+ if(field.kind==='hidden')return `<input type="hidden" name="${safe(field.key)}" value="${safe(value)}">`;
+ if(field.key==='approve'&&prefix!=='review-field-')return '';
+ if(field.kind==='bool')return `<div class="field bool"><input id="${id}" name="${safe(field.key)}" type="checkbox" ${value==='true'?'checked':''}><label for="${id}">${safe(field.label)}${field.key.startsWith('chain:')?' <span class="group">Toolchain</span>':field.key.startsWith('agent:')?' <span class="group">Agent</span>':''}</label></div>`;
+ if(field.kind==='choice')return `<div class="field"><label for="${id}">${safe(field.label)}</label><select id="${id}" name="${safe(field.key)}">${field.options.map(o=>`<option ${o===value?'selected':''}>${safe(o)}</option>`).join('')}</select></div>`;
+ return `<div class="field"><label for="${id}">${safe(field.label)}</label><input id="${id}" name="${safe(field.key)}" value="${safe(value)}" maxlength="240" autocomplete="off"></div>`;
+ }).join('');}
+function collectFields(f,element){const values={};for(const field of f.fields){const el=element.elements.namedItem(field.key);if(el)values[field.key]=field.kind==='bool'?String(el.checked):el.value;}return values;}
+function focusToken(){const el=document.activeElement;if(!el||el===document.body)return null;return {id:el.id,context:el.dataset.contextAction,sandbox:currentBox()?.name,instance:instanceID,selection:el.matches('input[type=text],input:not([type])')?[el.selectionStart,el.selectionEnd]:null};}
+function restoreFocus(token){if(!token)return;let el=token.id?$(token.id):null;if(!el&&token.context&&token.sandbox===currentBox()?.name&&token.instance===instanceID)el=document.querySelector(`.sandbox-actions [data-context-action="${token.context}"]:not(:disabled)`);if(el){el.focus({preventScroll:true});if(token.selection&&el.setSelectionRange)el.setSelectionRange(...token.selection);}}
+function render(){
+ if(!state)return;const focus=focusToken(),b=currentBox();if(b)target=b.name;
+ $('instance-context').textContent=state.instance.id+' / '+state.instance.group+' / '+state.instance.kind;
+ $('instance-select').innerHTML=state.instances.map(info=>`<option value="${safe(info.id)}">${safe(info.name)} / ${info.id==='local-fake'?'local':'remote demo'}</option>`).join('');$('instance-select').value=instanceID;$('instance-select').disabled=loading;
+ $('scenario').options[0].textContent=state.instance.seedCount+' Sandboxes';$('scenario').options[2].textContent=(state.instance.seedCount+24)+' Sandboxes';
+ const running=state.sandboxes.filter(b=>b.status==='running').length;
+ $('stats').innerHTML=`<span><b class="green">${running}</b> running</span><span><b>${state.sandboxes.length-running}</b> stopped</span><span><b class="blue">${images().length}</b> images</span>`;
+ $('tabs').innerHTML=sections.map((s,n)=>`<button role="tab" aria-selected="${n===section}" data-section="${n}">${n+1} ${s}</button>`).join('')+`<button data-section="2" aria-selected="${section===2}" class="app-config">⚙ Configuration</button>`;
+ document.querySelector('.toolsrow').hidden=section===2;
+ $('status-filter').hidden=section!==0;
+ $('search').placeholder=section===1?'/ Search images or toolchains':'/ Search sandbox or toolchain';
+ $('search').setAttribute('aria-label',section===1?'Search images':'Search sandboxes');
+ $('workspace').innerHTML=section===2?applicationConfig():ControlRoom();
+ $('activity').innerHTML=state.events.length?`<time>${safe(state.events[0].time)}</time><span>${safe(state.events[0].text)}</span>`:'';
+ $('scenario').value=state.scenario;$('fault').textContent=state.faultNext?'Error armed · next action':'Simulate error';$('fault').classList.toggle('danger',state.faultNext);
+ $('status-filter').textContent={all:'All statuses',running:'● Running',stopped:'○ Stopped'}[statusFilter];
+ restoreFocus(focus);
+}
+async function api(path,body,selected=instanceID){const url=new URL(path,location.href);url.searchParams.set('instance',selected);const response=await fetch(url,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(75000)}:{signal:AbortSignal.timeout(3000)});const data=await response.json();if(selected!==instanceID)throw new Error('Instance changed; previous response ignored');if(!response.ok)throw new Error(data.error??'Fake instance unreachable');return data;}
+async function switchInstance(id){
+ if(id===instanceID)return;
+ if(loading||$('editor').open||$('terminal-modal').open||$('create-wizard').open){normalizeURL();$('instance-select').value=instanceID;notify('Finish or close the current action before switching instances.',true);return;}
+ const previous=instanceID,previousState=state;
+ instanceID=id;instanceRevision++;loading=true;$('instance-select').disabled=true;$('workspace').innerHTML='<div class="empty">Switching instance …</div>';
+ try{const next=await api('/api/state');state=next;target='';imageID='';page=0;statusFilter='all';$('search').value='';lastState=JSON.stringify(next);normalizeURL();notify('Active instance: '+state.instance.name);}
+ catch(error){instanceID=previous;state=previousState;notify(error.message,true);}
+ finally{loading=false;render();}
+}
+
+async function runDirect(action,name){loading=true;notify('◌ '+action+' · '+name+' …');try{state=await api('/api/command',{action,name});notify(state.events[0]?.text??'Completed');}catch(error){notify(error.message,true);}finally{loading=false;render();}}
+async function runItemAction(action,key,field){
+ if(loading||section!==0)return;
+ const b=currentBox();if(!b)return;
+ if(action==='session-attach'){await openAttachment(b.name,key);return;}
+ const reason=itemReason(b,action,key);if(reason){notify(reason,true);return;}
+ loading=true;notify('◌ '+action+' / '+key+' / '+b.name+' …');render();
+ try{state=await api('/api/command',{action,name:b.name,values:{[field]:key}});notify(state.events[0]?.text??'Completed');}
+ catch(error){notify(error.message,true);}finally{loading=false;render();}
+}
+async function openAction(action){
+ if(loading)return;
+ if(action==='create'){await openCreateWizard();return;}
+ if(['agents','integration','end-sessions'].includes(action)){if(section!==0){notify('Select a sandbox in Sandboxes first.',true);return;}selectPage(({agents:2,integration:3,'end-sessions':5})[action]);return;}
+ if(action==='git-identity'&&(section!==0||!currentBox())){notify('Select a sandbox in Sandboxes first.',true);return;}
+ if(action==='images'){selectImage(currentBox()?.image??imageID);return;}
+ const b=currentBox();if((!b||section!==0)&&actionIDs.includes(action)){notify('Select a sandbox in Sandboxes first.',true);return;}
+ try{
+  if(action==='fault'){state=await api('/api/command',{action});render();return;}
+  if(actionIDs.includes(action)){const a=actionFor(b,action);if(!a){notify('This function is not available in the current sandbox state.',true);return;}if(a.reason){notify(a.reason,true);return;}if(a.direct){await runDirect(action,b.name);return;}}
+  dialogForm=await api('/api/form?'+new URLSearchParams({action,name:action==='image-toolchains'?activeImage()?.id??'':b?.name??''}));
+  $('dialog-target').textContent=action==='image-toolchains'?'Image / '+activeImage()?.name+' / '+state.instance.name:b&&!['create','build','scenario','reset'].includes(action)?'Target / '+b.name+' / '+state.instance.name:'Instance / '+state.instance.name+' / '+state.instance.group;
+  $('dialog-title').textContent=dialogForm.title;$('dialog-hint').textContent=dialogForm.hint;$('dialog-error').textContent='';
+  $('dialog-fields').innerHTML=fieldsHTML(dialogForm,{},'field-');
+  $('submit').textContent=action==='image-toolchains'?'Review impact →':action==='remove'?'Delete sandbox':action==='integration'?'Start demo workflow':'Apply';$('editor').showModal();
+ }catch(error){notify(error.message,true);}
+}
+function imageImpactHTML(id,values){
+ const linked=(state.sandboxes??[]).filter(b=>b.image===id),chains=Object.keys(values).filter(k=>k.startsWith('chain:')&&values[k]==='true').map(k=>k.slice(6));
+ return `<div class="impact-review"><h2>${safe(state.instance.name)} / UPDATE IMPACT / ${linked.length} ${linked.length===1?'SANDBOX':'SANDBOXES'}</h2>${dl([['Current toolchains',chainLabel(image(id).toolchains)],['New toolchains',chainLabel(chains)]])}${toolTable({toolchains:chains})}<div class="note amber">All linked sandboxes listed below will be updated and restarted. Their open agent sessions will end. Stopped sandboxes will start. Workspace, home data, agent selection and configuration are preserved.</div><div class="impact-targets">${linked.map(b=>`<div class="integration"><strong>${safe(b.name)}</strong><span>${safe(b.status)} → running${b.sessions?' · '+b.sessions+' session(s) will end':''}</span></div>`).join('')||'<p class="dim">No linked sandboxes. Only the image will be prepared.</p>'}</div><p class="dim">The matching image is built or reused; the previous image is kept.</p></div>`;
+}
+async function submitForm(event){
+ event?.preventDefault();if(!dialogForm||loading)return;
+ const values=dialogForm.reviewed?{...dialogForm.draft,...collectFields(dialogForm,$('edit-form'))}:collectFields(dialogForm,$('edit-form'));
+ if(dialogForm.action==='image-toolchains'&&!dialogForm.reviewed){
+  try{await api('/api/review',{action:dialogForm.action,name:dialogForm.name,values});dialogForm.draft=values;dialogForm.reviewed=true;$('dialog-title').textContent='Confirm image update';$('dialog-hint').textContent='Review all affected sandboxes. Cancel keeps the image and sandboxes unchanged.';$('dialog-fields').innerHTML=imageImpactHTML(dialogForm.name,values)+fieldsHTML({...dialogForm,fields:dialogForm.fields.filter(f=>f.key==='approve'||f.kind==='hidden')},values,'review-field-');$('submit').textContent='Update & restart';$('dialog-error').textContent='';}
+  catch(error){$('dialog-error').textContent=error.message;}return;
+ }
+ loading=true;$('submit').disabled=true;$('cancel').disabled=true;$('submit').textContent='◌ Fake action in progress …';$('dialog-error').textContent='';
+ try{state=await api('/api/command',{action:dialogForm.action,name:dialogForm.name,values});if(dialogForm.action==='image-toolchains'){imageID=state.images.find(i=>i.toolchains.length===Object.keys(values).filter(k=>k.startsWith('chain:')&&values[k]==='true').length&&i.toolchains.every(c=>values['chain:'+c]==='true'))?.id??imageID;}if(dialogForm.action==='create'){target=values.name;statusFilter='all';$('search').value='';section=0;page=0;}if(['scenario','reset'].includes(dialogForm.action)){target='';statusFilter='all';$('search').value='';}notify(state.events[0]?.text??'Completed');$('editor').close();dialogForm=null;render();}
+ catch(error){$('dialog-error').textContent=error.message;notify(error.message,true);}
+ finally{loading=false;$('submit').disabled=false;$('cancel').disabled=false;$('submit').textContent=dialogForm?.action==='image-toolchains'?(dialogForm.reviewed?'Update & restart':'Review impact →'):'Apply';}
+}
+function cycleContextAction(back=false){const buttons=[...document.querySelectorAll('.sandbox-actions button:not(:disabled)')];if(!buttons.length)return;const index=buttons.indexOf(document.activeElement);buttons[index<0?(back?buttons.length-1:0):(index+(back?-1:1)+buttons.length)%buttons.length].focus();}
+function selectTarget(name){target=name;section=0;page=0;statusFilter='all';$('search').value='';render();}
+function selectImage(id){imageID=id;section=1;$('search').value='';render();}
+function selectPage(index){section=0;page=index;render();}
+function call(promise){Promise.resolve(promise).catch(error=>notify(error.message,true));}
+
+document.addEventListener('click',event=>{
+ const el=event.target;
+ const instance=el.closest('[data-instance]');if(instance){call(switchInstance(instance.dataset.instance));return;}
+ const item=el.closest('[data-item-action]');if(item&&!item.disabled){call(runItemAction(item.dataset.itemAction,item.dataset.itemKey,item.dataset.itemField));return;}
+ const action=el.closest('[data-action]');if(action){call(openAction(action.dataset.action));return;}
+ const p=el.closest('[data-page]');if(p){selectPage(Number(p.dataset.page));return;}
+ const sec=el.closest('[data-section]');if(sec){section=Number(sec.dataset.section);$('search').value='';render();return;}
+ const box=el.closest('[data-target]');if(box){selectTarget(box.dataset.target);return;}
+ const img=el.closest('[data-image]');if(img){selectImage(img.dataset.image);return;}
+});
+$('instance-select').onchange=event=>call(switchInstance(event.target.value));
+$('edit-form').onsubmit=submitForm;
+$('cancel').onclick=()=>{$('editor').close();dialogForm=null;};$('editor').addEventListener('cancel',event=>{if(loading)event.preventDefault();else dialogForm=null;});
+$('reset').onclick=()=>call(openAction('reset'));$('fault').onclick=()=>call(openAction('fault'));
+$('scenario').onchange=async()=>{try{state=await api('/api/command',{action:'scenario',values:{scenario:$('scenario').value}});target='';statusFilter='all';$('search').value='';notify('Fake scenario loaded');render();}catch(error){notify(error.message,true);render();}};
+$('search').oninput=()=>render();$('status-filter').onclick=()=>{statusFilter={all:'running',running:'stopped',stopped:'all'}[statusFilter];target='';render();};
+$('help-open').onclick=()=>$('help').showModal();$('help-close').onclick=()=>$('help').close();
+window.addEventListener('popstate',()=>{const params=new URL(location.href).searchParams;const id=['local-fake','remote-lab'].includes(params.get('instance'))?params.get('instance'):'local-fake';if(id!==instanceID)call(switchInstance(id));else{normalizeURL();render();}});
+document.addEventListener('keydown',event=>{
+ if($('terminal-modal').open)return;
+ if($('create-wizard').open){if(event.ctrlKey&&event.key.toLowerCase()==='s'){event.preventDefault();call(createNext());}return;}
+ const editing=event.target.closest('input,textarea,select,[contenteditable]');
+ if($('editor').open){if(event.ctrlKey&&event.key.toLowerCase()==='s'){event.preventDefault();submitForm();}return;}
+ if($('help').open)return;
+ if(editing)return;
+ if(event.ctrlKey||event.altKey||event.metaKey)return;
+ const key=event.key;
+ if(key==='Tab'&&section===0&&document.querySelector('.sandbox-actions button:not(:disabled)')){event.preventDefault();cycleContextAction(event.shiftKey);return;}
+ if(key==='?'){$('help').showModal();return;}
+ if(key>='1'&&key<='2'){event.preventDefault();section=Number(key)-1;$('search').value='';render();return;}
+ const shortcuts={n:'create',s:'start',x:'stop',d:'remove',t:'images',a:'agents',i:'integration',c:'configure',b:'build',e:'end-sessions',f:'fault',r:'reset',p:'scenario'};
+ if(shortcuts[key]){event.preventDefault();call(openAction(shortcuts[key]));return;}
+ if(key==='/'){event.preventDefault();$('search').focus();return;}
+ if(key==='v'){$('status-filter').click();return;}
+ if(key==='.'||key===','){event.preventDefault();selectPage((currentPage()+(key==='.'?1:-1)+pages.length)%pages.length);return;}
+ if(['ArrowUp','ArrowDown','[',']'].includes(key)){
+  event.preventDefault();const delta=key==='ArrowUp'||key==='['?-1:1;
+  if(section===1&&!['[',']'].includes(key)){const list=images();imageID=list[Math.max(0,Math.min(list.length-1,list.findIndex(i=>i.id===activeImage()?.id)+delta))]?.id??'';}
+  else{const list=boxes();target=list[Math.max(0,Math.min(list.length-1,list.findIndex(b=>b.name===currentBox()?.name)+delta))]?.name??'';}
+  render();return;
+ }
+ if(key==='Enter'&&event.target===document.body){event.preventDefault();document.querySelector('.sandbox-actions button:not(:disabled)')?.click();}
+});
+function terminalSend(data){const a=attachment;if(a?.socket.readyState===WebSocket.OPEN)a.socket.send(JSON.stringify({type:'input',data}));}
+function terminalFit(){const a=attachment;if(!a||!$('terminal-modal').open)return;try{a.fit.fit();const d=a.fit.proposeDimensions();if(d)a.term.resize(Math.min(400,Math.max(2,d.cols-2)),Math.min(200,Math.max(2,d.rows-1)));if(a.socket?.readyState===WebSocket.OPEN)a.socket.send(JSON.stringify({type:'resize',cols:Math.min(400,Math.max(2,a.term.cols)),rows:Math.min(200,Math.max(2,a.term.rows))}));}catch{}}
+function detachAttachment(){
+ const a=attachment;if(!a)return;attachment=null;
+ a.observer?.disconnect();a.socket?.close(1000,'detach');a.term.dispose();
+ if($('terminal-modal').open)$('terminal-modal').close();
+ $('terminal-input').value='';notify('Detached from '+a.name+' / '+a.id+'. The agent session keeps running.');
+}
+async function openAttachment(name,id){
+ if(loading||!state)return;
+ if(attachment)detachAttachment();
+ const box=state.sandboxes.find(b=>b.name===name),session=box?.openSessions.find(s=>s.id===id);
+ if(!session){notify('This session is no longer open.',true);return;}
+ $('terminal-scope').textContent=state.instance.name+' / '+state.instance.group+' / '+name;
+ $('terminal-title').textContent=session.agent+' / '+id;$('terminal-status').textContent='Connecting …';$('terminal-status').className='amber';
+ $('terminal-input').disabled=true;$('terminal-send').disabled=true;$('terminal-input').value='';
+ $('session-terminal').replaceChildren();$('terminal-modal').showModal();
+ const term=new Terminal({cursorBlink:true,fontFamily:'ui-monospace, Consolas, monospace',fontSize:13,scrollback:3000,theme:{background:'#101318',foreground:'#d9e0e8',cursor:'#95d5ef'},allowProposedApi:false});
+ const fit=new FitAddon.FitAddon();term.loadAddon(fit);term.open($('session-terminal'));
+ const a={instance:instanceID,name,id,term,fit,socket:null,observer:null,ended:false};attachment=a;
+ const url=new URL('/api/terminal',location.href);url.protocol=location.protocol==='https:'?'wss:':'ws:';url.search=new URLSearchParams({instance:a.instance,sandbox:name,session:id});
+ const socket=new WebSocket(url);a.socket=socket;
+ socket.onopen=()=>{if(attachment!==a)return;$('terminal-status').textContent='Connected / simulated agent';$('terminal-status').className='green';$('terminal-input').disabled=false;$('terminal-send').disabled=false;terminalFit();term.focus();};
+ socket.onmessage=event=>{if(attachment!==a)return;try{const message=JSON.parse(event.data);if(message.type==='output')term.write(message.data);if(message.type==='ended'){a.ended=true;term.write('\r\n\x1b[33m'+message.data+'\x1b[0m\r\n');$('terminal-status').textContent='Session ended';$('terminal-status').className='amber';$('terminal-input').disabled=true;$('terminal-send').disabled=true;}}catch{notify('Invalid terminal stream message.',true);}};
+ socket.onerror=()=>{if(attachment!==a)return;$('terminal-status').textContent='Attachment failed. Close and retry.';$('terminal-status').className='red';};
+ socket.onclose=()=>{if(attachment!==a)return;if(!a.ended){$('terminal-status').textContent='Connection closed / reattach to continue';$('terminal-status').className='amber';}$('terminal-input').disabled=true;$('terminal-send').disabled=true;};
+ term.onData(data=>{if(attachment===a)terminalSend(data);});
+ a.observer=new ResizeObserver(()=>terminalFit());a.observer.observe($('session-terminal'));requestAnimationFrame(()=>terminalFit());
+}
+$('terminal-detach').onclick=detachAttachment;
+$('terminal-modal').addEventListener('cancel',event=>event.preventDefault());
+$('terminal-modal').addEventListener('close',()=>{if(attachment)detachAttachment();});
+$('terminal-form').onsubmit=event=>{event.preventDefault();const input=$('terminal-input');if(!input.disabled){terminalSend(input.value+'\r');input.value='';}};
+
+let backendOnline=false;
+function backendStatus(online,info){const el=$('backend-status');el.textContent=online?'Connected to shared backend / '+(info?.id??'').slice(0,8):'Backend offline / reconnecting — start or enable the service in the TUI';el.className=online?'green':'amber';}
+async function poll(){const selected=instanceID,revision=instanceRevision;try{const next=await api('/api/state',undefined,selected);if(selected!==instanceID||revision!==instanceRevision||loading)return;const reconnected=!backendOnline;backendOnline=true;backendStatus(true,next.service);const serialized=JSON.stringify(next);if(serialized!==lastState){const removed=target&&!next.sandboxes.some(b=>b.name===target);state=next;lastState=serialized;render();if(removed)notify('The selected sandbox was removed by another client. Choose an object again.',true);}if(reconnected)notify('Connected to shared backend. Web and TUI use the same state.');}catch(error){if(selected===instanceID){backendOnline=false;backendStatus(false);notify('Backend unavailable: '+error.message,true);}}finally{setTimeout(poll,300);}}
+
+poll();
+</script>
+<script src="/assets/create-wizard.js"></script>
+</body></html>
