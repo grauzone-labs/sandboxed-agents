@@ -105,7 +105,7 @@ sandboxed-agents agents status agent01 claude
 
 **Expected:** `enable` prints `claude enabled: version ...`, and `status` prints `claude: enabled; version ...; pin none; session false; signed in unknown`.
 
-**If it fails:** the output names the cause. Check that the sandbox has network access, then run the `enable` command again.
+**If it fails:** the output names the cause and, when the manager does not answer, the `check agent01` and `restart agent01` commands to run first. Fix the cause, for example missing network access in the sandbox, and run the `enable` command again.
 
 ## 8. Sign in
 
