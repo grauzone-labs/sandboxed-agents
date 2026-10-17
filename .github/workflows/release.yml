@@ -1,0 +1,114 @@
+name: Release publication
+
+'on':
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  stable_gate:
+    if: ${{ !contains(github.ref_name, '-preview.') }}
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/stable-release-gate.yml
+    with:
+      tag: ${{ github.ref_name }}
+
+  publish:
+    needs: stable_gate
+    if: ${{ always() && !cancelled() && (needs.stable_gate.result == 'success' || (needs.stable_gate.result == 'skipped' && contains(github.ref_name, '-preview.'))) }}
+    # npm trusted publishing supports GitHub-hosted runners, not Blacksmith.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/setup-dotnet@v5
+        if: ${{ !contains(github.ref_name, '-preview.') }}
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install the verified publication tools
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-tools"
+          curl --fail --silent --show-error --location \
+            https://github.com/cli/cli/releases/download/v2.83.2/gh_2.83.2_linux_amd64.tar.gz \
+            --output "$RUNNER_TEMP/release-tools/gh_2.83.2_linux_amd64.tar.gz"
+          cd "$RUNNER_TEMP/release-tools"
+          printf '%s\n' 'ca6e7641214fbd0e21429cec4b64a7ba626fd946d8f9d6d191467545b092015e  gh_2.83.2_linux_amd64.tar.gz' | sha256sum --check --strict
+          tar -xzf gh_2.83.2_linux_amd64.tar.gz
+          echo "$RUNNER_TEMP/release-tools/gh_2.83.2_linux_amd64/bin" >> "$GITHUB_PATH"
+      - name: Install npm with trusted publishing support
+        if: ${{ !contains(github.ref_name, '-preview.') }}
+        run: npm install --global npm@11.5.1
+      - name: Rebuild the exact tagged commit with committed release notes
+        id: build
+        shell: bash
+        run: |
+          [[ $RELEASE_TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-preview\.[0-9]{8}\.[0-9]+)?$ ]] || { echo 'Expected vX.Y.Z or vX.Y.Z-preview.YYYYMMDD.N' >&2; exit 1; }
+          [[ $(git rev-parse HEAD) == "$GITHUB_SHA" ]]
+          [[ $(git rev-parse "refs/tags/$RELEASE_TAG^{commit}") == "$GITHUB_SHA" ]]
+          version=${RELEASE_TAG#v}
+          base_version=${version%%-preview.*}
+          git show "$GITHUB_SHA:docs/release-notes/$base_version.md" | grep -q '[^[:space:]]'
+          bash scripts/release.sh "$version" "$RUNNER_TEMP/release-output"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      - name: Gate the rebuilt stable asset hash before any publication
+        if: ${{ !contains(github.ref_name, '-preview.') }}
+        shell: bash
+        run: |
+          version_output=$("$RUNNER_TEMP/release-output/sandboxed-agents-linux-amd64" version)
+          asset_hash=$(printf '%s\n' "$version_output" | awk '$1 == "asset-sha256" { print $2 }')
+          go run ./internal/release/cmd/stable-gate \
+            --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --asset-hash "$asset_hash"
+      - name: Attest all five rebuilt release files
+        uses: actions/attest@v4
+        with:
+          # These are release files. OCI storage records need an additional
+          # artifact-metadata permission and are not part of this publication.
+          push-to-registry: false
+          create-storage-record: false
+          subject-path: |
+            ${{ runner.temp }}/release-output/sandboxed-agents-linux-amd64
+            ${{ runner.temp }}/release-output/sandboxed-agents-windows-amd64.exe
+            ${{ runner.temp }}/release-output/SHA256SUMS
+            ${{ runner.temp }}/release-output/sandboxed-agents-${{ steps.build.outputs.version }}.tgz
+            ${{ runner.temp }}/release-output/SandboxedAgents.${{ steps.build.outputs.version }}.nupkg
+      - name: Request a short-lived NuGet publishing key
+        if: ${{ !contains(github.ref_name, '-preview.') }}
+        id: nuget
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+      - name: Verify provenance and publish or resume the release
+        env:
+          NUGET_OIDC_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}
+        shell: bash
+        run: |
+          go run ./internal/release/cmd/publish-release \
+            --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --directory "$RUNNER_TEMP/release-output"
