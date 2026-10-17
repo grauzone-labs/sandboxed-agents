@@ -202,7 +202,7 @@ func TestUpSSHOptInRefusesChangedRecordedPortBeforeStarting(t *testing.T) {
 	}
 }
 
-// TestSSHSetupRealOpenSSHResolvesIncludesAndPreservesConfigAlias proves quoted paths, configuration aliases, wildcard defaults, existing modes, and actual configured-host conflicts through the built CLI with real Linux ssh -G and fake Podman.
+// TestSSHSetupRealOpenSSHResolvesIncludesAndPreservesConfigAlias proves quoted paths, configuration aliases, wildcard defaults, existing modes, actual configured-host conflicts, and removal restoring user bytes through the built CLI with real Linux ssh -G and fake Podman.
 func TestSSHSetupRealOpenSSHResolvesIncludesAndPreservesConfigAlias(t *testing.T) {
 	if os.Getenv(nestedGuardEnv) == strconv.Itoa(os.Getppid()) {
 		t.Skip("nested offline guard isolates PATH to fake programs; the outer suite runs this real OpenSSH configuration check")
@@ -385,6 +385,51 @@ func TestSSHSetupPercentIncludeVersionFailuresWriteNothing(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSSHSetupRemovalWithoutIncludeDoesNotQueryClient proves removal updates
+// remaining host entries without recreating a user-deleted Include or requiring
+// a working SSH client through the built CLI and isolated configuration files.
+func TestSSHSetupRemovalWithoutIncludeDoesNotQueryClient(t *testing.T) {
+	sshSetupHarness(t, installResponses())
+	state := filepath.Join(t.TempDir(), "state %literal")
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("LOCALAPPDATA", state)
+	script, err := json.Marshal(map[string]lifecycleResponse{"-V": {Stderr: "OpenSSH_10.0p2\n"}, "-G -F *": {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_SSH_RESPONSES", string(script))
+	for _, name := range []string{"demo", "other"} {
+		selectSetupSandbox(t, "default", name, true, false)
+		if status, stdout, stderr := sshSetupRun(t, "ssh-config", name, "--install"); status != 0 {
+			t.Fatalf("install %s=%d %q %q", name, status, stdout, stderr)
+		}
+	}
+	config := filepath.Join(os.Getenv("HOME"), ".ssh", "config")
+	original := "# user removed the group's Include\n"
+	if err := os.WriteFile(config, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_SSH_RESPONSES", "")
+	t.Setenv("TEST_SSH_EXIT", "23")
+	selectSetupSandbox(t, "default", "demo", true, false)
+	if status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo", "--remove"); status != 0 {
+		t.Fatalf("remove=%d %q %q", status, stdout, stderr)
+	}
+	if data, err := os.ReadFile(config); err != nil || string(data) != original {
+		t.Fatalf("user config=%q error=%v", data, err)
+	}
+	for path, data := range setupFiles(t) {
+		if strings.Contains(data, "Host demo\n") {
+			t.Fatalf("removed host entry remains in %s", path)
+		}
+	}
+	selectSetupSandbox(t, "default", "other", true, false)
+	status, entry, stderr := sshSetupRun(t, "ssh-config", "other")
+	if status != 0 || !strings.Contains(entry, "Host other\n") || stderr != "" {
+		t.Fatalf("remaining entry=%d %q %q", status, entry, stderr)
 	}
 }
 

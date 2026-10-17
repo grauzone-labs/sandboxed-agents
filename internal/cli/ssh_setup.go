@@ -68,6 +68,25 @@ func literalSSHPath(path string) string {
 	return `"` + strings.ReplaceAll(path, `"`, `\"`) + `"`
 }
 
+func (s sshSetup) clientIncludeLine() (string, error) {
+	if !strings.Contains(s.config, "%") {
+		return s.includeLine(false), nil
+	}
+	output, err := exec.Command("ssh", "-V").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("SSH client version query: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	version, ok := strings.CutPrefix(strings.TrimSpace(string(output)), "OpenSSH_")
+	version = strings.TrimPrefix(version, "for_Windows_")
+	var major, minor int
+	if n, _ := fmt.Sscanf(version, "%d.%d", &major, &minor); !ok || n != 2 || major < 1 || minor < 0 {
+		return "", fmt.Errorf("cannot determine SSH Include syntax from client version %q", strings.TrimSpace(string(output)))
+	}
+	// OpenSSH 9.9 added percent expansion to Include; older clients treat
+	// both percent signs in %% literally and would miss the managed file.
+	return s.includeLine(major > 9 || major == 9 && minor >= 9), nil
+}
+
 func (s sshSetup) hostEntry(request Request, objects sandboxObjects) (string, error) {
 	port, err := parseSSHPort(objects.container.Config.Labels[SSHPortLabel])
 	if err != nil {
@@ -175,7 +194,7 @@ func installSSHSetup(request Request, p podmanTarget, objects sandboxObjects, s 
 	if err := s.checkConflict(sshHostName(request)); err != nil {
 		return err
 	}
-	include, err := s.clientIncludeLine()
+	includeLine, err := s.clientIncludeLine()
 	if err != nil {
 		return err
 	}
@@ -225,7 +244,7 @@ func installSSHSetup(request Request, p podmanTarget, objects sandboxObjects, s 
 	if err := os.Rename(stage, s.dir); err != nil {
 		return err
 	}
-	if err := s.updateConfiguration(include); err != nil {
+	if err := s.updateConfiguration(includeLine); err != nil {
 		os.RemoveAll(s.dir)
 		return err
 	}
