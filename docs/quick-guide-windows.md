@@ -9,6 +9,7 @@ Check each item in PowerShell 7 or Windows PowerShell as your normal user, which
 - [ ] **Windows 11 x64.** Check: `Get-CimInstance Win32_OperatingSystem | Select-Object Caption, OSArchitecture` prints `Microsoft Windows 11` and `64-bit`.
 - [ ] **Podman 4.7.0 or newer as client and as machine** ([host prerequisites](host-prerequisites.md#windows-11-x64)). Check: `podman version` prints a `Client` and a `Server` version of `4.7.0` or higher. Missing: follow the [Podman for Windows tutorial](https://github.com/podman-container-tools/podman/blob/main/docs/tutorials/podman-for-windows.md) with the WSL provider.
 - [ ] **A running rootless WSL2 Podman machine**, marked as default or the only one. Check: `podman machine list` prints one running machine with `*` after its name, or exactly one running machine.
+- [ ] **`pasta` inside the Podman machine** ([host prerequisites](host-prerequisites.md#windows-11-x64)). Check: `podman machine ssh command -v pasta` prints a path; when your machine is not `podman-machine-default`, put its name after `ssh`.
 - [ ] **OpenSSH client.** Check: `Get-Command ssh, ssh-keygen` prints two commands. Missing: enable the optional Windows feature **OpenSSH Client**.
 - [ ] **Optional: the GitHub CLI**, to verify the build attestation ([releases](releases.md#verify-a-download)). Check: `gh attestation verify --help` prints the command's help.
 
@@ -114,7 +115,7 @@ sandboxed-agents agents status agent01 claude
 
 **Expected:** `enable` prints `claude enabled: version ...`, and `status` prints `claude: enabled; version ...; pin none; session false; signed in unknown`.
 
-**If it fails:** the output names the cause. Check that the sandbox has network access, then run the `enable` command again.
+**If it fails:** the output names the cause and, when the manager does not answer, the `check agent01` and `restart agent01` commands to run first. Fix the cause, for example missing network access in the sandbox, and run the `enable` command again.
 
 ## 8. Sign in
 
