@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -79,26 +78,9 @@ func (s sshSetup) includeLine(expandTokens bool) string {
 	return "Include " + path + "\n"
 }
 
-func (s sshSetup) clientIncludeLine() (string, error) {
-	if !strings.Contains(s.config, "%") {
-		return s.includeLine(false), nil
-	}
-	output, err := exec.Command("ssh", "-V").CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("SSH client version query: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-	version, ok := strings.CutPrefix(strings.TrimSpace(string(output)), "OpenSSH_")
-	version = strings.TrimPrefix(version, "for_Windows_")
-	var major, minor int
-	if n, _ := fmt.Sscanf(version, "%d.%d", &major, &minor); !ok || n != 2 || major < 1 || minor < 0 {
-		return "", fmt.Errorf("cannot determine SSH Include syntax from client version %q", strings.TrimSpace(string(output)))
-	}
-	// OpenSSH 9.9 added percent expansion to Include; older clients treat
-	// both percent signs in %% literally and would miss the managed file.
-	return s.includeLine(major > 9 || major == 9 && minor >= 9), nil
-}
-
-func (s sshSetup) updateConfiguration(line string) error {
+// updateConfiguration adds includeLine only during installation. An empty line
+// requests removal cleanup, preserving any Include the user deleted themselves.
+func (s sshSetup) updateConfiguration(includeLine string) error {
 	entries, err := os.ReadDir(s.groupDir)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -140,20 +122,14 @@ func (s sshSetup) updateConfiguration(line string) error {
 		}
 		return nil
 	}
-	if !hasInclude && line == "" {
-		line, err = s.clientIncludeLine()
-		if err != nil {
-			return err
-		}
-	}
 	if err := writeSSHFile(s.config, managed.Bytes(), 0600, false); err != nil {
 		return err
 	}
-	if hasInclude {
+	if hasInclude || includeLine == "" {
 		return nil
 	}
 	if err := createSSHDirectory(filepath.Dir(s.userConfig)); err != nil {
 		return err
 	}
-	return writeSSHFile(s.userConfig, append([]byte(line), user...), 0600, true)
+	return writeSSHFile(s.userConfig, append([]byte(includeLine), user...), 0600, true)
 }
