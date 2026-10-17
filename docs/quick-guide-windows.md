@@ -7,7 +7,7 @@
 Check each item in PowerShell 7 or Windows PowerShell as your normal user, which is where every command below runs. `sandboxed-agents` never needs administrator rights and never installs or configures Podman, WSL2, or OpenSSH for you.
 
 - [ ] **Windows 11 x64.** Check: `Get-CimInstance Win32_OperatingSystem | Select-Object Caption, OSArchitecture` prints `Microsoft Windows 11` and `64-bit`.
-- [ ] **Podman 4.7.0 or newer as client and as machine** ([host prerequisites](host-prerequisites.md#windows-11-x64)). Check: `podman version` prints a `Client` and a `Server` version of `4.7.0` or higher. Missing: install the amd64 MSI with the WSL provider from the [Podman for Windows tutorial](https://github.com/podman-container-tools/podman/blob/main/docs/tutorials/podman-for-windows.md), then `podman machine init` and `podman machine start`.
+- [ ] **Podman 4.7.0 or newer as client and as machine** ([host prerequisites](host-prerequisites.md#windows-11-x64)). Check: `podman version` prints a `Client` and a `Server` version of `4.7.0` or higher. Missing: follow the [Podman for Windows tutorial](https://github.com/podman-container-tools/podman/blob/main/docs/tutorials/podman-for-windows.md) with the WSL provider.
 - [ ] **A running rootless WSL2 Podman machine**, marked as default or the only one. Check: `podman machine list` prints one running machine with `*` after its name, or exactly one running machine.
 - [ ] **OpenSSH client.** Check: `Get-Command ssh, ssh-keygen` prints two commands. Missing: enable the optional Windows feature **OpenSSH Client**.
 - [ ] **Optional: the GitHub CLI**, to verify the build attestation ([releases](releases.md#verify-a-download)). Check: `gh attestation verify --help` prints the command's help.
@@ -21,6 +21,8 @@ $Tag = 'v1.0.0-preview.YYYYMMDD.N'
 ```
 
 **Expected:** `$Tag` prints the tag you chose.
+
+**If it fails:** the variable is empty in a new terminal; set it again there.
 
 ## 2. Download
 
@@ -72,6 +74,8 @@ $env:Path = "$Dir;$env:Path"
 ```
 
 **Expected:** `Get-Command sandboxed-agents` prints the path `...\Programs\sandboxed-agents\sandboxed-agents.exe`.
+
+**If it fails:** an error names the command when the `$env:Path` line did not run in this terminal; run it again.
 
 ## 5. Check the host
 

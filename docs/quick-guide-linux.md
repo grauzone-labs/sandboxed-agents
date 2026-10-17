@@ -22,6 +22,8 @@ TAG=v1.0.0-preview.YYYYMMDD.N
 
 **Expected:** `echo "$TAG"` prints the tag you chose.
 
+**If it fails:** the variable is empty in a new terminal; set it again there.
+
 ## 2. Download
 
 Download the Linux binary and the checksum file into a new directory. The command stops at the first problem and refuses a directory that already exists.
@@ -63,6 +65,8 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 **Expected:** `command -v sandboxed-agents` prints `$HOME/.local/bin/sandboxed-agents` with your home directory filled in.
+
+**If it fails:** nothing is printed when the `export` line did not run in this terminal; run it again.
 
 ## 5. Check the host
 
