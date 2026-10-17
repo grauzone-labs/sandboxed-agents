@@ -50,7 +50,7 @@ gh attestation verify sandboxed-agents-linux-amd64 --repo grauzone-labs/sandboxe
 gh attestation verify SHA256SUMS --repo grauzone-labs/sandboxed-agents
 ```
 
-**Expected:** `sandboxed-agents-linux-amd64: OK`, and each `gh` command reports a successful verification.
+**Expected:** `sandboxed-agents-linux-amd64: OK`, and, when you ran the `gh` commands, each reports a successful verification.
 
 > **Warning:** if the checksum or an attestation check fails, do not run the file. Delete the download directory and start again at step 2 with a new directory name.
 
