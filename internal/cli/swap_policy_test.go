@@ -5,6 +5,14 @@ import (
 	"testing"
 )
 
+// scriptRecordedSwap changes only the swap field of the fake Podman inspect answer.
+func scriptRecordedSwap(f *fixture, swap string) {
+	key := "container inspect sandboxed-agents.default.demo"
+	r := f.responses[key]
+	r.Output = strings.Replace(r.Output, `"MemorySwap":8589934592,`, swap, 1)
+	f.responses[key] = r
+}
+
 // TestUpChecksRecordedSwapWithMemory proves explicit memory requests validate the no-swap policy while omitted options preserve older sandboxes through the executable CLI and fake Podman seam.
 func TestUpChecksRecordedSwapWithMemory(t *testing.T) {
 	for _, tc := range []struct {
@@ -20,10 +28,7 @@ func TestUpChecksRecordedSwapWithMemory(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := updateFixture(t)
-			key := "container inspect sandboxed-agents.default.demo"
-			r := f.responses[key]
-			r.Output = strings.Replace(r.Output, `"MemorySwap":8589934592,`, tc.swap, 1)
-			f.responses[key] = r
+			scriptRecordedSwap(f, tc.swap)
 			args := []string{"up", "demo"}
 			if tc.explicit {
 				args = append(args, "--memory", "8g")
@@ -33,7 +38,7 @@ func TestUpChecksRecordedSwapWithMemory(t *testing.T) {
 				if status != 0 {
 					t.Fatalf("status=%d output=%s", status, output)
 				}
-			} else if status != 1 || !strings.Contains(output, "--memory-swap") || !strings.Contains(output, tc.problem) {
+			} else if status != 1 || !strings.Contains(output, "memory-swap") || !strings.Contains(output, tc.problem) {
 				t.Fatalf("status=%d output=%s; want swap %s", status, output, tc.problem)
 			}
 			noMutation(t, calls)
@@ -58,13 +63,10 @@ func TestUpdatePreservesRecordedSwap(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := replacementFixture(t)
-			key := "container inspect sandboxed-agents.default.demo"
-			r := f.responses[key]
-			r.Output = strings.Replace(r.Output, `"MemorySwap":8589934592,`, tc.swap, 1)
-			f.responses[key] = r
+			scriptRecordedSwap(f, tc.swap)
 			status, output, calls := runUpExecutable(t, f, "update", "demo")
 			if !tc.valid {
-				if status != 1 || !strings.Contains(output, "--memory-swap") || !strings.Contains(output, tc.want) {
+				if status != 1 || !strings.Contains(output, "memory-swap") || !strings.Contains(output, tc.want) {
 					t.Fatalf("status=%d output=%s; want %s", status, output, tc.want)
 				}
 				noMutation(t, calls)
@@ -93,23 +95,26 @@ func TestUpdatePreservesRecordedSwap(t *testing.T) {
 func TestCheckReportsRecordedSwap(t *testing.T) {
 	for _, tc := range []struct {
 		name, swap, want string
-		missing          bool
+		invalid          bool
 	}{
 		{"no-swap", `"MemorySwap":8589934592,`, "memory-swap 8589934592", false},
 		{"legacy-allowance", `"MemorySwap":17179869184,`, "memory-swap 17179869184", false},
 		{"unlimited", `"MemorySwap":-1,`, "memory-swap -1", false},
 		{"missing", "", "recorded --memory-swap is missing", true},
 		{"null", `"MemorySwap":null,`, "recorded --memory-swap is missing", true},
+		{"zero", `"MemorySwap":0,`, "recorded --memory-swap must be -1 or at least recorded --memory", true},
+		{"below-memory", `"MemorySwap":4294967296,`, "recorded --memory-swap must be -1 or at least recorded --memory", true},
+		{"invalid-negative", `"MemorySwap":-2,`, "recorded --memory-swap must be -1 or at least recorded --memory", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := updateFixture(t)
+			scriptRecordedSwap(f, tc.swap)
 			key := "container inspect sandboxed-agents.default.demo"
 			r := f.responses[key]
-			r.Output = strings.Replace(r.Output, `"MemorySwap":8589934592,`, tc.swap, 1)
 			r.Output = strings.Replace(r.Output, `"Running":true`, `"Running":false`, 1)
 			f.responses[key] = r
 			status, output, calls := runUpExecutable(t, f, "check", "demo")
-			if (status != 0) != tc.missing || !strings.Contains(output, tc.want) {
+			if (status != 0) != tc.invalid || !strings.Contains(output, tc.want) {
 				t.Fatalf("status=%d output=%s; want %s", status, output, tc.want)
 			}
 			noMutation(t, calls)

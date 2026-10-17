@@ -10,13 +10,12 @@ type recordedIntegerLimit struct {
 	value  *int64
 }
 
-// integerLimits returns the recorded memory, process, shared-memory, and combined memory/swap limits.
-func (container sandboxContainer) integerLimits() [4]recordedIntegerLimit {
-	return [4]recordedIntegerLimit{
+// integerLimits returns the recorded memory, process, and shared-memory limit fields.
+func (container sandboxContainer) integerLimits() [3]recordedIntegerLimit {
+	return [3]recordedIntegerLimit{
 		{"memory", container.HostConfig.Memory},
 		{"pids-limit", container.HostConfig.PidsLimit},
 		{"shm-size", container.HostConfig.ShmSize},
-		{"memory-swap", container.HostConfig.MemorySwap},
 	}
 }
 
@@ -26,6 +25,23 @@ func (limit recordedIntegerLimit) read() (int64, error) {
 		return 0, fmt.Errorf("recorded --%s is missing", limit.option)
 	}
 	return *limit.value, nil
+}
+
+// memorySwapLimit reads and validates the combined ceiling, whose -1 value
+// permits unlimited swap and whose finite value must include the memory limit.
+func (container sandboxContainer) memorySwapLimit() (int64, error) {
+	swap, err := (recordedIntegerLimit{"memory-swap", container.HostConfig.MemorySwap}).read()
+	if err != nil {
+		return 0, err
+	}
+	memory, err := (recordedIntegerLimit{"memory", container.HostConfig.Memory}).read()
+	if err != nil {
+		return 0, err
+	}
+	if swap != -1 && (swap <= 0 || swap < memory) {
+		return 0, fmt.Errorf("recorded --memory-swap must be -1 or at least recorded --memory")
+	}
+	return swap, nil
 }
 
 // workspaceBind returns the host source of a bind at /workspace, if one exists.

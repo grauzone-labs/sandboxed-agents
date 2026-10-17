@@ -106,6 +106,12 @@ func reportResources(container sandboxContainer, output io.Writer) error {
 		}
 		fmt.Fprintf(output, "%s %d\n", limit.option, value)
 	}
+	swap, err := container.memorySwapLimit()
+	if err != nil {
+		problems = append(problems, err)
+	} else {
+		fmt.Fprintf(output, "memory-swap %d\n", swap)
+	}
 	cpu, err := container.cpuLimit()
 	if err != nil {
 		problems = append(problems, err)
