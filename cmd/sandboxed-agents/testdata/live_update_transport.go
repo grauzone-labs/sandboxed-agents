@@ -12,6 +12,7 @@ import (
 	"strings"
 )
 
+// run forwards standard streams to a fixture subprocess and propagates its exit status.
 func run(command *exec.Cmd) {
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := command.Run(); err != nil {
@@ -23,6 +24,7 @@ func run(command *exec.Cmd) {
 	}
 }
 
+// main emulates Podman and SSH subprocess transport for live update interception tests.
 func main() {
 	name := strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe")
 	if name == "ssh" {

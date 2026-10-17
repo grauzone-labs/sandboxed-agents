@@ -141,6 +141,7 @@ func TestSSHSetupWindowsInstallSecuresNewPathsAndPreservesExistingPermissions(t 
 	}
 }
 
+// setupCustomWindowsSSHPermissions installs a custom OpenSSH-compatible DACL for preservation tests.
 func setupCustomWindowsSSHPermissions(t *testing.T, path string) {
 	t.Helper()
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
@@ -164,6 +165,7 @@ func setupCustomWindowsSSHPermissions(t *testing.T, path string) {
 	}
 }
 
+// assertWindowsSSHManagerCall checks the fake Podman log for a root manager call on the selected Windows connection.
 func assertWindowsSSHManagerCall(t *testing.T, log, command string, arguments ...string) {
 	t.Helper()
 	want := strings.Join(append([]string{"exec", "--user=0:0", "sandboxed-agents.default.demo", "/usr/local/bin/sandboxed-agents-manager", command}, arguments...), " ")
@@ -175,6 +177,7 @@ func assertWindowsSSHManagerCall(t *testing.T, log, command string, arguments ..
 	t.Fatalf("missing root manager call: %s", want)
 }
 
+// windowsSSHEntryPath decodes a quoted file path from an installed SSH entry directive.
 func windowsSSHEntryPath(t *testing.T, entry, directive string) string {
 	t.Helper()
 	for _, line := range strings.Split(entry, "\n") {

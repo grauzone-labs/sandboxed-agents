@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// updateFixture scripts an owned running sandbox whose recorded image and configuration are
+// current.
 func updateFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := linuxHost(t)
@@ -39,6 +41,8 @@ func TestUpdateCurrentImageIsUntouched(t *testing.T) {
 	}
 }
 
+// replacementFixture scripts an outdated sandbox, replacement lifecycle calls, and successful
+// manager and SSH readiness.
 func replacementFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := updateFixture(t)
@@ -232,6 +236,7 @@ func TestUpdateSessionGuardAndRollbackReports(t *testing.T) {
 	}
 }
 
+// flatCalls joins each recorded command's arguments for readable sequence assertions.
 func flatCalls(calls [][]string) []string {
 	out := make([]string, len(calls))
 	for i, call := range calls {

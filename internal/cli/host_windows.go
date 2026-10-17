@@ -8,11 +8,14 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// windowsBuild returns the running Windows build number.
 func windowsBuild() (uint32, error) { return windows.RtlGetVersion().BuildNumber, nil }
 
 // workstationProductType is Windows VER_NT_WORKSTATION, excluding server editions.
 const workstationProductType = 1
 
+// windowsWorkstation reports whether the running Windows edition is a workstation rather than a
+// server.
 func windowsWorkstation() (bool, error) {
 	return windows.RtlGetVersion().ProductType == workstationProductType, nil
 }

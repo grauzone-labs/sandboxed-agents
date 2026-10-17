@@ -5,6 +5,8 @@ import (
 	"os"
 )
 
+// hideTerminalInput disables console echo and line processing and returns a function that
+// restores the prior mode.
 func hideTerminalInput(file *os.File) (func() error, error) {
 	handle := windows.Handle(file.Fd())
 	var previous uint32

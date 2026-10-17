@@ -2,6 +2,8 @@ package cli
 
 import "io"
 
+// openShell opens Bash in a running sandbox as the agent user and forwards the attached process
+// status.
 func openShell(request Request, p podmanTarget, interactive bool, stdout, stderr io.Writer) (int, error) {
 	objects, err := requireSandbox(request, p)
 	if err != nil {

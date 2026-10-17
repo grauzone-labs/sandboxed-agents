@@ -30,14 +30,20 @@ const (
 	rootlessMachineRequirement = "a rootless Podman machine is required"
 )
 
+// windowsClientVersionRequirement formats the minimum supported Windows Podman client version
+// requirement.
 func windowsClientVersionRequirement() string {
 	return fmt.Sprintf("Podman >= %s is required", minimumWindowsPodmanVersion)
 }
 
+// windowsMachineVersionRequirement formats the minimum supported Windows Podman machine version
+// requirement.
 func windowsMachineVersionRequirement() string {
 	return fmt.Sprintf("Podman machine >= %s is required", minimumWindowsPodmanVersion)
 }
 
+// windowsPreflight collects read-only Windows prerequisites and binds the selected running
+// rootless WSL2 machine.
 func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 	var failures []error
 	clientVersionRequirement := windowsClientVersionRequirement()
@@ -130,6 +136,8 @@ func machineAutomountRoot(local podmanTarget, name string) (string, error) {
 	return parseAutomountRoot(config)
 }
 
+// parseAutomountRoot reads the WSL automount root setting, defaulting to /mnt/ when it is
+// absent.
 func parseAutomountRoot(config string) (string, error) {
 	if strings.ContainsRune(config, '\x00') {
 		return "", fmt.Errorf("unreadable wsl.conf configuration")
@@ -179,6 +187,8 @@ func atLeastFloor(value, minimum string) bool {
 	return atLeast(value, floor[0], floor[1], floor[2])
 }
 
+// unverifiedPrerequisites formats a failure for each prerequisite that the supplied cause
+// prevented checking.
 func unverifiedPrerequisites(cause error, requirements ...string) []error {
 	var failures []error
 	for _, requirement := range requirements {
@@ -187,11 +197,15 @@ func unverifiedPrerequisites(cause error, requirements ...string) []error {
 	return failures
 }
 
+// unverifiedMachineSelection combines a selection failure with the machine requirements it left
+// unverified.
 func unverifiedMachineSelection(cause error) error {
 	failures := append([]error{cause}, unverifiedPrerequisites(cause, runningMachineRequirement, wslMachineRequirement, rootlessMachineRequirement)...)
 	return errors.Join(failures...)
 }
 
+// unverifiedMachinePrerequisites lists prerequisite failures that cannot be checked without a
+// selected machine.
 func unverifiedMachinePrerequisites(cause error) []error {
 	requirements := []string{
 		windowsMachineVersionRequirement(),
@@ -209,6 +223,8 @@ type machine struct {
 	VMType  string
 }
 
+// selectWindowsTarget selects the sole or uniquely default machine and requires a running
+// rootless WSL2 target.
 func selectWindowsTarget(p podmanTarget) (podmanTarget, error) {
 	output, err := p.query("machine", "list", "--format", "json")
 	if err != nil {
@@ -295,6 +311,7 @@ func machineControllers(local podmanTarget, name string) (string, error) {
 	return delegatedControllers(readFile, uid)
 }
 
+// machineSSH runs a command through Podman machine SSH using the local client target.
 func machineSSH(local podmanTarget, name string, argv ...string) (string, error) {
 	return local.query(append([]string{"machine", "ssh", name}, argv...)...)
 }

@@ -112,6 +112,7 @@ func collectEvidence(repository, tag, commit, hash string) (release.StableGateEv
 	return evidence, refusal
 }
 
+// collectPreviewRecords downloads every required validation record from the preview release.
 func collectPreviewRecords(base string, preview githubRelease, commit string) (*release.PreviewEvidence, error) {
 	candidate := &release.PreviewEvidence{Tag: preview.TagName, Commit: commit, Records: map[string][]byte{}}
 	for _, filename := range release.ValidationRecordFilenames() {
@@ -128,6 +129,7 @@ func collectPreviewRecords(base string, preview githubRelease, commit string) (*
 	return candidate, nil
 }
 
+// collectPreviewHash downloads the Linux preview executable and reads its reported asset hash.
 func collectPreviewHash(base string, preview githubRelease) (string, error) {
 	id := preview.assetID("sandboxed-agents-linux-amd64")
 	if id == 0 {
@@ -140,6 +142,7 @@ func collectPreviewHash(base string, preview githubRelease) (string, error) {
 	return previewAssetHash(data)
 }
 
+// collectCI records whether the latest push workflow for the release commit passed both platform jobs.
 func collectCI(base string, evidence *release.StableGateEvidence) error {
 	// Runs are newest first. An old passing run never hides a newer failed or
 	// still-running push run on the same commit.
@@ -197,6 +200,7 @@ type githubRelease struct {
 	} `json:"assets"`
 }
 
+// assetID returns the matching release asset ID, or zero when the named asset is absent.
 func (r githubRelease) assetID(name string) int64 {
 	for _, asset := range r.Assets {
 		if asset.Name == name {
@@ -212,9 +216,12 @@ type githubRun struct {
 	Status, Conclusion string
 }
 
+// githubAsset downloads the raw bytes of a GitHub release asset.
 func githubAsset(base string, id int64) ([]byte, error) {
 	return github(fmt.Sprintf("%s/releases/assets/%d", base, id), "-H", "Accept: application/octet-stream")
 }
+
+// githubJSON fetches a GitHub API response and decodes it into target.
 func githubJSON(endpoint string, target any) error {
 	data, err := github(endpoint)
 	if err != nil {
@@ -225,6 +232,8 @@ func githubJSON(endpoint string, target any) error {
 	}
 	return nil
 }
+
+// githubPages fetches every GitHub API page and passes each decoded JSON value to page.
 func githubPages(endpoint string, page func(json.RawMessage) error) error {
 	data, err := github(endpoint, "--paginate")
 	if err != nil {
@@ -245,6 +254,8 @@ func githubPages(endpoint string, page func(json.RawMessage) error) error {
 		}
 	}
 }
+
+// github runs a read through the GitHub CLI and returns its response bytes.
 func github(endpoint string, args ...string) ([]byte, error) {
 	command := exec.Command("gh", append([]string{"api", endpoint}, args...)...)
 	data, err := command.Output()
@@ -253,6 +264,8 @@ func github(endpoint string, args ...string) ([]byte, error) {
 	}
 	return data, nil
 }
+
+// previewAssetHash runs the supplied preview executable and extracts the asset hash from its version output.
 func previewAssetHash(data []byte) (string, error) {
 	directory, err := os.MkdirTemp("", "stable-gate-preview-")
 	if err != nil {

@@ -30,6 +30,8 @@ const fingerprintOutput = "ssh-ed25519 SHA256:Uz9PmsHJGPbzd6klakDqu+UqExF7zwQK5z
 	"ecdsa-sha2-nistp256 SHA256:0MmBQckGFO78t2X4AvUiL96AyaQoB8qPx5CNGDqs/5c\n" +
 	"ssh-rsa SHA256:Hh2udSs0jsTy9nRDAZ62zfc0mxPQOa7m5TKFNLNNuis\n"
 
+// fingerprintFixture scripts a running sandbox and its SSH host keys at the CLI-to-Podman query
+// seam.
 func fingerprintFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := linuxHost(t)
@@ -41,6 +43,8 @@ func fingerprintFixture(t *testing.T) *fixture {
 	return f
 }
 
+// fingerprintRead returns the expected unprivileged Podman command for reading a sandbox host
+// public key.
 func fingerprintRead(path string) string {
 	return "exec --user=1000:1000 --env HOME=/home/agent " + shellContainer + " cat " + path
 }
@@ -113,6 +117,7 @@ func TestFingerprintReadFailureEmitsNothing(t *testing.T) {
 	}
 }
 
+// publicKeyText encodes the supplied SSH wire fields as an OpenSSH public key fixture.
 func publicKeyText(kind string, fields ...[]byte) string {
 	var wire bytes.Buffer
 	for _, field := range append([][]byte{[]byte(kind)}, fields...) {
@@ -268,6 +273,8 @@ type hostFileSnapshot struct {
 	Data string
 }
 
+// snapshotHostFiles records relative paths, file modes, and contents for host-file mutation
+// assertions.
 func snapshotHostFiles(t *testing.T, root string) map[string]hostFileSnapshot {
 	t.Helper()
 	snapshot := make(map[string]hostFileSnapshot)

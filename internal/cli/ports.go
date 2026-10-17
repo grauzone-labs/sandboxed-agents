@@ -20,6 +20,8 @@ const SSHPortLabel = "io.sandboxed-agents.port"
 // defaultSSHPort is the first port considered when no explicit port is requested.
 const defaultSSHPort = 2222
 
+// allocatePort selects an available loopback SSH port that no sandbox in any controller group
+// has recorded.
 func allocatePort(p podmanTarget, requested string) (uint16, error) {
 	output, err := p.query("ps", "--all", "--format", "json")
 	if err != nil {
@@ -75,6 +77,7 @@ func allocatePort(p podmanTarget, requested string) (uint16, error) {
 	return 0, fmt.Errorf("no SSH port is available between %d and 65535", defaultSSHPort)
 }
 
+// parseSSHPort parses a nonzero decimal TCP port.
 func parseSSHPort(value string) (uint16, error) {
 	port, err := strconv.ParseUint(value, 10, 16)
 	if err != nil {
@@ -86,6 +89,8 @@ func parseSSHPort(value string) (uint16, error) {
 	return uint16(port), nil
 }
 
+// loopbackPortAvailable probes whether a TCP port can be bound on IPv4 loopback, then closes the
+// listener.
 func loopbackPortAvailable(port uint16) error {
 	// This is an availability probe, not a reservation. The command must fail
 	// if Podman cannot publish the port; another process can bind after close.
@@ -96,6 +101,8 @@ func loopbackPortAvailable(port uint16) error {
 	return listener.Close()
 }
 
+// checkRecordedPort validates the sandbox's recorded SSH port and probes its loopback
+// availability.
 func checkRecordedPort(p podmanTarget, container sandboxContainer) error {
 	value := container.Config.Labels[SSHPortLabel]
 	port, err := parseSSHPort(value)

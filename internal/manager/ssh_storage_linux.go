@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 )
 
+// replaceAuthorizedKey atomically replaces authorized_keys with a root-owned mode-0644 file.
 func replaceAuthorizedKey(dir string, data []byte) error {
 	return writeAuthorizedKey(dir, data, func(file *os.File) error { return file.Chown(0, 0) })
 }
 
+// writeAuthorizedKey applies ownership, permissions, and synced contents before publishing authorized_keys.
 func writeAuthorizedKey(dir string, data []byte, own func(*os.File) error) error {
 	file, err := os.CreateTemp(dir, ".authorized_keys-")
 	if err != nil {
@@ -34,6 +36,7 @@ func writeAuthorizedKey(dir string, data []byte, own func(*os.File) error) error
 	return os.Rename(file.Name(), filepath.Join(dir, "authorized_keys"))
 }
 
+// removeAuthorizedKey deletes authorized_keys and treats an absent file as success.
 func removeAuthorizedKey(dir string) error {
 	err := os.Remove(filepath.Join(dir, "authorized_keys"))
 	if os.IsNotExist(err) {

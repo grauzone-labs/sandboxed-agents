@@ -15,6 +15,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
+// sshSetupRun runs the built CLI and returns its exit status and separate output streams.
 func sshSetupRun(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	command := exec.Command(executable, args...)
@@ -544,6 +545,7 @@ func TestLifecycleSSHOptInInstallsAfterStartAndKeepsSandboxOnFailure(t *testing.
 	}
 }
 
+// setupFiles snapshots SSH and host state file contents while excluding lifecycle lock files.
 func setupFiles(t *testing.T) map[string]string {
 	t.Helper()
 	files := map[string]string{}
@@ -799,6 +801,7 @@ func TestSSHConfigPreviewPrintsHardenedEntryWithoutWriting(t *testing.T) {
 	}
 }
 
+// sshSetupHarness installs fake processes and SSH key generation with isolated home and host state directories.
 func sshSetupHarness(t *testing.T, responses map[string]lifecycleResponse) testutil.Fakes {
 	t.Helper()
 	responses = setupResponsesForPlatform(responses, runtime.GOOS)
@@ -823,6 +826,7 @@ func sshSetupHarness(t *testing.T, responses map[string]lifecycleResponse) testu
 	return fakes
 }
 
+// setupResponsesForPlatform adds Windows machine selection and connection prefixes to fake Podman responses.
 func setupResponsesForPlatform(responses map[string]lifecycleResponse, platform string) map[string]lifecycleResponse {
 	if platform != "windows" {
 		return responses
@@ -836,6 +840,7 @@ func setupResponsesForPlatform(responses map[string]lifecycleResponse, platform 
 
 const setupPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
+// selectSetupSandbox scripts fake SSH setup responses for a sandbox and selects its controller group.
 func selectSetupSandbox(t *testing.T, group, name string, running bool, managerDown bool) {
 	t.Helper()
 	responses := map[string]lifecycleResponse{}
@@ -930,6 +935,7 @@ func TestSSHSetupRemovalMaintainsGroupIncludesAndOtherEntries(t *testing.T) {
 	}
 }
 
+// scriptSetupResponses installs platform-adjusted fake Podman answers in the test environment.
 func scriptSetupResponses(t *testing.T, responses map[string]lifecycleResponse, platform string) {
 	t.Helper()
 	data, err := json.Marshal(setupResponsesForPlatform(responses, platform))
@@ -939,6 +945,7 @@ func scriptSetupResponses(t *testing.T, responses map[string]lifecycleResponse, 
 	t.Setenv("TEST_PODMAN_RESPONSES", string(data))
 }
 
+// setupPreflightResponses adds successful Linux preflight answers to the fake SSH setup responses.
 func setupPreflightResponses(running bool) map[string]lifecycleResponse {
 	responses := setupResponses(running)
 	responses["--version"] = lifecycleResponse{Output: "podman version 4.4.0"}
@@ -946,6 +953,7 @@ func setupPreflightResponses(running bool) map[string]lifecycleResponse {
 	return responses
 }
 
+// setupNewSandboxResponses scripts successful preflight and creation for a new sandbox with SSH setup.
 func setupNewSandboxResponses() map[string]lifecycleResponse {
 	responses := setupPreflightResponses(true)
 	responses["container exists sandboxed-agents.default.demo"] = lifecycleResponse{Exit: 1}
@@ -956,8 +964,10 @@ func setupNewSandboxResponses() map[string]lifecycleResponse {
 	return responses
 }
 
+// installResponses scripts fake SSH setup answers for a running sandbox.
 func installResponses() map[string]lifecycleResponse { return setupResponses(true) }
 
+// setupResponses scripts an owned sandbox and successful manager SSH administration calls.
 func setupResponses(running bool) map[string]lifecycleResponse {
 	responses := ownedLifecycleResponses(running)
 	responses["container inspect sandboxed-agents.default.demo"] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}},"State":{"Running":` + strconv.FormatBool(running) + `}}]`}

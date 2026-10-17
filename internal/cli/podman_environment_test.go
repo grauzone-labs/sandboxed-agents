@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+// logAmbientPodmanEnvironment sets ambient Podman target variables and enables environment
+// capture by the fake Podman process.
 func logAmbientPodmanEnvironment(t *testing.T) string {
 	t.Helper()
 	for _, key := range []string{"CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINER_SSHKEY"} {
@@ -18,6 +20,8 @@ func logAmbientPodmanEnvironment(t *testing.T) string {
 	return envLog
 }
 
+// assertNoAmbientPodmanEnvironment checks the captured child-process environment for leaked
+// ambient Podman target variables.
 func assertNoAmbientPodmanEnvironment(t *testing.T, envLog string) {
 	t.Helper()
 	data, err := os.ReadFile(envLog)

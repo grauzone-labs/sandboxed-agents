@@ -97,6 +97,7 @@ func liveImageCoverage(t *testing.T, suite *liveSuite) {
 	t.Logf("image coverage complete on %s: base and four toolchains, one build; controller group %s", runtime.GOOS, host.group)
 }
 
+// assertNoBakedSSHKeys inspects saved live image layers for embedded SSH host keys.
 func (host liveHost) assertNoBakedSSHKeys(t *testing.T, tag string) {
 	t.Helper()
 	// Saving the image reads its actual layers. Looking inside the running
@@ -159,6 +160,7 @@ func (host liveHost) assertNoBakedSSHKeys(t *testing.T, tag string) {
 	}
 }
 
+// assertLiveImage checks live image labels and verifies toolchain images extend the base image layers.
 func assertLiveImage(t *testing.T, set, assetHash string, actual, base liveImage) {
 	t.Helper()
 	for key, value := range map[string]string{
@@ -193,6 +195,7 @@ test "$PWD" = /workspace
 test -s /usr/local/share/sandboxed-agents/versions.txt
 `
 
+// liveImageSmoke returns shell checks for the programs supplied by the selected toolchain image.
 func liveImageSmoke(set string) string {
 	switch set {
 	case "none":

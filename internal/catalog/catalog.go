@@ -8,12 +8,14 @@ type Catalog struct {
 	Integrations map[string]Integration
 }
 
+// Integration declares the login and config workflows for an external service.
 type Integration struct {
 	Login           *LoginWorkflow
 	LoginWorkflows  []string // Explicit positional names; empty means the delivered login accepts no workflow argument.
 	ConfigWorkflows map[string]ConfigWorkflow
 }
 
+// LoginWorkflow declares login availability, accepted options, and usage diagnostics.
 type LoginWorkflow struct {
 	Delivered               bool
 	Options                 map[string]string // option name to usage value label
@@ -22,11 +24,13 @@ type LoginWorkflow struct {
 	InvalidArgumentsMessage string
 }
 
+// ConfigWorkflow declares accepted options and the global Git settings to write.
 type ConfigWorkflow struct {
 	Options     []string
 	GitSettings []GitSetting
 }
 
+// Default is the embedded catalog shared by the host executable and manager.
 var Default = Catalog{
 	Agents: map[string]Agent{
 		"copilot": {

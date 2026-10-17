@@ -76,6 +76,7 @@ func TestNuGetCommandScripts(t *testing.T) {
 	}
 }
 
+// hkcuIntegrationEnabled requires a Windows host and explicit opt-in for registry integration tests.
 func hkcuIntegrationEnabled(host, optIn string) bool {
 	return host == "windows" && optIn == "1"
 }

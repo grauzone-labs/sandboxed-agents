@@ -20,6 +20,7 @@ func TestNpmLaunchersAbsentFromPATHAreProtected(t *testing.T) {
 	}
 }
 
+// assertNpmLauncherProtected checks the built CLI refuses a workspace exposing an npm launcher or its alias before external calls.
 func assertNpmLauncherProtected(t *testing.T, kind string) {
 	t.Helper()
 	fakes := testutil.Install(t, fakeExecutable)

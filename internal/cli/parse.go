@@ -28,6 +28,8 @@ type commandSpec struct {
 	options  map[string]bool // true means the option takes a value
 }
 
+// spec builds a command definition from its positional range, sandbox requirement, and option
+// names.
 func spec(min, max int, sandbox bool, values, switches string) commandSpec {
 	options := make(map[string]bool)
 	for _, name := range strings.Fields(values) {

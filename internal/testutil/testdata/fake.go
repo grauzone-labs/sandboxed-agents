@@ -51,6 +51,7 @@ func priorInvocations(prefix string) int {
 	return count
 }
 
+// main records process arguments and serves scripted responses for external-command tests.
 func main() {
 	// A bounded child deliberately keeps the parent's inherited output open.
 	if len(os.Args) == 3 && os.Args[1] == "--test-hold-output" {

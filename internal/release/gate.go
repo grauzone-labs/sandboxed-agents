@@ -83,6 +83,7 @@ func ValidateStableAssetHash(stable, preview string) error {
 	return nil
 }
 
+// validateRecord checks a live suite or manual checklist record against its exact schema and release commit.
 func validateRecord(data []byte, filename, commit string) error {
 	if !utf8.Valid(data) {
 		return fmt.Errorf("validation record is not UTF-8")
@@ -234,6 +235,7 @@ func PreviewTagVersion(tag string) string {
 	return match[1]
 }
 
+// exactFields reports whether fields contains exactly the expected keys.
 func exactFields(fields map[string]json.RawMessage, expected []string) bool {
 	if len(fields) != len(expected) {
 		return false
@@ -246,6 +248,7 @@ func exactFields(fields map[string]json.RawMessage, expected []string) bool {
 	return true
 }
 
+// jsonString reports whether raw encodes the requested JSON string.
 func jsonString(raw json.RawMessage, want string) bool {
 	var value string
 	return json.Unmarshal(raw, &value) == nil && value == want

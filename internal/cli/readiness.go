@@ -25,12 +25,15 @@ type readinessRuntime struct {
 // readinessDeadline bounds the whole readiness wait, probes included (ADR 0007).
 var readinessDeadline = 60 * time.Second
 
+// readySandbox waits for manager and SSH readiness while allowing an interrupt to cancel the
+// wait.
 func readySandbox(p podmanTarget, container string, port uint16) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	return waitReadiness(ctx, p, container, port, readinessRuntime{time.Now, waitContext, func(_ context.Context, cmd *exec.Cmd) ([]byte, error) { return cmd.Output() }})
 }
 
+// waitContext waits for the duration or returns the context's cancellation error.
 func waitContext(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
@@ -42,6 +45,8 @@ func waitContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// waitReadiness retries manager and SSH probes within one deadline using the supplied clock and
+// process hooks.
 func waitReadiness(ctx context.Context, p podmanTarget, container string, port uint16, r readinessRuntime) error {
 	deadline := r.now().Add(readinessDeadline)
 	type readinessProbe struct {

@@ -9,6 +9,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/sshkey"
 )
 
+// sshAdministration dispatches recognized SSH requests after requiring container root.
 func sshAdministration(args []string, stdout, stderr io.Writer, effects Effects) (int, bool) {
 	if len(args) == 0 {
 		return 0, false
@@ -40,6 +41,7 @@ func sshAdministration(args []string, stdout, stderr io.Writer, effects Effects)
 	return run(), true
 }
 
+// sshDeauthorize removes managed authorization through the injected storage operation.
 func sshDeauthorize(stderr io.Writer, effects Effects) int {
 	if effects.RemoveAuthorizedKey == nil {
 		return exitStatus(fmt.Errorf("SSH authorization storage is unavailable"), stderr)
@@ -47,6 +49,7 @@ func sshDeauthorize(stderr io.Writer, effects Effects) int {
 	return exitStatus(effects.RemoveAuthorizedKey(), stderr)
 }
 
+// sshAuthorize validates one Ed25519 public key and replaces the managed authorization.
 func sshAuthorize(text string, stderr io.Writer, effects Effects) int {
 	key, err := sshkey.Ed25519(text)
 	if err != nil {
@@ -58,6 +61,7 @@ func sshAuthorize(text string, stderr io.Writer, effects Effects) int {
 	return exitStatus(effects.ReplaceAuthorizedKey([]byte(key+"\n")), stderr)
 }
 
+// sshHostKey waits briefly for server key generation and prints the validated Ed25519 public key.
 func sshHostKey(stdout, stderr io.Writer, effects Effects) int {
 	if effects.ReadFile == nil {
 		return exitStatus(fmt.Errorf("SSH server storage is unavailable"), stderr)

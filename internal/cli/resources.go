@@ -19,10 +19,12 @@ type Resources struct {
 	ShmSize    int64
 }
 
+// DefaultResources returns up's default limits with swap disabled.
 func DefaultResources() Resources {
 	return Resources{Memory: 8 * 1024 * 1024 * 1024, MemorySwap: 8 * 1024 * 1024 * 1024, CPUs: 4, PIDsLimit: 2048, ShmSize: 1024 * 1024 * 1024}
 }
 
+// positiveInteger parses a positive decimal integer that fits in an int64.
 func positiveInteger(value string) (int64, error) {
 	if !digits.MatchString(value) {
 		return 0, fmt.Errorf("expected a positive whole number")
@@ -34,6 +36,7 @@ func positiveInteger(value string) (int64, error) {
 	return number, nil
 }
 
+// size parses a positive byte count with an optional binary K, M, G, or T suffix.
 func size(value string) (int64, error) {
 	multiplier := int64(1)
 	if len(value) > 0 {
@@ -61,6 +64,8 @@ func size(value string) (int64, error) {
 	return number * multiplier, nil
 }
 
+// parse validates resource and port options, updates supplied resource limits, and disables
+// swap.
 func (r *Resources) parse(options map[string]string) error {
 	for _, option := range []string{"memory", "cpus", "pids-limit", "shm-size", "port"} {
 		value, exists := options[option]

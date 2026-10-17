@@ -11,6 +11,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/image"
 )
 
+// main writes the release overlay into the requested directory or exits with an error.
 func main() {
 	if len(os.Args) != 2 {
 		fmt.Fprintln(os.Stderr, "usage: overlay OUTPUT_DIRECTORY (run from repository root)")
@@ -23,6 +24,7 @@ func main() {
 	}
 }
 
+// writeOverlay writes normalized image assets, builds the embedded Linux manager, and saves the Go overlay mapping.
 func writeOverlay(directory string) error {
 	root, err := os.Getwd()
 	if err != nil {

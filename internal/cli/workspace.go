@@ -11,6 +11,8 @@ import (
 	"strings"
 )
 
+// podmanWorkspacePath returns the optional workspace bind path, translating Windows drive paths
+// for WSL.
 func podmanWorkspacePath(request Request, p podmanTarget) (string, error) {
 	if len(request.Args) != 2 {
 		return "", nil
@@ -21,6 +23,8 @@ func podmanWorkspacePath(request Request, p podmanTarget) (string, error) {
 	return request.Args[1], nil
 }
 
+// checkWorkspaceAutomount rejects Windows workspace binds when the selected machine uses a
+// custom automount root.
 func checkWorkspaceAutomount(request Request, p podmanTarget) error {
 	if len(request.Args) == 2 && p.host.Platform == "windows" && p.automountRoot != "/mnt/" && p.automountRoot != "/mnt" {
 		return fmt.Errorf("workspace binds are unsupported with custom WSL automount root %q on machine %q", p.automountRoot, p.connection)
@@ -28,11 +32,15 @@ func checkWorkspaceAutomount(request Request, p podmanTarget) error {
 	return nil
 }
 
+// validateWorkspaceForHost checks that the workspace resolves to a directory outside protected
+// host paths.
 func validateWorkspaceForHost(path, hostOS string) error {
 	_, err := workspacePathForHost(path, hostOS)
 	return err
 }
 
+// workspacePathForHost resolves a workspace directory and rejects overlap with protected host
+// paths.
 func workspacePathForHost(path, hostOS string) (string, error) {
 	resolved, err := resolvedPath(path)
 	if err != nil {
@@ -104,6 +112,8 @@ func workspacePathForHost(path, hostOS string) (string, error) {
 	return resolved, nil
 }
 
+// packageLaunchers collects protected package launcher paths from installation metadata and
+// executable search directories.
 func packageLaunchers(executable string) ([]string, error) {
 	directories := append([]string{filepath.Dir(executable)}, filepath.SplitList(os.Getenv("PATH"))...)
 	var paths []string
@@ -161,6 +171,7 @@ func resolvedPath(path string) (string, error) {
 	return filepath.Join(resolved, filepath.Base(absolute)), nil
 }
 
+// within reports whether a path is inside or equal to a parent, folding case on Windows.
 func within(path, parent string) bool {
 	if runtime.GOOS == "windows" {
 		path = strings.ToLower(path)
@@ -181,6 +192,8 @@ func windowsWorkspacePath(path string) (string, error) {
 	return "/mnt/" + strings.ToLower(normalized[:1]) + "/" + normalized[3:], nil
 }
 
+// normalizeWindowsFinalPath normalizes extended Windows drive and UNC paths and rejects
+// unsupported final-path forms.
 func normalizeWindowsFinalPath(path string) (string, error) {
 	if strings.HasPrefix(path, `\\?\UNC\`) {
 		path = `\\` + strings.TrimPrefix(path, `\\?\UNC\`)

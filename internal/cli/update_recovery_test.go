@@ -193,6 +193,8 @@ func TestUpdateRecoversRunningBackup(t *testing.T) {
 	}
 }
 
+// recoveryActions extracts recovery lifecycle actions while rejecting image work and volume
+// mutations.
 func recoveryActions(t *testing.T, calls [][]string) []string {
 	t.Helper()
 	var actions []string

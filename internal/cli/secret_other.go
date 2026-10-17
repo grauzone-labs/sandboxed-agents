@@ -7,6 +7,7 @@ import (
 	"os"
 )
 
+// hideTerminalInput reports that secure terminal input is unsupported on this platform.
 func hideTerminalInput(*os.File) (func() error, error) {
 	return nil, fmt.Errorf("secure terminal input is unsupported on this platform")
 }

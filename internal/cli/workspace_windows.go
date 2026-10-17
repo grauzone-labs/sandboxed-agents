@@ -6,6 +6,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// resolveExistingPath resolves an existing Windows path through its file handle, following
+// junctions and symbolic links.
 func resolveExistingPath(path string) (string, error) {
 	// Extended names keep long paths usable. Opening without
 	// FILE_FLAG_OPEN_REPARSE_POINT follows junctions and symlinks to the target.

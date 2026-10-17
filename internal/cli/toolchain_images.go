@@ -21,6 +21,7 @@ const (
 	baseImageLabel   = "io.sandboxed-agents.base-image"
 )
 
+// toolchainSet formats a toolchain set for labels, using none for an empty set.
 func toolchainSet(set []string) string {
 	if len(set) == 0 {
 		return "none"
@@ -28,6 +29,8 @@ func toolchainSet(set []string) string {
 	return strings.Join(set, ",")
 }
 
+// sandboxToolchains reads and validates a sandbox's recorded toolchains, falling back to its
+// image tag.
 func sandboxToolchains(container sandboxContainer) ([]string, error) {
 	value := container.Config.Labels[ToolchainsLabel]
 	if value == "" {
@@ -40,6 +43,7 @@ func sandboxToolchains(container sandboxContainer) ([]string, error) {
 	return recordedToolchains(value)
 }
 
+// recordedToolchains validates, sorts, and deduplicates a recorded toolchain selection.
 func recordedToolchains(value string) ([]string, error) {
 	if value == "none" {
 		return nil, nil
@@ -60,6 +64,7 @@ type imageRecord struct {
 	Labels map[string]string
 }
 
+// inspectImage reads exactly one image record with a nonempty immutable ID.
 func inspectImage(p podmanTarget, name string) (imageRecord, error) {
 	output, err := p.query("image", "inspect", name)
 	if err != nil {
@@ -72,6 +77,8 @@ func inspectImage(p podmanTarget, name string) (imageRecord, error) {
 	return records[0], nil
 }
 
+// buildLabeledImage builds an image with product, asset, toolchain, and base-image labels and
+// the requested refresh policy.
 func buildLabeledImage(p podmanTarget, set []string, hash, baseID string, refresh bool, output io.Writer) (string, error) {
 	return image.BuildWithToolchains(context.Background(), nil, set, func(ctx context.Context, args ...string) error {
 		flags := []string{"--label", imageMarkerLabel + "=sandboxed-agents", "--label", assetHashLabel + "=" + hash, "--label", ToolchainsLabel + "=" + toolchainSet(set)}
@@ -206,6 +213,8 @@ func ensureImage(p podmanTarget, set []string, output io.Writer) (string, error)
 	return buildLabeledImage(p, set, hash, base.ID, false, output)
 }
 
+// sandboxImageOutdated compares a sandbox's image with the current image for its recorded
+// toolchains.
 func sandboxImageOutdated(p podmanTarget, container sandboxContainer, hash string) (bool, error) {
 	set, err := sandboxToolchains(container)
 	if err != nil {
@@ -214,6 +223,8 @@ func sandboxImageOutdated(p podmanTarget, container sandboxContainer, hash strin
 	return imageOutdated(p, container.Image, set, hash)
 }
 
+// imageOutdated reports whether an image differs from the current tag or uses an outdated base
+// image.
 func imageOutdated(p podmanTarget, imageID string, set []string, hash string) (bool, error) {
 	tag := image.Tag(hash, set)
 	exists, err := p.exists(imageResource, tag)

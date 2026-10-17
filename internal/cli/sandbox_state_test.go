@@ -12,6 +12,8 @@ const sandboxBackup = "sandboxed-agents-backup.default.agent01"
 
 var sandboxVolumes = []string{shellContainer + ".workspace", shellContainer + ".home", shellContainer + ".ssh"}
 
+// sandboxStateFixture prepares a running sandbox fixture with scripted shell output at the
+// public CLI seam.
 func sandboxStateFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := fingerprintFixture(t)
@@ -20,14 +22,19 @@ func sandboxStateFixture(t *testing.T) *fixture {
 	return f
 }
 
+// containerInspectAnswer formats a container-inspect fixture with supplied labels and running
+// state.
 func containerInspectAnswer(labels, running string) string {
 	return `[{"Config":{"Labels":` + labels + `},"State":{"Running":` + running + `}}]`
 }
 
+// volumeInspectAnswer formats a volume-inspect fixture with the supplied labels.
 func volumeInspectAnswer(labels string) string {
 	return `[{"Labels":` + labels + `}]`
 }
 
+// configureSandboxQueries scripts owned sandbox and absent-volume responses for the requested
+// group and connection.
 func configureSandboxQueries(f *fixture, group, connection string) {
 	container := "sandboxed-agents." + group + ".agent01"
 	labels := `{"io.sandboxed-agents.owner":"` + group + `"}`
@@ -40,6 +47,8 @@ func configureSandboxQueries(f *fixture, group, connection string) {
 	f.responses[connection+"container exists sandboxed-agents-backup."+group+".agent01"] = response{Exit: 1}
 }
 
+// sandboxObjectCalls builds the expected existence and inspect queries for the supplied sandbox
+// object state.
 func sandboxObjectCalls(container, backup bool, volumes ...string) [][]string {
 	calls := [][]string{{"container", "exists", shellContainer}}
 	if container {
@@ -60,14 +69,20 @@ func sandboxObjectCalls(container, backup bool, volumes ...string) [][]string {
 	return calls
 }
 
+// sandboxExistenceCalls returns the expected object queries when the sandbox has no existing
+// objects.
 func sandboxExistenceCalls() [][]string {
 	return sandboxObjectCalls(false, false)
 }
 
+// sandboxQueryCalls returns the expected object queries for an existing sandbox container
+// without volumes or backup.
 func sandboxQueryCalls() [][]string {
 	return sandboxObjectCalls(true, false)
 }
 
+// assertSandboxRefusal checks that the public CLI refuses sandbox state without host-file reads,
+// SSH calls, or Podman actions.
 func assertSandboxRefusal(t *testing.T, f *fixture, command string, messages ...string) [][]string {
 	t.Helper()
 	f.host.ReadFile = func(path string) ([]byte, error) {

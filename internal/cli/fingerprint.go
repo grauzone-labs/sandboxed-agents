@@ -22,6 +22,8 @@ var hostKeys = [...]hostKey{
 	{"/etc/ssh/ssh_host_rsa_key.pub", "ssh-rsa", validRSAKey},
 }
 
+// printFingerprints validates all supported SSH host public keys in a running sandbox before
+// printing their SHA-256 fingerprints.
 func printFingerprints(request Request, p podmanTarget, stdout io.Writer) error {
 	objects, err := requireSandbox(request, p)
 	if err != nil {
@@ -81,11 +83,13 @@ func hostPublicKey(text string, key hostKey) ([]byte, bool) {
 	return blob, key.validate(readString) && len(rest) == 0
 }
 
+// validEd25519Key checks that the SSH wire key contains a 32-byte Ed25519 public key.
 func validEd25519Key(readString func() ([]byte, bool)) bool {
 	key, ok := readString()
 	return ok && len(key) == 32
 }
 
+// validECDSAKey checks that the SSH wire key names nistp256 and contains a point on that curve.
 func validECDSAKey(readString func() ([]byte, bool)) bool {
 	curve, ok := readString()
 	if !ok || string(curve) != "nistp256" {
@@ -99,6 +103,8 @@ func validECDSAKey(readString func() ([]byte, bool)) bool {
 	return x != nil
 }
 
+// validRSAKey checks that the SSH wire key contains positive RSA integers with a valid odd
+// exponent and modulus.
 func validRSAKey(readString func() ([]byte, bool)) bool {
 	exponent, ok := readString()
 	if !ok || !positiveSSHInteger(exponent) {
@@ -112,6 +118,8 @@ func validRSAKey(readString func() ([]byte, bool)) bool {
 	return e.IsInt64() && e.Int64() >= 3 && e.Int64() <= 1<<31-1 && e.Bit(0) != 0 && n.Bit(0) != 0 && n.Cmp(e) > 0
 }
 
+// positiveSSHInteger reports whether an SSH multiprecision integer is positive and uses its
+// minimal signed encoding.
 func positiveSSHInteger(value []byte) bool {
 	if len(value) == 0 || value[0]&0x80 != 0 {
 		return false

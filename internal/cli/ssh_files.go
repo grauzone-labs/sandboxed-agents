@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+// createSSHDirectory creates missing SSH directories with restricted permissions while
+// preserving existing directories.
 func createSSHDirectory(path string) error {
 	info, err := os.Stat(path)
 	if err == nil {
@@ -28,6 +30,8 @@ func createSSHDirectory(path string) error {
 	return secureSSHPath(path, os.ModeDir|0700)
 }
 
+// writeSSHFile atomically replaces an SSH file, optionally preserving the existing file's
+// permissions.
 func writeSSHFile(path string, data []byte, mode os.FileMode, preserve bool) error {
 	previous := ""
 	if preserve {

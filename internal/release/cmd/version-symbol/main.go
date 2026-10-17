@@ -8,6 +8,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/release"
 )
 
+// main prints the canonical release version linker symbol from the current repository.
 func main() {
 	symbol, err := release.VersionSymbol(os.DirFS("."))
 	if err != nil {

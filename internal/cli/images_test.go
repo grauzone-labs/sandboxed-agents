@@ -12,6 +12,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
+// baseTag derives the current base image tag from the embedded build context.
 func baseTag(t *testing.T) string {
 	t.Helper()
 	hash, err := image.Hash(image.Context())
@@ -205,6 +206,8 @@ func TestBuildAndUpAgreeOnNoneImageTag(t *testing.T) {
 	assertExpectedBuildAndNoOtherMutations(t, calls[previousCallCount:], buildIndex, "", tag)
 }
 
+// assertExpectedBuildAndNoOtherMutations checks the recorded Podman build and optional sandbox
+// creation, rejecting other mutations.
 func assertExpectedBuildAndNoOtherMutations(t *testing.T, calls [][]string, buildIndex int, connection, tag string) {
 	t.Helper()
 	if buildIndex < 0 || buildIndex >= len(calls) {

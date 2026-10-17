@@ -128,6 +128,8 @@ func TestQueryFailurePreservesDiagnosticStreams(t *testing.T) {
 	}
 }
 
+// linuxHost creates a passing Linux host fixture with isolated host state and fake external
+// programs.
 func linuxHost(t *testing.T) *fixture {
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
@@ -167,6 +169,8 @@ func linuxHost(t *testing.T) *fixture {
 	return f
 }
 
+// run runs the public CLI against the fixture and returns its status, combined output, and
+// Podman calls.
 func (f *fixture) run(t *testing.T, args ...string) (int, string, [][]string) {
 	t.Helper()
 	data, err := json.Marshal(f.responses)
@@ -179,6 +183,8 @@ func (f *fixture) run(t *testing.T, args ...string) (int, string, [][]string) {
 	return status, output.String(), testutil.Invocations(t, f.fakes.PodmanLog)
 }
 
+// noMutation rejects recorded Podman mutations and mounts outside the permitted named-volume
+// policy.
 func noMutation(t *testing.T, calls [][]string) {
 	t.Helper()
 	if err := mountBoundaryError(calls, "", ""); err != nil {
@@ -312,6 +318,7 @@ func TestPreflightUnusableQueriesFailClosed(t *testing.T) {
 	}
 }
 
+// fakePath returns the platform-specific path to a fake program in the fixture directory.
 func fakePath(f *fixture, name string) string {
 	if runtime.GOOS == "windows" {
 		name += ".exe"

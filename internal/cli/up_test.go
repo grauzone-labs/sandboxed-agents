@@ -17,6 +17,8 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
+// scriptNewSandbox scripts the Podman responses needed to create and start a new sandbox through
+// the public CLI.
 func scriptNewSandbox(t *testing.T, f *fixture, group, name string) {
 	prefix := "sandboxed-agents." + group + "." + name
 	connection := ""
@@ -44,6 +46,8 @@ func TestUpCreatesOwnedSandbox(t *testing.T) {
 	assertNewSandbox(t, calls, "", "default", "agent01", baseTag(t), "", "2222", "8589934592", "4", "2048", "1073741824")
 }
 
+// assertNewSandbox checks the Podman creation sequence, storage boundaries, identity, and
+// resource limits.
 func assertNewSandbox(t *testing.T, calls [][]string, connection, group, name, tag, workspace, port, memory, cpus, pids, shm string) {
 	t.Helper()
 	prefix := "sandboxed-agents." + group + "." + name
@@ -82,6 +86,8 @@ func assertNewSandbox(t *testing.T, calls [][]string, connection, group, name, t
 	}
 }
 
+// runUpExecutable runs the up-command test executable in a child process and captures its
+// status, output, and Podman calls.
 func runUpExecutable(t *testing.T, f *fixture, args ...string) (int, string, [][]string) {
 	t.Helper()
 	program, err := os.Executable()

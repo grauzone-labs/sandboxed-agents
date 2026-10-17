@@ -97,6 +97,7 @@ func walkAssets(source fs.FS, visit func(string, []byte) error) ([]string, error
 // normalizedFS keeps normalization in one place for the asset hash and release preprocessing.
 type normalizedFS struct{ fs.FS }
 
+// Open passes directories through and returns normalized file contents with their adjusted size.
 func (context normalizedFS) Open(name string) (fs.File, error) {
 	file, err := context.FS.Open(name)
 	if err != nil {
@@ -127,12 +128,16 @@ type normalizedFile struct {
 	info fs.FileInfo
 }
 
+// Stat returns metadata with the normalized content size.
 func (file *normalizedFile) Stat() (fs.FileInfo, error) { return file.info, nil }
-func (file *normalizedFile) Close() error               { return nil }
+
+// Close succeeds without releasing resources because normalized contents are held in memory.
+func (file *normalizedFile) Close() error { return nil }
 
 type normalizedInfo struct {
 	fs.FileInfo
 	size int64
 }
 
+// Size returns the normalized content length instead of the underlying file size.
 func (info normalizedInfo) Size() int64 { return info.size }

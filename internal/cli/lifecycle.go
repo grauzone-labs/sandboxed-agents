@@ -22,6 +22,7 @@ type sandboxContainer struct {
 	}
 }
 
+// inspectContainer reads exactly one container record from the selected Podman target.
 func inspectContainer(p podmanTarget, name string) (sandboxContainer, error) {
 	var records []sandboxContainer
 	output, err := p.query("container", "inspect", name)
@@ -105,6 +106,7 @@ func readSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 	return objects, nil
 }
 
+// ownerError reports the collected ownership conflicts among sandbox objects.
 func (objects sandboxObjects) ownerError() error {
 	if len(objects.conflicts) > 0 {
 		return fmt.Errorf("owner conflict: %s; use Podman to remove or rename the objects", strings.Join(objects.conflicts, ", "))
@@ -112,6 +114,8 @@ func (objects sandboxObjects) ownerError() error {
 	return nil
 }
 
+// requireSandbox reads sandbox objects and enforces the command's existence, ownership, and
+// interrupted-update rules.
 func requireSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 	requiresContainer := request.Command != "remove" && !(request.Command == "ssh-config" && request.Options["remove"] != "")
 	objects, err := readSandbox(request, p)
@@ -140,6 +144,8 @@ func requireSandbox(request Request, p podmanTarget) (sandboxObjects, error) {
 	return objects, nil
 }
 
+// requireRunning requires a recorded running state and returns the sandbox's derived Podman
+// names.
 func requireRunning(request Request, objects sandboxObjects) (ObjectNames, error) {
 	names := DerivedNames(request.Group, request.Name)
 	if objects.container.State.Running == nil {
@@ -230,6 +236,8 @@ func applySandboxState(request Request, p podmanTarget, objects sandboxObjects, 
 	return nil
 }
 
+// removeSandbox removes the sandbox container and host SSH setup, deleting only requested owned
+// volumes.
 func removeSandbox(request Request, p podmanTarget, objects sandboxObjects, ended sessionReport, output io.Writer) error {
 	name := DerivedNames(request.Group, request.Name).Container
 	if objects.exists {
@@ -273,6 +281,8 @@ func removeSandbox(request Request, p podmanTarget, objects sandboxObjects, ende
 	return errors.Join(failures...)
 }
 
+// removeSandboxVolumes removes requested owned volumes and reports any remaining ownership
+// conflict.
 func removeSandboxVolumes(request Request, p podmanTarget, objects sandboxObjects, output io.Writer) error {
 	for _, volume := range objects.volumes {
 		if request.Options["volumes"] != "" && objects.volumeOwners[volume] == request.Group {
@@ -297,6 +307,7 @@ type sessionReport struct {
 	unavailable bool
 }
 
+// write prints which agent sessions ended or reports that their names were unavailable.
 func (r sessionReport) write(output io.Writer, name string) {
 	if r.unavailable {
 		fmt.Fprintf(output, "sandbox %s: sessions that may have been running were ended and cannot be named\n", name)
@@ -305,6 +316,8 @@ func (r sessionReport) write(output io.Writer, name string) {
 	}
 }
 
+// guardSessions refuses to end running or unverified agent sessions unless the command requests
+// force.
 func guardSessions(request Request, p podmanTarget) (sessionReport, error) {
 	output, err := queryManagerSessions(request, p)
 	if err != nil {

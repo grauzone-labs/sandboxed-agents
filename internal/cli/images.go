@@ -18,6 +18,7 @@ const (
 	volumeResource    resourceKind = "volume"
 )
 
+// exists queries whether a Podman resource exists, distinguishing absence from query failures.
 func (p podmanTarget) exists(kind resourceKind, name string) (bool, error) {
 	_, err := p.query(string(kind), "exists", name)
 	if err == nil {

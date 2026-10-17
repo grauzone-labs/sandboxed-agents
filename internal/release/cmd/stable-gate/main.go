@@ -7,8 +7,10 @@ import (
 	"os"
 )
 
+// main exits with the stable release gate command status.
 func main() { os.Exit(run(os.Args[1:])) }
 
+// run parses gate options, collects GitHub evidence, and reports whether the stable release prerequisites pass.
 func run(args []string) int {
 	flags := flag.NewFlagSet("stable-gate", flag.ContinueOnError)
 	tag := flags.String("tag", "", "stable release tag vX.Y.Z")

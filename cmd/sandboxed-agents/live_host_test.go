@@ -139,6 +139,7 @@ func buildLiveExecutable(t *testing.T, directory string) string {
 	return binary
 }
 
+// cli runs the live executable with the host environment and a bounded execution time.
 func (host liveHost) cli(input string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer cancel()
@@ -149,6 +150,7 @@ func (host liveHost) cli(input string, args ...string) (string, error) {
 	return string(output), err
 }
 
+// mustCLI runs and logs a live CLI command, failing the test when the executable fails.
 func (host liveHost) mustCLI(t *testing.T, input string, args ...string) string {
 	t.Helper()
 	t.Logf("sandboxed-agents %s", strings.Join(args, " "))
@@ -160,6 +162,7 @@ func (host liveHost) mustCLI(t *testing.T, input string, args ...string) string 
 	return output
 }
 
+// podman runs a bounded live Podman command against the selected connection.
 func (host liveHost) podman(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -168,6 +171,7 @@ func (host liveHost) podman(args ...string) (string, error) {
 	return string(output), err
 }
 
+// podmanCommand creates a live Podman command bound to the selected connection and clears ambient Windows target overrides.
 func (host liveHost) podmanCommand(ctx context.Context, args ...string) *exec.Cmd {
 	command := exec.CommandContext(ctx, "podman", append(slices.Clone(host.connection), args...)...)
 	command.Env = host.environment
@@ -184,6 +188,7 @@ func (host liveHost) podmanCommand(ctx context.Context, args ...string) *exec.Cm
 	return command
 }
 
+// selectConnection binds direct Windows Podman calls to the default or sole machine used by the CLI.
 func (host *liveHost) selectConnection(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "windows" {
@@ -241,6 +246,7 @@ func (host liveHost) assertNoSwap(t *testing.T, name string, container liveConta
 	}
 }
 
+// inspectContainer reads and validates the live sandbox container through Podman.
 func (host liveHost) inspectContainer(t *testing.T, name string) liveContainer {
 	t.Helper()
 	output, err := host.podman("container", "inspect", cli.DerivedNames(host.group, name).Container)
@@ -251,6 +257,7 @@ func (host liveHost) inspectContainer(t *testing.T, name string) liveContainer {
 	return records[0]
 }
 
+// inspectImage reads and validates a live image record through Podman.
 func (host liveHost) inspectImage(t *testing.T, tag string) liveImage {
 	t.Helper()
 	output, err := host.podman("image", "inspect", tag)
@@ -261,10 +268,12 @@ func (host liveHost) inspectImage(t *testing.T, tag string) liveImage {
 	return records[0]
 }
 
+// sameImageID compares image IDs with or without the sha256 prefix.
 func sameImageID(left, right string) bool {
 	return strings.TrimPrefix(left, "sha256:") == strings.TrimPrefix(right, "sha256:")
 }
 
+// cleanupSandbox registers forced sandbox and volume removal followed by a Podman absence check.
 func (host liveHost) cleanupSandbox(t *testing.T, name string) {
 	t.Helper()
 	t.Cleanup(func() {
@@ -349,6 +358,7 @@ func (host liveHost) assertListed(t *testing.T, name, state string) {
 	}
 }
 
+// removeGroupStateOnCleanup registers removal of the live controller group's host state.
 func (host liveHost) removeGroupStateOnCleanup(t *testing.T) {
 	t.Helper()
 	root := os.Getenv("XDG_STATE_HOME")

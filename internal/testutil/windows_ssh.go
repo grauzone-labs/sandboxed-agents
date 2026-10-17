@@ -15,11 +15,13 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// WindowsSSHPermissions records a path's owner, DACL, and security descriptor control flags.
 type WindowsSSHPermissions struct {
 	Descriptor string
 	Control    windows.SECURITY_DESCRIPTOR_CONTROL
 }
 
+// NativeWindowsOpenSSH locates native SSH and keygen executables or skips the test.
 func NativeWindowsOpenSSH(t *testing.T) (ssh, keygen string) {
 	t.Helper()
 	var directories []string
@@ -44,6 +46,7 @@ func NativeWindowsOpenSSH(t *testing.T) (ssh, keygen string) {
 	return "", ""
 }
 
+// RunWindowsSSH captures combined command output and fails the test after a 15-second timeout.
 func RunWindowsSSH(t *testing.T, executable string, arguments ...string) ([]byte, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -61,6 +64,7 @@ func SSHKeyOutputMatches(output []byte, publicKey string) bool {
 	return len(fields) >= 2 && strings.Join(fields[:2], " ") == publicKey
 }
 
+// SnapshotWindowsSSHPermissions reads a path's owner, DACL, and descriptor control flags.
 func SnapshotWindowsSSHPermissions(t *testing.T, path string) WindowsSSHPermissions {
 	t.Helper()
 	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
@@ -75,6 +79,7 @@ func SnapshotWindowsSSHPermissions(t *testing.T, path string) WindowsSSHPermissi
 	return WindowsSSHPermissions{Descriptor: descriptor.String(), Control: control}
 }
 
+// AssertWindowsSSHPermissionsUnchanged fails if the owner, DACL, or control flags changed.
 func AssertWindowsSSHPermissionsUnchanged(t *testing.T, path string, before WindowsSSHPermissions) {
 	t.Helper()
 	if after := SnapshotWindowsSSHPermissions(t, path); after != before {
@@ -82,6 +87,7 @@ func AssertWindowsSSHPermissionsUnchanged(t *testing.T, path string, before Wind
 	}
 }
 
+// AssertWindowsSSHAccessControlUnchanged checks DACL and control preservation while allowing owner changes.
 func AssertWindowsSSHAccessControlUnchanged(t *testing.T, path string, before WindowsSSHPermissions) {
 	t.Helper()
 	after := SnapshotWindowsSSHPermissions(t, path)
@@ -92,6 +98,7 @@ func AssertWindowsSSHAccessControlUnchanged(t *testing.T, path string, before Wi
 	}
 }
 
+// AssertWindowsSSHOwnerIsProcessUser fails unless the path belongs to the current process user.
 func AssertWindowsSSHOwnerIsProcessUser(t *testing.T, path string) {
 	t.Helper()
 	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)

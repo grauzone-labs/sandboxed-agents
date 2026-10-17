@@ -5,6 +5,8 @@ import (
 	"os"
 )
 
+// hideTerminalInput disables terminal echo and line processing and returns a function that
+// restores the prior mode.
 func hideTerminalInput(file *os.File) (func() error, error) {
 	fd := int(file.Fd())
 	previous, err := unix.IoctlGetTermios(fd, unix.TCGETS)
