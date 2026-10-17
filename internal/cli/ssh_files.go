@@ -70,6 +70,8 @@ func writeSSHFile(path string, data []byte, mode os.FileMode, preserve bool) err
 	return os.Rename(file.Name(), resolved)
 }
 
+// includeLine quotes the managed configuration path, escaping literal percent
+// signs when the client expands Include tokens.
 func (s sshSetup) includeLine(expandTokens bool) string {
 	path := literalSSHPath(s.config)
 	if expandTokens {
