@@ -10,12 +10,13 @@ type recordedIntegerLimit struct {
 	value  *int64
 }
 
-// integerLimits returns the recorded memory, process, and shared-memory limit fields.
-func (container sandboxContainer) integerLimits() [3]recordedIntegerLimit {
-	return [3]recordedIntegerLimit{
+// integerLimits returns the recorded memory, process, shared-memory, and combined memory/swap limits.
+func (container sandboxContainer) integerLimits() [4]recordedIntegerLimit {
+	return [4]recordedIntegerLimit{
 		{"memory", container.HostConfig.Memory},
 		{"pids-limit", container.HostConfig.PidsLimit},
 		{"shm-size", container.HostConfig.ShmSize},
+		{"memory-swap", container.HostConfig.MemorySwap},
 	}
 }
 

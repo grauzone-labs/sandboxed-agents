@@ -15,7 +15,7 @@ type sandboxContainer struct {
 		Labels map[string]string
 		Image  string
 	}
-	HostConfig struct{ Memory, PidsLimit, ShmSize, NanoCpus, CpuQuota, CpuPeriod *int64 }
+	HostConfig struct{ Memory, MemorySwap, PidsLimit, ShmSize, NanoCpus, CpuQuota, CpuPeriod *int64 }
 	State      struct{ Running *bool }
 	Mounts     []struct {
 		Type, Name, Source, Destination string

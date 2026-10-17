@@ -234,6 +234,7 @@ func (suite *liveSuite) lifecycle(t *testing.T) {
 	const name = "live-lifecycle"
 	host.cleanupSandbox(t, name)
 	host.mustCLI(t, "", "up", name)
+	host.assertNoSwap(t, name, host.inspectContainer(t, name))
 	key := host.sshHostKey(t, name)
 	host.assertSSHServer(t, name, key)
 	host.assertListed(t, name, "running")

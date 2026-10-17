@@ -41,6 +41,7 @@ func liveImageCoverage(t *testing.T, suite *liveSuite) {
 		}
 		host.mustCLI(t, liveAgentIdentity+liveImageSmoke(set), "shell", name)
 		container := host.inspectContainer(t, name)
+		host.assertNoSwap(t, name, container)
 		if strings.Contains(container.Config.Image, host.group) {
 			t.Fatalf("image tag includes controller group: %s", container.Config.Image)
 		}

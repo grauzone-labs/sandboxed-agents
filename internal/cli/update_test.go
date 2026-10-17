@@ -14,7 +14,7 @@ func updateFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := linuxHost(t)
 	f.responses["container exists sandboxed-agents.default.demo"] = response{}
-	f.responses["container inspect sandboxed-agents.default.demo"] = response{Output: `[{"Image":"sha256:current","Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.toolchains":"none","io.sandboxed-agents.port":"2222"}},"State":{"Running":true},"HostConfig":{"Memory":8589934592,"CpuQuota":400000,"CpuPeriod":100000,"PidsLimit":2048,"ShmSize":1073741824},"Mounts":[{"Type":"volume","Name":"sandboxed-agents.default.demo.workspace","Destination":"/workspace"},{"Type":"volume","Name":"sandboxed-agents.default.demo.home","Destination":"/home/agent"},{"Type":"volume","Name":"sandboxed-agents.default.demo.ssh","Destination":"/etc/ssh"}]}]`}
+	f.responses["container inspect sandboxed-agents.default.demo"] = response{Output: `[{"Image":"sha256:current","Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.toolchains":"none","io.sandboxed-agents.port":"2222"}},"State":{"Running":true},"HostConfig":{"Memory":8589934592,"MemorySwap":8589934592,"CpuQuota":400000,"CpuPeriod":100000,"PidsLimit":2048,"ShmSize":1073741824},"Mounts":[{"Type":"volume","Name":"sandboxed-agents.default.demo.workspace","Destination":"/workspace"},{"Type":"volume","Name":"sandboxed-agents.default.demo.home","Destination":"/home/agent"},{"Type":"volume","Name":"sandboxed-agents.default.demo.ssh","Destination":"/etc/ssh"}]}]`}
 	f.responses["volume exists *"] = response{}
 	f.responses["volume inspect *"] = response{Output: `[{"Labels":{"io.sandboxed-agents.owner":"default"}}]`}
 	f.responses["container exists sandboxed-agents-backup.default.demo"] = response{Exit: 1}

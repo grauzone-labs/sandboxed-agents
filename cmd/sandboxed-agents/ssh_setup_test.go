@@ -68,7 +68,7 @@ func TestUpSSHOptInChecksExplicitResourceLimitsBeforeStarting(t *testing.T) {
 	for _, options := range [][]string{{"--memory", "9g"}, {"--cpus", "5"}, {"--pids-limit", "2000"}, {"--shm-size", "2g"}, {"--memory", "8g", "--cpus", "4", "--pids-limit", "2048", "--shm-size", "1g"}} {
 		t.Run(strings.Join(options, " "), func(t *testing.T) {
 			responses := setupPreflightResponses(true)
-			responses["container inspect sandboxed-agents.default.demo"] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}},"HostConfig":{"Memory":8589934592,"NanoCpus":4000000000,"CpuQuota":400000,"CpuPeriod":100000,"PidsLimit":2048,"ShmSize":1073741824},"State":{"Running":false}}]`}
+			responses["container inspect sandboxed-agents.default.demo"] = lifecycleResponse{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}},"HostConfig":{"Memory":8589934592,"MemorySwap":8589934592,"NanoCpus":4000000000,"CpuQuota":400000,"CpuPeriod":100000,"PidsLimit":2048,"ShmSize":1073741824},"State":{"Running":false}}]`}
 			fakes := sshSetupHarness(t, map[string]lifecycleResponse{})
 			scriptSetupResponses(t, responses, "linux")
 			host := lifecycleLinuxHost(t, fakes)

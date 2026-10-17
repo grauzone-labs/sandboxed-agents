@@ -141,7 +141,7 @@ func TestUpResourceOverridesAreReportedByCheck(t *testing.T) {
 		}
 		created = true
 		joined := strings.Join(call, " ")
-		for _, option := range []string{"--memory 9663676416", "--cpus 2.5", "--pids-limit 3000", "--shm-size 2147483648"} {
+		for _, option := range []string{"--memory 9663676416", "--memory-swap 9663676416", "--cpus 2.5", "--pids-limit 3000", "--shm-size 2147483648"} {
 			if !strings.Contains(joined, option) {
 				t.Fatalf("missing %q: %v", option, call)
 			}
@@ -157,7 +157,7 @@ func TestUpResourceOverridesAreReportedByCheck(t *testing.T) {
 	if status != 0 {
 		t.Fatalf("check=%d %s %s", status, stdout.String(), stderr.String())
 	}
-	for _, report := range []string{"memory 9663676416", "cpus 2.5", "pids-limit 3000", "shm-size 2147483648"} {
+	for _, report := range []string{"memory 9663676416", "memory-swap 9663676416", "cpus 2.5", "pids-limit 3000", "shm-size 2147483648"} {
 		if !strings.Contains(stdout.String(), report) {
 			t.Fatalf("missing %q: %s", report, stdout.String())
 		}

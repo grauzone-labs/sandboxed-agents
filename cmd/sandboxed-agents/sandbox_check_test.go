@@ -14,7 +14,7 @@ import (
 func healthyCheckResponses(running bool) map[string]lifecycleResponse {
 	responses := setupResponses(running)
 	record := responses["container inspect sandboxed-agents.default.demo"]
-	record.Output = strings.Replace(record.Output, `"State":`, `"HostConfig":{"Memory":9663676416,"CpuQuota":250000,"CpuPeriod":100000,"PidsLimit":3000,"ShmSize":2147483648},"State":`, 1)
+	record.Output = strings.Replace(record.Output, `"State":`, `"HostConfig":{"Memory":9663676416,"MemorySwap":9663676416,"CpuQuota":250000,"CpuPeriod":100000,"PidsLimit":3000,"ShmSize":2147483648},"State":`, 1)
 	responses["container inspect sandboxed-agents.default.demo"] = record
 	for _, kind := range []string{"workspace", "home", "ssh"} {
 		name := "sandboxed-agents.default.demo." + kind
