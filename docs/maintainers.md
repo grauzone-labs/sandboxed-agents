@@ -47,13 +47,13 @@ The live suite is `TestLiveSuite` ([releases](releases.md#live-suite)). Before t
 
 | | Linux host | Windows host |
 |---|---|---|
-| System | Debian 13.6 (trixie), kernel 7.0.14-pve, amd64, 8 vCPU, 16 GiB | Windows 11 (build 10.0.26300), x64, 8 vCPU, 16 GiB; WSL 2.7.12.0, kernel 6.18.33.2-2 |
+| System | Debian 13.6 (trixie), kernel 7.0.14-20-pve, amd64, 8 vCPU, 16 GiB | Windows 11 (build 10.0.26300.9457), x64, 8 vCPU, 16 GiB; WSL 2.7.12.0, kernel 6.18.33.2-2 |
 | Podman | 5.4.2, rootless, cgroup v2, `systemd` cgroup manager | client 5.8.3; rootless WSL2 machine with Podman 5.8.9, cgroup v2, `cgroupfs` manager |
 | Go, OpenSSH | 1.27.2; OpenSSH 10.0p2 (Debian-7+deb13u4) | 1.27.2; OpenSSH for Windows 9.5p2 |
 
 | Date (UTC) | Commit | Test | Linux | Windows | Record |
 |---|---|---|---|---|---|
-| 2026-10-15 | `f577a28` | `TestLiveImages`, image coverage; asset hash `04de2cbb…bdef` on both hosts | `PASS (1254.04s)` | `PASS (2787.61s)` | the former "Live proof" section of the images page |
+| 2026-10-15 | `f577a28` | `TestLiveImages`, image coverage; asset hash `04de2cbb…bdef` on both hosts | `PASS (1254.04s)` | `PASS (2787.61s)` | this page: [what the runs proved](#what-the-runs-proved) and the observations below |
 | 2026-10-16 | `95a9abb` | `TestLiveImages`, with the successful `image-none` update and the forced `image-native` rollback | `PASS (1601.03s)` | `PASS (2842.61s)` | [pull request #66](https://github.com/grauzone-labs/sandboxed-agents/pull/66#issuecomment-6216134884) |
 | 2026-10-16 | `4831f91` | `TestLiveSuite` with image coverage, every case `pass` | `PASS (2357.21s)` | `PASS (3308.43s)` | [pull request #74](https://github.com/grauzone-labs/sandboxed-agents/pull/74), the live suite records comment, with both JSON records |
 | 2026-10-16/17 | `da065a2` | `TestLiveSuite` with image coverage, every case `pass` | `PASS (2218.65s)` | `PASS (3114.23s)` | [issue #71](https://github.com/grauzone-labs/sandboxed-agents/issues/71#issuecomment-6227867029), the baseline comment |
@@ -106,7 +106,7 @@ The key's subkey binding signature, created in 2016, uses SHA-1, verified with `
 
 ### Key rotation
 
-When NodeSource rotates its key, the check fails, `build` stops and builds no image for any toolchain set, the previous images stay usable under their tags, and `up` cannot build a missing base image until the recipe is updated. To update the pin:
+When NodeSource rotates its key, the check fails and `build` stops ([images](images.md#nodesource-signing-key-check)). To update the pin:
 
 1. Fetch the new key.
 2. Confirm its primary fingerprint with gpg, for example `gpg --show-keys --with-fingerprint`, in an isolated `GNUPGHOME`. When possible, confirm it from a source independent of deb.nodesource.com as well.

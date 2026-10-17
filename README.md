@@ -2,7 +2,7 @@
 
 `sandboxed-agents` runs coding agents in rootless Podman containers, one sandbox per workspace, on Linux and Windows 11. An agent's mistake, such as deleting the wrong directory, installing a bad package, or reading credentials it should not have, stays inside one sandbox: its workspace, its home data, and the credentials stored there.
 
-It is one static executable. The host needs only Podman and OpenSSH. From here you can install it, create your first sandbox, and find the page for every command and topic.
+It is one static executable, and the host needs only Podman and OpenSSH. From here you can install it, create your first sandbox, and find the page for every command and topic.
 
 ## What you get
 
@@ -56,7 +56,8 @@ Install methods: the downloaded binary (both quick guides show download, checksu
 - **Only SSH is published**, on host loopback. There are no managed services and no port forwarding.
 - **No command removes old images.** Remove unused ones yourself, for example with `podman image prune` ([images](docs/images.md#no-image-removal)).
 - **Owner conflicts are reported and not repaired.** You resolve them with Podman ([command reference](docs/command-reference.md#ownership-and-names)).
-- **Linux amd64 and Windows 11 x64 only.** ARM64, a self-update command, and install methods for agents other than npm are not part of the first version. Windows workspaces must lie under the Podman machine's default automount root.
+- **Linux amd64 and Windows 11 x64 only.** ARM64, a self-update command, and install methods for agents other than npm are not part of the first version.
+- **Windows workspaces** must lie under the Podman machine's default automount root ([host prerequisites](docs/host-prerequisites.md#windows-11-x64)).
 
 ## Security
 
