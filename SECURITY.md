@@ -26,14 +26,15 @@ It is **not** built against code that actively tries to escape. A sandbox shares
 | `--user=0:0` | fixed | Starts the container as container root, which initializes the container, runs sshd, and runs the in-container manager for administrative operations. |
 | `--security-opt=no-new-privileges` | fixed | A process cannot gain privileges through setuid or similar mechanisms. |
 | `--network=pasta:--no-map-gw` | fixed | Rootless `pasta` networking without mapping the gateway address to the host. |
-| `--memory` | `8g`, at least `6m` | Memory limit; `up --memory SIZE` changes it. |
+| `--memory` | `8g`, at least `6m` | Memory limit; `up --memory SIZE` changes it. It is a ceiling, not a reservation. |
+| `--memory-swap` | equal to `--memory` | The combined memory and swap ceiling. Equal to the memory limit, it leaves a new sandbox no swap. There is no option for it. A sandbox created before this default keeps the allowance it was created with. |
 | `--cpus` | `4` | CPU limit; `up --cpus N` changes it. |
 | `--pids-limit` | `2048` | Limit on processes; `up --pids-limit N` changes it. |
 | `--shm-size` | `1g` | Size of `/dev/shm`; `up --shm-size SIZE` changes it. |
 | `--publish` | `127.0.0.1:PORT:22/tcp` | The only published port: SSH, on host loopback. The default port is the first free one from 2222 upward. |
 | `--mount` | one `/workspace` mount, one volume at `/home/agent`, one volume at `/etc/ssh` | The only mounts. See [Mounts](#mounts). |
 
-The resource limits are enforced by cgroups v2 with delegated controllers, which the preflight checks. The [command reference](docs/command-reference.md#lifecycle-commands) lists the accepted value ranges.
+The resource limits are enforced by cgroups v2 with delegated controllers, which the preflight checks. The [command reference](docs/command-reference.md#lifecycle-commands) lists the accepted value ranges. The memory limit does not guarantee physical memory: see [Memory limit and the Podman machine](docs/command-reference.md#memory-limit-and-the-podman-machine).
 
 ### Users and root
 

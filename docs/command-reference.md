@@ -54,7 +54,7 @@ Names:
 | `version` | Prints the version and `asset-sha256 HASH`, the hash of the embedded build assets. It never calls Podman. |
 | `list` | Lists the sandboxes of the current controller group with state, port, toolchain set, agents, and problems. States include "volumes only", "update interrupted", and "owner conflict". A sandbox whose image is older than the current one is marked as outdated. |
 | `check` | Without a name, runs the preflight on its own and reports each missing host prerequisite. See [Host prerequisites](host-prerequisites.md). |
-| `check NAME` | Diagnoses one sandbox. It reports an owner conflict, a leftover backup container of an interrupted update, and other problems, exits non-zero when it finds one, and changes nothing. |
+| `check NAME` | Diagnoses one sandbox. It reports an owner conflict, a leftover backup container of an interrupted update, and other problems, exits non-zero when it finds one, and changes nothing. It also reports the recorded memory limit and the recorded `memory-swap` in bytes; `memory-swap` is the combined memory and swap ceiling, and `-1` means unlimited. |
 | `build [--with SET]` | Builds the base image and every existing toolchain set of this executable anew, plus `SET` when given. See [Images](images.md#build-refresh-and-reuse). |
 
 ## Lifecycle commands
@@ -81,7 +81,7 @@ Options:
 | `--agents LIST` | `up` | Agents to enable after the sandbox runs. A failed install leaves the sandbox running, is reported, and makes `up` exit non-zero. See [Agents](agents.md#choose-agents-at-creation). |
 | `--port N` | `up` | The host loopback port for SSH. Without it, the first free port from 2222 upward that no sandbox of any controller group has recorded. |
 | `--ssh-config` | `up`, `start` | Installs the opt-in SSH setup after the sandbox runs. See [SSH access](ssh.md). |
-| `--memory SIZE` | `up` | Memory limit. Default `8g`, at least `6m`. |
+| `--memory SIZE` | `up` | Memory limit. Default `8g`, at least `6m`. A new sandbox gets a `memory-swap` equal to it, so it has no swap; there is no option for the swap limit. |
 | `--cpus N` | `up` | CPU limit. Default `4`. |
 | `--pids-limit N` | `up` | Limit on processes. Default `2048`. |
 | `--shm-size SIZE` | `up` | Size of `/dev/shm`. Default `1g`. |
@@ -90,7 +90,13 @@ Options:
 
 Every limit is greater than zero and has no sign and no exponent. `SIZE` is a whole number of bytes, optionally followed by `k`, `m`, `g`, or `t` in either case (powers of 1024), and is at most 9223372036854775807 bytes. `--cpus` takes a whole number, optionally with a point and one to three decimals, at most `9223372036.854`. `--pids-limit` takes a whole number, at most 9223372036854775807.
 
-Options that describe a sandbox's configuration apply when the sandbox is created. `up` on an existing sandbox with an option that differs from the recorded configuration fails and names the difference and the way to change it.
+Options that describe a sandbox's configuration apply when the sandbox is created. `up` on an existing sandbox with an option that differs from the recorded configuration fails and names the difference and the way to change it. `up NAME` without options reuses the recorded configuration. With an explicit `--memory`, `up` compares both the recorded memory limit and the recorded `memory-swap` with the request, which is the memory limit and no swap; a sandbox whose `memory-swap` differs fails the same way.
+
+### Memory limit and the Podman machine
+
+A new sandbox is created with `--memory` and a `--memory-swap` equal to it (both `8589934592` bytes by default). Podman's `--memory-swap` is the combined memory and swap ceiling, so an equal value leaves the sandbox no swap. `update` keeps the recorded `memory-swap` as it is, including the allowance of a sandbox created before this default and `-1` (unlimited); it never tightens or migrates it. When the recorded value is missing or invalid, `update` refuses to replace the sandbox rather than guess. To give a sandbox created earlier no swap, run `remove NAME` without `--volumes`, then `up NAME` with the original options. The volumes stay, and the new container gets the default.
+
+The memory limit is a ceiling, not a reservation. On Windows 11 the default `8g` can exceed the memory that the Podman machine has: one measured Podman machine had about 7.9 GiB usable. The machine's memory is shared by all sandboxes and every other process in it, and the machine or the host can run out of memory before one sandbox reaches its ceiling. Disabling swap for a sandbox neither guarantees physical memory nor prevents memory pressure on the machine or the host. Choose a `--memory` below the memory available to the machine, with headroom for other sandboxes and processes. The preflight does not warn about this.
 
 A command that would end an agent session, or replace the installation of an agent whose session is running, refuses while one runs, names the running sessions, and proceeds only with `--force`. This covers `stop`, `restart`, `remove`, and `update`, and for the agent concerned `agents disable`, `agents update`, and `agents enable` on an enabled agent. When the manager does not answer, `stop`, `restart`, `remove`, and `update` cannot rule out running sessions and refuse in the same way.
 
