@@ -79,19 +79,10 @@ func newHostedTUI(host *fakeHost, port int, enabled bool) (*tui, error) {
 		return m, nil
 	}
 	if err := m.ownedService.start(); err != nil {
-		// A second TUI joins an already-running service, never a private substitute.
-		client, e := newServiceClient(m.ownedService.address())
-		if e == nil {
-			if state, e := client.snapshot("local-fake"); e == nil {
-				other := newConnectedTUI(client, "local-fake")
-				other.applySnapshot(state, true)
-				return other, nil
-			}
-			client.close()
-		}
+
 		return nil, err
 	}
-	client, err := newServiceClient(m.ownedService.address())
+	client, err := newServiceClient(m.ownedService.address(), m.fleet.ownerCredential)
 	if err != nil {
 		_ = m.ownedService.stop()
 		return nil, err
@@ -140,7 +131,7 @@ func (m *tui) receiveServiceChanged(msg serviceChanged) tea.Cmd {
 		m.remote = nil
 	}
 	if msg.enabled {
-		client, err := newServiceClient(m.ownedService.address())
+		client, err := newServiceClient(m.ownedService.address(), m.fleet.ownerCredential)
 		if err != nil {
 			m.message(err.Error(), true)
 			return refresh()
@@ -151,8 +142,8 @@ func (m *tui) receiveServiceChanged(msg serviceChanged) tea.Cmd {
 		return m.refreshService()
 	}
 	m.fleet = m.ownedService.fleet
-	m.host = m.fleet.hosts[m.instance]
-	m.state = m.host.snapshot()
+	m.host = m.fleet.hosts["local-fake"]
+	m.applySnapshot(m.fleet.snapshot(m.instance), false)
 	m.online = false
 	m.message("Background service disabled. Local TUI data and sessions are kept.", false)
 	return refresh()

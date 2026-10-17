@@ -16,7 +16,7 @@ import (
 // TestSharedServiceCommandAPI proves that a typed TUI command changes the state served to the existing web API through a real HTTP service.
 func TestSharedServiceCommandAPI(t *testing.T) {
 	host := newFakeHost(0)
-	server := httptest.NewServer(browserHandler(host))
+	server := httptest.NewServer(ownerFixture(newFakeFleet(host)))
 	defer server.Close()
 	data, _ := json.Marshal(request{Action: "start", Name: "release-check"})
 	response, err := http.Post(server.URL+"/api/action?instance=local-fake", "application/json", bytes.NewReader(data))
@@ -41,9 +41,9 @@ func TestSharedServiceCommandAPI(t *testing.T) {
 	}
 }
 
-func serviceUI(t *testing.T, url string) *tui {
+func serviceUI(t *testing.T, url string, token ...string) *tui {
 	t.Helper()
-	client, err := newServiceClient(url)
+	client, err := newServiceClient(url, token...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,9 +73,13 @@ func refreshClient(t *testing.T, m *tui) {
 	_, cmd := m.Update(refreshMsg{})
 	completeService(t, m, cmd)
 }
-func readServiceState(t *testing.T, url string) instanceState {
+func readServiceState(t *testing.T, url string, token ...string) instanceState {
 	t.Helper()
-	response, err := http.Get(url + "/api/state")
+	request, _ := http.NewRequest("GET", url+"/api/state", nil)
+	if len(token) > 0 {
+		request.Header.Set("Authorization", "Bearer "+token[0])
+	}
+	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +103,7 @@ func freeServicePort(t *testing.T) int {
 
 // TestWebAndTUIShareState proves both directions of synchronization through the real HTTP API and Bubble Tea command seam.
 func TestWebAndTUIShareState(t *testing.T) {
-	server := httptest.NewServer(browserHandler(newFakeHost(0)))
+	server := httptest.NewServer(ownerFixture(newFakeFleet(newFakeHost(0))))
 	defer server.Close()
 	m := serviceUI(t, server.URL)
 	for range 3 {
@@ -132,8 +136,8 @@ func TestServiceToggleKeepsState(t *testing.T) {
 	}
 	defer m.close()
 	url := m.ownedService.address()
-	initial := readServiceState(t, url)
-	external := serviceUI(t, url)
+	initial := readServiceState(t, url, m.fleet.ownerCredential)
+	external := serviceUI(t, url, m.fleet.ownerCredential)
 	typeKeys(m, "3")
 	press(m, tea.KeyTab)
 	completeService(t, m, press(m, tea.KeyEnter))
@@ -161,7 +165,7 @@ func TestServiceToggleKeepsState(t *testing.T) {
 	typeKeys(m, "3")
 	press(m, tea.KeyTab)
 	completeService(t, m, press(m, tea.KeyEnter))
-	state := readServiceState(t, url)
+	state := readServiceState(t, url, m.fleet.ownerCredential)
 	if state.Service.ID != initial.Service.ID || state.findSandbox("kept-while-disabled") == nil {
 		t.Fatal("Enable must expose the same engine and retained state")
 	}
@@ -176,7 +180,7 @@ func TestServiceToggleKeepsState(t *testing.T) {
 
 // TestSharedServiceCreationWizard proves server-side reviews and creation through the HTTP-connected TUI wizard.
 func TestSharedServiceCreationWizard(t *testing.T) {
-	server := httptest.NewServer(browserHandler(newFakeHost(0)))
+	server := httptest.NewServer(ownerFixture(newFakeFleet(newFakeHost(0))))
 	defer server.Close()
 	m := serviceUI(t, server.URL)
 	typeKeys(m, "n")
@@ -195,7 +199,7 @@ func TestSharedServiceCreationWizard(t *testing.T) {
 
 // TestSharedSelectionSurvivesOtherClientChanges proves identity-based selection and safe handling of deletion through API updates and TUI refreshes.
 func TestSharedSelectionSurvivesOtherClientChanges(t *testing.T) {
-	server := httptest.NewServer(browserHandler(newFakeHost(0)))
+	server := httptest.NewServer(ownerFixture(newFakeFleet(newFakeHost(0))))
 	defer server.Close()
 	m := serviceUI(t, server.URL)
 	press(m, tea.KeyDown)
@@ -223,7 +227,7 @@ func TestSharedSelectionSurvivesOtherClientChanges(t *testing.T) {
 
 // TestWebAndTUIShareTerminal proves bidirectional session input, shared history and correct attachment counts through real WebSockets and Bubble Tea.
 func TestWebAndTUIShareTerminal(t *testing.T) {
-	server := httptest.NewServer(browserHandler(newFakeHost(0)))
+	server := httptest.NewServer(ownerFixture(newFakeFleet(newFakeHost(0))))
 	defer server.Close()
 	m := serviceUI(t, server.URL)
 	typeKeys(m, "e")

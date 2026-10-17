@@ -62,7 +62,9 @@ type tui struct {
 }
 
 func newTUI(host *fakeHost) *tui {
-	return &tui{fleet: newFakeFleet(host), host: host, state: host.snapshot(), instance: "local-fake", width: 120, height: 36, statusFilter: "all"}
+	m := &tui{fleet: newFakeFleet(host), host: host, state: host.snapshot(), instance: "local-fake", width: 120, height: 36, statusFilter: "all"}
+	m.applySnapshot(m.fleet.snapshot("local-fake"), true)
+	return m
 }
 func refresh() tea.Cmd {
 	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg { return refreshMsg(t) })
@@ -112,7 +114,11 @@ func (m *tui) image() image {
 }
 func (m *tui) info() instanceInfo {
 	if m.remote == nil {
-		return m.fleet.snapshot(m.instance).Instance
+		for _, info := range m.fleet.instanceInfos() {
+			if info.ID == m.instance {
+				return info
+			}
+		}
 	}
 	for _, i := range m.metadata.Instances {
 		if i.ID == m.instance {
@@ -130,12 +136,12 @@ func (m *tui) switchInstance(id string) tea.Cmd {
 		m.pollLoop++
 		return m.fetchService(id, true)
 	}
-	if m.fleet.hosts[id] == nil {
+	if !m.fleet.hasInstance(id) {
 		return nil
 	}
 	m.instance = id
-	m.host = m.fleet.hosts[id]
-	m.state = m.host.snapshot()
+	m.host = m.fleet.hosts["local-fake"]
+	m.applySnapshot(m.fleet.snapshot(id), true)
 	m.boxCursor, m.imageCursor = 0, 0
 	m.search, m.statusFilter = "", "all"
 	m.missingBox, m.missingImage = false, false
@@ -239,6 +245,8 @@ func (m *tui) runAction(a uiAction) tea.Cmd {
 		return m.toggleService(a.Target == "enable")
 	case "attach":
 		return m.attach(a.Request)
+	case "admin":
+		m.openAdmin(a.Request.Action, a.Target)
 	case "form":
 		m.open(a.Request.Action, a.Request.Name)
 	default:
@@ -247,13 +255,17 @@ func (m *tui) runAction(a uiAction) tea.Cmd {
 	return nil
 }
 func (m *tui) execute(r request) tea.Cmd {
+	if !m.environmentOnline() {
+		m.message("Remote disconnected or offline. No command was sent or queued.", true)
+		return nil
+	}
 	if m.remote != nil && !m.online {
 		m.message("Backend offline. No command was sent or queued.", true)
 		return nil
 	}
 	m.pending = true
 	m.message("Working on "+m.info().Name+" …", false)
-	host, id := m.host, m.instance
+	fleet, id := m.fleet, m.instance
 	if m.remote != nil {
 		m.networkRevision++
 		client := m.remote
@@ -262,7 +274,10 @@ func (m *tui) execute(r request) tea.Cmd {
 			return actionDone{request: r, instance: id, err: err, state: &state}
 		}
 	}
-	return func() tea.Msg { err := host.command(r); return actionDone{request: r, instance: id, err: err} }
+	return func() tea.Msg {
+		state, err := fleet.apply(id, r, false)
+		return actionDone{request: r, instance: id, err: err, state: &state}
+	}
 }
 func (m *tui) open(action, name string) {
 	if action == "create" {
@@ -292,7 +307,7 @@ func (m *tui) instancePicker() {
 	for _, i := range m.instanceList() {
 		ids = append(ids, i.ID)
 	}
-	m.dialog = &form{Action: "select-instance", Title: "Switch instance", Hint: "Each simulated instance owns its own sandboxes, images and sessions.", Fields: []field{{Key: "instance", Label: "Instance", Kind: "choice", Value: m.instance, Options: ids}}}
+	m.dialog = &form{Action: "select-instance", Title: "Switch instance", Hint: "Each backend owns its own sandboxes, images and sessions. Remote connections require a valid token.", Fields: []field{{Key: "instance", Label: "Instance", Kind: "choice", Value: m.instance, Options: ids}}}
 	m.dialogMode = "instance"
 	m.message("", false)
 }
@@ -301,6 +316,8 @@ func (m *tui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.revealAction()
+	case adminDone:
+		return m, m.receiveAdmin(msg)
 	case serviceChanged:
 		return m, m.receiveServiceChanged(msg)
 	case serviceTick:
@@ -321,28 +338,20 @@ func (m *tui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.remote != nil {
 			return m, m.refreshService()
 		}
-		m.state = m.host.snapshot()
+		m.applySnapshot(m.fleet.snapshot(m.instance), false)
 		return m, refresh()
 	case terminalOutput:
 		return m, m.receiveTerminal(msg)
 	case actionDone:
 		m.pending = false
-		if m.remote == nil {
-			m.state = m.host.snapshot()
-		} else if msg.err == nil && msg.state != nil {
+		if msg.err == nil && msg.state != nil {
 			m.applySnapshot(*msg.state, false)
 		}
 		if msg.err != nil {
 			m.connectionFailure(msg.err)
 			return m, nil
 		}
-		if m.remote == nil {
-			if msg.request.Action == "reset" || msg.request.Action == "scenario" {
-				m.fleet.terminals.reset(msg.instance)
-			} else {
-				m.fleet.terminals.reconcile(msg.instance, m.fleet.hosts[msg.instance])
-			}
-		}
+
 		if m.wizard != nil && msg.request.Action == "create" {
 			m.wizard.Step = 4
 			m.selectBox(msg.request.Name)

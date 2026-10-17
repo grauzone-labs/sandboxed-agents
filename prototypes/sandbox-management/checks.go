@@ -14,7 +14,7 @@ import (
 
 func selfCheck() error {
 	host := newFakeHost(0)
-	handler := browserHandler(host)
+	handler := ownerFixture(newFakeFleet(host))
 	passed := 0
 	check := func(ok bool, message string) error {
 		if !ok {
@@ -107,7 +107,7 @@ func selfCheck() error {
 	// A delayed action must lock its sandbox while unrelated sandboxes progress.
 	concurrent := newFakeHost(40 * time.Millisecond)
 	reviewHost := newFakeHost(0)
-	reviewHandler := browserHandler(reviewHost)
+	reviewHandler := ownerFixture(newFakeFleet(reviewHost))
 	for _, name := range []string{"", "review-only"} {
 		body, _ := json.Marshal(map[string]any{"action": "create", "values": map[string]string{"name": name}})
 		recorder := httptest.NewRecorder()
@@ -146,4 +146,16 @@ func selfCheck() error {
 	}
 	fmt.Printf("PASS · %d offline checks · Go fakes, image rollout, HTTP forms and attachments\n", passed)
 	return nil
+}
+
+// ownerFixture is used only by executable walkthroughs and legacy tests. Every
+// fixture request explicitly supplies the private owner credential to the real
+// authenticated handler; the production handler never grants loopback ownership.
+func ownerFixture(fleet *fakeFleet) http.Handler {
+	handler := fleet.handler()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.Clone(r.Context())
+		r.Header.Set("Authorization", "Bearer "+fleet.ownerCredential)
+		handler.ServeHTTP(w, r)
+	})
 }

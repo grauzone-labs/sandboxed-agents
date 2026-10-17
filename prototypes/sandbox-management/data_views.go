@@ -68,7 +68,7 @@ func (m *tui) detailRows() []detailRow {
 			}
 			text("")
 		}
-		text(muted.Render("Independent simulated hosts / use g to switch"))
+		text(muted.Render("Independent backends / use g to switch"))
 		text("")
 		for _, info := range m.instanceList() {
 			label := info.Name
@@ -78,6 +78,10 @@ func (m *tui) detailRows() []detailRow {
 			text(accent.Render(label))
 			pair("Instance", info.ID)
 			pair("Connection", info.Kind)
+			pair("Status", info.Status)
+			if info.Error != "" {
+				text(warn.Render(info.Error + " / cached inventory"))
+			}
 			pair("Address", info.Address)
 			pair("Controller group", info.Group)
 			pair("Inventory", fmt.Sprintf("%d sandboxes / %d images", info.SandboxCount, info.ImageCount))
@@ -86,9 +90,31 @@ func (m *tui) detailRows() []detailRow {
 				reason = "Current instance"
 			}
 			action(uiAction{Kind: "instance", Target: info.ID, Label: "Use this instance", Reason: reason})
+			if info.ID != "local-fake" {
+				if info.Status == "connected" || info.Status == "offline" {
+					action(uiAction{Kind: "admin", Request: request{Action: "remote-disconnect"}, Target: info.ID, Label: "Disconnect remote environment"})
+				}
+				action(uiAction{Kind: "admin", Request: request{Action: "remote-reconnect"}, Target: info.ID, Label: "Reconnect with replacement token"})
+			}
 			text("")
 		}
-		text(warn.Render("Remote authentication and adding instances are future work."))
+		action(uiAction{Kind: "admin", Request: request{Action: "remote-connect"}, Label: "Connect remote environment"})
+		text("")
+		text(accent.Render("TOKENS / CURRENT HOSTING BACKEND"))
+		text(tokenScopeHint)
+		action(uiAction{Kind: "admin", Request: request{Action: "token-create"}, Label: "Create named token"})
+		tokens := m.metadata.Tokens
+		if m.remote == nil {
+			tokens = m.fleet.auth.list()
+		}
+		for _, token := range tokens {
+			text(token.Name + " / " + token.Status)
+			pair("Token ID", token.ID)
+			pair("Expires", token.Expires)
+			if token.Status == "active" {
+				action(uiAction{Kind: "admin", Request: request{Action: "token-revoke"}, Target: token.ID, Label: "Revoke " + token.Name})
+			}
+		}
 		return rows
 	}
 	if m.section == 1 {

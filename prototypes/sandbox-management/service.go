@@ -1,6 +1,6 @@
 package main
 
-// THROWAWAY: one process owns both fake instances and all terminal sessions.
+// THROWAWAY: each process owns one local fake inventory and its agent sessions.
 // Clients can come and go without resetting that process's state.
 import (
 	"context"
@@ -30,6 +30,22 @@ func newServiceInfo() serviceInfo {
 	return serviceInfo{hex.EncodeToString(id[:]), time.Now().UTC().Format(time.RFC3339), "Shared fake state in service memory", 300}
 }
 func (f *fakeFleet) apply(id string, r request, review bool) (instanceState, error) {
+	if id != "local-fake" {
+		c, err := f.remoteClient(id, true)
+		if err != nil {
+			return instanceState{}, err
+		}
+		if review {
+			_, err = c.review("local-fake", r)
+		} else {
+			_, err = c.command("local-fake", r)
+		}
+		if err != nil {
+			f.remoteFailure(id, c, err)
+			return instanceState{}, fmt.Errorf("Remote action rejected or unavailable; refresh or reconnect the environment")
+		}
+		return f.snapshot(id), nil
+	}
 	host := f.hosts[id]
 	if host == nil {
 		return instanceState{}, fmt.Errorf("Unknown instance")
@@ -65,7 +81,7 @@ func (f *fakeFleet) handleAction(w http.ResponseWriter, r *http.Request, review 
 	if id == "" {
 		id = "local-fake"
 	}
-	if f.hosts[id] == nil {
+	if !f.hasInstance(id) {
 		respondError(404, fmt.Errorf("Unknown instance"))
 		return
 	}
@@ -88,16 +104,25 @@ func (f *fakeFleet) handleAction(w http.ResponseWriter, r *http.Request, review 
 	}
 	_ = json.NewEncoder(w).Encode(state)
 }
-func runService(host *fakeHost, port int) error {
+func runService(host *fakeHost, port int, tokenFile ...string) error {
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("Port must be between 1 and 65535")
 	}
+	fleet := newFakeFleet(host)
+	path := ""
+	if len(tokenFile) > 0 {
+		path = tokenFile[0]
+	}
+	if err := fleet.bootstrapToken(path); err != nil {
+		return err
+	}
+	defer fleet.closeConnections()
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		return err
 	}
-	fleet := newFakeFleet(host)
-	fmt.Printf("Backend service: http://127.0.0.1:%d/\nWeb Control room: http://127.0.0.1:%d/\nService ID: %s\nShared fake state stays alive when clients close; restarting the service resets it.\nCtrl+C stops the service.\n", port, port, fleet.service.ID)
+	fmt.Printf("Setup token file: %s (keep private; its token is reloaded on service restart)\n", path)
+	fmt.Printf("Backend service: http://127.0.0.1:%d/\nWeb Control room: http://127.0.0.1:%d/\nService ID: %s\nLogin requires the setup token file or a token created in Configuration. Every token grants full control. Issued tokens and connection records are memory-only; the setup token file can bootstrap another process. Shared fake state stays alive when clients close; restarting the service resets it.\nCtrl+C stops the service.\n", port, port, fleet.service.ID)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	server := &http.Server{Handler: fleet.handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}

@@ -2,7 +2,7 @@ package main
 
 // THROWAWAY: Which TUI simplifies sandbox management?
 // One Control room in the terminal and browser; run without flags for the TUI.
-// web Control room: /?instance=local-fake|remote-lab. Not production code.
+// web Control room: /?instance=CONNECTION_ID. Not production code.
 
 import (
 	"crypto/sha256"

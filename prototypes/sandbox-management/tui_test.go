@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -176,35 +177,39 @@ func TestRequiredAgentAndDraftBack(t *testing.T) {
 func TestRemoteCreationAndInstanceIsolation(t *testing.T) {
 	local := newFakeHost(0)
 	m := newTUI(local)
+	defer m.close()
+	remoteFleet := newFakeFleet(newFakeHost(0))
+	server := httptest.NewServer(remoteFleet.handler())
+	defer server.Close()
+	info, err := m.fleet.changeConnection(connectionRequest{Action: "connect", Label: "Second backend", URL: server.URL, Token: remoteFleet.ownerCredential})
+	if err != nil {
+		t.Fatal(err)
+	}
 	typeKeys(m, "g")
 	press(m, tea.KeyRight)
 	press(m, tea.KeyCtrlS)
-	if !strings.Contains(m.View(), "Remote build lab") || strings.Contains(m.View(), "api-refactor") {
-		t.Fatal("remote instance must have its own inventory")
+	if m.instance != info.ID || m.metadata.Origin.ID != remoteFleet.service.ID {
+		t.Fatal("must select the actual second backend")
 	}
 	typeKeys(m, "n")
 	press(m, tea.KeyDown)
 	press(m, tea.KeyCtrlS)
 	typeKeys(m, "remote-created")
-	press(m, tea.KeyCtrlS)
-	press(m, tea.KeyCtrlK)
-	cmd := press(m, tea.KeyCtrlS)
-	if cmd == nil {
-		t.Fatal("remote creation should run")
-	}
-	m.Update(cmd())
+	completeService(t, m, press(m, tea.KeyCtrlS))
+	completeService(t, m, press(m, tea.KeyCtrlK))
+	completeService(t, m, press(m, tea.KeyCtrlS))
 	press(m, tea.KeyEnter)
-	if !strings.Contains(m.View(), "remote-created") || !strings.Contains(m.View(), "azure + dotnet") {
-		t.Fatal("remote image and new sandbox must be selected")
+	if !strings.Contains(m.View(), "remote-created") || remoteFleet.hosts["local-fake"].snapshot().findSandbox("remote-created") == nil {
+		t.Fatal("remote wizard must create on the second backend")
 	}
 	if len(local.snapshot().Sandboxes) != 5 || len(local.snapshot().Images) != 4 {
-		t.Fatal("remote changes must leave the local instance untouched")
+		t.Fatal("remote changes must leave local inventory untouched")
 	}
 	typeKeys(m, "g")
 	press(m, tea.KeyLeft)
 	press(m, tea.KeyCtrlS)
 	if !strings.Contains(m.View(), "api-refactor") || strings.Contains(m.View(), "remote-created") {
-		t.Fatal("switching back must restore the local inventory")
+		t.Fatal("switching back must restore local inventory")
 	}
 }
 

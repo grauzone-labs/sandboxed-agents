@@ -119,6 +119,13 @@ func editFields(f *form, msg tea.KeyMsg, buttons int) {
 }
 func (m *tui) updateDialog(msg tea.KeyMsg) tea.Cmd {
 	key := msg.String()
+	if m.dialogMode == "secret" {
+		if key == "esc" || key == "ctrl+g" || key == "enter" || key == "ctrl+s" {
+			m.dialog = nil
+			m.message("Token dismissed; secret cannot be retrieved again.", false)
+		}
+		return nil
+	}
 	if key == "ctrl+g" {
 		m.dialog = nil
 		m.editDraft = nil
@@ -162,6 +169,14 @@ func (m *tui) updateDialog(msg tea.KeyMsg) tea.Cmd {
 }
 func (m *tui) submitDialog() tea.Cmd {
 	f := m.dialog
+	if m.dialogMode == "secret" {
+		m.dialog = nil
+		m.message("Token display dismissed. The secret cannot be shown again.", false)
+		return nil
+	}
+	if m.dialogMode == "admin" {
+		return m.submitAdmin()
+	}
 	if m.dialogMode == "instance" {
 		id := fieldValue(f, "instance")
 		m.dialog = nil
@@ -182,7 +197,7 @@ func (m *tui) submitDialog() tea.Cmd {
 		return nil
 	}
 	if m.dialogMode == "image-edit" {
-		if m.remote != nil {
+		if m.remote != nil || m.instance != "local-fake" {
 			return m.reviewService(r, "image")
 		}
 		r.Approve = true
@@ -201,6 +216,9 @@ func formRows(f *form, w int) []string {
 	for pos, n := range visibleFields(f) {
 		i := f.Fields[n]
 		value := i.Value
+		if i.Kind == "secret" {
+			value = strings.Repeat("•", len([]rune(value)))
+		}
 		if i.Kind == "bool" {
 			value = "[ ]"
 			if i.Value == "true" {
@@ -210,7 +228,7 @@ func formRows(f *form, w int) []string {
 		if i.Kind == "choice" {
 			value = "‹ " + value + " ›"
 		}
-		if i.Kind == "text" && pos == f.Focus {
+		if (i.Kind == "text" || i.Kind == "secret") && pos == f.Focus {
 			r := []rune(value)
 			cursor := min(max(0, f.Cursor), len(r))
 			value = string(r[:cursor]) + "▏" + string(r[cursor:])
@@ -293,6 +311,17 @@ func formPanel(f *form, title, hint string, w, h int, buttons []string, extra []
 }
 func (m *tui) dialogView(w, h int) string {
 	f := m.dialog
+	if m.dialogMode == "secret" {
+		token := fieldValue(f, "created-token")
+		lines := []string{"Copy all 64 characters; join wrapped lines:", ""}
+		for len(token) > 0 {
+			n := min(len(token), max(1, w-6))
+			lines = append(lines, token[:n])
+			token = token[n:]
+		}
+		lines = append(lines, "", "Shown once / full administrative access.", "Memory only / expires at the configured time.", "Enter / Esc Dismiss")
+		return panel("New token / shown ONCE", strings.Join(lines, "\n"), w, h)
+	}
 	extra := []string{}
 	hint := f.Hint
 	buttons := []string{"Apply", "Cancel"}
@@ -312,6 +341,9 @@ func (m *tui) dialogView(w, h int) string {
 		}
 		extra = append(extra, "")
 		buttons = []string{"Confirm update & restart", "← Back"}
+	}
+	if m.dialogMode == "secret" {
+		buttons = []string{"Dismiss", "Close"}
 	}
 	if m.dialogMode == "instance" {
 		hint += " Current: " + m.info().Name

@@ -1,8 +1,9 @@
 # Sandbox management prototype
 
 A throwaway prototype that asks: does the web Control room work well as a
-keyboard-first terminal UI (TUI)? All sandboxes, images and versions are fake.
-Data lives only in memory. No Podman, SSH or model provider is needed.
+keyboard-first terminal UI (TUI)? Sandboxes, images and versions are fake, and
+no Podman, SSH or model provider is touched. Both the TUI and the web UI are in
+English. Everything lives in memory.
 
 ## Prerequisites
 
@@ -22,32 +23,88 @@ cd sandboxed-agents/prototypes/sandbox-management
 go run .
 ```
 
-`go run .` starts the TUI and a web/API service on `127.0.0.1:4317`. Open
-<http://127.0.0.1:4317/> in a browser on the same machine to see the same
-state. The listener is loopback only, so another machine cannot reach it.
+`go run .` starts the TUI and its web/API service on `127.0.0.1:4317`. The
+listener is loopback only. If the port is taken, start fails; pick another one
+with `-port`.
 
-## Try it
+## Keys
 
-- Keys: arrows pick object or tab, `Tab` selects an action, `Enter` runs it,
-  `n` opens the new-sandbox wizard, `g` shows the instance, `?` shows help,
-  `q` quits. In a session, `Esc` detaches and keeps the history.
-- Sharing: press `3` (Configuration), `Tab` to **Disable service** or
-  **Enable service**, then `Enter`. State is kept while sharing is disabled.
-- `q` stops the TUI that owns the service, and the server with it. A fresh
-  start resets the in-memory data.
-- If another process already uses the port, a second TUI connects to the
-  existing compatible backend. Only the owning TUI can toggle availability.
+Arrows pick object or tab, `Tab` selects an action, `Enter` runs it, `n` opens
+the new-sandbox wizard, `g` switches instance, `?` shows help, `q` quits. In a
+session, `Esc` detaches and keeps the history.
 
-## Options
+## Two backends, one TUI
+
+This walks through the real multi-backend flow with two independent prototype
+backends on the same machine. Their sandbox and image runtime is still fake.
+
+1. **Remote backend.** In terminal B run `go run . -port 4318`.
+2. **Remote token.** In B, press `3` (Configuration), `Tab` to **Create named
+   token**, `Enter`, then enter a name and a lifetime in hours. The opaque token
+   is shown once; copy it before dismissing.
+3. **Local backend.** In terminal A run `go run .` (port 4317).
+4. **Connect.** In A, open Configuration (`3`) → **Connect remote environment**.
+   Enter a label, URL `http://127.0.0.1:4318` and the token (the field is
+   hidden).
+5. **Use it.** Press `g` and select the new environment.
+   - **Disconnect remote environment** drops the connection and keeps its
+     label and URL.
+   - **Reconnect with replacement token** needs a new token from B.
+   - Revoking a token in B closes the streams that use it.
+
+Token and connection management in Configuration always acts on the backend
+that hosts this TUI (A), even while B is selected with `g`. To create or revoke
+a token for B, use B's own TUI or web UI.
+
+## Web UI and tokens
+
+Open <http://127.0.0.1:4317/> on the same machine. The page is a public login
+gate: it needs a named token created in the owning TUI. The token stays in page
+memory only, so a reload asks you to log in again. There are no cookies or
+`localStorage`.
+
+Every token grants full control, including creating tokens and managing remote
+connections. Tokens expire or are revoked, which also closes their streams.
+Named tokens, remote connections and fake data are RAM-only and are lost when
+the process fully exits. **Disable service** / **Enable service**
+(Configuration) keeps them. `q` stops the owning TUI and its server.
+
+## Standalone backend
 
 ```sh
-go run . -port 4318                       # use another port
-go run . -service=false                   # TUI with sharing initially off
-go run . -serve                           # backend + web only; Ctrl+C stops
-go run . -connect http://127.0.0.1:4317   # TUI for a running backend
+go run . -serve -port 4318 -token-file /tmp/sandbox-4318.token
 ```
 
-`-serve` and `-connect` can run in two terminals.
+`-token-file` is required with `-serve`. The file is created as a private
+(0600) regular file, or read if it exists. It holds a setup token, which is the
+only credential that survives a restart with the same file; named tokens and
+data do not. Never pass a secret as a command-line argument. To log in to the
+web UI with it, view the file in a private terminal and paste it into the login
+field. Stop the service with `Ctrl+C`.
+
+Connect a TUI to it with a private token file, or omit the file for a hidden
+prompt:
+
+```sh
+go run . -connect http://127.0.0.1:4318 -token-file /path/to/private.token
+```
+
+`SANDBOX_PROTOTYPE_TOKEN` is also read if you already have a token. Use only
+tokens you created.
+
+## Across machines
+
+Backends listen on loopback only and there is no service installer. To reach a
+remote backend, forward its port over SSH, then connect to the forwarded port
+using a token created on the target:
+
+```sh
+ssh -N -L 5318:127.0.0.1:4318 user@remote-host
+# then, on this machine: Connect remote environment → http://127.0.0.1:5318
+```
+
+A non-loopback origin must use HTTPS with a valid certificate. Plain HTTP is
+accepted only on loopback.
 
 ## Check
 
@@ -63,6 +120,3 @@ go run . -check
 go build -o sandbox-prototype .
 ./sandbox-prototype
 ```
-
-The prototype is not installed as an operating system service. Stop it with
-`q` (or `Ctrl+C` for `-serve`).

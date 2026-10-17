@@ -45,12 +45,21 @@ func (m *tui) finishAttach(msg attachReady) tea.Cmd {
 	return waitTerminal(m.terminal)
 }
 func (m *tui) attach(r request) tea.Cmd {
-	if m.remote != nil {
-		if !m.online {
+	if m.remote != nil || m.instance != "local-fake" {
+		if !m.environmentOnline() {
 			m.message("Backend offline. Reconnect before attaching.", true)
 			return nil
 		}
 		client, id := m.remote, m.instance
+		if client == nil {
+			var err error
+			client, err = m.fleet.remoteClient(id, true)
+			if err != nil {
+				m.message(err.Error(), true)
+				return nil
+			}
+			id = "local-fake"
+		}
 		agent := "agent"
 		if b := m.state.findSandbox(r.Name); b != nil {
 			for _, s := range sessionsForSandbox(*b) {
@@ -80,7 +89,7 @@ func (m *tui) attach(r request) tea.Cmd {
 	}
 	host := m.host
 	m.terminal = &tuiTerminal{session: t, events: out, host: host, name: r.Name, agent: t.agent, id: r.Session, send: func(data string) error { t.input(data); return nil }, closeStream: func() { t.unsubscribe(out, host) }}
-	m.state = m.host.snapshot()
+	m.applySnapshot(m.fleet.snapshot(m.instance), false)
 	m.message("Attached / "+r.Session+". Esc detaches; Ctrl+C interrupts the demo agent.", false)
 	return waitTerminal(m.terminal)
 }
@@ -109,7 +118,7 @@ func (m *tui) detachTerminal() {
 	t.closeStream()
 	m.terminal = nil
 	if m.remote == nil {
-		m.state = m.host.snapshot()
+		m.applySnapshot(m.fleet.snapshot(m.instance), false)
 	}
 	m.message("Detached. The agent session and its history are still available.", false)
 }

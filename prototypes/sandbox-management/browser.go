@@ -20,6 +20,11 @@ func browserHandler(host *fakeHost) http.Handler {
 
 func (fleet *fakeFleet) handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/tokens", fleet.handleTokens)
+	mux.HandleFunc("POST /api/tokens", fleet.handleTokens)
+	mux.HandleFunc("GET /api/connections", fleet.handleConnections)
+	mux.HandleFunc("POST /api/connections", fleet.handleConnections)
+	mux.HandleFunc("POST /api/terminal-ticket", fleet.handleTicket)
 	mux.HandleFunc("POST /api/action", func(w http.ResponseWriter, r *http.Request) { fleet.handleAction(w, r, false) })
 	mux.HandleFunc("POST /api/action-review", func(w http.ResponseWriter, r *http.Request) { fleet.handleAction(w, r, true) })
 	assets, _ := fs.Sub(browserAssets, "web_assets")
@@ -50,10 +55,17 @@ func (fleet *fakeFleet) handler() http.Handler {
 		return id, host
 	}
 	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
-		id, host := resolve(w, r)
-		if host != nil {
-			respond(w, fleet.snapshot(id))
+		id := selectedInstance(r)
+		if !fleet.hasInstance(id) {
+			apiProblem(w, 404, "Unknown instance")
+			return
 		}
+		state := fleet.snapshot(id)
+		if r.Header.Get("X-Prototype-Local-Only") == "1" {
+			state.Instances = state.Instances[:1]
+			state.Tokens = nil
+		}
+		respond(w, state)
 	})
 	mux.HandleFunc("GET /api/form", func(w http.ResponseWriter, r *http.Request) {
 		_, host := resolve(w, r)
@@ -100,7 +112,15 @@ func (fleet *fakeFleet) handler() http.Handler {
 	}
 	mux.HandleFunc("POST /api/command", func(w http.ResponseWriter, r *http.Request) { handleForm(w, r, true) })
 	mux.HandleFunc("POST /api/review", func(w http.ResponseWriter, r *http.Request) { handleForm(w, r, false) })
-	return mux
+	return fleet.authenticated(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if fleet.proxyRemote(w, r) {
+			return
+		}
+		mux.ServeHTTP(w, r)
+	}))
 }
 
-func runBrowser(host *fakeHost, port int) error { return runService(host, port) }
+func runBrowser(host *fakeHost, port int, tokenFile ...string) error {
+	return runService(host, port, tokenFile...)
+}

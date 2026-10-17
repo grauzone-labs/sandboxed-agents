@@ -12,7 +12,15 @@ import (
 // integrations through the web API, including review and failed atomic creation.
 func checkCreationWizard(check func(bool, string) error) error {
 	fleet := newFakeFleet(newFakeHost(0))
-	handler := fleet.handler()
+	handler := ownerFixture(fleet)
+	remoteFleet := newFakeFleet(newFakeHost(0))
+	remoteServer := httptest.NewServer(remoteFleet.handler())
+	defer remoteServer.Close()
+	defer fleet.closeConnections()
+	info, err := fleet.changeConnection(connectionRequest{Action: "connect", Label: "Second backend", URL: remoteServer.URL, Token: remoteFleet.ownerCredential})
+	if err != nil {
+		return err
+	}
 	post := func(path, instance string, values map[string]string) int {
 		body, _ := json.Marshal(map[string]any{"action": "create-sandbox", "values": values})
 		rec := httptest.NewRecorder()
@@ -41,7 +49,7 @@ func checkCreationWizard(check func(bool, string) error) error {
 	}
 	before = local.snapshot()
 	for _, bad := range []map[string]string{
-		{"name": "foreign-image", "imageMode": "existing", "imageID": "remote-web"},
+		{"name": "foreign-image", "imageMode": "existing", "imageID": "missing-image"},
 		{"name": "changed-image", "imageMode": "existing", "imageID": "img-web", "chain:azure": "true"},
 		{"name": "missing-toolchain", "imageMode": "new", "chain:dotnet": "true", "chain:playwright": "true", "connect:azure": "true"},
 		{"name": "invalid-git", "imageMode": "new", "chain:dotnet": "true", "chain:playwright": "true", "gitName": "Developer", "gitEmail": "invalid"},
@@ -74,9 +82,9 @@ func checkCreationWizard(check func(bool, string) error) error {
 		return err
 	}
 	before = local.snapshot()
-	status = post("/api/command", "remote-lab", map[string]string{"name": "remote-wizard-box", "imageMode": "existing", "imageID": "remote-dotnet", "connect:azdo": "true"})
-	remote := fleet.hosts["remote-lab"].snapshot().findSandbox("remote-wizard-box")
-	if err := check(status == 200 && remote.Group == "remote-ci" && remote.Image == "remote-dotnet" && remote.Integrations["azdo"] == "connected (demo)" && reflect.DeepEqual(before, local.snapshot()), "Wizard creation and optional integration setup stay within the selected remote instance"); err != nil {
+	status = post("/api/command", info.ID, map[string]string{"name": "remote-wizard-box", "imageMode": "existing", "imageID": "img-dotnet", "connect:azdo": "true"})
+	remote := remoteFleet.hosts["local-fake"].snapshot().findSandbox("remote-wizard-box")
+	if err := check(status == 200 && remote.Group == "default" && remote.Image == "img-dotnet" && remote.Integrations["azdo"] == "connected (demo)" && reflect.DeepEqual(before, local.snapshot()), "Wizard creation and optional integration setup stay within the selected remote instance"); err != nil {
 		return err
 	}
 	_ = local.command(request{Action: "remove", Name: "experiment", Confirm: "experiment", KeepVolumes: true})

@@ -12,7 +12,7 @@ import (
 // alongside the existing executable offline walkthrough.
 func checkWebImageWorkflow(check func(bool, string) error) error {
 	host := newFakeHost(0)
-	handler := browserHandler(host)
+	handler := ownerFixture(newFakeFleet(host))
 	post := func(path, name string, values map[string]string) int {
 		body, _ := json.Marshal(map[string]any{"action": "image-toolchains", "name": name, "values": values})
 		rec := httptest.NewRecorder()

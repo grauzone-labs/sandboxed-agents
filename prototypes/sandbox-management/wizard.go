@@ -139,7 +139,7 @@ func (m *tui) creationNext(skip bool) tea.Cmd {
 		}
 	}
 	r, err := m.creationRequest(w.Step == 1)
-	if m.remote != nil {
+	if m.remote != nil || m.instance != "local-fake" {
 		if err != nil {
 			m.message(err.Error(), true)
 			return nil

@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- THROWAWAY: Does the New sandbox wizard make image choice, agents and optional integrations clear?
-Host /?instance=local-fake|remote-lab; default local-fake. Single Control room; web variants retired. Web-first iteration; terminal layout is deferred. -->
+Host /?instance=CONNECTION_ID; default local-fake. Single Control room; web variants retired. Web-first iteration; terminal layout is deferred. -->
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -22,14 +22,16 @@ Host /?instance=local-fake|remote-lab; default local-fake. Single Control room; 
 </style>
 </head>
 <body>
-<header class="intro"><div><div class="eyebrow dim">Design study / 01</div><h1>Sandbox management / web study</h1><p>Two simulated instances · interactive agent sessions · shared backend state</p><p id="backend-status" class="amber" role="status">Connecting to backend …</p></div><div class="tools"><label class="dim" for="scenario">Fake data</label><select id="scenario"><option value="normal">5 Sandboxes</option><option value="empty">Empty host</option><option value="many">29 Sandboxes</option></select><button id="fault">Simulate error</button><button id="reset">Reset</button><button id="help-open" aria-label="Open help">?</button></div></header>
-<main class="terminal"><div class="termhead"><div><span class="brand">◈ SANDBOXED</span> <span class="dim">/ control room</span><div class="dim" style="font-size:11px" id="instance-context"></div></div><div class="instance-picker"><label for="instance-select" class="dim">Instance</label><select id="instance-select" aria-label="Active instance"><option value="local-fake">Local workstation</option><option value="remote-lab">Remote build lab</option></select></div><div class="stats" id="stats"></div></div><nav class="tabs" id="tabs" aria-label="Management sections"></nav><div class="toolsrow"><div><input id="search" aria-label="Search sandboxes" placeholder="/ Search sandbox or toolchain"><button id="status-filter">All statuses</button></div><div><button data-action="build">+ Build image</button><button class="primary" data-action="create">n New sandbox</button></div></div><div id="workspace"></div><div class="activity" id="activity"></div><div class="notice" id="notice" role="status" aria-live="polite"></div><footer class="footkeys"><kbd>Tab</kbd> Choose action &nbsp; <kbd>Enter</kbd> Run &nbsp; <kbd>↑↓</kbd> Sandbox &nbsp; <kbd>1–2</kbd> Section &nbsp; <kbd>n</kbd> Create &nbsp; <kbd>s/x</kbd> Start/Stop &nbsp; <kbd>t</kbd> Image &nbsp; <kbd>a</kbd> Agents &nbsp; <kbd>i/c</kbd> Integration/Config &nbsp; <kbd>e</kbd> Sessions &nbsp; <kbd>?</kbd> Help<br>Two independent simulated instances · session terminals use WebSocket · all changes stay in memory.</footer></main>
+<header class="intro"><div><div class="eyebrow dim">Design study / 01</div><h1>Sandbox management / web study</h1><p>Independent backends · authenticated remote connections · simulated inventory</p><p id="backend-status" class="amber" role="status">Connecting to backend …</p></div><div class="tools" id="header-tools" hidden><button id="logout" type="button">Log out</button><label class="dim" for="scenario">Fake data</label><select id="scenario"><option value="normal">5 Sandboxes</option><option value="empty">Empty host</option><option value="many">29 Sandboxes</option></select><button id="fault">Simulate error</button><button id="reset">Reset</button><button id="help-open" aria-label="Open help">?</button></div></header>
+<section id="login-gate" style="max-width:660px;margin:48px auto;padding:24px" aria-labelledby="login-title"><h2 id="login-title">Connect to this hosting backend</h2><p class="note">Create a token in the hosting TUI: 3 Configuration → Create named token. A standalone service uses its private setup token file. Every token grants full control, including tokens and remote connections.</p><form id="login-form" class="dialogfields"><label for="login-token">Backend token</label><input id="login-token" type="password" autocomplete="off" required maxlength="128"><button class="primary">Connect</button><p id="login-error" class="red" role="alert"></p></form><p class="dim">Token stays only in this page's private memory. Reload or Log out requires login again. Issued tokens and connections are memory-only; Disable/Enable sharing keeps them. An explicit setup token file can bootstrap a new standalone process.</p></section>
+<main class="terminal" hidden><div class="termhead"><div><span class="brand">◈ SANDBOXED</span> <span class="dim">/ control room</span><div class="dim" style="font-size:11px" id="instance-context"></div></div><div class="instance-picker"><label for="instance-select" class="dim">Instance</label><select id="instance-select" aria-label="Active instance"><option value="local-fake">Local workstation</option></select></div><div class="stats" id="stats"></div></div><nav class="tabs" id="tabs" aria-label="Management sections"></nav><div class="toolsrow"><div><input id="search" aria-label="Search sandboxes" placeholder="/ Search sandbox or toolchain"><button id="status-filter">All statuses</button></div><div><button data-action="build">+ Build image</button><button class="primary" data-action="create">n New sandbox</button></div></div><div id="workspace"></div><div class="activity" id="activity"></div><div class="notice" id="notice" role="status" aria-live="polite"></div><footer class="footkeys"><kbd>Tab</kbd> Choose action &nbsp; <kbd>Enter</kbd> Run &nbsp; <kbd>↑↓</kbd> Sandbox &nbsp; <kbd>1–2</kbd> Section &nbsp; <kbd>n</kbd> Create &nbsp; <kbd>s/x</kbd> Start/Stop &nbsp; <kbd>t</kbd> Image &nbsp; <kbd>a</kbd> Agents &nbsp; <kbd>i/c</kbd> Integration/Config &nbsp; <kbd>e</kbd> Sessions &nbsp; <kbd>?</kbd> Help<br>Real authenticated connections · simulated inventory and agents · memory-only state.</footer></main>
 <dialog id="editor"><form id="edit-form"><div class="dialogtop"><div class="eyebrow blue" id="dialog-target"></div><h3 id="dialog-title"></h3><p id="dialog-hint"></p></div><div class="dialogfields" id="dialog-fields"></div><div class="dialogerror" id="dialog-error" role="alert"></div><div class="dialogbottom"><small>Esc cancel · Ctrl+S apply</small><div class="buttons"><button type="button" id="cancel">Cancel</button><button type="submit" class="primary" id="submit">Apply</button></div></div></form></dialog>
+<dialog id="token-created"><div class="dialogtop"><h3>New token / shown ONCE</h3><p>Copy now. Full control, including token and connection management. Dismiss clears the secret; it cannot be retrieved again.</p></div><div class="dialogfields"><label for="created-token">New token</label><input id="created-token" readonly autocomplete="off"><button id="token-dismiss" type="button">Dismiss</button></div></dialog>
 <dialog id="help"><div class="dialogtop"><h3>Controls &amp; test ideas</h3></div><pre>1. New sandbox → Image → Sandbox → Integrations (optional) → Review.
    Select an existing image or choose toolchains for a new image.
    Choose at least one agent. Skip integrations to configure them later.
    Back keeps the draft. Only Create sandbox changes the fake instance.
-2. Switch Local workstation / Remote build lab: inventories stay separate.
+2. Configuration → Create token on B, then Connect remote on A: inventory stays on B.
 3. Sessions → Attach: try /help or a prompt; detach and attach again.
 4. Agents: enable/disable each agent. Integrations: connect/disconnect.
 5. Image → Open image → Configure toolchains → Review impact.
@@ -42,7 +44,7 @@ a Agents · i Integrations · c Sandbox config · b Build image
 e Sessions · / Search · v Status filter · r Reset
 
 Wizard: Next / Back · Ctrl+S next step · Esc cancel
-All sessions, versions, logins and effects are simulated.
+Inventory, agent sessions and tool versions are simulated; remote HTTP/WS connections and authentication are real.
 Esc closes this help.</pre><div class="dialogbottom"><small>Throwaway prototype · no production connection</small><button id="help-close">Close</button></div></dialog>
 <dialog id="create-wizard" aria-labelledby="create-title"><div class="dialogtop"><div class="eyebrow blue" id="create-scope"></div><h3 id="create-title">New sandbox</h3><p>Create a sandbox on this instance. Changes are applied after the final review.</p></div><div class="create-body"><ol id="create-progress" class="wizard-progress" aria-label="Creation steps"></ol><form id="create-form"><div id="create-content"></div><button type="submit" hidden>Next</button></form><div class="dialogerror" id="create-error" role="alert"></div></div><div class="dialogbottom"><button type="button" id="create-cancel">Cancel</button><div class="buttons"><button type="button" id="create-back">← Back</button><button type="button" id="create-skip" hidden>Skip integrations</button><button type="button" id="create-next" class="primary">Next →</button></div></div></dialog>
 <dialog id="terminal-modal"><div class="terminal-dialog-head"><div><div class="eyebrow blue" id="terminal-scope"></div><h3 id="terminal-title">Agent session</h3></div><div><span id="terminal-status" class="dim">Connecting …</span><button id="terminal-detach" type="button">Detach</button></div></div><div id="session-terminal" aria-label="Agent session terminal"></div><form id="terminal-form"><label class="dim" for="terminal-input">Demo prompt</label><input id="terminal-input" maxlength="2048" autocomplete="off" placeholder="Type /help, /status or a request" disabled><button id="terminal-send" class="primary" disabled>Send</button></form><p class="terminal-note dim">Live WebSocket transport · simulated agent responses · Detach preserves the session and its history.</p></dialog>
@@ -54,7 +56,7 @@ const pages=['Overview','Image','Agents','Integrations','Configuration','Session
 const $=id=>document.getElementById(id);
 const safe=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const chainLabel=c=>c?.length?c.join(', '):'none (Base image)';
-let instanceID=['local-fake','remote-lab'].includes(new URL(location.href).searchParams.get('instance'))?new URL(location.href).searchParams.get('instance'):'local-fake',instanceRevision=0;
+let instanceID=new URL(location.href).searchParams.get('instance')||'local-fake',instanceRevision=0;
 let attachment=null;
 let section=0,page=0,target='',imageID='',state=null,dialogForm=null,loading=false,statusFilter='all',lastState='';
 let createWizard=null;
@@ -141,7 +143,8 @@ function detail(){
  const b=currentBox();if(!b)return '<div class="empty">No sandbox selected.</div>';
  return `<div class="panelbody"><div class="detailtitle"><div><h3>${safe(b.name)}</h3><small>Data and functions of this sandbox</small></div><span class="${b.status==='running'?'green':'dim'}">${b.status==='running'?'●':'○'} ${b.status}</span></div><nav class="data-tabs" aria-label="Data of ${safe(b.name)}">${pages.map((label,n)=>`<button data-page="${n}" aria-pressed="${currentPage()===n}" class="${currentPage()===n?'blue':''}">${label}</button>`).join('')}</nav><div class="sandbox-data" data-sandbox="${safe(b.name)}">${sandboxActions(b)}${sandboxData(b)}</div></div>`;
 }
-function applicationConfig(){return panel('Application configuration',`<div class="panelbody"><article class="session-card"><h3>Shared backend service</h3>${dl([['Service ID',state.service?.id??'unknown'],['Started',state.service?.started??'unknown'],['State','Shared in service memory']])}<div class="note">Web and TUI use this same backend. The hosting TUI can enable or disable web access in Configuration; disabling keeps its data. In this prototype, quitting the hosting TUI ends its service. A service started with -serve runs independently.</div></article><h3>Sandboxed agents instances</h3><p class="dim">Switch between independent simulated hosts. Each instance owns its sandboxes, images, sessions and activity.</p>${state.instances.map(info=>`<article class="session-card"><div class="item-header"><div><strong>${safe(info.name)}</strong><small>${safe(info.id)}</small></div><span class="${info.id===instanceID?'green':'dim'}">${info.id===instanceID?'● Active':'Connected / simulated'}</span></div>${dl([['Connection',info.kind],['Address',info.address],['Controller group',info.group],['Inventory',info.sandboxCount+' sandboxes / '+info.imageCount+' images']])}<div class="actions"><button data-instance="${safe(info.id)}" ${info.id===instanceID?'disabled':''}>${info.id===instanceID?'Current instance':'Use this instance'}</button></div></article>`).join('')}<div class="note">Both connections are simulated locally. Real remote connections and their authentication workflow are future work.</div><div class="actions"><button disabled title="Future feature">+ Add another instance</button><span class="tag">Planned</span></div></div>`);}
+function applicationConfig(){return panel('Application configuration',`<div class="panelbody"><h3>CURRENT hosting backend</h3>${dl([['Service ID',state.service?.id],['Started',state.service?.started]])}<p class="note">The hosting TUI can Disable/Enable sharing and preserve this engine. Quitting the host ends the service. A standalone -serve process uses its setup token file.</p><h3>Remote environments</h3><p class="dim">The selected backend owns its inventory and agent sessions. Only its own local environment is reachable through a connection.</p>${state.instances.map(info=>`<article class="session-card"><h3>${safe(info.name)} ${info.id===instanceID?' / ACTIVE':''}</h3>${dl([['Connection ID',info.id],['Status',info.status],['Address',info.address],['Service ID',info.serviceID],['Controller group',info.group],['Inventory',info.sandboxCount+' sandboxes / '+info.imageCount+' images']])}${info.error?`<p class="amber">${safe(info.error)}</p>`:''}<div class="actions"><button data-instance="${safe(info.id)}" ${info.id===instanceID?'disabled':''}>Use this instance</button>${info.id!=='local-fake'?`<button data-admin="remote-reconnect" data-admin-id="${safe(info.id)}">Reconnect with replacement token</button><button data-admin="remote-disconnect" data-admin-id="${safe(info.id)}">Disconnect</button>`:''}</div></article>`).join('')}<div class="actions"><button data-admin="remote-connect">Connect remote environment</button></div><h3 style="margin-top:24px">Tokens / CURRENT hosting backend</h3><p class="note">Full control, including tokens and remote connections. Issued tokens and connection records are lost on process exit. Disable/Enable sharing preserves them. An explicit setup token file can bootstrap a new standalone process.</p><div class="actions"><button data-admin="token-create">Create named token</button></div>${(state.tokens??[]).map(token=>`<article class="session-card"><h3>${safe(token.name)} / ${safe(token.status)}</h3>${dl([['Token ID',token.id],['Created',token.created],['Expires',token.expires]])}${token.status==='active'?`<button data-admin="token-revoke" data-admin-id="${safe(token.id)}">Revoke token</button>`:''}</article>`).join('')}</div>`);}
+
 
 function navigator(){
  const b=currentBox(),sandboxes=boxes(),q=section===1?$('search').value.toLowerCase():'';
@@ -158,15 +161,15 @@ function fieldsHTML(f,values,prefix){return f.fields.map((field,idx)=>{
  if(field.key==='approve'&&prefix!=='review-field-')return '';
  if(field.kind==='bool')return `<div class="field bool"><input id="${id}" name="${safe(field.key)}" type="checkbox" ${value==='true'?'checked':''}><label for="${id}">${safe(field.label)}${field.key.startsWith('chain:')?' <span class="group">Toolchain</span>':field.key.startsWith('agent:')?' <span class="group">Agent</span>':''}</label></div>`;
  if(field.kind==='choice')return `<div class="field"><label for="${id}">${safe(field.label)}</label><select id="${id}" name="${safe(field.key)}">${field.options.map(o=>`<option ${o===value?'selected':''}>${safe(o)}</option>`).join('')}</select></div>`;
- return `<div class="field"><label for="${id}">${safe(field.label)}</label><input id="${id}" name="${safe(field.key)}" value="${safe(value)}" maxlength="240" autocomplete="off"></div>`;
+ return `<div class="field"><label for="${id}">${safe(field.label)}</label><input id="${id}" name="${safe(field.key)}" value="${safe(value)}" type="${field.kind==='secret'?'password':'text'}" maxlength="240" autocomplete="off"></div>`;
  }).join('');}
 function collectFields(f,element){const values={};for(const field of f.fields){const el=element.elements.namedItem(field.key);if(el)values[field.key]=field.kind==='bool'?String(el.checked):el.value;}return values;}
 function focusToken(){const el=document.activeElement;if(!el||el===document.body)return null;return {id:el.id,context:el.dataset.contextAction,sandbox:currentBox()?.name,instance:instanceID,selection:el.matches('input[type=text],input:not([type])')?[el.selectionStart,el.selectionEnd]:null};}
 function restoreFocus(token){if(!token)return;let el=token.id?$(token.id):null;if(!el&&token.context&&token.sandbox===currentBox()?.name&&token.instance===instanceID)el=document.querySelector(`.sandbox-actions [data-context-action="${token.context}"]:not(:disabled)`);if(el){el.focus({preventScroll:true});if(token.selection&&el.setSelectionRange)el.setSelectionRange(...token.selection);}}
 function render(){
  if(!state)return;const focus=focusToken(),b=currentBox();if(b)target=b.name;
- $('instance-context').textContent=state.instance.id+' / '+state.instance.group+' / '+state.instance.kind;
- $('instance-select').innerHTML=state.instances.map(info=>`<option value="${safe(info.id)}">${safe(info.name)} / ${info.id==='local-fake'?'local':'remote demo'}</option>`).join('');$('instance-select').value=instanceID;$('instance-select').disabled=loading;
+ $('instance-context').textContent=state.instance.id+' / '+state.instance.group+' / '+state.instance.kind+' / '+state.instance.status+(state.origin?' / origin '+state.origin.id:'');
+ $('instance-select').innerHTML=state.instances.map(info=>`<option value="${safe(info.id)}">${safe(info.name)} / ${info.id==='local-fake'?'local':info.status}</option>`).join('');$('instance-select').value=instanceID;$('instance-select').disabled=loading;
  $('scenario').options[0].textContent=state.instance.seedCount+' Sandboxes';$('scenario').options[2].textContent=(state.instance.seedCount+24)+' Sandboxes';
  const running=state.sandboxes.filter(b=>b.status==='running').length;
  $('stats').innerHTML=`<span><b class="green">${running}</b> running</span><span><b>${state.sandboxes.length-running}</b> stopped</span><span><b class="blue">${images().length}</b> images</span>`;
@@ -178,10 +181,32 @@ function render(){
  $('workspace').innerHTML=section===2?applicationConfig():ControlRoom();
  $('activity').innerHTML=state.events.length?`<time>${safe(state.events[0].time)}</time><span>${safe(state.events[0].text)}</span>`:'';
  $('scenario').value=state.scenario;$('fault').textContent=state.faultNext?'Error armed · next action':'Simulate error';$('fault').classList.toggle('danger',state.faultNext);
+ if(state.instance.status!=='connected'){notify((state.instance.error||'Remote offline')+' / cached inventory is read-only',true);if(attachment)detachAttachment();}for(const el of document.querySelectorAll('#scenario,#fault,#reset,.toolsrow [data-action]'))el.disabled=state.instance.status!=='connected'||loading;for(const el of document.querySelectorAll('[data-action],[data-item-action]')){if(state.instance.status!=='connected')el.disabled=true;}
  $('status-filter').textContent={all:'All statuses',running:'● Running',stopped:'○ Stopped'}[statusFilter];
  restoreFocus(focus);
 }
-async function api(path,body,selected=instanceID){const url=new URL(path,location.href);url.searchParams.set('instance',selected);const response=await fetch(url,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(75000)}:{signal:AbortSignal.timeout(3000)});const data=await response.json();if(selected!==instanceID)throw new Error('Instance changed; previous response ignored');if(!response.ok)throw new Error(data.error??'Fake instance unreachable');return data;}
+// No cookies: different ports on one host must never receive each other's credentials.
+// This closure is the sole owner of the browser bearer; it is not page state.
+const api=(()=>{
+ let bearer='';
+ function clearLogin(){bearer='';if(attachment)detachAttachment();for(const id of ['editor','create-wizard','terminal-modal','token-created']){if($(id).open)$(id).close();}dialogForm=null;createWizard=null;$('dialog-fields').replaceChildren();$('login-token').value='';$('created-token').value='';$('login-gate').hidden=false;document.querySelector('main.terminal').hidden=true;$('header-tools').hidden=true;state=null;backendOnline=false;}
+ async function request(path,body,selected=instanceID){
+  if(!bearer)throw new Error('Login required');
+  const url=new URL(path,location.href);if(url.origin!==location.origin)throw new Error('API origin must match this page');url.searchParams.set('instance',selected);
+  const response=await fetch(url,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+bearer,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{}),credentials:'omit',signal:AbortSignal.timeout(body?75000:3500)});
+  const data=await response.json();if(response.status===401){clearLogin();throw new Error('Hosting backend token missing, revoked or expired. Log in again.');}
+  if(selected!==instanceID)throw new Error('Instance changed; previous response ignored');if(!response.ok)throw new Error(data.error??'Backend request rejected');return data;
+ }
+ $('login-form').onsubmit=async event=>{event.preventDefault();
+  if(location.protocol!=='https:'&&!['127.0.0.1','localhost','[::1]'].includes(location.hostname)){$('login-token').value='';$('login-error').textContent='Use HTTPS or loopback SSH forwarding before entering a token.';return;}
+  bearer=$('login-token').value.trim();$('login-token').value='';$('login-error').textContent='';
+  try{const next=await request('/api/state');state=next;lastState=JSON.stringify(next);$('login-gate').hidden=true;document.querySelector('main.terminal').hidden=false;$('header-tools').hidden=false;backendOnline=true;backendStatus(true,next.service);render();}
+  catch(error){bearer='';$('login-error').textContent=error.message;}
+ };
+ $('logout').onclick=clearLogin;
+ return request;
+})();
+
 async function switchInstance(id){
  if(id===instanceID)return;
  if(loading||$('editor').open||$('terminal-modal').open||$('create-wizard').open){normalizeURL();$('instance-select').value=instanceID;notify('Finish or close the current action before switching instances.',true);return;}
@@ -203,7 +228,8 @@ async function runItemAction(action,key,field){
  catch(error){notify(error.message,true);}finally{loading=false;render();}
 }
 async function openAction(action){
- if(loading)return;
+ if(loading||!state)return;
+ if(state.instance.status!=='connected'){notify('Remote offline; reconnect before changing it.',true);return;}
  if(action==='create'){await openCreateWizard();return;}
  if(['agents','integration','end-sessions'].includes(action)){if(section!==0){notify('Select a sandbox in Sandboxes first.',true);return;}selectPage(({agents:2,integration:3,'end-sessions':5})[action]);return;}
  if(action==='git-identity'&&(section!==0||!currentBox())){notify('Select a sandbox in Sandboxes first.',true);return;}
@@ -219,12 +245,37 @@ async function openAction(action){
   $('submit').textContent=action==='image-toolchains'?'Review impact →':action==='remove'?'Delete sandbox':action==='integration'?'Start demo workflow':'Apply';$('editor').showModal();
  }catch(error){notify(error.message,true);}
 }
+function openAdmin(action,id){
+ if(loading||!state)return;
+ const field=(key,label,kind='text',value='')=>({key,label,kind,value});
+ const configs={
+  'token-create':['Create token on CURRENT hosting backend','Full control, including tokens and remote connections. Tokens live only in this running process.',[field('name','Token name'),field('hours','Lifetime (hours, 1–8760)','text','24')]],
+  'token-revoke':['Revoke token / '+id,'Immediately closes HTTP and terminal access using this token.',[]],
+  'remote-connect':['Connect remote environment','Create a token on the remote system, then enter it here. HTTP only on loopback; other origins require HTTPS.',[field('label','Connection label'),field('url','Backend origin URL','text','http://127.0.0.1:4318'),field('token','Remote token','secret')]],
+  'remote-reconnect':['Reconnect remote / '+id,'Enter a replacement token created on the remote host. Saved label and origin are kept.',[field('token','Replacement remote token','secret')]],
+  'remote-disconnect':['Disconnect remote / '+id,'Closes this connection and its attachments. Remote agent sessions keep running; metadata is kept for reconnect.',[]]
+ };
+ const config=configs[action];if(!config)return;dialogForm={admin:true,action,name:id,fields:config[2]};$('dialog-target').textContent='CURRENT hosting backend / '+state.service.id;$('dialog-title').textContent=config[0];$('dialog-hint').textContent=config[1];$('dialog-error').textContent='';$('dialog-fields').innerHTML=fieldsHTML(dialogForm,{},'admin-field-');$('submit').textContent='Apply';$('editor').showModal();
+}
+async function submitAdmin(){
+ const f=dialogForm,values=collectFields(f,$('edit-form'));loading=true;$('submit').disabled=true;
+ let body,path;
+ if(f.action==='token-create'){const hours=Number(values.hours);if(!Number.isInteger(hours)||hours<1||hours>8760){loading=false;$('submit').disabled=false;$('dialog-error').textContent='Token lifetime must be 1–8760 whole hours.';return;}path='/api/tokens';body={action:'create',name:values.name,expiresInSeconds:hours*3600};}
+ else if(f.action==='token-revoke'){path='/api/tokens';body={action:'revoke',id:f.name};}
+ else{path='/api/connections';body={action:f.action.slice(7),...(f.name?{id:f.name}:{}),...(values.label?{label:values.label}:{}),...(values.url?{url:values.url}:{}),...(values.token?{token:values.token}:{})};}
+ for(const el of $('edit-form').querySelectorAll('input[type=password]'))el.value='';
+ try{const result=await api(path,body);$('editor').close();dialogForm=null;$('dialog-fields').replaceChildren();if(result.secret){$('created-token').value=result.secret;$('token-created').showModal();}state=await api('/api/state');lastState=JSON.stringify(state);render();notify('Hosting backend configuration updated.');}
+ catch(error){$('dialog-error').textContent=error.message;}
+ finally{loading=false;$('submit').disabled=false;}
+}
+$('token-dismiss').onclick=()=>$('token-created').close();$('token-created').addEventListener('close',()=>{$('created-token').value='';});
 function imageImpactHTML(id,values){
  const linked=(state.sandboxes??[]).filter(b=>b.image===id),chains=Object.keys(values).filter(k=>k.startsWith('chain:')&&values[k]==='true').map(k=>k.slice(6));
  return `<div class="impact-review"><h2>${safe(state.instance.name)} / UPDATE IMPACT / ${linked.length} ${linked.length===1?'SANDBOX':'SANDBOXES'}</h2>${dl([['Current toolchains',chainLabel(image(id).toolchains)],['New toolchains',chainLabel(chains)]])}${toolTable({toolchains:chains})}<div class="note amber">All linked sandboxes listed below will be updated and restarted. Their open agent sessions will end. Stopped sandboxes will start. Workspace, home data, agent selection and configuration are preserved.</div><div class="impact-targets">${linked.map(b=>`<div class="integration"><strong>${safe(b.name)}</strong><span>${safe(b.status)} → running${b.sessions?' · '+b.sessions+' session(s) will end':''}</span></div>`).join('')||'<p class="dim">No linked sandboxes. Only the image will be prepared.</p>'}</div><p class="dim">The matching image is built or reused; the previous image is kept.</p></div>`;
 }
 async function submitForm(event){
  event?.preventDefault();if(!dialogForm||loading)return;
+ if(dialogForm.admin){await submitAdmin();return;}
  const values=dialogForm.reviewed?{...dialogForm.draft,...collectFields(dialogForm,$('edit-form'))}:collectFields(dialogForm,$('edit-form'));
  if(dialogForm.action==='image-toolchains'&&!dialogForm.reviewed){
   try{await api('/api/review',{action:dialogForm.action,name:dialogForm.name,values});dialogForm.draft=values;dialogForm.reviewed=true;$('dialog-title').textContent='Confirm image update';$('dialog-hint').textContent='Review all affected sandboxes. Cancel keeps the image and sandboxes unchanged.';$('dialog-fields').innerHTML=imageImpactHTML(dialogForm.name,values)+fieldsHTML({...dialogForm,fields:dialogForm.fields.filter(f=>f.key==='approve'||f.kind==='hidden')},values,'review-field-');$('submit').textContent='Update & restart';$('dialog-error').textContent='';}
@@ -242,7 +293,9 @@ function selectPage(index){section=0;page=index;render();}
 function call(promise){Promise.resolve(promise).catch(error=>notify(error.message,true));}
 
 document.addEventListener('click',event=>{
+ if(!$('login-gate').hidden)return;
  const el=event.target;
+ const admin=el.closest('[data-admin]');if(admin){openAdmin(admin.dataset.admin,admin.dataset.adminId??'');return;}
  const instance=el.closest('[data-instance]');if(instance){call(switchInstance(instance.dataset.instance));return;}
  const item=el.closest('[data-item-action]');if(item&&!item.disabled){call(runItemAction(item.dataset.itemAction,item.dataset.itemKey,item.dataset.itemField));return;}
  const action=el.closest('[data-action]');if(action){call(openAction(action.dataset.action));return;}
@@ -253,13 +306,15 @@ document.addEventListener('click',event=>{
 });
 $('instance-select').onchange=event=>call(switchInstance(event.target.value));
 $('edit-form').onsubmit=submitForm;
-$('cancel').onclick=()=>{$('editor').close();dialogForm=null;};$('editor').addEventListener('cancel',event=>{if(loading)event.preventDefault();else dialogForm=null;});
+$('cancel').onclick=()=>{$('editor').close();dialogForm=null;$('dialog-fields').replaceChildren();};$('editor').addEventListener('cancel',event=>{if(loading)event.preventDefault();else{dialogForm=null;$('dialog-fields').replaceChildren();}});
 $('reset').onclick=()=>call(openAction('reset'));$('fault').onclick=()=>call(openAction('fault'));
 $('scenario').onchange=async()=>{try{state=await api('/api/command',{action:'scenario',values:{scenario:$('scenario').value}});target='';statusFilter='all';$('search').value='';notify('Fake scenario loaded');render();}catch(error){notify(error.message,true);render();}};
 $('search').oninput=()=>render();$('status-filter').onclick=()=>{statusFilter={all:'running',running:'stopped',stopped:'all'}[statusFilter];target='';render();};
 $('help-open').onclick=()=>$('help').showModal();$('help-close').onclick=()=>$('help').close();
-window.addEventListener('popstate',()=>{const params=new URL(location.href).searchParams;const id=['local-fake','remote-lab'].includes(params.get('instance'))?params.get('instance'):'local-fake';if(id!==instanceID)call(switchInstance(id));else{normalizeURL();render();}});
+window.addEventListener('popstate',()=>{const params=new URL(location.href).searchParams;const id=params.get('instance')||'local-fake';if(id!==instanceID)call(switchInstance(id));else{normalizeURL();render();}});
 document.addEventListener('keydown',event=>{
+ if(!$('login-gate').hidden)return;
+ if($('token-created').open)return;
  if($('terminal-modal').open)return;
  if($('create-wizard').open){if(event.ctrlKey&&event.key.toLowerCase()==='s'){event.preventDefault();call(createNext());}return;}
  const editing=event.target.closest('input,textarea,select,[contenteditable]');
@@ -270,7 +325,7 @@ document.addEventListener('keydown',event=>{
  const key=event.key;
  if(key==='Tab'&&section===0&&document.querySelector('.sandbox-actions button:not(:disabled)')){event.preventDefault();cycleContextAction(event.shiftKey);return;}
  if(key==='?'){$('help').showModal();return;}
- if(key>='1'&&key<='2'){event.preventDefault();section=Number(key)-1;$('search').value='';render();return;}
+ if(key>='1'&&key<='3'){event.preventDefault();section=Number(key)-1;$('search').value='';render();return;}
  const shortcuts={n:'create',s:'start',x:'stop',d:'remove',t:'images',a:'agents',i:'integration',c:'configure',b:'build',e:'end-sessions',f:'fault',r:'reset',p:'scenario'};
  if(shortcuts[key]){event.preventDefault();call(openAction(shortcuts[key]));return;}
  if(key==='/'){event.preventDefault();$('search').focus();return;}
@@ -305,7 +360,9 @@ async function openAttachment(name,id){
  const fit=new FitAddon.FitAddon();term.loadAddon(fit);term.open($('session-terminal'));
  const a={instance:instanceID,name,id,term,fit,socket:null,observer:null,ended:false};attachment=a;
  const url=new URL('/api/terminal',location.href);url.protocol=location.protocol==='https:'?'wss:':'ws:';url.search=new URLSearchParams({instance:a.instance,sandbox:name,session:id});
- const socket=new WebSocket(url);a.socket=socket;
+ let ticket;try{ticket=(await api('/api/terminal-ticket',{sandbox:name,session:id},a.instance)).ticket;}catch(error){detachAttachment();notify(error.message,true);return;}
+ if(attachment!==a)return;
+ const socket=new WebSocket(url,['sandbox-ticket.'+ticket]);ticket=null;a.socket=socket;
  socket.onopen=()=>{if(attachment!==a)return;$('terminal-status').textContent='Connected / simulated agent';$('terminal-status').className='green';$('terminal-input').disabled=false;$('terminal-send').disabled=false;terminalFit();term.focus();};
  socket.onmessage=event=>{if(attachment!==a)return;try{const message=JSON.parse(event.data);if(message.type==='output')term.write(message.data);if(message.type==='ended'){a.ended=true;term.write('\r\n\x1b[33m'+message.data+'\x1b[0m\r\n');$('terminal-status').textContent='Session ended';$('terminal-status').className='amber';$('terminal-input').disabled=true;$('terminal-send').disabled=true;}}catch{notify('Invalid terminal stream message.',true);}};
  socket.onerror=()=>{if(attachment!==a)return;$('terminal-status').textContent='Attachment failed. Close and retry.';$('terminal-status').className='red';};
@@ -319,8 +376,8 @@ $('terminal-modal').addEventListener('close',()=>{if(attachment)detachAttachment
 $('terminal-form').onsubmit=event=>{event.preventDefault();const input=$('terminal-input');if(!input.disabled){terminalSend(input.value+'\r');input.value='';}};
 
 let backendOnline=false;
-function backendStatus(online,info){const el=$('backend-status');el.textContent=online?'Connected to shared backend / '+(info?.id??'').slice(0,8):'Backend offline / reconnecting — start or enable the service in the TUI';el.className=online?'green':'amber';}
-async function poll(){const selected=instanceID,revision=instanceRevision;try{const next=await api('/api/state',undefined,selected);if(selected!==instanceID||revision!==instanceRevision||loading)return;const reconnected=!backendOnline;backendOnline=true;backendStatus(true,next.service);const serialized=JSON.stringify(next);if(serialized!==lastState){const removed=target&&!next.sandboxes.some(b=>b.name===target);state=next;lastState=serialized;render();if(removed)notify('The selected sandbox was removed by another client. Choose an object again.',true);}if(reconnected)notify('Connected to shared backend. Web and TUI use the same state.');}catch(error){if(selected===instanceID){backendOnline=false;backendStatus(false);notify('Backend unavailable: '+error.message,true);}}finally{setTimeout(poll,300);}}
+function backendStatus(online,info){const el=$('backend-status');el.textContent=online?'Connected to shared backend / '+(info?.id??'').slice(0,8):'Hosting backend offline / reconnecting — start or enable its service in the TUI';el.className=online?'green':'amber';}
+async function poll(){if(!$('login-gate').hidden){setTimeout(poll,300);return;}const selected=instanceID,revision=instanceRevision;try{const next=await api('/api/state',undefined,selected);if(selected!==instanceID||revision!==instanceRevision||loading)return;const reconnected=!backendOnline;backendOnline=true;backendStatus(true,next.service);if(next.instance.status!=='connected'&&attachment)detachAttachment();const serialized=JSON.stringify(next);if(serialized!==lastState){const removed=target&&!next.sandboxes.some(b=>b.name===target);state=next;lastState=serialized;render();if(removed)notify('The selected sandbox was removed by another client. Choose an object again.',true);}if(reconnected)notify('Connected to shared backend. Web and TUI use the same state.');}catch(error){if(selected===instanceID){backendOnline=false;backendStatus(false);notify('Backend unavailable: '+error.message,true);}}finally{setTimeout(poll,300);}}
 
 poll();
 </script>

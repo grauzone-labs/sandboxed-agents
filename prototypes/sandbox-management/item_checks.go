@@ -12,7 +12,7 @@ import (
 // agent, integration or session through the same HTTP boundary as the browser.
 func checkSandboxItems(check func(bool, string) error) error {
 	host := newFakeHost(0)
-	handler := browserHandler(host)
+	handler := ownerFixture(newFakeFleet(host))
 	post := func(action, name string, values map[string]string) int {
 		body, _ := json.Marshal(map[string]any{"action": action, "name": name, "values": values})
 		rec := httptest.NewRecorder()

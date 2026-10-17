@@ -29,7 +29,7 @@ func (m *tui) instanceList() []instanceInfo {
 	if m.remote != nil {
 		return m.metadata.Instances
 	}
-	return m.fleet.snapshot(m.instance).Instances
+	return m.fleet.instanceInfos()
 }
 func (m *tui) backendInfo() string {
 	if m.remote == nil {
@@ -64,11 +64,23 @@ func (m *tui) applySnapshot(next instanceState, switching bool) {
 		id = i.ID
 	}
 	changedService := m.metadata.Service.ID != "" && m.metadata.Service.ID != next.Service.ID
+	if m.metadata.Origin != nil && next.Origin != nil && m.metadata.Origin.ID != next.Origin.ID {
+		changedService = true
+	}
 	m.state = next.fakeState
 	m.metadata = next
 	m.instance = next.Instance.ID
 	m.online = true
 	m.connectionErr = ""
+	if next.Instance.Status != "connected" && next.Instance.ID != "local-fake" {
+		if switching {
+			m.boxCursor, m.imageCursor = 0, 0
+			m.missingBox, m.missingImage = false, false
+			m.clearFocus()
+		}
+		m.message(next.Instance.Error, true)
+		return
+	}
 	if switching {
 		m.boxCursor, m.imageCursor = 0, 0
 		m.search, m.statusFilter = "", "all"
@@ -145,8 +157,8 @@ func (m *tui) receiveSnapshot(msg serviceSnapshot) tea.Cmd {
 	return m.pollService()
 }
 func (m *tui) reviewService(r request, kind string) tea.Cmd {
-	if !m.online {
-		m.message("Backend offline. Reconnect before reviewing or applying changes.", true)
+	if !m.environmentOnline() {
+		m.message("Backend or remote offline. Reconnect before reviewing or applying changes.", true)
 		return nil
 	}
 	m.pending = true
@@ -155,7 +167,17 @@ func (m *tui) reviewService(r request, kind string) tea.Cmd {
 	if m.wizard != nil {
 		step = m.wizard.Step
 	}
-	return func() tea.Msg { s, err := client.review(id, r); return serviceReview{s, err, r, kind, step} }
+	fleet := m.fleet
+	return func() tea.Msg {
+		var s instanceState
+		var err error
+		if client != nil {
+			s, err = client.review(id, r)
+		} else {
+			s, err = fleet.apply(id, r, true)
+		}
+		return serviceReview{s, err, r, kind, step}
+	}
 }
 func (m *tui) receiveReview(msg serviceReview) tea.Cmd {
 	m.pending = false
@@ -177,6 +199,12 @@ func (m *tui) receiveReview(msg serviceReview) tea.Cmd {
 	}
 	return nil
 }
+func (m *tui) environmentOnline() bool {
+	if m.instance == "local-fake" {
+		return m.remote == nil || m.online
+	}
+	return (m.remote == nil || m.online) && m.info().Status == "connected"
+}
 func (m *tui) close() {
 	if m.terminal != nil {
 		m.detachTerminal()
@@ -186,6 +214,9 @@ func (m *tui) close() {
 	}
 	if m.ownedService != nil {
 		_ = m.ownedService.stop()
+	}
+	if m.fleet != nil {
+		m.fleet.closeConnections()
 	}
 }
 func (m *tui) connectionFailure(err error) {

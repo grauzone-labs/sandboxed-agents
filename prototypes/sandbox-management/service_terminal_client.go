@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/gorilla/websocket"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -21,9 +22,17 @@ func (c *serviceClient) terminal(instance, name, id string) (*tuiTerminal, error
 	ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
 	defer cancel()
 	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
-	conn, _, err := dialer.DialContext(ctx, u.String(), nil)
+	headers := http.Header{"Authorization": {"Bearer " + c.token}}
+	if c.localOnly {
+		headers.Set("X-Prototype-Local-Only", "1")
+	}
+	conn, response, err := dialer.DialContext(ctx, u.String(), headers)
 	if err != nil {
-		return nil, fmt.Errorf("Terminal connection failed: %w", err)
+		if response != nil {
+			response.Body.Close()
+			return nil, &apiError{response.StatusCode, "Terminal authentication or session rejected"}
+		}
+		return nil, fmt.Errorf("Terminal connection failed")
 	}
 	events := make(chan terminalEvent, 64)
 	send := make(chan string, 64)

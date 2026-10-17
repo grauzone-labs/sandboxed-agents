@@ -244,12 +244,22 @@ func (fleet *fakeFleet) serveTerminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Gorilla's default origin check permits same-origin browser connections only.
-	upgrader := websocket.Upgrader{ReadBufferSize: 4096, WriteBufferSize: 4096, HandshakeTimeout: 5 * time.Second}
+	upgrader := terminalUpgrader(r)
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
 	defer conn.Close()
+	done := make(chan struct{})
+	defer close(done)
+	g := r.Context().Value(grantKey{}).(*authGrant)
+	go func() {
+		select {
+		case <-g.done:
+		case <-done:
+		}
+		_ = conn.Close()
+	}()
 	out, err := t.subscribe(host)
 	if err != nil {
 		_ = conn.WriteJSON(terminalEvent{"ended", err.Error()})
@@ -270,6 +280,10 @@ func (fleet *fakeFleet) serveTerminal(w http.ResponseWriter, r *http.Request) {
 				if conn.WriteJSON(event) != nil {
 					return
 				}
+			case <-done:
+				return
+			case <-g.done:
+				return
 			case <-ping.C:
 				_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 				if conn.WriteMessage(websocket.PingMessage, nil) != nil {
