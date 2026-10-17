@@ -2,7 +2,7 @@
 
 `sandboxed-agents` runs coding agents in rootless Podman containers, one sandbox per workspace, on Linux and Windows 11. An agent's mistake, such as deleting the wrong directory, installing a bad package, or reading credentials it should not have, stays inside one sandbox: its workspace, its home data, and the credentials stored there.
 
-It is one static executable, and the host needs only Podman and OpenSSH. From here you can install it, create your first sandbox, and find the page for every command and topic.
+It is one static executable, and the host needs only Podman and OpenSSH; [Host prerequisites](docs/host-prerequisites.md) states the Podman versions and the parts of a rootless Podman setup that the preflight checks. From here you can install it, create your first sandbox, and find the page for every command and topic.
 
 ## What you get
 
