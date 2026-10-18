@@ -196,6 +196,80 @@ func TestPublicationWorkflowWiring(t *testing.T) {
 	}
 }
 
+// TestPublicationWorkflowReleaseNotes proves the maintained build-step shell accepts normal and large committed notes and refuses absent, blank or unreadable notes before invoking the stub release build through real Git and Bash with Actions pipefail options.
+func TestPublicationWorkflowReleaseNotes(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repositoryRoot(t), ".github/workflows/release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, publishJob, found := strings.Cut(string(data), "\n  publish:\n")
+	if !found {
+		t.Fatal("workflow omits the publication job")
+	}
+	if end := regexp.MustCompile(`(?m)^(?:\S|  \S)`).FindStringIndex(publishJob); end != nil {
+		publishJob = publishJob[:end[0]]
+	}
+	buildSteps := regexp.MustCompile(`(?m)^        id: build\n        shell: bash\n        run: \|\n((?:          [^\n]*\n|\n)+)`).FindAllStringSubmatch(publishJob, -1)
+	if len(buildSteps) != 1 {
+		t.Fatal("workflow must contain exactly one Bash build-step script")
+	}
+	for _, test := range []struct {
+		name, notes                string
+		missing, unreadable, valid bool
+	}{
+		{name: "normal", notes: "Reviewed release notes.\n", valid: true},
+		{name: "very large", notes: "Reviewed release notes.\n" + strings.Repeat("Release detail.\n", 1<<18), valid: true},
+		{name: "empty"},
+		{name: "whitespace", notes: " \t\n\r\n "},
+		{name: "missing", missing: true},
+		{name: "Git read failure", notes: "Unreadable committed notes.\n", unreadable: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			checkout := ciRepository(t)
+			ciWrite(t, checkout, "scripts/release.sh", "printf built > \"$BUILD_MARKER\"\n")
+			const notesPath = "docs/release-notes/1.0.0.md"
+			if !test.missing {
+				ciWrite(t, checkout, notesPath, test.notes)
+			}
+			commit := ciCommit(t, checkout)
+			runGit(t, checkout, "tag", "v1.0.0")
+			if test.unreadable {
+				blob := gitOutput(t, checkout, "rev-parse", "HEAD:"+notesPath)
+				if err := os.Remove(filepath.Join(checkout, ".git", "objects", blob[:2], blob[2:])); err != nil {
+					t.Fatal(err)
+				}
+			}
+			directory := t.TempDir()
+			marker, outputPath := filepath.Join(directory, "build-called"), filepath.Join(directory, "github-output")
+			command := exec.Command("bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", buildSteps[0][1])
+			command.Dir = checkout
+			command.Env = append(os.Environ(), "RELEASE_TAG=v1.0.0", "GITHUB_SHA="+commit, "RUNNER_TEMP="+directory, "GITHUB_OUTPUT="+outputPath, "BUILD_MARKER="+marker)
+			output, err := command.CombinedOutput()
+			if test.valid {
+				if err != nil {
+					t.Fatalf("valid committed notes (%d bytes) failed before build: %v\n%s", len(test.notes), err, output)
+				}
+				if _, err := os.Stat(marker); err != nil {
+					t.Fatalf("valid notes did not reach the release build: %v", err)
+				}
+				data, err := os.ReadFile(outputPath)
+				if err != nil || string(data) != "version=1.0.0\n" {
+					t.Fatalf("build output = %q, error=%v; want completed version output", data, err)
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("invalid committed notes accepted: %s", output)
+				}
+				for _, path := range []string{marker, outputPath} {
+					if _, err := os.Stat(path); !os.IsNotExist(err) {
+						t.Fatalf("invalid notes reached build or version output: %s, error=%v", path, err)
+					}
+				}
+			}
+		})
+	}
+}
+
 // TestReleaseGitHubCLISetupRejectsUnverifiedArchive proves the actual shared installer rejects untrusted download bytes before extraction or PATH installation through fake curl and tar boundaries.
 func TestReleaseGitHubCLISetupRejectsUnverifiedArchive(t *testing.T) {
 	root := releaseRepositoryOrSkip(t)

@@ -69,7 +69,7 @@ jobs:
           [[ $(git rev-parse "refs/tags/$RELEASE_TAG^{commit}") == "$GITHUB_SHA" ]]
           version=${RELEASE_TAG#v}
           base_version=${version%%-preview.*}
-          git show "$GITHUB_SHA:docs/release-notes/$base_version.md" | grep -q '[^[:space:]]'
+          git show "$GITHUB_SHA:docs/release-notes/$base_version.md" | grep '[^[:space:]]' > /dev/null
           bash scripts/release.sh "$version" "$RUNNER_TEMP/release-output"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
       - name: Gate the rebuilt stable asset hash before any publication
