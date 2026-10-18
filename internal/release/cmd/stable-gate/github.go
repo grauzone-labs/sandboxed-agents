@@ -268,7 +268,7 @@ func github(endpoint string, args ...string) ([]byte, error) {
 	return data, nil
 }
 
-// previewAssetHash verifies exact preview bytes before making them executable, then reads their hash with no inherited environment or publication credentials.
+// previewAssetHash verifies exact preview bytes before making them executable, then reads their hash with no inherited environment variables.
 func previewAssetHash(data []byte, repository, tag, commit string) (string, error) {
 	directory, err := os.MkdirTemp("", "stable-gate-preview-")
 	if err != nil {

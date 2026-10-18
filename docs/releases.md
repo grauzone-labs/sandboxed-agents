@@ -98,7 +98,7 @@ On a stable tag, the release workflow checks that:
 - each record names that commit, has the right schema and kind, and reports a pass;
 - each live-suite record says the image coverage ran and completed;
 - the offline suite is green on the commit;
-- the asset hash printed by `version` is the same for the preview and the stable binaries. The preview executable that prints it is run only after the exact downloaded file passes `gh attestation verify` for this repository, `release.yml`, the candidate commit, and the preview tag, and it runs without the workflow's credentials ([maintainer notes](maintainers.md#preview-provenance-before-execution)).
+- the asset hash printed by `version` is the same for the preview and the stable binaries. The preview executable that prints it is run only after the exact downloaded file passes `gh attestation verify` for this repository, `release.yml`, the candidate commit, and the preview tag, and it runs with an empty environment, which is not an isolation boundary ([maintainer notes](maintainers.md#preview-provenance-before-execution)).
 
 When a check fails, the workflow fails with a message that names the missing preview, file, or gate, and publishes nothing, neither a GitHub release nor a registry package. The decision logic is covered by offline tests without network or credentials; publication itself is observed on a real stable release and recorded as such, never as an offline result.
 
