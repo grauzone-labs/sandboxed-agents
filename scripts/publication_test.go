@@ -89,13 +89,17 @@ func TestPublicationResumesInterruptedRegistries(t *testing.T) {
 	}
 }
 
-// TestPublicationWorkflowWiring proves tag pushes grant only reads to the reusable gate, rebuild and gate before publication, and pin privileged external actions through the maintained Actions workflow.
+// TestPublicationWorkflowWiring proves tag pushes confine writes to the publish job, grant only reads to the reusable gate, rebuild and gate before publication, and pin privileged external actions through the maintained Actions workflow.
 func TestPublicationWorkflowWiring(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repositoryRoot(t), ".github/workflows/release.yml"))
 	if err != nil {
 		t.Fatalf("tag publication workflow is unavailable: %v", err)
 	}
 	text := string(data)
+	rootPermissions := regexp.MustCompile(`(?m)^permissions:[^\n]*(?:\n(?:[ \t]+[^\n]*)?)*`).FindAllString(text, -1)
+	if len(rootPermissions) != 1 || strings.TrimRight(rootPermissions[0], "\n") != "permissions:\n  contents: read" {
+		t.Error("root workflow permissions must grant only contents read")
+	}
 	_, gateJob, found := strings.Cut(text, "\n  stable_gate:\n")
 	if !found {
 		t.Fatal("publication workflow omits the reusable stable gate caller")
@@ -108,7 +112,7 @@ func TestPublicationWorkflowWiring(t *testing.T) {
 		t.Error("stable_gate caller permissions must grant only contents, actions and attestations reads to the reusable gate")
 	}
 	for _, required := range []string{
-		"  push:\n    tags: ['v*']", "cancel-in-progress: false", "uses: ./.github/workflows/stable-release-gate.yml", "needs: stable_gate", "needs.stable_gate.result == 'success'", "runs-on: ubuntu-24.04", "ref: ${{ github.sha }}", "fetch-depth: 0", "persist-credentials: false", "go-version-file: go.mod", "node-version: '24'", "npm install --global npm@11.5.1", "bash scripts/setup-release-gh.sh", "id-token: write", "attestations: write", "push-to-registry: false", "create-storage-record: false", "user: ${{ vars.NUGET_USER }}", "NUGET_OIDC_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}",
+		"  push:\n    tags: ['v*']", "cancel-in-progress: false", "uses: ./.github/workflows/stable-release-gate.yml", "needs: stable_gate", "needs.stable_gate.result == 'success'", "runs-on: ubuntu-24.04", "ref: ${{ github.sha }}", "fetch-depth: 0", "persist-credentials: false", "go-version-file: go.mod", "node-version: '24'", "npm install --global npm@11.5.1", "bash scripts/setup-release-gh.sh", "push-to-registry: false", "create-storage-record: false", "user: ${{ vars.NUGET_USER }}", "NUGET_OIDC_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("publication workflow omits %q", required)
@@ -127,9 +131,13 @@ func TestPublicationWorkflowWiring(t *testing.T) {
 	if !found {
 		t.Fatal("workflow omits the privileged publication job")
 	}
-	// Limit the action policy to this job, stopping at any next job or root key.
+	// Limit the permission and action policies to this job, stopping at any next job or root key.
 	if end := regexp.MustCompile(`(?m)^(?:\S|  \S)`).FindStringIndex(publishJob); end != nil {
 		publishJob = publishJob[:end[0]]
+	}
+	publishPermissions := regexp.MustCompile(`(?m)^    permissions:[^\n]*(?:\n(?:      [^\n]*)?)*`).FindAllString(publishJob, -1)
+	if len(publishPermissions) != 1 || strings.TrimRight(publishPermissions[0], "\n") != "    permissions:\n      contents: write\n      actions: read\n      id-token: write\n      attestations: write" {
+		t.Error("publish job permissions must grant exactly contents write, actions read, id-token write and attestations write")
 	}
 	uses := regexp.MustCompile(`(?m)^[ \t]+(?:- )?uses:[ \t]+([^ \t\r\n#]+)(?:[ \t]+#[ \t]*([^\r\n]*))?[ \t]*$`).FindAllStringSubmatch(publishJob, -1)
 	wantActions := []struct{ repository, version string }{
