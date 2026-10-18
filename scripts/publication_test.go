@@ -100,7 +100,7 @@ func TestPublicationResumesInterruptedRegistries(t *testing.T) {
 	}
 }
 
-// TestPublicationWorkflowWiring proves root and gate permissions grant only reads, the publish job uses the release environment and exact required permissions, rebuilding and gating precede publication, and privileged external actions are pinned through the maintained Actions workflow.
+// TestPublicationWorkflowWiring proves root and gate permissions grant only reads, the publish job uses the release environment and exact required permissions with setup-go caching disabled, rebuilding and gating precede publication, and privileged external actions are pinned through the maintained Actions workflow.
 func TestPublicationWorkflowWiring(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repositoryRoot(t), ".github/workflows/release.yml"))
 	if err != nil {
@@ -155,6 +155,9 @@ func TestPublicationWorkflowWiring(t *testing.T) {
 	publishPermissions := regexp.MustCompile(`(?m)^    permissions:[^\n]*(?:\n(?:      [^\n]*)?)*`).FindAllString(publishJob, -1)
 	if len(publishPermissions) != 1 || strings.TrimRight(publishPermissions[0], "\n") != "    permissions:\n      contents: write\n      actions: read\n      id-token: write\n      attestations: write" {
 		t.Error("publish job permissions must grant exactly contents write, actions read, id-token write and attestations write")
+	}
+	if !regexp.MustCompile(`(?m)^      - uses: actions/setup-go@[^\n]+\n        with:\n          go-version-file: go.mod\n          cache: false\n`).MatchString(publishJob) {
+		t.Error("publish setup-go step must disable shared Go caching")
 	}
 	uses := regexp.MustCompile(`(?m)^[ \t]+(?:- )?uses:[ \t]+([^ \t\r\n#]+)(?:[ \t]+#[ \t]*([^\r\n]*))?[ \t]*$`).FindAllStringSubmatch(publishJob, -1)
 	wantActions := []struct{ repository, version string }{
