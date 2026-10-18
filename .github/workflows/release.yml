@@ -27,6 +27,7 @@ jobs:
     if: ${{ always() && !cancelled() && (needs.stable_gate.result == 'success' || (needs.stable_gate.result == 'skipped' && contains(github.ref_name, '-preview.'))) }}
     # npm trusted publishing supports GitHub-hosted runners, not Blacksmith.
     runs-on: ubuntu-24.04
+    environment: release
     permissions:
       contents: write
       actions: read
