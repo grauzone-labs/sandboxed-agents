@@ -60,7 +60,6 @@ func (p publication) releaseFilenames() []string {
 type publishedRelease struct {
 	ID      int64  `json:"id"`
 	Tag     string `json:"tag_name"`
-	Commit  string `json:"target_commitish"`
 	Body    string `json:"body"`
 	Draft   bool   `json:"draft"`
 	Preview bool   `json:"prerelease"`
@@ -224,13 +223,13 @@ func (p publication) existingRelease() (*publishedRelease, error) {
 	}
 }
 
-// compareAssets refuses foreign release metadata or different bytes and returns only the missing build outputs.
+// compareAssets refuses differing release notes, release kind or bytes and returns only the missing build outputs.
 func (p publication) compareAssets(state *publishedRelease) ([]string, error) {
 	filenames := p.releaseFilenames()
 	if state == nil {
 		return filenames, nil
 	}
-	if state.Commit != p.commit || state.Body != p.notes || state.Preview != p.preview {
+	if state.Body != p.notes || state.Preview != p.preview {
 		return nil, fmt.Errorf("existing release metadata differs from the validated tag, notes or release kind; recovery requires maintainer inspection")
 	}
 	found := map[string]bool{}

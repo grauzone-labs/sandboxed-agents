@@ -432,11 +432,14 @@ func TestPublicationRefusesUnauthenticatedPreview(t *testing.T) {
 	assertNoPublicationMutation(t, f.log(t))
 }
 
-// TestPublicationRecoversPartialGitHubState proves abandoned drafts, missing public assets and packages without a release resume without overwriting bytes through the actual publication command and fake services.
+// TestPublicationRecoversPartialGitHubState proves drafts and public releases with branch-valued target metadata and validated lightweight or annotated tags, and packages without a release, resume without overwriting bytes through the actual publication command and fake services.
 func TestPublicationRecoversPartialGitHubState(t *testing.T) {
 	for _, scenario := range []string{"abandoned draft", "public release missing file", "packages without release"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := publicationFixture(t, "1.0.0")
+			if scenario == "public release missing file" {
+				runGit(t, f.checkout, "tag", "--force", "--annotate", "--message", "Validated release tag", "v"+f.version, f.commit)
+			}
 			if scenario == "abandoned draft" {
 				ciWrite(t, f.services, "fail", "gh release upload")
 			}
@@ -451,9 +454,13 @@ func TestPublicationRecoversPartialGitHubState(t *testing.T) {
 			} else if err != nil {
 				t.Fatalf("first publication: %v %s", err, output)
 			}
-			if scenario == "public release missing file" {
+			if scenario != "packages without release" {
 				state := f.state(t)
-				state["assets"] = state["assets"].([]any)[:4]
+				state["target_commitish"] = "main"
+				if scenario == "public release missing file" {
+					state["target_commitish"] = "release/1.x"
+					state["assets"] = state["assets"].([]any)[:4]
+				}
 				data, err := json.Marshal(state)
 				if err != nil {
 					t.Fatal(err)
@@ -492,32 +499,40 @@ func TestPublicationRecoversPartialGitHubState(t *testing.T) {
 	}
 }
 
-// TestPublicationRefusesForeignReleaseState proves differing existing files or notes stop recovery before any writes through the real command and fake GitHub state.
+// TestPublicationRefusesForeignReleaseState proves missing or differing notes, release kind and asset bytes stop recovery with branch-valued target metadata before writes through the real command and fake GitHub state.
 func TestPublicationRefusesForeignReleaseState(t *testing.T) {
-	for _, scenario := range []string{"asset bytes", "release notes"} {
+	for _, scenario := range []string{"asset bytes", "release notes", "missing release notes", "release kind"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := publicationFixture(t, "1.0.0")
 			if output, err := f.run(t); err != nil {
 				t.Fatalf("initial publication: %v %s", err, output)
 			}
-			if scenario == "asset bytes" {
+			state := f.state(t)
+			state["target_commitish"] = "main"
+			reason := "existing release metadata differs"
+			switch scenario {
+			case "asset bytes":
 				ciWrite(t, f.services, "asset-100", "foreign bytes")
-			} else {
-				state := f.state(t)
+				reason = "differs from rebuilt bytes"
+			case "release notes":
 				state["body"] = "foreign notes"
-				data, err := json.Marshal(state)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(f.services, "release.json"), data, 0600); err != nil {
-					t.Fatal(err)
-				}
+			case "missing release notes":
+				state["body"] = ""
+			case "release kind":
+				state["prerelease"] = true
+			}
+			data, err := json.Marshal(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(f.services, "release.json"), data, 0600); err != nil {
+				t.Fatal(err)
 			}
 			if err := os.Remove(filepath.Join(f.services, "commands.jsonl")); err != nil {
 				t.Fatal(err)
 			}
-			if output, err := f.run(t); err == nil {
-				t.Fatalf("foreign state accepted: %s", output)
+			if output, err := f.run(t); err == nil || !strings.Contains(string(output), reason) {
+				t.Fatalf("foreign state: error=%v output=%s; want %s refusal", err, output, reason)
 			}
 			assertNoPublicationMutation(t, f.log(t))
 		})
@@ -551,7 +566,8 @@ func TestPublicationRequiresTaggedNotes(t *testing.T) {
 			case "different commit":
 				ciWrite(t, f.checkout, "new.txt", "new commit")
 				f.commit = ciCommit(t, f.checkout)
-				reason = "does not name the release commit"
+				ciWrite(t, f.services, "release.json", `{"tag_name":"v`+f.version+`","target_commitish":"`+f.commit+`","body":"Reviewed version notes\n","draft":true,"prerelease":true,"assets":[]}`)
+				reason = "refs/tags/v" + f.version + "^{commit} does not name the release commit"
 			case "absent notes":
 				runGit(t, f.checkout, "rm", "docs/release-notes/1.0.0.md")
 				f.commit = ciCommit(t, f.checkout)
