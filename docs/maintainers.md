@@ -300,7 +300,33 @@ gh api repos/grauzone-labs/sandboxed-agents/environments/release/deployment-bran
 
 The first call should show `protected_branches` false and `custom_branch_policies` true under `deployment_branch_policy`, a `protection_rules` list with only the `branch_policy` rule (no reviewer or wait-timer rule), and `can_admins_bypass` true; the second exactly one policy, `v*` of type `tag`. A readback proves only the configured policy, and it reports `can_admins_bypass` true: GitHub's default allows an administrator override that the environment API cannot switch off, so the environment is not unconditionally non-bypassable. Repository administrators can already change the settings and create tags. It does not prove that GitHub denies a run, and it does not prove that either registry accepts or rejects a token. The name of the environment alone, without the tag rule, is not enough.
 
-**Check before the registry entries are activated.** Prove the denial once with a real run, not with the readback: from a branch (and from a branch whose name starts with `v`), a run of a workflow with the file name `release.yml` whose job declares `environment: release` and contains no publication step, started in a way that does not push a `v*` tag. It must be refused at the environment and run none of its steps; a registry token must not be requested. This check has **not** happened. Record its result and the run URLs here when it has, and keep the registry entries unconfigured until then.
+**Check before the registry entries are activated.** Prove the denial once with real runs, not with the readback. The maintained `release.yml` runs only for pushed `v*` tags, so a branch push does not start it; the check therefore uses two temporary, unmerged branches that carry a replacement test workflow with the same file name. `workflow_dispatch` is not used, because it needs the workflow file on the default branch, and a tag is never pushed ([events that trigger workflows](https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows)).
+
+1. Create two temporary branches from the reviewed head: an ordinary one, `environment-denial-check`, and one whose name starts with `v`, `v-environment-denial-check`.
+2. On each branch, replace the whole content of `.github/workflows/release.yml` with the test workflow below, so that no publication job or step remains, and commit it. Do not edit the maintained file on any other branch.
+3. Push each branch. The push of a branch listed under `branches` starts the test workflow for it.
+
+```yaml
+name: Release environment denial check
+'on':
+  push:
+    branches: [environment-denial-check, v-environment-denial-check]
+permissions: {}
+jobs:
+  denied:
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions: {}
+    steps:
+      - name: Must never run
+        run: echo "the release environment admitted this branch"
+```
+
+The workflow has a GitHub-hosted runner, no token permissions (no `id-token`, no `contents`), no secrets, and no publication; its single step only prints a marker line and is expected **not** to run. The expected result on each branch is a run for that push that GitHub refuses at the environment, because the ref is not a `v*` tag, before any step runs; the marker step must not run, and no override or bypass is used. If no run appears for a branch, nothing was proven: fix the trigger and push again.
+
+Record the URL of both runs and, for each, that the environment refused the ref before any step started. If either run starts a step, the environment admitted a branch: the check has failed, the registry entries stay unconfigured, and the environment policy is corrected and checked again.
+
+Afterwards cancel any run that is still pending, record it, and delete both temporary branches from the remote and locally. Never open a pull request from them or merge them, and never change the maintained, tag-only `release.yml` for this check. This check has **not** been run. Record its result and the run URLs here when it has, and keep the registry entries unconfigured until then.
 
 ### One-time registry setup
 
