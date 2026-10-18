@@ -369,7 +369,7 @@ func (p publication) createAndPublish(state *publishedRelease, missing []string,
 		}
 		if !existing[p.nugetFilename()] {
 			if _, err := command("dotnet", "nuget", "push", filepath.Join(p.directory, p.nugetFilename()), "--api-key", os.Getenv("NUGET_OIDC_KEY"), "--source", "https://api.nuget.org/v3/index.json"); err != nil {
-				return fmt.Errorf("NuGet publication: %w", err)
+				return fmt.Errorf("NuGet publication: %w; a recently pushed version may still be validating and hidden from the flat-container feed; confirm the version on https://www.nuget.org/packages/SandboxedAgents/%s and wait before retrying", err, p.baseVersion)
 			}
 		}
 	}
