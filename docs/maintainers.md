@@ -155,7 +155,7 @@ This section records what the publication of a stable release relies on, what a 
 
 ### State on record
 
-Read on 2026-10-17. A row says "absent" when the thing does not exist yet, and "installed" only where it was read back from GitHub.
+Read on 2026-10-17, except a row that names a later date, which uses that date. A row says "absent" when the thing does not exist yet, and "installed" only where it was read back from GitHub.
 
 | Item | State | Evidence |
 |---|---|---|
@@ -281,7 +281,7 @@ GitHub's own "immutable releases" repository setting locks a published release's
 
 ### Environment `release`
 
-Both registry entries name the environment `release` in addition to the repository and the file name `release.yml`. A file name alone is weaker than the tag rules: another workflow run of the same file on a branch, or on a branch whose name starts with `v`, would otherwise carry the same repository and workflow claims. npm and NuGet both accept an optional environment in the policy ([npm](https://docs.npmjs.com/trusted-publishers/), [NuGet](https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing)), and GitHub can restrict an environment to named tags ([deployment branch and tag policies](https://docs.github.com/en/rest/deployments/branch-policies#create-a-deployment-branch-policy)). The `publish` job declares `environment: release` for preview and stable tags; the read-only `stable_gate` job declares none. Together with the tag rulesets, which let only the repository Admin role create `v*` tags and let nobody move or delete them, in normal operation only a published `v*` tag can deploy to the environment.
+Both registry entries name the environment `release` in addition to the repository and the file name `release.yml`. A file name alone is weaker than the tag rules: another workflow run of the same file on a branch, or on a branch whose name starts with `v`, would otherwise carry the same repository and workflow claims. npm and NuGet both accept an optional environment in the policy ([npm](https://docs.npmjs.com/trusted-publishers/), [NuGet](https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing)), and GitHub can restrict an environment to named tags ([deployment branch and tag policies](https://docs.github.com/en/rest/deployments/branch-policies#create-a-deployment-branch-policy)). The `publish` job declares `environment: release` for preview and stable tags; the read-only `stable_gate` job declares none. Together with the tag rulesets, which let only the repository Admin role create `v*` tags and let nobody move or delete them, in normal operation only a pushed `v*` tag can deploy to the environment.
 
 Settings of the environment, created by a repository administrator before the first `v*` tag is pushed:
 
@@ -294,11 +294,11 @@ Create it first, and do not let a workflow create it: GitHub creates an environm
 Read it back (administrator access):
 
 ```sh
-gh api repos/grauzone-labs/sandboxed-agents/environments/release --jq '{name, deployment_branch_policy, protection_rules}'
+gh api repos/grauzone-labs/sandboxed-agents/environments/release --jq '{name, can_admins_bypass, deployment_branch_policy, protection_rules}'
 gh api repos/grauzone-labs/sandboxed-agents/environments/release/deployment-branch-policies --jq '[.branch_policies[] | {name, type}]'
 ```
 
-The first call should show `custom_branch_policies` true and no reviewer or wait-timer rule; the second exactly one policy, `v*` of type `tag`. A readback proves only the configured policy, and it reports `can_admins_bypass` true: GitHub's default allows an administrator override that the environment API cannot switch off, so the environment is not unconditionally non-bypassable. Repository administrators can already change the settings and create tags. It does not prove that GitHub denies a run, and it does not prove that either registry accepts or rejects a token. The name of the environment alone, without the tag rule, is not enough.
+The first call should show `protected_branches` false and `custom_branch_policies` true under `deployment_branch_policy`, a `protection_rules` list with only the `branch_policy` rule (no reviewer or wait-timer rule), and `can_admins_bypass` true; the second exactly one policy, `v*` of type `tag`. A readback proves only the configured policy, and it reports `can_admins_bypass` true: GitHub's default allows an administrator override that the environment API cannot switch off, so the environment is not unconditionally non-bypassable. Repository administrators can already change the settings and create tags. It does not prove that GitHub denies a run, and it does not prove that either registry accepts or rejects a token. The name of the environment alone, without the tag rule, is not enough.
 
 **Check before the registry entries are activated.** Prove the denial once with a real run, not with the readback: from a branch (and from a branch whose name starts with `v`), a run of a workflow with the file name `release.yml` whose job declares `environment: release` and contains no publication step, started in a way that does not push a `v*` tag. It must be refused at the environment and run none of its steps; a registry token must not be requested. This check has **not** happened. Record its result and the run URLs here when it has, and keep the registry entries unconfigured until then.
 
