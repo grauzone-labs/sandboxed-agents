@@ -15,6 +15,9 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/release"
 )
 
+// previewVerifierVersion is the checksum-pinned CLI installed by both release workflows.
+const previewVerifierVersion = "2.102.0"
+
 // All GitHub operations in this adapter are reads. Publication is owned by the
 // workflow caller, which must depend on a successful gate.
 func collectEvidence(repository, tag, commit, hash string) (release.StableGateEvidence, error) {
@@ -81,7 +84,7 @@ func collectEvidence(repository, tag, commit, hash string) (release.StableGateEv
 			err = release.ValidateStableGatePrerequisites(evidence)
 		}
 		if err == nil {
-			candidate.AssetHash, err = collectPreviewHash(base, preview)
+			candidate.AssetHash, err = collectPreviewHash(repository, preview, candidate.Commit)
 		}
 		if err == nil {
 			err = release.ValidateStableAssetHash(evidence.AssetHash, candidate.AssetHash)
@@ -129,17 +132,17 @@ func collectPreviewRecords(base string, preview githubRelease, commit string) (*
 	return candidate, nil
 }
 
-// collectPreviewHash downloads the Linux preview executable and reads its reported asset hash.
-func collectPreviewHash(base string, preview githubRelease) (string, error) {
+// collectPreviewHash downloads and authenticates the candidate's Linux executable before reading its asset hash.
+func collectPreviewHash(repository string, preview githubRelease, commit string) (string, error) {
 	id := preview.assetID("sandboxed-agents-linux-amd64")
 	if id == 0 {
 		return "", fmt.Errorf("asset hash: Linux preview binary missing")
 	}
-	data, err := githubAsset(base, id)
+	data, err := githubAsset("repos/"+repository, id)
 	if err != nil {
 		return "", fmt.Errorf("asset hash: %w", err)
 	}
-	return previewAssetHash(data)
+	return previewAssetHash(data, repository, preview.TagName, commit)
 }
 
 // collectCI records whether the latest push workflow for the release commit passed both platform jobs.
@@ -265,18 +268,36 @@ func github(endpoint string, args ...string) ([]byte, error) {
 	return data, nil
 }
 
-// previewAssetHash runs the supplied preview executable and extracts the asset hash from its version output.
-func previewAssetHash(data []byte) (string, error) {
+// previewAssetHash verifies exact preview bytes before making them executable, then reads their hash with no inherited environment or publication credentials.
+func previewAssetHash(data []byte, repository, tag, commit string) (string, error) {
 	directory, err := os.MkdirTemp("", "stable-gate-preview-")
 	if err != nil {
 		return "", fmt.Errorf("asset hash: cannot create preview directory")
 	}
 	defer os.RemoveAll(directory)
-	binary := filepath.Join(directory, "sandboxed-agents")
-	if err := os.WriteFile(binary, data, 0700); err != nil {
+	binary := filepath.Join(directory, "sandboxed-agents-linux-amd64")
+	if err := os.WriteFile(binary, data, 0600); err != nil {
 		return "", fmt.Errorf("asset hash: cannot save preview binary")
 	}
-	output, err := exec.Command(binary, "version").Output()
+	version, err := exec.Command("gh", "--version").Output()
+	fields := strings.Fields(string(version))
+	if err != nil || len(fields) < 3 || fields[0] != "gh" || fields[1] != "version" || fields[2] != previewVerifierVersion {
+		return "", fmt.Errorf("asset hash: preview provenance requires gh %s", previewVerifierVersion)
+	}
+	verify := exec.Command("gh", "attestation", "verify", binary, "--repo", repository,
+		"--signer-workflow", repository+"/.github/workflows/release.yml", "--source-digest", commit,
+		"--source-ref", "refs/tags/"+tag, "--deny-self-hosted-runners")
+	if err := verify.Run(); err != nil {
+		return "", fmt.Errorf("asset hash: preview provenance verification failed for %s", tag)
+	}
+	if err := os.Chmod(binary, 0700); err != nil {
+		return "", fmt.Errorf("asset hash: cannot make verified preview executable")
+	}
+	command := exec.Command(binary, "version")
+	// Prepared release binaries are static; version needs no host or workflow environment.
+	command.Env = []string{}
+	command.Dir = directory
+	output, err := command.Output()
 	if err != nil {
 		return "", fmt.Errorf("asset hash: preview version command failed")
 	}

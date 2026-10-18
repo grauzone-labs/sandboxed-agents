@@ -39,6 +39,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Install the verified preview provenance verifier
+        if: steps.tag.outputs.preview != 'true'
+        shell: bash
+        run: bash scripts/setup-release-gh.sh
       - name: Build stable binaries
         if: steps.tag.outputs.preview != 'true'
         shell: bash
