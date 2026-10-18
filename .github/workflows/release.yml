@@ -35,20 +35,20 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '24'
           package-manager-cache: false
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         if: ${{ !contains(github.ref_name, '-preview.') }}
         with:
           dotnet-version: '8.0.x'
@@ -87,7 +87,7 @@ jobs:
           go run ./internal/release/cmd/stable-gate \
             --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --asset-hash "$asset_hash"
       - name: Attest all five rebuilt release files
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           # These are release files. OCI storage records need an additional
           # artifact-metadata permission and are not part of this publication.
@@ -102,7 +102,7 @@ jobs:
       - name: Request a short-lived NuGet publishing key
         if: ${{ !contains(github.ref_name, '-preview.') }}
         id: nuget
-        uses: NuGet/login@v1
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1
         with:
           user: ${{ vars.NUGET_USER }}
       - name: Verify provenance and publish or resume the release
