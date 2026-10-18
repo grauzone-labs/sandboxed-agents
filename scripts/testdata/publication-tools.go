@@ -2,7 +2,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -65,10 +67,11 @@ func main() {
 // github implements releases and attestation reads and writes using fixture files.
 func github(args []string) {
 	if args[0] == "--version" {
-		fmt.Println("gh version 2.83.2")
+		fmt.Println("gh version 2.102.0")
 		return
 	}
 	if args[0] == "attestation" && args[1] == "verify" {
+		verifyArtifact(args[2:])
 		return
 	}
 	if args[0] == "api" {
@@ -175,6 +178,49 @@ func github(args []string) {
 		writeState(state)
 	default:
 		panic("unexpected gh release operation")
+	}
+}
+
+// verifyArtifact requires expected source bindings and exact fixture bytes for every attestation, and nonexecutable bytes for the preview downloaded by the gate.
+func verifyArtifact(args []string) {
+	if len(args) == 0 {
+		panic("missing attestation subject")
+	}
+	flags := flag.NewFlagSet("verify", flag.ExitOnError)
+	repo := flags.String("repo", "", "")
+	workflow := flags.String("signer-workflow", "", "")
+	commit := flags.String("source-digest", "", "")
+	ref := flags.String("source-ref", "", "")
+	deny := flags.Bool("deny-self-hosted-runners", false, "")
+	check(flags.Parse(args[1:]))
+	if flags.NArg() != 0 || *repo != "grauzone-labs/sandboxed-agents" || *workflow != "grauzone-labs/sandboxed-agents/.github/workflows/release.yml" || *commit != os.Getenv("FIXTURE_COMMIT") || !*deny {
+		panic("incorrect attestation policy")
+	}
+	var expected []byte
+	var err error
+	if *ref == "refs/tags/v"+os.Getenv("FIXTURE_VERSION") {
+		expected, err = os.ReadFile(filepath.Join(os.Getenv("FIXTURE_OUTPUT"), filepath.Base(args[0])))
+	} else if *ref == "refs/tags/v1.0.0-preview.20261017.1" {
+		if _, err := os.Stat(path("preview-provenance-fail")); err == nil {
+			panic("unverified preview")
+		}
+		info, err := os.Stat(args[0])
+		check(err)
+		if info.Mode().Perm()&0111 != 0 {
+			panic("preview executable before verification")
+		}
+		expected, err = os.ReadFile(path("preview"))
+		if os.IsNotExist(err) {
+			expected, err = os.ReadFile(filepath.Join(os.Getenv("FIXTURE_OUTPUT"), "sandboxed-agents-linux-amd64"))
+		}
+	} else {
+		panic("incorrect attestation source ref")
+	}
+	check(err)
+	actual, err := os.ReadFile(args[0])
+	check(err)
+	if !bytes.Equal(actual, expected) {
+		panic("attestation subject differs from exact downloaded bytes")
 	}
 }
 

@@ -54,15 +54,7 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Install the verified publication tools
         shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/release-tools"
-          curl --fail --silent --show-error --location \
-            https://github.com/cli/cli/releases/download/v2.83.2/gh_2.83.2_linux_amd64.tar.gz \
-            --output "$RUNNER_TEMP/release-tools/gh_2.83.2_linux_amd64.tar.gz"
-          cd "$RUNNER_TEMP/release-tools"
-          printf '%s\n' 'ca6e7641214fbd0e21429cec4b64a7ba626fd946d8f9d6d191467545b092015e  gh_2.83.2_linux_amd64.tar.gz' | sha256sum --check --strict
-          tar -xzf gh_2.83.2_linux_amd64.tar.gz
-          echo "$RUNNER_TEMP/release-tools/gh_2.83.2_linux_amd64/bin" >> "$GITHUB_PATH"
+        run: bash scripts/setup-release-gh.sh
       - name: Install npm with trusted publishing support
         if: ${{ !contains(github.ref_name, '-preview.') }}
         run: npm install --global npm@11.5.1

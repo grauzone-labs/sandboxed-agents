@@ -1,11 +1,14 @@
 package main_test
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -28,6 +31,11 @@ func githubFixture(t *testing.T) string {
 	directory := t.TempDir()
 	buildFixture(t, filepath.Join(directory, "gh"), "testdata/gh.go")
 	buildFixture(t, filepath.Join(directory, "preview"), "testdata/preview.go")
+	preview, err := os.ReadFile(filepath.Join(directory, "preview"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeJSON(t, directory, "attestations.json", map[string]map[string]string{"refs/tags/v1.0.0-preview.20261012.1": {"repository": "owner/repo", "workflow": "owner/repo/.github/workflows/release.yml", "commit": "0123456789abcdef0123456789abcdef01234567", "hosted": "true", "sha256": fmt.Sprintf("%x", sha256.Sum256(preview))}})
 	commit := "0123456789abcdef0123456789abcdef01234567"
 	responses := map[string]string{
 		"repos/owner/repo/releases?per_page=100":             "releases.json",
@@ -56,12 +64,136 @@ func githubFixture(t *testing.T) string {
 }
 
 // buildFixture compiles a test executable without network dependency resolution.
-func buildFixture(t *testing.T, path, source string) {
+func buildFixture(t *testing.T, path, source string, flags ...string) {
 	t.Helper()
-	command := exec.Command("go", "build", "-o", path, source)
+	args := append([]string{"build", "-o", path}, flags...)
+	command := exec.Command("go", append(args, source)...)
 	command.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("fixture build: %v\n%s", err, output)
+	}
+}
+
+// TestStableGateCommandAuthenticatesPreviewBeforeExecution proves missing or mismatched provenance never executes downloaded bytes through the real gate CLI and fake GitHub verifier.
+func TestStableGateCommandAuthenticatesPreviewBeforeExecution(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("preview execution requires the Linux release runner")
+	}
+	for _, field := range []string{"missing", "repository", "workflow", "workflow-prefix", "workflow-metachar", "commit", "ref", "ref-case", "sha256", "hosted", "verifier"} {
+		t.Run(field, func(t *testing.T) {
+			directory := githubFixture(t)
+			marker := filepath.Join(directory, "executed-preview.json")
+			buildFixture(t, filepath.Join(directory, "preview"), "testdata/preview.go", "-ldflags", "-X "+strconv.Quote("main.markerPath="+marker))
+			binary, err := os.ReadFile(filepath.Join(directory, "preview"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var proofs map[string]map[string]string
+			readJSON(t, directory, "attestations.json", &proofs)
+			ref := "refs/tags/v1.0.0-preview.20261012.1"
+			proofs[ref]["sha256"] = fmt.Sprintf("%x", sha256.Sum256(binary))
+			if field == "verifier" {
+				if err := os.WriteFile(filepath.Join(directory, "gh-version"), []byte("2.83.2"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else if field == "missing" {
+				delete(proofs, ref)
+			} else if field == "ref" {
+				proofs[ref+"-wrong"] = proofs[ref]
+				delete(proofs, ref)
+			} else if field == "ref-case" {
+				proofs[ref]["ref"] = strings.Replace(ref, "-preview.", "-PREVIEW.", 1)
+			} else if field == "workflow-prefix" {
+				proofs[ref]["workflow"] += ".untrusted.yml"
+			} else if field == "workflow-metachar" {
+				proofs[ref]["workflow"] = strings.Replace(proofs[ref]["workflow"], "release.yml", "releaseXyml.yml", 1)
+			} else {
+				proofs[ref][field] = "wrong"
+			}
+			writeJSON(t, directory, "attestations.json", proofs)
+			output, err := runGitHubGate(t, directory)
+			if _, markerErr := os.Stat(marker); !os.IsNotExist(markerErr) {
+				t.Errorf("unauthenticated preview executed: %v", markerErr)
+			}
+			if err == nil || !strings.Contains(string(output), "preview provenance") {
+				t.Fatalf("error=%v output=%s; want named provenance refusal", err, output)
+			}
+		})
+	}
+}
+
+// TestStableGateCommandRunsVerifiedPreviewWithoutCredentials proves authenticated bytes execute only after verification with no inherited credentials through the real CLI and marker preview process.
+func TestStableGateCommandRunsVerifiedPreviewWithoutCredentials(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("preview execution requires the Linux release runner")
+	}
+	directory := githubFixture(t)
+	marker := filepath.Join(directory, "executed-preview.json")
+	buildFixture(t, filepath.Join(directory, "preview"), "testdata/preview.go", "-ldflags", "-X "+strconv.Quote("main.markerPath="+marker))
+	binary, err := os.ReadFile(filepath.Join(directory, "preview"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var proofs map[string]map[string]string
+	readJSON(t, directory, "attestations.json", &proofs)
+	proofs["refs/tags/v1.0.0-preview.20261012.1"]["sha256"] = fmt.Sprintf("%x", sha256.Sum256(binary))
+	writeJSON(t, directory, "attestations.json", proofs)
+	command := exec.Command("go", "run", ".", "--tag", "v1.0.0", "--repository", "owner/repo", "--commit", "0123456789abcdef0123456789abcdef01234567", "--asset-hash", strings.Repeat("a", 64))
+	command.Env = append(os.Environ(), "PATH="+directory+string(os.PathListSeparator)+os.Getenv("PATH"), "GATE_FIXTURE="+directory, "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local", "GH_TOKEN=sentinel", "GITHUB_TOKEN=sentinel", "ACTIONS_ID_TOKEN_REQUEST_TOKEN=sentinel", "ACTIONS_ID_TOKEN_REQUEST_URL=https://example.invalid/oidc", "NUGET_OIDC_KEY=sentinel", "NUGET_API_KEY=sentinel", "NPM_TOKEN=sentinel", "NODE_AUTH_TOKEN=sentinel")
+	output, err := command.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "gates passed") {
+		t.Fatalf("verified preview: %v %s", err, output)
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var environment []string
+	if err := json.Unmarshal(data, &environment); err != nil {
+		t.Fatal(err)
+	}
+	if len(environment) != 0 {
+		t.Fatalf("preview inherited %d environment variables", len(environment))
+	}
+	verified, err := os.ReadFile(filepath.Join(directory, "verified-preview"))
+	if err != nil || string(verified) != "refs/tags/v1.0.0-preview.20261012.1" {
+		t.Fatalf("wrong verified source: %q %v", verified, err)
+	}
+	requests, err := os.ReadFile(filepath.Join(directory, "requests.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetch, verify := strings.Index(string(requests), "repos/owner/repo/releases/assets/4"), strings.Index(string(requests), "verify refs/tags/v1.0.0-preview.20261012.1")
+	if fetch < 0 || verify <= fetch {
+		t.Fatalf("preview verification did not follow exact-byte download: %s", requests)
+	}
+}
+
+// TestStableGateCommandFallsBackAfterUnverifiedPreview proves a candidate's provenance refusal does not hide a later verified preview through the real gate command and fake verifier.
+func TestStableGateCommandFallsBackAfterUnverifiedPreview(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("preview execution requires the Linux release runner")
+	}
+	directory := githubFixture(t)
+	var previews []map[string]any
+	readJSON(t, directory, "releases.json", &previews)
+	first := map[string]any{"tag_name": "v1.0.0-preview.20261012.2", "prerelease": true, "assets": previews[0]["assets"]}
+	writeJSON(t, directory, "releases.json", append([]map[string]any{first}, previews...))
+	var responses map[string]string
+	readJSON(t, directory, "responses.json", &responses)
+	responses["repos/owner/repo/commits/v1.0.0-preview.20261012.2"] = "commit.json"
+	writeJSON(t, directory, "responses.json", responses)
+	output, err := runGitHubGate(t, directory)
+	if err != nil || !strings.Contains(string(output), "gates passed") {
+		t.Fatalf("verified fallback: %v %s", err, output)
+	}
+	requests, err := os.ReadFile(filepath.Join(directory, "requests.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstTry, secondTry := strings.Index(string(requests), "verify refs/tags/v1.0.0-preview.20261012.2"), strings.Index(string(requests), "verify refs/tags/v1.0.0-preview.20261012.1")
+	if firstTry < 0 || secondTry <= firstTry {
+		t.Fatalf("candidate provenance ordering lost: %s", requests)
 	}
 }
 
@@ -157,6 +289,15 @@ func TestStableTagWorkflowRunsGate(t *testing.T) {
 		if strings.Contains(text, publish) {
 			t.Fatalf("gate workflow exposes publication %q", publish)
 		}
+	}
+}
+
+// TestStableGateWorkflowInstallsVerifiedGitHubCLI proves the read-only gate installs the pinned verifier before fetching preview provenance through its maintained workflow boundary.
+func TestStableGateWorkflowInstallsVerifiedGitHubCLI(t *testing.T) {
+	text := stableGateWorkflow(t)
+	setup, gate := strings.Index(text, "bash scripts/setup-release-gh.sh"), strings.Index(text, "go run ./internal/release/cmd/stable-gate")
+	if setup < 0 || gate <= setup {
+		t.Fatal("read-only gate must install verified gh before preview provenance verification")
 	}
 }
 
@@ -394,8 +535,8 @@ func TestStableTagWorkflowValidatesCalls(t *testing.T) {
 			t.Fatalf("reusable invocation policy lacks %q", required)
 		}
 	}
-	if strings.Count(text, "if: steps.tag.outputs.preview != 'true'") != 3 {
-		t.Fatal("setup, build and gate steps must only skip classified direct previews")
+	if strings.Count(text, "if: steps.tag.outputs.preview != 'true'") != 4 {
+		t.Fatal("Go setup, verifier setup, build and gate steps must only skip classified direct previews")
 	}
 	if runtime.GOOS != "linux" {
 		t.Skip("verification script runs on the Linux release runner")

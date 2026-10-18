@@ -97,10 +97,19 @@ func TestPublicationWorkflowWiring(t *testing.T) {
 	}
 	text := string(data)
 	for _, required := range []string{
-		"  push:\n    tags: ['v*']", "cancel-in-progress: false", "uses: ./.github/workflows/stable-release-gate.yml", "needs: stable_gate", "needs.stable_gate.result == 'success'", "runs-on: ubuntu-24.04", "ref: ${{ github.sha }}", "fetch-depth: 0", "persist-credentials: false", "go-version-file: go.mod", "node-version: '24'", "npm install --global npm@11.5.1", "gh_2.83.2_linux_amd64.tar.gz", "ca6e7641214fbd0e21429cec4b64a7ba626fd946d8f9d6d191467545b092015e", "id-token: write", "attestations: write", "push-to-registry: false", "create-storage-record: false", "user: ${{ vars.NUGET_USER }}", "NUGET_OIDC_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}",
+		"  push:\n    tags: ['v*']", "cancel-in-progress: false", "uses: ./.github/workflows/stable-release-gate.yml", "needs: stable_gate", "needs.stable_gate.result == 'success'", "runs-on: ubuntu-24.04", "ref: ${{ github.sha }}", "fetch-depth: 0", "persist-credentials: false", "go-version-file: go.mod", "node-version: '24'", "npm install --global npm@11.5.1", "bash scripts/setup-release-gh.sh", "id-token: write", "attestations: write", "push-to-registry: false", "create-storage-record: false", "user: ${{ vars.NUGET_USER }}", "NUGET_OIDC_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("publication workflow omits %q", required)
+		}
+	}
+	installer, err := os.ReadFile(filepath.Join(repositoryRoot(t), "scripts/setup-release-gh.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"v2.102.0/gh_2.102.0_linux_amd64.tar.gz", "bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386", "sha256sum --check --strict", `"$directory/gh_2.102.0_linux_amd64/bin/gh" --version`, `>> "$GITHUB_PATH"`} {
+		if !strings.Contains(string(installer), required) {
+			t.Errorf("shared verified gh setup omits %q", required)
 		}
 	}
 	_, publishJob, found := strings.Cut(text, "\n  publish:\n")
@@ -137,7 +146,7 @@ func TestPublicationWorkflowWiring(t *testing.T) {
 		}
 	}
 	last := -1
-	for _, step := range []string{"bash scripts/release.sh", "go run ./internal/release/cmd/stable-gate", "uses: actions/attest@", "uses: NuGet/login@", "go run ./internal/release/cmd/publish-release"} {
+	for _, step := range []string{"bash scripts/setup-release-gh.sh", "bash scripts/release.sh", "go run ./internal/release/cmd/stable-gate", "uses: actions/attest@", "uses: NuGet/login@", "go run ./internal/release/cmd/publish-release"} {
 		next := strings.Index(publishJob, step)
 		if next < last || next < 0 {
 			t.Errorf("workflow order omits or misorders %q", step)
@@ -152,6 +161,32 @@ func TestPublicationWorkflowWiring(t *testing.T) {
 	for _, forbidden := range []string{"secrets.NPM_TOKEN", "secrets.NUGET_API_KEY", "--skip-duplicate", "--clobber", "continue-on-error:"} {
 		if strings.Contains(text, forbidden) {
 			t.Errorf("workflow permits unsafe publication: %s", forbidden)
+		}
+	}
+}
+
+// TestReleaseGitHubCLISetupRejectsUnverifiedArchive proves the actual shared installer rejects untrusted download bytes before extraction or PATH installation through fake curl and tar boundaries.
+func TestReleaseGitHubCLISetupRejectsUnverifiedArchive(t *testing.T) {
+	root := releaseRepositoryOrSkip(t)
+	directory := t.TempDir()
+	for name, body := range map[string]string{
+		"curl": "#!/usr/bin/env bash\nwhile (($#)); do\n  if [[ $1 == --output ]]; then printf 'untrusted archive' > \"$2\"; exit 0; fi\n  shift\ndone\nexit 1\n",
+		"tar":  "#!/bin/sh\nprintf invoked > \"$GH_SETUP_TAR_MARKER\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte(body), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	marker, outputPath := filepath.Join(directory, "tar-called"), filepath.Join(directory, "github-path")
+	command := exec.Command("bash", filepath.Join(root, "scripts/setup-release-gh.sh"))
+	command.Env = append(os.Environ(), "PATH="+directory+string(os.PathListSeparator)+os.Getenv("PATH"), "RUNNER_TEMP="+t.TempDir(), "GITHUB_PATH="+outputPath, "GH_SETUP_TAR_MARKER="+marker)
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "FAILED") {
+		t.Fatalf("untrusted CLI archive accepted: %v %s", err, output)
+	}
+	for _, name := range []string{marker, outputPath} {
+		if _, err := os.Stat(name); !os.IsNotExist(err) {
+			t.Fatalf("unverified CLI archive reached extraction or PATH installation: %s %v", name, err)
 		}
 	}
 }
@@ -267,6 +302,22 @@ func TestPublicationFailsClosed(t *testing.T) {
 			assertNoPublicationMutation(t, f.log(t))
 		})
 	}
+}
+
+// TestPublicationRefusesUnauthenticatedPreview proves a preview with no provenance cannot execute its marker or change release or registry state through the real publication and gate commands with fake services.
+func TestPublicationRefusesUnauthenticatedPreview(t *testing.T) {
+	f := publicationFixture(t, "1.0.0")
+	marker := filepath.Join(f.services, "unauthenticated-preview-executed")
+	ciWrite(t, f.services, "preview", "#!/bin/sh\nprintf executed > '"+strings.ReplaceAll(marker, "'", "'\\''")+"'\nprintf 'asset-sha256 "+strings.Repeat("a", 64)+"\\n'\n")
+	ciWrite(t, f.services, "preview-provenance-fail", "yes")
+	output, err := f.run(t)
+	if err == nil || !strings.Contains(string(output), "preview provenance") {
+		t.Fatalf("error=%v output=%s; want named preview provenance refusal", err, output)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("unauthenticated preview executed: %v", err)
+	}
+	assertNoPublicationMutation(t, f.log(t))
 }
 
 // TestPublicationRecoversPartialGitHubState proves abandoned drafts, missing public assets and packages without a release resume without overwriting bytes through the actual publication command and fake services.
