@@ -289,7 +289,9 @@ func TestPublicationFailsClosed(t *testing.T) {
 		{"different asset hash", "asset hash", func(t *testing.T, f publicationTestFixture) {
 			ciWrite(t, f.services, "preview", "#!/bin/sh\nprintf 'asset-sha256 "+strings.Repeat("f", 64)+"\\n'\n")
 		}},
-		{"missing attestation", "provenance", func(t *testing.T, f publicationTestFixture) { ciWrite(t, f.services, "fail", "gh attestation verify") }},
+		{"missing attestation", "sandboxed-agents-linux-amd64 provenance", func(t *testing.T, f publicationTestFixture) {
+			ciWrite(t, f.services, "fail", "--source-ref refs/tags/v1.0.0 --deny-self-hosted-runners")
+		}},
 		{"registry outage", "HTTP 503", func(t *testing.T, f publicationTestFixture) { ciWrite(t, f.services, "http-status", "503") }},
 		{"registry transport failure", "registry lookup", func(t *testing.T, f publicationTestFixture) { ciWrite(t, f.services, "fail", "curl --silent") }},
 		{"different npm bytes", "differs from rebuilt bytes", func(t *testing.T, f publicationTestFixture) { ciWrite(t, f.services, "npm.tgz", "foreign version") }},
