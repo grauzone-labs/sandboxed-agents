@@ -13,6 +13,7 @@ name: Stable release gate
 permissions:
   contents: read
   actions: read
+  attestations: read
 
 jobs:
   gate:

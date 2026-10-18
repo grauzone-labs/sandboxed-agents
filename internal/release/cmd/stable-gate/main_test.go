@@ -256,6 +256,9 @@ func TestStableGateCommandRefusesGitHubEvidenceFailures(t *testing.T) {
 // TestStableTagWorkflowRunsGate proves workflow calls and v* tag pushes run only the read-only gate through .github/workflows/stable-release-gate.yml's trigger and job mappings.
 func TestStableTagWorkflowRunsGate(t *testing.T) {
 	text := stableGateWorkflow(t)
+	if !strings.Contains(text, "\npermissions:\n  contents: read\n  actions: read\n  attestations: read\n\njobs:\n") {
+		t.Error("gate workflow root permissions must grant only contents, actions and attestations reads")
+	}
 	// Inspect only the root event mapping: an unrelated workflow_call string
 	// in a comment or job must not make the reusable-workflow check pass.
 	_, afterOn, found := strings.Cut(text, "'on':\n")
@@ -285,7 +288,7 @@ func TestStableTagWorkflowRunsGate(t *testing.T) {
 			t.Fatalf("stable workflow lacks %q", required)
 		}
 	}
-	for _, publish := range []string{"contents: write", "packages: write", "id-token: write", "gh release create", "npm publish", "nuget push"} {
+	for _, publish := range []string{"contents: write", "packages: write", "attestations: write", "id-token: write", "gh release create", "npm publish", "nuget push"} {
 		if strings.Contains(text, publish) {
 			t.Fatalf("gate workflow exposes publication %q", publish)
 		}

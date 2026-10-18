@@ -10,7 +10,8 @@ import (
 	"path/filepath"
 )
 
-// main logs a GitHub API request and serves its configured fixture response without network access.
+// main simulates CLI version reporting and preview attestation policy, and logs
+// API requests while serving configured responses without network access.
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
 		version, err := os.ReadFile(filepath.Join(os.Getenv("GATE_FIXTURE"), "gh-version"))
