@@ -223,7 +223,7 @@ The attestation authenticates where the file came from and which commit built it
 A preview's attestation exists only after a real preview run, so no preview attestation has been verified by the gate yet; the first real verification is observed with the first real preview and recorded as such. The offline tests of the gate use fakes and are not that evidence.
 #### Release notes
 
-Release notes live in `docs/release-notes/X.Y.Z.md`, one file per version, committed before the preview tag so that they belong to the validated commit. A preview `vX.Y.Z-preview.YYYYMMDD.N` uses the notes of its base version `X.Y.Z`. The publication fails before it builds anything when the file is missing or empty at the tagged commit. The workflow publishes the file as the release text; for a stable release it appends, for each gate, the commit it passed on. The notes of 1.0.0 are [`docs/release-notes/1.0.0.md`](release-notes/1.0.0.md); they claim no gate result.
+Release notes live in `docs/release-notes/X.Y.Z.md`, one file per version, committed before the preview tag so that they belong to the validated commit. A preview `vX.Y.Z-preview.YYYYMMDD.N` uses the notes of its base version `X.Y.Z`. The publication job fails before it builds its release artifacts when the file is missing or empty at the tagged commit. The workflow publishes the file as the release text; for a stable release it appends, for each gate, the commit it passed on. The notes of 1.0.0 are [`docs/release-notes/1.0.0.md`](release-notes/1.0.0.md); they claim no gate result.
 
 Nothing may be committed between the validated preview and the stable tag, so a correction to the notes after the preview means a new preview and new validation.
 
