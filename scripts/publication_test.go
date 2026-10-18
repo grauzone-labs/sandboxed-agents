@@ -95,7 +95,7 @@ func TestPublicationResumesInterruptedRegistries(t *testing.T) {
 	}
 }
 
-// TestPublicationWorkflowWiring proves root and gate permissions grant only reads, publish permissions grant the exact required scopes, rebuilding and gating precede publication, and privileged external actions are pinned through the maintained Actions workflow.
+// TestPublicationWorkflowWiring proves root and gate permissions grant only reads, the publish job uses the release environment and exact required permissions, rebuilding and gating precede publication, and privileged external actions are pinned through the maintained Actions workflow.
 func TestPublicationWorkflowWiring(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repositoryRoot(t), ".github/workflows/release.yml"))
 	if err != nil {
@@ -139,9 +139,13 @@ func TestPublicationWorkflowWiring(t *testing.T) {
 	if !found {
 		t.Fatal("workflow omits the privileged publication job")
 	}
-	// Limit the permission and action policies to this job, stopping at any next job or root key.
+	// Limit the environment, permission and action policies to this job, stopping at any next job or root key.
 	if end := regexp.MustCompile(`(?m)^(?:\S|  \S)`).FindStringIndex(publishJob); end != nil {
 		publishJob = publishJob[:end[0]]
+	}
+	publishEnvironments := regexp.MustCompile(`(?m)^    environment:[^\n]*$`).FindAllString(publishJob, -1)
+	if len(publishEnvironments) != 1 || publishEnvironments[0] != "    environment: release" {
+		t.Error("publish job must use the static release environment")
 	}
 	publishPermissions := regexp.MustCompile(`(?m)^    permissions:[^\n]*(?:\n(?:      [^\n]*)?)*`).FindAllString(publishJob, -1)
 	if len(publishPermissions) != 1 || strings.TrimRight(publishPermissions[0], "\n") != "    permissions:\n      contents: write\n      actions: read\n      id-token: write\n      attestations: write" {
