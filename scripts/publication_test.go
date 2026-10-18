@@ -89,14 +89,16 @@ func TestPublicationResumesInterruptedRegistries(t *testing.T) {
 	}
 }
 
-// TestPublicationWorkflowWiring proves tag pushes confine writes to the publish job, grant only reads to the reusable gate, rebuild and gate before publication, and pin privileged external actions through the maintained Actions workflow.
+// TestPublicationWorkflowWiring proves root and gate permissions grant only reads, publish permissions grant the exact required scopes, rebuilding and gating precede publication, and privileged external actions are pinned through the maintained Actions workflow.
 func TestPublicationWorkflowWiring(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repositoryRoot(t), ".github/workflows/release.yml"))
 	if err != nil {
 		t.Fatalf("tag publication workflow is unavailable: %v", err)
 	}
 	text := string(data)
-	rootPermissions := regexp.MustCompile(`(?m)^permissions:[^\n]*(?:\n(?:[ \t]+[^\n]*)?)*`).FindAllString(text, -1)
+	// Whole-line YAML comments do not end permission mappings; retain inline action versions.
+	permissionText := regexp.MustCompile(`(?m)^[ \t]*#[^\n]*(?:\n|$)`).ReplaceAllString(text, "")
+	rootPermissions := regexp.MustCompile(`(?m)^permissions:[^\n]*(?:\n(?:[ \t]+[^\n]*)?)*`).FindAllString(permissionText, -1)
 	if len(rootPermissions) != 1 || strings.TrimRight(rootPermissions[0], "\n") != "permissions:\n  contents: read" {
 		t.Error("root workflow permissions must grant only contents read")
 	}
@@ -127,7 +129,7 @@ func TestPublicationWorkflowWiring(t *testing.T) {
 			t.Errorf("shared verified gh setup omits %q", required)
 		}
 	}
-	_, publishJob, found := strings.Cut(text, "\n  publish:\n")
+	_, publishJob, found := strings.Cut(permissionText, "\n  publish:\n")
 	if !found {
 		t.Fatal("workflow omits the privileged publication job")
 	}
