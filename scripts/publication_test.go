@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -87,7 +89,7 @@ func TestPublicationResumesInterruptedRegistries(t *testing.T) {
 	}
 }
 
-// TestPublicationWorkflowWiring proves tag pushes rebuild the exact commit and gate before attestation and OIDC publication through the maintained Actions workflow.
+// TestPublicationWorkflowWiring proves tag pushes rebuild and gate before publication and privileged external actions use immutable commits through the maintained Actions workflow.
 func TestPublicationWorkflowWiring(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repositoryRoot(t), ".github/workflows/release.yml"))
 	if err != nil {
@@ -95,15 +97,48 @@ func TestPublicationWorkflowWiring(t *testing.T) {
 	}
 	text := string(data)
 	for _, required := range []string{
-		"  push:\n    tags: ['v*']", "cancel-in-progress: false", "uses: ./.github/workflows/stable-release-gate.yml", "needs: stable_gate", "needs.stable_gate.result == 'success'", "runs-on: ubuntu-24.04", "ref: ${{ github.sha }}", "fetch-depth: 0", "persist-credentials: false", "go-version-file: go.mod", "node-version: '24'", "npm install --global npm@11.5.1", "gh_2.83.2_linux_amd64.tar.gz", "ca6e7641214fbd0e21429cec4b64a7ba626fd946d8f9d6d191467545b092015e", "id-token: write", "attestations: write", "uses: actions/attest@v4", "push-to-registry: false", "create-storage-record: false", "uses: NuGet/login@v1", "user: ${{ vars.NUGET_USER }}", "NUGET_OIDC_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}",
+		"  push:\n    tags: ['v*']", "cancel-in-progress: false", "uses: ./.github/workflows/stable-release-gate.yml", "needs: stable_gate", "needs.stable_gate.result == 'success'", "runs-on: ubuntu-24.04", "ref: ${{ github.sha }}", "fetch-depth: 0", "persist-credentials: false", "go-version-file: go.mod", "node-version: '24'", "npm install --global npm@11.5.1", "gh_2.83.2_linux_amd64.tar.gz", "ca6e7641214fbd0e21429cec4b64a7ba626fd946d8f9d6d191467545b092015e", "id-token: write", "attestations: write", "push-to-registry: false", "create-storage-record: false", "user: ${{ vars.NUGET_USER }}", "NUGET_OIDC_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("publication workflow omits %q", required)
 		}
 	}
+	_, publishJob, found := strings.Cut(text, "\n  publish:\n")
+	if !found {
+		t.Fatal("workflow omits the privileged publication job")
+	}
+	// Limit the action policy to this job, stopping at any next job or root key.
+	if end := regexp.MustCompile(`(?m)^(?:\S|  \S)`).FindStringIndex(publishJob); end != nil {
+		publishJob = publishJob[:end[0]]
+	}
+	uses := regexp.MustCompile(`(?m)^[ \t]+(?:- )?uses:[ \t]+([^ \t\r\n#]+)(?:[ \t]+#[ \t]*([^\r\n]*))?[ \t]*$`).FindAllStringSubmatch(publishJob, -1)
+	wantActions := []struct{ repository, version string }{
+		{"actions/checkout", "v7"},
+		{"actions/setup-go", "v7"},
+		{"actions/setup-node", "v7"},
+		{"actions/setup-dotnet", "v5"},
+		{"actions/attest", "v4"},
+		{"NuGet/login", "v1"},
+	}
+	if len(uses) != len(wantActions) {
+		t.Fatalf("publication has %d action references; want the six agreed external steps", len(uses))
+	}
+	commitPattern := regexp.MustCompile(`^[0-9a-f]{40}$`)
+	for i, action := range uses {
+		repository, ref, hasRef := strings.Cut(action[1], "@")
+		if repository != wantActions[i].repository {
+			t.Errorf("publication action %d is %s; want %s in the agreed order", i+1, repository, wantActions[i].repository)
+		}
+		if !hasRef || !commitPattern.MatchString(ref) {
+			t.Errorf("privileged action %s must use an immutable full commit SHA", action[1])
+		}
+		if !slices.Contains(strings.Fields(action[2]), wantActions[i].version) {
+			t.Errorf("publication action %s omits its readable %s version comment", repository, wantActions[i].version)
+		}
+	}
 	last := -1
-	for _, step := range []string{"bash scripts/release.sh", "go run ./internal/release/cmd/stable-gate", "uses: actions/attest@v4", "uses: NuGet/login@v1", "go run ./internal/release/cmd/publish-release"} {
-		next := strings.Index(text, step)
+	for _, step := range []string{"bash scripts/release.sh", "go run ./internal/release/cmd/stable-gate", "uses: actions/attest@", "uses: NuGet/login@", "go run ./internal/release/cmd/publish-release"} {
+		next := strings.Index(publishJob, step)
 		if next < last || next < 0 {
 			t.Errorf("workflow order omits or misorders %q", step)
 		}
