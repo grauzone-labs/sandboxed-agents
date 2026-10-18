@@ -58,6 +58,7 @@ func (p publication) releaseFilenames() []string {
 
 // publishedRelease describes the metadata and assets needed to resume an interrupted publication.
 type publishedRelease struct {
+	ID      int64  `json:"id"`
 	Tag     string `json:"tag_name"`
 	Commit  string `json:"target_commitish"`
 	Body    string `json:"body"`
@@ -375,7 +376,22 @@ func (p publication) createAndPublish(state *publishedRelease, missing []string,
 	if state != nil && !state.Draft {
 		return nil
 	}
-	_, err = command("gh", "release", "edit", p.tag, "--repo", p.repository, "--draft=false", fmt.Sprintf("--prerelease=%t", p.preview), fmt.Sprintf("--latest=%t", !p.preview))
+	if p.preview {
+		_, err = command("gh", "release", "edit", p.tag, "--repo", p.repository, "--draft=false", "--prerelease=true", "--latest=false")
+		return err
+	}
+	if state == nil {
+		state, err = p.existingRelease()
+		if err != nil {
+			return err
+		}
+	}
+	if state == nil || state.ID <= 0 {
+		return fmt.Errorf("stable publication requires the created release ID")
+	}
+	// gh release edit accepts only a boolean --latest; omission defaults to true on publication.
+	_, err = command("gh", "api", fmt.Sprintf("repos/%s/releases/%d", p.repository, state.ID), "--method", "PATCH",
+		"-f", "tag_name="+p.tag, "-F", "draft=false", "-F", "prerelease=false", "-f", "make_latest=legacy")
 	return err
 }
 

@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-// TestPreviewPublication proves a preview publishes all five attested files and committed notes without registry calls through the real publication command and fake external processes.
+// TestPreviewPublication proves a preview publishes all five attested files and committed notes, stays excluded from Latest, and makes no registry calls through the real publication command and fake external processes.
 func TestPreviewPublication(t *testing.T) {
 	f := publicationFixture(t, "1.0.0-preview.20261017.1")
 	output, err := f.run(t)
@@ -30,6 +30,9 @@ func TestPreviewPublication(t *testing.T) {
 		t.Fatalf("release = %#v; want five assets and committed notes", state)
 	}
 	log := f.log(t)
+	if !strings.Contains(log, `"--prerelease=true","--latest=false"`) {
+		t.Fatalf("preview publication must remain a prerelease excluded from Latest:\n%s", log)
+	}
 	if strings.Contains(log, `"tool":"npm"`) || strings.Contains(log, `"tool":"dotnet"`) || strings.Contains(log, `"tool":"curl"`) {
 		t.Fatalf("preview contacted a registry:\n%s", log)
 	}
@@ -38,7 +41,7 @@ func TestPreviewPublication(t *testing.T) {
 	}
 }
 
-// TestStablePublication proves the existing gate precedes every publication mutation and stable publication completes both registries before exposing the release through real commands and fake external processes.
+// TestStablePublication proves the gate precedes every mutation and stable publication completes both registries before exposing the release with automatic Latest selection through real commands and fake external processes.
 func TestStablePublication(t *testing.T) {
 	f := publicationFixture(t, "1.0.0")
 	output, err := f.run(t)
@@ -59,7 +62,10 @@ func TestStablePublication(t *testing.T) {
 	create := strings.Index(log, `"release","create"`)
 	npm := strings.Index(log, `"tool":"npm"`)
 	nuget := strings.Index(log, `"tool":"dotnet"`)
-	finish := strings.Index(log, `"release","edit"`)
+	finish := strings.Index(log, `"make_latest=legacy"`)
+	if finish < 0 || strings.Contains(log, "--latest=true") {
+		t.Fatalf("stable publication must request automatic Latest selection:\n%s", log)
+	}
 	if gate < 0 || create < gate || npm < create || nuget < npm || finish < nuget {
 		t.Fatalf("publication order bypasses gate or registries:\n%s", log)
 	}
@@ -215,7 +221,7 @@ func TestReleaseGitHubCLISetupRejectsUnverifiedArchive(t *testing.T) {
 // TestPublicationRecoversRepositorySignedNuGet proves a verified repository signature may be added without permitting changed package content through real recovery commands and fake registry processes.
 func TestPublicationRecoversRepositorySignedNuGet(t *testing.T) {
 	f := publicationFixture(t, "1.0.0")
-	ciWrite(t, f.services, "fail", "gh release edit")
+	ciWrite(t, f.services, "fail", "make_latest=legacy")
 	if output, err := f.run(t); err == nil {
 		t.Fatalf("want interrupted final publication, got %s", output)
 	}
@@ -388,6 +394,9 @@ func TestPublicationRecoversPartialGitHubState(t *testing.T) {
 				t.Fatalf("incomplete recovered release: %#v", state)
 			}
 			log := f.log(t)
+			if scenario == "public release missing file" && (strings.Contains(log, `"release","edit"`) || strings.Contains(log, `"--method","PATCH"`)) {
+				t.Fatalf("public release recovery changed publication state or Latest selection:\n%s", log)
+			}
 			if scenario != "abandoned draft" && (strings.Contains(log, `"tool":"npm"`) || strings.Contains(log, `"nuget","push"`)) {
 				t.Fatalf("republished immutable registry version:\n%s", log)
 			}
@@ -478,7 +487,7 @@ func TestPublicationRequiresTaggedNotes(t *testing.T) {
 // assertNoPublicationMutation checks that a service transcript contains no release changes or registry pushes.
 func assertNoPublicationMutation(t *testing.T, log string) {
 	t.Helper()
-	for _, mutation := range []string{`"release","create"`, `"release","upload"`, `"release","edit"`, `"tool":"npm"`, `"nuget","push"`} {
+	for _, mutation := range []string{`"release","create"`, `"release","upload"`, `"release","edit"`, `"--method","PATCH"`, `"tool":"npm"`, `"nuget","push"`} {
 		if strings.Contains(log, mutation) {
 			t.Fatalf("refusal changed publication state (%s):\n%s", mutation, log)
 		}

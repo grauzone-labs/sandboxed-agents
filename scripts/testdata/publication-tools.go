@@ -76,6 +76,15 @@ func github(args []string) {
 	}
 	if args[0] == "api" {
 		endpoint := args[1]
+		if endpoint == "repos/grauzone-labs/sandboxed-agents/releases/50" && option(args, "--method") == "PATCH" {
+			state := readState()
+			if !has(args, "tag_name="+state["tag_name"].(string)) || !has(args, "draft=false") || !has(args, "prerelease=false") || !has(args, "make_latest=legacy") {
+				panic("stable publication must preserve its tag and select Latest automatically")
+			}
+			state["draft"], state["prerelease"] = false, false
+			writeState(state)
+			return
+		}
 		if strings.Contains(endpoint, "/releases?") {
 			if data, err := os.ReadFile(path("releases-response")); err == nil {
 				_, err = os.Stdout.Write(data)
