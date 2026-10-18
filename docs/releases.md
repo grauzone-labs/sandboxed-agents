@@ -106,7 +106,7 @@ When a check fails, the workflow fails with a message that names the missing pre
 
 When the check passes, the workflow rebuilds the tagged commit, attests all five release files, and publishes them as a GitHub release that is not a prerelease. The same run publishes the npm package as `sandboxed-agents` and the NuGet package as `SandboxedAgents` through trusted publishing: the run identifies itself to each registry by OIDC and receives a short-lived token, so the repository holds no long-lived registry token. The text of the GitHub release states, for each of the three gates (the offline suite; the live suite on Linux and Windows 11; the manual checklist), the commit it passed on. The live suite is one gate with two records, so it has one line, and the stable release check has already required both records to name the release commit. A preview tag runs the same build and attestation and ends in a GitHub prerelease; it publishes to neither registry.
 
-The release files, the trusted publisher settings, the tag ruleset that keeps `v*` tags from being created by others, moved, or deleted, and the recovery from an interrupted publication are described for maintainers in [Publishing a stable release](maintainers.md#publishing-a-stable-release).
+The publish job runs in the GitHub environment `release`, which must admit only `v*` tags, and both registry policies name that environment. The release files, the trusted publisher settings, the tag ruleset that keeps `v*` tags from being created by others, moved, or deleted, and the recovery from an interrupted publication are described for maintainers in [Publishing a stable release](maintainers.md#publishing-a-stable-release).
 
 ## Installing
 

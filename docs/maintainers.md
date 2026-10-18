@@ -161,6 +161,7 @@ Read on 2026-10-17. A row says "absent" when the thing does not exist yet, and "
 |---|---|---|
 | Tag ruleset `Stable tag creation (v*)` | installed, active | ID 25318428; read back through the rulesets API on 2026-10-17 ([rule page](https://github.com/grauzone-labs/sandboxed-agents/rules/25318428)) |
 | Tag ruleset `Stable tag immutability (v*)` | installed, active | ID 25318430; read back the same way ([rule page](https://github.com/grauzone-labs/sandboxed-agents/rules/25318430)) |
+| GitHub environment `release`, required to admit only `v*` tags | **required before the first tag; installed state not recorded on this page** | read it back as under [Environment `release`](#environment-release) and record the result here; the denial of an off-tag run has **not** been observed |
 | Repository variable `NUGET_USER` | set to `grauzone` | read back through the Actions variables API on 2026-10-17 |
 | Immutable releases repository setting | off | read through the repository API on 2026-10-17; keep it off, see [Immutable releases](#immutable-releases) |
 | Branch protection of `main` | required checks `linux`, `windows`, and `compare`, strict, applied to administrators | read on 2026-10-17 |
@@ -178,7 +179,7 @@ The acceptance criteria of issue #36 that need a real publication, a real previe
 `.github/workflows/release.yml` runs when a tag matching `v*` is pushed. The workflow has two jobs.
 
 - **`stable_gate`** runs only for a stable tag. It calls `stable-release-gate.yml` as a reusable workflow with the tag: the tag must point to the workflow commit, the release is rebuilt, and the [stable release check](releases.md#stable-release-check) runs against the preview and its records.
-- **`publish`** runs on a GitHub-hosted runner after `stable_gate` succeeded, or for a preview tag, for which `stable_gate` is skipped. It rebuilds the tagged commit with `scripts/release.sh` and, for a stable tag, runs the `stable-gate` command again on that rebuild before anything else. It then attests the five release files in one step and runs `go run ./internal/release/cmd/publish-release`. That command checks again that the rebuilt executables match `SHA256SUMS` and print the tag's version, runs the `stable-gate` command a third time for a stable tag, verifies each file's attestation, and looks up the release for the tag. With none, it creates the release as a draft; a matching draft is resumed; a matching release that is already public is completed in place. In each case it uploads only the missing files. For a stable tag it also publishes the npm package and then the NuGet package, each only when its exact version is absent. Last, it makes a draft public: a preview as a prerelease that is explicitly not marked Latest, and a stable release with `make_latest=legacy`, so GitHub chooses the Latest release itself, by date and semantic version, and a stable release is not forced to be Latest. A release that is already public stays public throughout and is never made a draft again: the command adds its missing files and completes the missing registry packages, and skips that last step.
+- **`publish`** runs on a GitHub-hosted runner, in the GitHub environment `release` for preview and stable tags alike ([Environment `release`](#environment-release)), after `stable_gate` succeeded, or for a preview tag, for which `stable_gate` is skipped. It rebuilds the tagged commit with `scripts/release.sh` and, for a stable tag, runs the `stable-gate` command again on that rebuild before anything else. It then attests the five release files in one step and runs `go run ./internal/release/cmd/publish-release`. That command checks again that the rebuilt executables match `SHA256SUMS` and print the tag's version, runs the `stable-gate` command a third time for a stable tag, verifies each file's attestation, and looks up the release for the tag. With none, it creates the release as a draft; a matching draft is resumed; a matching release that is already public is completed in place. In each case it uploads only the missing files. For a stable tag it also publishes the npm package and then the NuGet package, each only when its exact version is absent. Last, it makes a draft public: a preview as a prerelease that is explicitly not marked Latest, and a stable release with `make_latest=legacy`, so GitHub chooses the Latest release itself, by date and semantic version, and a stable release is not forced to be Latest. A release that is already public stays public throughout and is never made a draft again: the command adds its missing files and completes the missing registry packages, and skips that last step.
 
 A preview tag takes the same path without the gate and without any registry step, and ends in a published GitHub prerelease. Concurrency is per tag and never cancels a running publication. The release text is the notes file; for a stable release the command appends, under "Validation gates (passed on this release commit)", one line for each of the three gates, `Offline suite`, `Live suite (Linux and Windows 11)`, and `Manual checklist`, each naming the commit of the release. The two live-suite records, one per platform, are one gate and have one line; the gate has already checked both records, the manual-checklist record, and the CI result against that commit.
 
@@ -186,6 +187,7 @@ A preview tag takes the same path without the gate and without any registry step
 |---|---|---|
 | Runner | GitHub-hosted `ubuntu-24.04` | npm trusted publishing supports cloud-hosted runners and not self-hosted ones. The CI workflows run on Blacksmith runners, so the publication does not reuse them. Whether a Blacksmith runner counts as self-hosted is not stated by npm; reports from other projects say it does, and nothing here depends on that. |
 | Workflow file name | `release.yml` | Both registries bind the trust to the file name. Renaming the file breaks both policies until they are recreated. |
+| Environment | the `publish` job declares `environment: release`; `stable_gate` declares none | Both registry policies name this environment, so a run that cannot deploy to it cannot obtain a registry token. See [Environment `release`](#environment-release). |
 | Job permissions | `contents: write`, `actions: read`, `id-token: write`, `attestations: write` | `id-token: write` lets the job request the OIDC token that both registries and the attestation signing need; `attestations: write` stores the attestation; `contents: write` writes the release; `actions: read` reads the CI result. `artifact-metadata: write` is not granted and not needed: the attest step sets `push-to-registry: false` and `create-storage-record: false`, and the action creates a storage record only for a single OCI image pushed to a registry, which these five files are not ([`actions/attest` v4 source](https://github.com/actions/attest/blob/v4/src/attest.ts), [README on storage records](https://github.com/actions/attest/blob/v4/README.md#artifact-metadata-storage-records)). |
 | Node.js and npm | Node.js 24; `npm install --global npm@11.5.1` | Trusted publishing needs npm 11.5.1 or newer and Node.js 22.14.0 or newer. The GitHub-hosted Ubuntu 24.04 image 20261012.334.1 carries npm 10.9.9, which is too old, so the job installs the floor version. |
 | .NET SDK | 8.0.x through `actions/setup-dotnet@v5` | `dotnet nuget push` and `dotnet nuget verify`. |
@@ -277,11 +279,34 @@ Release tags are not protected by the branch protection of `main`, which is a se
 
 GitHub's own "immutable releases" repository setting locks a published release's tag and assets. It is off, and the project does not depend on it. Leave it off: validation records are uploaded to a preview's prerelease after it is published ([manual checklist](manual-checklist.md#upload)), and the recovery of a public release adds a missing file. GitHub states that the protections start at publication ([immutable releases](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/immutable-releases)), so turning the setting on would block both. That consequence is inferred from the page; it has not been tried here.
 
+### Environment `release`
+
+Both registry entries name the environment `release` in addition to the repository and the file name `release.yml`. A file name alone is weaker than the tag rules: another workflow run of the same file on a branch, or on a branch whose name starts with `v`, would otherwise carry the same repository and workflow claims. npm and NuGet both accept an optional environment in the policy ([npm](https://docs.npmjs.com/trusted-publishers/), [NuGet](https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing)), and GitHub can restrict an environment to named tags ([deployment branch and tag policies](https://docs.github.com/en/rest/deployments/branch-policies#create-a-deployment-branch-policy)). The `publish` job declares `environment: release` for preview and stable tags; the read-only `stable_gate` job declares none. Together with the tag rulesets, which let only the repository Admin role create `v*` tags and let nobody move or delete them, only a published `v*` tag can deploy to the environment.
+
+Settings of the environment, created by a repository administrator before the first `v*` tag is pushed:
+
+- Name: `release`, in this repository.
+- Deployment branches and tags: selected branches and tags only, with exactly one rule, of type **tag**, with the name pattern `v*`, and no branch rule. A plain `v*` branch rule would admit a branch whose name starts with `v`.
+- No required reviewers and no wait timer. The environment adds no human approval step.
+
+Create it first, and do not let a workflow create it: GitHub creates an environment that a running workflow names and that does not exist, and it has no protection ([managing environments](https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-deployments/managing-environments-for-deployment)). Anyone who can edit workflows can cause that, while only repository administrators can configure an environment.
+
+Read it back (administrator access):
+
+```sh
+gh api repos/grauzone-labs/sandboxed-agents/environments/release --jq '{name, deployment_branch_policy, protection_rules}'
+gh api repos/grauzone-labs/sandboxed-agents/environments/release/deployment-branch-policies --jq '[.branch_policies[] | {name, type}]'
+```
+
+The first call should show `custom_branch_policies` true and no reviewer or wait-timer rule; the second exactly one policy, `v*` of type `tag`. A readback proves only the configured policy. It does not prove that GitHub denies a run, and it does not prove that either registry accepts or rejects a token. The name of the environment alone, without the tag rule, is not enough.
+
+**Check before the registry entries are activated.** Prove the denial once with a real run, not with the readback: from a branch (and from a branch whose name starts with `v`), a run of a workflow with the file name `release.yml` whose job declares `environment: release` and contains no publication step, started in a way that does not push a `v*` tag. It must be refused at the environment and run none of its steps; a registry token must not be requested. This check has **not** happened. Record its result and the run URLs here when it has, and keep the registry entries unconfigured until then.
+
 ### One-time registry setup
 
 Neither registry trusts the workflow yet. A maintainer sets this up by hand, once per registry, signed in as the account that owns the package. The values are exact; both registries compare them with the claims in the OIDC token of the run, and npm does not check the entries when you save them, so a mistake shows only at the first publication.
 
-Timing matters. npm gives a new trusted publisher **two days** to complete its first successful publish, and then it expires and can no longer be used or edited; a NuGet policy for a private repository can also start with a temporary activation window. Create both entries after the preview is validated and just before the stable tag is pushed, not weeks ahead.
+Timing matters. npm gives a new trusted publisher **two days** to complete its first successful publish, and then it expires and can no longer be used or edited; a NuGet policy for a private repository can also start with a temporary activation window. Create both entries after the preview is validated and just before the stable tag is pushed, not weeks ahead. The GitHub environment they name is different: it is created and read back earlier, before the first preview tag is pushed, because the preview's `publish` job references it too. Do not activate either registry entry until the off-tag check under [Environment `release`](#environment-release) has been run and has denied the run.
 
 #### npm
 
@@ -292,7 +317,7 @@ Package `sandboxed-agents` on npmjs.com, as the maintainer account `grauzone` (w
 | Organization or user | `grauzone-labs` |
 | Repository | `sandboxed-agents` |
 | Workflow filename | `release.yml` (the file name only, with its extension) |
-| Environment name | empty (the workflow uses no GitHub environment) |
+| Environment name | `release` (exactly; the `publish` job declares it) |
 | Allowed actions | `npm publish` selected. The workflow publishes directly; `npm stage publish` is always allowed and is not what the workflow runs. |
 
 All fields are case-sensitive. The `repository.url` in the published `package.json` must match the GitHub repository; `packages/npm/package.json` carries `https://github.com/grauzone-labs/sandboxed-agents.git`, and npm records such a URL in the normalized form `git+https://github.com/OWNER/REPO.git`. npm generates provenance for a package published through OIDC from a public repository on its own; the repository is public.
@@ -309,7 +334,7 @@ On nuget.org, signed in as `grauzone`, open the user menu, Trusted Publishing, a
 | Repository Owner | `grauzone-labs` |
 | Repository | `sandboxed-agents` |
 | Workflow File | `release.yml` (the file name only, without `.github/workflows/`) |
-| Environment | empty |
+| Environment | `release` |
 | Scope | publishing new versions of an existing package, limited by the glob `SandboxedAgents` |
 
 The values are case-insensitive. A policy applies to the packages the chosen owner owns, and the scope with its glob narrows it. The Microsoft page describes scopes and the glob but not the labels of the form, so choose the scope that matches the table when you see the form. A policy can start as temporarily active for seven days, which happens usually with private repositories; if no publish happens in that time it becomes inactive, and the window can be restarted. A successful publish makes it permanent.
@@ -329,7 +354,7 @@ Issue #8 allowed a classic token held as a repository secret, `NPM_TOKEN` or `NU
 
 #### Limits of what can be tested
 
-Previews are not published to the registries, so neither OIDC exchange can run before the first stable tag. Everything above about the registries comes from their documentation; the first real stable run is the first observation, and it is recorded as such. Because the tag cannot be moved, a bug in the workflow found at that point cannot be fixed under `v1.0.0`.
+Previews are not published to the registries, so neither OIDC exchange can run before the first stable tag. Everything above about the registries comes from their documentation; the first real stable run is the first observation, and it is recorded as such. Because the tag cannot be moved, a bug in the workflow found at that point cannot be fixed under `v1.0.0`. The same holds for the environment: reading its policy back shows what is configured, not that GitHub denies an off-tag run, and the denial is checked separately before the registry entries are activated.
 
 ### Recovery from an interrupted publication
 
