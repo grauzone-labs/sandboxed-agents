@@ -169,7 +169,7 @@ Read on 2026-10-17. A row says "absent" when the thing does not exist yet, and "
 | NuGet trusted publishing policy for `SandboxedAgents` | **absent**: the same confirmation | none |
 | Any `v*` tag, preview, or GitHub release | **absent** | no tag and no release on 2026-10-17 |
 | Validation records and a manual-checklist run | **absent** | there is no preview to hold them |
-| Registry OIDC publication | **never observed** | npm and NuGet hold only `0.2.0` of the earlier implementation (read 2026-10-17) |
+| Registry OIDC publication | **never observed** | no stable tag has been pushed, so `release.yml` has published nothing to either registry (read 2026-10-17) |
 
 The acceptance criteria of issue #36 that need a real publication, a real preview, or a manual run stay open until their evidence exists. This page is not that evidence.
 
@@ -295,7 +295,7 @@ Package `sandboxed-agents` on npmjs.com, as the maintainer account `grauzone` (w
 | Environment name | empty (the workflow uses no GitHub environment) |
 | Allowed actions | `npm publish` selected. The workflow publishes directly; `npm stage publish` is always allowed and is not what the workflow runs. |
 
-All fields are case-sensitive. The `repository.url` in the published `package.json` must match the GitHub repository; `packages/npm/package.json` carries `https://github.com/grauzone-labs/sandboxed-agents.git`, and the registry's record of `0.2.0` shows npm stores such a URL in the form `git+https://github.com/OWNER/REPO.git`. npm generates provenance for a package published through OIDC from a public repository on its own; the repository is public.
+All fields are case-sensitive. The `repository.url` in the published `package.json` must match the GitHub repository; `packages/npm/package.json` carries `https://github.com/grauzone-labs/sandboxed-agents.git`, and npm records such a URL in the normalized form `git+https://github.com/OWNER/REPO.git`. npm generates provenance for a package published through OIDC from a public repository on its own; the repository is public.
 
 After the first successful publish the entry is validated and bound to the repository's identity. If it expired before that, delete it, create it again, and rerun the publication.
 
@@ -320,9 +320,8 @@ The workflow gets the one-hour API key from `NuGet/login@v1` and `NUGET_USER`. T
 
 Read on 2026-10-17, without publishing anything:
 
-- **npm.** The package `sandboxed-agents` exists: one version, `0.2.0`, created 2026-09-30, maintainer `grauzone`, repository `grauzone-git/sandboxed-ai-agents`. npm's `npm trust` page says the package must already exist before a trusted publisher is configured ([npm trust](https://docs.npmjs.com/cli/v11/commands/npm-trust), page edited 2026-06-02), and the trusted-publishers page does not describe configuring one for a name that does not exist. Because the package exists, no separate first-publish step is needed, and none is documented here.
-- **NuGet.** The package `SandboxedAgents` exists: one version, `0.2.0`, owner `grauzone`. The Microsoft page does not describe how a policy behaves for an identifier that does not exist yet, whether a policy can reserve one, or what the first upload of a new identifier needs. That does not matter for this release, because the identifier exists under the owner the policy belongs to.
-- **Both `0.2.0` versions come from the earlier implementation** in `grauzone-git/sandboxed-ai-agents`, as [the npm package page](npm-package.md#where-the-package-comes-from) says. Version 1.0.0 is higher and does not collide.
+- **npm.** The package `sandboxed-agents` exists on the registry, with the maintainer `grauzone`. npm's `npm trust` page says the package must already exist before a trusted publisher is configured ([npm trust](https://docs.npmjs.com/cli/v11/commands/npm-trust), page edited 2026-06-02), and the trusted-publishers page does not describe configuring one for a name that does not exist. Because the package exists, no separate first-publish step is needed, and none is documented here.
+- **NuGet.** The package `SandboxedAgents` exists on nuget.org, owned by `grauzone`. The Microsoft page does not describe how a policy behaves for an identifier that does not exist yet, whether a policy can reserve one, or what the first upload of a new identifier needs. That does not matter for this release, because the identifier exists under the owner the policy belongs to.
 
 #### No token fallback
 
