@@ -4,7 +4,7 @@ This page tells you what a release consists of, how to verify a downloaded file,
 
 ## Status
 
-The [releases list](https://github.com/grauzone-labs/sandboxed-agents/releases) of `grauzone-labs/sandboxed-agents` is the record of what has been published: a stable release appears as a GitHub release, a preview as a prerelease. A version that is not listed there has not been published, and the npm and NuGet registries hold a package from this repository only for stable releases ([Versions](#versions)). The quick guides write the tag as a placeholder; take the tag of the release you install from that list.
+The [releases list](https://github.com/grauzone-labs/sandboxed-agents/releases) of `grauzone-labs/sandboxed-agents` is the record of the public GitHub releases: a stable release appears as a GitHub release, a preview as a prerelease. A version that is not listed there has no published GitHub release. The npm and NuGet registries hold a package from this repository only for stable releases ([Versions](#versions)), and an interrupted stable publication can leave an npm or NuGet package available before its GitHub release is public ([recovery](maintainers.md#recovery-from-an-interrupted-publication)). The quick guides write the tag as a placeholder; take the tag of the release you install from that list.
 
 ## Release files
 
