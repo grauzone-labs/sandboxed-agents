@@ -4,7 +4,7 @@ This page tells you how to install, upgrade, and remove the `sandboxed-agents` c
 
 ## Where the package comes from
 
-Every release carries the tarball `sandboxed-agents-X.Y.Z.tgz` among its [release files](releases.md#release-files); the [releases page](releases.md#versions) says which kind of release the npm registry also holds. Earlier registry versions such as `sandboxed-agents@0.2.0` come from the earlier implementation in `grauzone-git/sandboxed-ai-agents`: the shared package and command name alone does not identify a release of `grauzone-labs/sandboxed-agents`, its attestation does. If the command is already installed on your machine, identify its source before you replace it.
+Every release carries the tarball `sandboxed-agents-X.Y.Z.tgz` among its [release files](releases.md#release-files); the [releases page](releases.md#versions) says which kind of release the npm registry also holds. A package or command name alone does not identify a release of `grauzone-labs/sandboxed-agents`; its attestation does. If the command is already installed on your machine, identify its source before you replace it.
 
 ## Requirements
 
