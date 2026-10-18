@@ -89,13 +89,24 @@ func TestPublicationResumesInterruptedRegistries(t *testing.T) {
 	}
 }
 
-// TestPublicationWorkflowWiring proves tag pushes rebuild and gate before publication and privileged external actions use immutable commits through the maintained Actions workflow.
+// TestPublicationWorkflowWiring proves tag pushes grant only reads to the reusable gate, rebuild and gate before publication, and pin privileged external actions through the maintained Actions workflow.
 func TestPublicationWorkflowWiring(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repositoryRoot(t), ".github/workflows/release.yml"))
 	if err != nil {
 		t.Fatalf("tag publication workflow is unavailable: %v", err)
 	}
 	text := string(data)
+	_, gateJob, found := strings.Cut(text, "\n  stable_gate:\n")
+	if !found {
+		t.Fatal("publication workflow omits the reusable stable gate caller")
+	}
+	gateJob, _, found = strings.Cut(gateJob, "\n  publish:\n")
+	if !found {
+		t.Fatal("publication workflow omits the boundary after the stable gate caller")
+	}
+	if !strings.Contains(gateJob, "\n    permissions:\n      contents: read\n      actions: read\n      attestations: read\n    uses: ./.github/workflows/stable-release-gate.yml\n") {
+		t.Error("stable_gate caller permissions must grant only contents, actions and attestations reads to the reusable gate")
+	}
 	for _, required := range []string{
 		"  push:\n    tags: ['v*']", "cancel-in-progress: false", "uses: ./.github/workflows/stable-release-gate.yml", "needs: stable_gate", "needs.stable_gate.result == 'success'", "runs-on: ubuntu-24.04", "ref: ${{ github.sha }}", "fetch-depth: 0", "persist-credentials: false", "go-version-file: go.mod", "node-version: '24'", "npm install --global npm@11.5.1", "bash scripts/setup-release-gh.sh", "id-token: write", "attestations: write", "push-to-registry: false", "create-storage-record: false", "user: ${{ vars.NUGET_USER }}", "NUGET_OIDC_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}",
 	} {

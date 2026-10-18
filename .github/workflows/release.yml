@@ -17,6 +17,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      attestations: read
     uses: ./.github/workflows/stable-release-gate.yml
     with:
       tag: ${{ github.ref_name }}
