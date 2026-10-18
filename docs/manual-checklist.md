@@ -685,7 +685,7 @@ Identifier `no-image-removal`. Compare the images before and after the one `buil
 Identifier `preview-attestation`. This item needs a **tagged preview** and fails while none exists, or while the release process does not produce attestations ([Releases](releases.md#release-files)).
 
 1. `gh release view TAG --repo grauzone-labs/sandboxed-agents --json assets --jq '.assets[].name'` for the preview tag `TAG`.
-2. Download every file of the list and, for each, run `gh attestation verify FILE --repo grauzone-labs/sandboxed-agents`. This check names only the repository; for it, 2.67.0 is the historical floor, and 2.102.0 is the version the automated gate requires: `gh attestation` first shipped in 2.49.0, and releases up to 2.66.1 can exit with status zero when no attestation exists ([maintainer notes](maintainers.md#the-gh-version)).
+2. Download every file of the list and, for each, run `gh attestation verify FILE --repo grauzone-labs/sandboxed-agents`. This check names only the repository; for it, 2.67.0 is the historical floor, and 2.102.0 is the version the automated gate requires: `gh attestation` first shipped in 2.49.0, and releases up to 2.66.1 can exit with status zero, after printing a failure, when the artifact has an attestation of a different predicate type than the requested one ([maintainer notes](maintainers.md#the-gh-version)).
 3. `sha256sum --check --ignore-missing SHA256SUMS` next to the two executables.
 4. `git rev-parse "TAG^{commit}"` and compare it with the commit of your run.
 
