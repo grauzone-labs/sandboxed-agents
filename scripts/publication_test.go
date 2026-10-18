@@ -74,13 +74,18 @@ func TestStablePublication(t *testing.T) {
 	}
 }
 
-// TestPublicationResumesInterruptedRegistries proves a NuGet failure leaves a draft and a retry compares published bytes, skips npm, and completes the release through the real command against fake services.
+// TestPublicationResumesInterruptedRegistries proves a NuGet failure explains a possible validation delay and leaves a draft, and a retry compares published bytes, skips npm, and completes the release through the real command against fake services.
 func TestPublicationResumesInterruptedRegistries(t *testing.T) {
 	f := publicationFixture(t, "1.0.0")
 	ciWrite(t, f.services, "fail", "dotnet nuget push")
 	output, err := f.run(t)
 	if err == nil || !strings.Contains(string(output), "NuGet publication") || f.state(t)["draft"] != true {
 		t.Fatalf("interrupted publication: error=%v output=%s; want NuGet failure with draft", err, output)
+	}
+	for _, required := range []string{"dotnet failed", "may still be validating", "flat-container", "https://www.nuget.org/packages/SandboxedAgents/1.0.0", "wait before retrying"} {
+		if !strings.Contains(string(output), required) {
+			t.Fatalf("NuGet failure omits %q guidance or cause: %s", required, output)
+		}
 	}
 	if err := os.Remove(filepath.Join(f.services, "fail")); err != nil {
 		t.Fatal(err)
