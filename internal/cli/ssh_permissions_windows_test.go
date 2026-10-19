@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,61 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 	"golang.org/x/sys/windows"
 )
+
+// TestSecureSSHPathWindowsAcceptsOwnedFileWithoutWriteOwner proves through
+// secureSSHPath that an owned key with read/write access can be hardened without
+// permission to assign its owner, as with native Windows ssh-keygen output.
+func TestSecureSSHPathWindowsAcceptsOwnedFileWithoutWriteOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "id_ed25519")
+	const contents = "managed key fixture\n"
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Set the owner while the newly created fixture still grants full access.
+	// The restricted DACL then models ssh-keygen's read/write-only user ACE.
+	descriptor, err := windows.SecurityDescriptorFromString(fmt.Sprintf("O:%sD:P(A;;FRFW;;;%s)", user.User.Sid, user.User.Sid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		user.User.Sid, nil, dacl, nil); err != nil {
+		t.Fatal(err)
+	}
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, access := range []uint32{windows.WRITE_DAC, windows.WRITE_OWNER} {
+		handle, err := windows.CreateFile(name, access,
+			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+			nil, windows.OPEN_EXISTING, 0, 0)
+		if err == nil {
+			windows.CloseHandle(handle)
+		}
+		if access == windows.WRITE_DAC && err != nil {
+			t.Fatalf("fixture must permit DACL changes: %v", err)
+		}
+		if access == windows.WRITE_OWNER && !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			t.Fatalf("fixture must deny owner changes: %v", err)
+		}
+	}
+	if err := secureSSHPath(path, 0600); err != nil {
+		t.Fatalf("secure an owned key without WRITE_OWNER: %v", err)
+	}
+	testutil.AssertWindowsSSHPathAccess(t, path, true, 0)
+	if got, err := os.ReadFile(path); err != nil || string(got) != contents {
+		t.Fatalf("secured key contents = %q, %v; want %q", got, err, contents)
+	}
+}
 
 // TestSecureSSHPathWindowsRestrictsManagedFiles proves through secureSSHPath
 // that Windows files get a protected DACL granting only the process user access.
