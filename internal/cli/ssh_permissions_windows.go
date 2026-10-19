@@ -15,6 +15,20 @@ func secureSSHPath(path string, mode os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("read process user for SSH permissions: %w", err)
 	}
+	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("read SSH owner for %q: %w", path, err)
+	}
+	if descriptor == nil {
+		return fmt.Errorf("SSH path %q has no security descriptor", path)
+	}
+	previousOwner, _, err := descriptor.Owner()
+	if err != nil {
+		return fmt.Errorf("read SSH owner for %q: %w", path, err)
+	}
+	if previousOwner == nil {
+		return fmt.Errorf("SSH path %q has no owner", path)
+	}
 	// TRUSTEE stores its SID as a uintptr, so keep the SID pinned until the
 	// Windows calls have finished using it.
 	var pinner runtime.Pinner
@@ -37,12 +51,16 @@ func secureSSHPath(path string, mode os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("build SSH permissions for %q: %w", path, err)
 	}
-	// Setting an owner from the current token and changing our own files'
-	// DACLs requires no administrator privilege. Protection prevents parent
-	// permissions from granting access to additional users.
-	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		user.User.Sid, nil, dacl, nil); err != nil {
+	// An owner can change the DACL without WRITE_OWNER. Native ssh-keygen
+	// files grant read/write access, so redundantly assigning their existing
+	// owner would fail. Protection still excludes inherited access for others.
+	information := windows.SECURITY_INFORMATION(windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION)
+	var owner *windows.SID
+	if !previousOwner.Equals(user.User.Sid) {
+		information |= windows.OWNER_SECURITY_INFORMATION
+		owner = user.User.Sid
+	}
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, information, owner, nil, dacl, nil); err != nil {
 		return fmt.Errorf("secure SSH path %q: %w", path, err)
 	}
 	return nil
