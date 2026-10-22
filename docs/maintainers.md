@@ -169,7 +169,7 @@ This section records what the publication of a stable release relies on, what a 
 
 ### State on record
 
-Read on 2026-10-17, except a row that names a later date, which uses that date. A row says "absent" when the thing does not exist yet, and "installed" only where it was read back from GitHub.
+Read on 2026-10-17, except rows that name a later date, which use that date. A row says "absent" when the thing does not exist yet, and "installed" only where it was read back from GitHub.
 
 | Item | State | Evidence |
 |---|---|---|
@@ -345,7 +345,7 @@ Record the URL of both runs and, for each, that the environment refused the ref 
 
 Afterwards cancel any run that is still pending, record it, and delete both temporary branches from the remote and locally. Never open a pull request from them or merge them, and never change the maintained, tag-only `release.yml` for this check.
 
-**Result, 2026-10-18.** The environment denied both runs. They were created at 2026-10-18T09:24:13Z and 09:24:14Z; the push of the first `v*` tag started run [39115281621](https://github.com/grauzone-labs/sandboxed-agents/actions/runs/39115281621) at 2026-10-18T09:25:35Z, so the check ran before that tag was pushed:
+**Result, 2026-10-18.** The environment denied both runs. They were created at 2026-10-18T09:24:13Z and 09:24:14Z; the run that the push of the first `v*` tag started, [39115281621](https://github.com/grauzone-labs/sandboxed-agents/actions/runs/39115281621), was created at 2026-10-18T09:25:35Z, so the check ran before that tag was pushed (all three times are the `created_at` field of the Actions runs API):
 
 | Branch | Commit | Run | What GitHub reported |
 |---|---|---|---|
