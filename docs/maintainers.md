@@ -165,7 +165,7 @@ Checked on 2026-10-14; every toolchain's packages are available for Debian 13:
 
 ## Publishing a stable release
 
-This section records what the publication of a stable release relies on, what a maintainer sets up once by hand, and how to recover when a publication stops half-way. It states what is installed today and what is still absent. Where a fact comes from an external page, the page and the date it was read are named in [Sources](#publication-sources); nothing here was observed on a real publication, because none has happened.
+This section records what the publication of a stable release relies on, what a maintainer sets up once by hand, and how to recover when a publication stops half-way. It states what is installed today and what is still absent. Where a fact comes from an external page, the page and the date it was read are named in [Sources](#publication-sources). Nothing here was observed on a real stable publication, because none has happened; the two preview publications on record ran the same workflow without the gate and without any registry step.
 
 ### State on record
 
@@ -175,16 +175,16 @@ Read on 2026-10-17, except a row that names a later date, which uses that date. 
 |---|---|---|
 | Tag ruleset `Stable tag creation (v*)` | installed, active | ID 25318428; read back through the rulesets API on 2026-10-17 ([rule page](https://github.com/grauzone-labs/sandboxed-agents/rules/25318428)) |
 | Tag ruleset `Stable tag immutability (v*)` | installed, active | ID 25318430; read back the same way ([rule page](https://github.com/grauzone-labs/sandboxed-agents/rules/25318430)) |
-| GitHub environment `release` | installed 2026-10-18T01:42:28Z, ID 24606547140; `protected_branches` false, `custom_branch_policies` true; exactly one deployment policy, ID 63427523, type `tag`, pattern `v*`, and no branch rule; no reviewers, wait timer, or secrets | read back through the environments and deployment-branch-policies APIs on 2026-10-18. The response reports `can_admins_bypass` true, GitHub's default, which the environment API does not let a request change, so an administrator override of the policy exists. The denial of an off-tag run has **not** been observed |
-| Repository variable `NUGET_USER` | set to `grauzone` | read back through the Actions variables API on 2026-10-17 |
+| GitHub environment `release` | installed 2026-10-18T01:42:28Z, ID 24606547140; `protected_branches` false, `custom_branch_policies` true; exactly one deployment policy, ID 63427523, type `tag`, pattern `v*`, and no branch rule; no reviewers, wait timer, or secrets | read back through the environments and deployment-branch-policies APIs on 2026-10-18 and again on 2026-10-22, unchanged. The response reports `can_admins_bypass` true, GitHub's default, which the environment API does not let a request change, so an administrator override of the policy exists. The denial of an off-tag run was observed on 2026-10-18 with two real runs ([Environment `release`](#environment-release)) |
+| Repository variable `NUGET_USER` | set to `grauzone` | read back through the Actions variables API on 2026-10-17 and on 2026-10-22 |
 | Immutable releases repository setting | off | read through the repository API on 2026-10-17; keep it off, see [Immutable releases](#immutable-releases) |
 | Branch protection of `main` | required checks `linux`, `windows`, and `compare`, strict, applied to administrators | read on 2026-10-17 |
-| Publication workflow `.github/workflows/release.yml` | added by the change that adds this section; no run on record | none |
+| Publication workflow `.github/workflows/release.yml` | two preview runs on record, both green: [39115281621](https://github.com/grauzone-labs/sandboxed-agents/actions/runs/39115281621) for `v1.0.0-preview.20261018.1` and [39303250926](https://github.com/grauzone-labs/sandboxed-agents/actions/runs/39303250926) for `v1.0.0-preview.20261019.1`; in both, `stable_gate` was skipped and the `publish` job ran without the stable-only steps, as every preview does. No run for a stable tag | read back through the Actions runs API on 2026-10-22 |
 | npm trusted publisher for `sandboxed-agents` | **absent**: the maintainer confirmed on 2026-10-17 that none is configured | none |
 | NuGet trusted publishing policy for `SandboxedAgents` | **absent**: the same confirmation | none |
-| Any `v*` tag, preview, or GitHub release | **absent** | no tag and no release on 2026-10-17 |
-| Validation records and a manual-checklist run | **absent** | there is no preview to hold them |
-| Registry OIDC publication | **never observed** | no stable tag has been pushed, so `release.yml` has published nothing to either registry (read 2026-10-17) |
+| `v*` tags, previews, and GitHub releases | two preview tags, each with its prerelease: [`v1.0.0-preview.20261018.1`](https://github.com/grauzone-labs/sandboxed-agents/releases/tag/v1.0.0-preview.20261018.1) on `f2fefd7cd431595e41d44674b7475a7ea6a4edfb` and [`v1.0.0-preview.20261019.1`](https://github.com/grauzone-labs/sandboxed-agents/releases/tag/v1.0.0-preview.20261019.1) on `a5c2c19409a7b038bd9600c2547eebc35efe596c`. No stable tag and no release that is not a prerelease | `gh release list` and `gh api repos/grauzone-labs/sandboxed-agents/commits/tags/TAG --jq .sha` on 2026-10-22 |
+| Validation records and a manual-checklist run | on `v1.0.0-preview.20261018.1`: `live-suite-linux.json`, `live-suite-windows-11.json`, and `manual-checklist.json`, each naming `f2fefd7cd431595e41d44674b7475a7ea6a4edfb` with `result` `pass`; both live-suite records have `image_part_selected`, `image_part_ran`, and `image_coverage_complete` true and their five checks at `pass`; the manual-checklist record holds 23 checks, all `pass`, dated 2026-10-18 and 2026-10-19. On `v1.0.0-preview.20261019.1`: the two live-suite records, each naming `a5c2c19409a7b038bd9600c2547eebc35efe596c` with `result` `pass` and the image coverage run and complete, and no manual-checklist record | downloaded from the two prereleases and read on 2026-10-22. The stable gate has read none of them, because no stable tag exists |
+| Registry OIDC publication | **never observed** | no stable tag has been pushed, so `release.yml` has published nothing to either registry (read 2026-10-22) |
 
 The acceptance criteria of issue #36 that need a real publication, a real preview, or a manual run stay open until their evidence exists. This page is not that evidence.
 
@@ -234,7 +234,7 @@ The stable gate compares the asset hash that the preview's Linux executable prin
 
 The attestation authenticates where the file came from and which commit built it. It does not show that the code is benign. A verified preview was built from the candidate commit, which is trusted release code that the job already executes with the job's authority (`scripts/release.sh`, `go run`, and the rebuilt binaries), so a malicious attested preview would need malicious code at the candidate commit or control of the preview run, which already holds that authority. The verification keeps an unknown or altered file out; it does not make the child a sandbox. The exact-byte check and the pinned verifier fail closed.
 
-A preview's attestation exists only after a real preview run, so no preview attestation has been verified by the gate yet; the first real verification is observed with the first real preview and recorded as such. The offline tests of the gate use fakes and are not that evidence.
+Preview attestations exist since the first preview run on 2026-10-18 ([State on record](#state-on-record)); the manual checklist item `preview-attestation` verified them by hand on `v1.0.0-preview.20261018.1`. The gate has verified none, because it runs only for a stable tag; its first real verification is observed with the first stable tag and recorded as such. The offline tests of the gate use fakes and are not that evidence.
 #### Release notes
 
 Release notes live in `docs/release-notes/X.Y.Z.md`, one file per version, committed before the preview tag so that they belong to the validated commit. A preview `vX.Y.Z-preview.YYYYMMDD.N` uses the notes of its base version `X.Y.Z`. The publication job fails before it builds its release artifacts when the file is missing or empty at the tagged commit. The workflow publishes the file as the release text; for a stable release it appends, for each gate, the commit it passed on. The notes of 1.0.0 are [`docs/release-notes/1.0.0.md`](release-notes/1.0.0.md); they claim no gate result.
@@ -342,13 +342,22 @@ The workflow has a GitHub-hosted runner, no token permissions (no `id-token`, no
 
 Record the URL of both runs and, for each, that the environment refused the ref before any step started. If either run starts a step, the environment admitted a branch: the check has failed, the registry entries stay unconfigured, and the environment policy is corrected and checked again.
 
-Afterwards cancel any run that is still pending, record it, and delete both temporary branches from the remote and locally. Never open a pull request from them or merge them, and never change the maintained, tag-only `release.yml` for this check. This check has **not** been run. Record its result and the run URLs here when it has, and keep the registry entries unconfigured until then.
+Afterwards cancel any run that is still pending, record it, and delete both temporary branches from the remote and locally. Never open a pull request from them or merge them, and never change the maintained, tag-only `release.yml` for this check.
+
+**Result, 2026-10-18.** The check was run before the first `v*` tag was pushed, and the environment denied both runs:
+
+| Branch | Commit | Run | What GitHub reported |
+|---|---|---|---|
+| `environment-denial-check` | `886fd3ffec55d289ce580afb26354682b084afcc` | [39115189654](https://github.com/grauzone-labs/sandboxed-agents/actions/runs/39115189654), created 2026-10-18T09:24:13Z | job `denied` ended with the conclusion `failure` after zero steps; its annotations read `Branch "environment-denial-check" is not allowed to deploy to release due to environment protection rules.` and `The deployment was rejected or didn't satisfy other protection rules.` |
+| `v-environment-denial-check` | `c680cf4689d93e12124774bea71876543357625e` | [39115191120](https://github.com/grauzone-labs/sandboxed-agents/actions/runs/39115191120), created 2026-10-18T09:24:14Z | the same: conclusion `failure` after zero steps, with the same two annotations for `v-environment-denial-check` |
+
+In both runs the environment refused the ref before any step started, so the marker step did not run, and the refusal itself shows that no override was applied. No run stayed pending, and both temporary branches are absent from the remote, read back on 2026-10-22 together with the two runs and their annotations through the Actions runs and check-run annotations APIs. The check proves the policy for a branch push; it does not prove that either registry accepts or rejects a token.
 
 ### One-time registry setup
 
 Neither registry trusts the workflow yet. A maintainer sets this up by hand, once per registry, signed in as the account that owns the package. The values are exact; both registries compare them with the claims in the OIDC token of the run, and npm does not check the entries when you save them, so a mistake shows only at the first publication.
 
-Timing matters. npm gives a new trusted publisher **two days** to complete its first successful publish, and then it expires and can no longer be used or edited; a NuGet policy for a private repository can also start with a temporary activation window. Create both entries after the preview is validated and just before the stable tag is pushed, not weeks ahead. The GitHub environment they name is different: it is created and read back earlier, before the first preview tag is pushed, because the preview's `publish` job references it too. Do not activate either registry entry until the off-tag check under [Environment `release`](#environment-release) has been run and has denied the run.
+Timing matters. npm gives a new trusted publisher **two days** to complete its first successful publish, and then it expires and can no longer be used or edited; a NuGet policy for a private repository can also start with a temporary activation window. Create both entries after the preview is validated and just before the stable tag is pushed, not weeks ahead. The GitHub environment they name is different: it is created and read back earlier, before the first preview tag is pushed, because the preview's `publish` job references it too. Do not activate either registry entry until the off-tag check under [Environment `release`](#environment-release) has been run and has denied the run; it was run on 2026-10-18 and denied both runs, so that condition is met.
 
 #### npm
 
@@ -396,7 +405,7 @@ Issue #8 allowed a classic token held as a repository secret, `NPM_TOKEN` or `NU
 
 #### Limits of what can be tested
 
-Previews are not published to the registries, so neither OIDC exchange can run before the first stable tag. Everything above about the registries comes from their documentation; the first real stable run is the first observation, and it is recorded as such. Because the tag cannot be moved, a bug in the workflow found at that point cannot be fixed under `v1.0.0`. The same holds for the environment: reading its policy back shows what is configured, not that GitHub denies an off-tag run, and the denial is checked separately before the registry entries are activated.
+Previews are not published to the registries, so neither OIDC exchange can run before the first stable tag. Everything above about the registries comes from their documentation; the first real stable run is the first observation, and it is recorded as such. Because the tag cannot be moved, a bug in the workflow found at that point cannot be fixed under `v1.0.0`. The same holds for the environment: reading its policy back shows what is configured, not that GitHub denies an off-tag run; the denial was checked separately with real runs on 2026-10-18 ([Environment `release`](#environment-release)), before any registry entry is activated.
 
 ### Recovery from an interrupted publication
 
