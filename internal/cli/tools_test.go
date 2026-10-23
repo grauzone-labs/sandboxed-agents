@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -102,19 +103,20 @@ func TestToolsStatusRendersSelection(t *testing.T) {
 	} {
 		f := sandboxStateFixture(t)
 		f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
-		f.responses[toolManagerPrefix+"status t3code"] = tc.answer
+		f.responses[toolManagerPrefix+"status t3code --connect"] = tc.answer
 		status, output, calls := f.run(t, "tools", "status", "agent01", "t3code")
 		if status != tc.status || !strings.Contains(output, tc.message) || (tc.answer.Exit == 1 && strings.Contains(output, "manager does not answer")) {
 			t.Fatalf("answer=%+v status=%d output=%q want %d %q", tc.answer, status, output, tc.status, tc.message)
 		}
-		want := append(sandboxQueryCalls(), strings.Fields(agentWorkProbe), strings.Fields(toolManagerPrefix+"status t3code"))
+		// The user's status asks for the account connection state; the pre-checks of other commands do not.
+		want := append(sandboxQueryCalls(), strings.Fields(agentWorkProbe), strings.Fields(toolManagerPrefix+"status t3code --connect"))
 		if !reflect.DeepEqual(calls, want) {
 			t.Fatalf("calls=%v want=%v", calls, want)
 		}
 	}
 }
 
-// TestToolsChecksPrecedeChanges proves a stopped sandbox, an unanswering manager, and an update of a Tool that is not enabled each refuse before any tools request reaches the manager through RunWithHost and fake Podman.
+// TestToolsChecksPrecedeChanges proves a stopped sandbox, an unanswering manager, an update of a Tool that is not enabled, and a status answer that names a manager failure each refuse before any tools change reaches the manager, through RunWithHost and fake Podman.
 func TestToolsChecksPrecedeChanges(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -128,6 +130,10 @@ func TestToolsChecksPrecedeChanges(t *testing.T) {
 		{"manager", func(f *fixture) {
 			f.responses[agentWorkProbe] = response{Exit: 125}
 		}, []string{"tools", "status", "agent01", "t3code"}, "manager does not answer"},
+		{"status-connect", func(f *fixture) {
+			f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+			f.responses[toolManagerPrefix+"status t3code --connect"] = response{Exit: 1, Stderr: "invalid tool selection\n"}
+		}, []string{"tools", "status", "agent01", "t3code"}, "invalid tool selection"},
 		{"not-enabled", func(f *fixture) {
 			f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
 			f.responses[toolManagerPrefix+"status t3code"] = response{Output: `{"name":"t3code","enabled":false}`}
@@ -141,7 +147,8 @@ func TestToolsChecksPrecedeChanges(t *testing.T) {
 				t.Fatalf("status=%d output=%s want %q", status, output, tc.message)
 			}
 			for _, call := range calls {
-				if len(call) > 0 && call[0] == "exec" && call[len(call)-2] != "status" && call[len(call)-1] != "version" {
+				joined := strings.Join(call, " ")
+				if call[0] == "exec" && !strings.Contains(joined, " tools status ") && call[len(call)-1] != "version" {
 					t.Fatalf("tools change reached the manager: %v", call)
 				}
 			}
@@ -225,7 +232,7 @@ func TestToolsCommandsChangeNoPodmanObjects(t *testing.T) {
 	f := sandboxStateFixture(t)
 	f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
 	f.responses[toolManagerPrefix+"enable t3code"] = response{Output: "t3code enabled: version 0.1.2 (channel latest); service running\n"}
-	f.responses[toolManagerPrefix+"status t3code"] = response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running"}`}
+	f.responses[toolManagerPrefix+"status t3code --connect"] = response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running"}`}
 	f.responses[toolManagerPrefix+"restore"] = response{Output: "t3code service running\n"}
 	var all [][]string
 	for _, args := range [][]string{{"tools", "enable", "agent01", "t3code"}, {"tools", "status", "agent01", "t3code"}, {"start", "agent01"}} {
@@ -394,6 +401,135 @@ func TestUpdateAllCountsUpdatedSandboxesWithFailedToolServices(t *testing.T) {
 	for _, want := range []string{"sandbox demo updated, but", "tools status demo t3code", "sandbox next updated", "2 updated, 0 current, 0 volumes only, 0 not updated", "1 updated sandbox(es) with a tool service that did not start", "1 with a tool service that did not start"} {
 		if !strings.Contains(output, want) {
 			t.Errorf("missing %q: %s", want, output)
+		}
+	}
+}
+
+// TestToolsConnectParseRejectsUnknownActions proves tools connect accepts exactly the catalog's connect actions and rejects unknown actions, missing actions, and options at cli.Parse, before any Podman call.
+func TestToolsConnectParseRejectsUnknownActions(t *testing.T) {
+	for _, action := range []string{"login", "link", "unlink", "logout"} {
+		request, err := cli.Parse([]string{"tools", "connect", "demo", "t3code", action}, "default")
+		if err != nil || request.Command != "tools connect" || request.Args[2] != action {
+			t.Fatalf("action %s: request=%+v error=%v", action, request, err)
+		}
+	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"tools", "connect", "demo", "t3code", "pair"}, `unknown connect action "pair": valid names: link, login, logout, unlink`},
+		{[]string{"tools", "connect", "demo", "t3code"}, "wrong number of arguments for tools connect"},
+		{[]string{"tools", "connect", "demo", "t3code", "login", "extra"}, "wrong number of arguments for tools connect"},
+		{[]string{"tools", "connect", "demo", "t3code", "login", "--headless"}, `unknown option "--headless"`},
+		{[]string{"tools", "connect", "demo", "codex", "login"}, `unknown tool "codex": valid names: t3code`},
+	} {
+		if _, err := cli.Parse(tc.args, "default"); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("args=%q error=%v; want %q", tc.args, err, tc.want)
+		}
+	}
+}
+
+// TestToolsConnectRunsTheManagerAsAgentWithTerminalRules proves login and link need an interactive terminal and fail before any manager change without one, unlink and logout run without a terminal, every action runs the manager as agent with the caller's input, and an upstream failure exits non-zero naming the action, through RunWithHost and fake Podman.
+func TestToolsConnectRunsTheManagerAsAgentWithTerminalRules(t *testing.T) {
+	for _, action := range []string{"login", "link", "unlink", "logout"} {
+		for _, terminal := range [][2]bool{{false, false}, {true, false}, {true, true}} {
+			for _, exit := range []int{0, 1} {
+				f := sandboxStateFixture(t)
+				f.host.IsInputTerminal = func(io.Reader) bool { return terminal[0] }
+				f.host.IsOutputTerminal = func(io.Writer) bool { return terminal[1] }
+				f.host.Stdin = strings.NewReader("connect input\n")
+				f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+				f.responses[toolManagerPrefix+"status t3code"] = response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running"}`}
+				execution := strings.Fields("exec --user=1000:1000 --env HOME=/home/agent -i")
+				interactive := terminal[0] && terminal[1]
+				if interactive {
+					execution = append(execution, "-t")
+				}
+				execution = append(execution, shellContainer, integrationManager, "tools", "connect", "t3code", action)
+				f.responses[strings.Join(execution, " ")] = response{Output: "upstream output\n", Exit: exit, EchoStdin: true}
+				status, output, calls := f.run(t, "tools", "connect", "agent01", "t3code", action)
+				needsTerminal := action == "login" || action == "link"
+				want := append(sandboxQueryCalls(), strings.Fields(agentWorkProbe), strings.Fields(toolManagerPrefix+"status t3code"))
+				switch {
+				case needsTerminal && !interactive:
+					if status != 1 || !strings.Contains(output, "tools connect t3code "+action+" needs an interactive terminal") || strings.Contains(output, "upstream output") {
+						t.Fatalf("%s terminal=%v status=%d output=%s", action, terminal, status, output)
+					}
+				default:
+					want = append(want, execution)
+					if (exit == 0) != (status == 0) || !strings.Contains(output, "upstream output\nconnect input\n") {
+						t.Fatalf("%s terminal=%v exit=%d status=%d output=%s", action, terminal, exit, status, output)
+					}
+					if exit != 0 && !strings.Contains(output, "tools connect t3code "+action+" failed") {
+						t.Fatalf("%s failure not named: %s", action, output)
+					}
+				}
+				if !reflect.DeepEqual(calls, want) {
+					t.Fatalf("%s terminal=%v calls=%v want=%v", action, terminal, calls, want)
+				}
+			}
+		}
+	}
+}
+
+// TestToolsConnectChecksPrecedeTheAction proves a stopped sandbox, an unanswering manager, a Tool that is not enabled, and a transport failure each refuse or report before or instead of the connect action, through RunWithHost and fake Podman.
+func TestToolsConnectChecksPrecedeTheAction(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prepare func(f *fixture)
+		message string
+	}{
+		{"stopped", func(f *fixture) {
+			f.responses["container inspect "+shellContainer] = response{Output: containerInspectAnswer(`{"io.sandboxed-agents.owner":"default"}`, "false")}
+		}, "start agent01"},
+		{"manager", func(f *fixture) { f.responses[agentWorkProbe] = response{Exit: 125} }, "manager does not answer"},
+		{"not-enabled", func(f *fixture) {
+			f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+			f.responses[toolManagerPrefix+"status t3code"] = response{Output: `{"name":"t3code","enabled":false}`}
+		}, "t3code not enabled; run tools enable agent01 t3code"},
+		{"transport", func(f *fixture) {
+			f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+			f.responses[toolManagerPrefix+"status t3code"] = response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running"}`}
+			f.responses["exec --user=1000:1000 --env HOME=/home/agent -i "+shellContainer+" "+integrationManager+" tools connect t3code logout"] = response{Exit: 125}
+		}, "manager does not answer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := sandboxStateFixture(t)
+			f.host.IsInputTerminal = func(io.Reader) bool { return false }
+			f.host.IsOutputTerminal = func(io.Writer) bool { return false }
+			tc.prepare(f)
+			status, output, calls := f.run(t, "tools", "connect", "agent01", "t3code", "logout")
+			if status != 1 || !strings.Contains(output, tc.message) {
+				t.Fatalf("status=%d output=%s want %q", status, output, tc.message)
+			}
+			if tc.name != "transport" {
+				for _, call := range calls {
+					if call[0] == "exec" && call[len(call)-1] == "logout" {
+						t.Fatalf("connect action reached the manager: %v", call)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestToolsStatusRendersTheConnectState proves status renders the account, linked, relay, and reachability state, a missing login, and a connect status that could not be read, through RunWithHost and fake Podman.
+func TestToolsStatusRendersTheConnectState(t *testing.T) {
+	for _, tc := range []struct {
+		connect string
+		want    string
+	}{
+		{`{"authenticated":false,"linked":false,"relay_client":"missing"}`, "service running; log /x/service.log; T3 Connect not signed in, not linked; relay client missing\n"},
+		{`{"authenticated":true,"linked":true,"account":"user_123","relay_client":"available","reachability":"{\"status\":\"unreachable\",\"reason\":\"cannot reach port 7844\"}"}`, "T3 Connect signed in as user_123, linked; relay client available; relay failure: {\"status\":\"unreachable\",\"reason\":\"cannot reach port 7844\"}\n"},
+		{`{"authenticated":true,"linked":true,"account":"user_123","relay_client":"available","reachability":"{\"status\":\"reachable\"}","reachable":true}`, "T3 Connect signed in as user_123, linked; relay client available; relay reachable\n"},
+		{`{"error":"status unavailable: status failed"}`, "T3 Connect status unavailable: status failed\n"},
+	} {
+		f := sandboxStateFixture(t)
+		f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+		f.responses[toolManagerPrefix+"status t3code --connect"] = response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running","service_log":"/x/service.log","connect":` + tc.connect + `}`}
+		status, output, _ := f.run(t, "tools", "status", "agent01", "t3code")
+		if status != 0 || !strings.Contains(output, tc.want) {
+			t.Fatalf("connect=%s status=%d output=%q want %q", tc.connect, status, output, tc.want)
 		}
 	}
 }

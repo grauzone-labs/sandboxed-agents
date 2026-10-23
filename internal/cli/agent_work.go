@@ -40,17 +40,11 @@ func runAgentWork(request Request, p podmanTarget, stdout, stderr io.Writer) (in
 	if !status.Enabled && !stopping {
 		return 1, agentNotEnabledError(request)
 	}
-	args := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent", "-i"}
 	interactive := !stopping && p.host.IsInputTerminal(p.host.Stdin) && p.host.IsOutputTerminal(stdout)
 	if needsTerminal && !interactive {
 		return 1, fmt.Errorf("%s %s needs an interactive terminal", request.Args[1], verb)
 	}
-	if interactive {
-		args = append(args, "-t")
-	}
-	args = append(args, names.Container, managerPath, "agents", verb)
-	args = append(args, payload...)
-	exit, err := p.run(p.host.Stdin, stdout, stderr, args...)
+	exit, err := p.run(p.host.Stdin, stdout, stderr, agentExecArgs(interactive, names.Container, append([]string{"agents", verb}, payload...)...)...)
 	if passExit {
 		return exit, err
 	}

@@ -88,6 +88,13 @@ var Default = Catalog{
 			Channels: []string{"latest", "nightly"}, HomeVariable: "T3CODE_HOME",
 			VersionArgs: []string{"--version"}, VersionPrefix: "t3 v",
 			ServiceArgs: []string{"serve", "--host", "127.0.0.1", "--port", "3773"},
+			ConnectActions: map[string][]string{
+				"login": {"connect", "login", "--headless"}, "link": {"connect", "link", "--headless"},
+				"unlink": {"connect", "unlink"}, "logout": {"connect", "logout"},
+			},
+			InteractiveConnectActions: []string{"login", "link"},
+			ConnectStatusArgs:         []string{"connect", "status", "--json"},
+			CredentialPath:            "userdata/secrets/cloud-cli-oauth-token.bin",
 		},
 	},
 }

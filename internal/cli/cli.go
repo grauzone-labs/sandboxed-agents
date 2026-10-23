@@ -240,6 +240,16 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			return 1
 		}
 		return 0
+	case "tools connect":
+		target, err := selectedTarget()
+		if err != nil {
+			return 1
+		}
+		if err := connectTool(request, target, stdout, stderr); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 
 	case "fingerprint":
 		target, err := selectedTarget()

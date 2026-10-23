@@ -544,7 +544,11 @@ func TestSupervisorRequestsValidateBeforeHome(t *testing.T) {
 // lockFor takes the sandbox's manager lock in the test home, as a competing change would, and returns its release.
 func lockFor(t *testing.T, home string) (func(), bool, error) {
 	t.Helper()
-	path := filepath.Join(home, ".local", "share", "sandboxed-agents", "manager.lock")
+	return lockPath(filepath.Join(home, ".local", "share", "sandboxed-agents", "manager.lock"))
+}
+
+// lockPath takes an exclusive nonblocking lock on the file, as another manager process would, and returns its release.
+func lockPath(path string) (func(), bool, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, false, err

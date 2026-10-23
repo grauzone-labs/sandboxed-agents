@@ -98,6 +98,9 @@ type Effects struct {
 	Sleep func(context.Context, time.Duration) error
 	// Signals delivers the termination signals the supervisor reacts to.
 	Signals func() <-chan os.Signal
+	// NotifyInterrupt delivers a Ctrl+C to the returned channel instead of ending the manager, so an
+	// interactive child's interruption can be named and cleaned up; the returned function restores the default.
+	NotifyInterrupt func() (<-chan os.Signal, func())
 }
 
 // RunWithEffects returns the manager command's exit status at injected OS seams.

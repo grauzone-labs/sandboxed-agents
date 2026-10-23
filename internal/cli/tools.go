@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,7 +29,7 @@ func administerTool(request Request, p podmanTarget, stdout io.Writer) error {
 		return printToolStatus(request, p, stdout)
 	}
 	if verb == "update" {
-		status, err := readToolStatus(request, p)
+		status, err := readToolStatus(request, p, false)
 		if err != nil {
 			return err
 		}
@@ -57,12 +58,17 @@ func administerTool(request Request, p podmanTarget, stdout io.Writer) error {
 	return outputErr
 }
 
-// readToolStatus asks the manager, as agent, for the Tool selection and validates the answer before callers use it.
-func readToolStatus(request Request, p podmanTarget) (catalog.ToolStatus, error) {
+// readToolStatus asks the manager, as agent, for the Tool selection and service state, with the
+// account connection state when asked, and validates the answer before callers use it.
+func readToolStatus(request Request, p podmanTarget, connect bool) (catalog.ToolStatus, error) {
 	var status catalog.ToolStatus
+	payload := []string{"status", request.Args[1]}
+	if connect {
+		payload = append(payload, "--connect")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	answer, err := p.queryContext(ctx, time.Second, toolManagerArgs(request, "status", request.Args[1])...)
+	answer, err := p.queryContext(ctx, time.Second, toolManagerArgs(request, payload...)...)
 	if err != nil {
 		if ctx.Err() == nil && managerOperationFailure(err) {
 			return status, err
@@ -77,7 +83,7 @@ func readToolStatus(request Request, p podmanTarget) (catalog.ToolStatus, error)
 
 // printToolStatus renders the installed version, the channel or pin, and the service state, or an absent selection.
 func printToolStatus(request Request, p podmanTarget, stdout io.Writer) error {
-	status, err := readToolStatus(request, p)
+	status, err := readToolStatus(request, p, true)
 	if err != nil {
 		return err
 	}
@@ -92,8 +98,87 @@ func printToolStatus(request Request, p podmanTarget, stdout io.Writer) error {
 	if pin == "" {
 		pin = "none"
 	}
-	_, err = fmt.Fprintf(stdout, "%s: enabled; version %s; channel %s; pin %s; %s\n", status.Name, status.InstalledVersion, channel, pin, describeToolService(status))
+	_, err = fmt.Fprintf(stdout, "%s: enabled; version %s; channel %s; pin %s; %s%s\n", status.Name, status.InstalledVersion, channel, pin, describeToolService(status), describeToolConnect(status.Connect))
 	return err
+}
+
+// connectTool runs one T3 Connect account action through the manager as agent: after the sandbox
+// checks it needs an enabled Tool, and the interactive actions need a terminal before anything changes.
+func connectTool(request Request, p podmanTarget, stdout, stderr io.Writer) error {
+	names, err := requireAgentManager(request, p)
+	if err != nil {
+		return err
+	}
+	status, err := readToolStatus(request, p, false)
+	if err != nil {
+		return err
+	}
+	if !status.Enabled {
+		return fmt.Errorf("%s not enabled; run tools enable %s %s", request.Args[1], request.Name, request.Args[1])
+	}
+	tool, err := catalog.Default.ResolveTool(request.Args[1])
+	if err != nil {
+		return err
+	}
+	action := request.Args[2]
+	interactive := p.host.IsInputTerminal(p.host.Stdin) && p.host.IsOutputTerminal(stdout)
+	if slices.Contains(tool.InteractiveConnectActions, action) && !interactive {
+		return fmt.Errorf("tools connect %s %s needs an interactive terminal", request.Args[1], action)
+	}
+	exit, err := p.run(p.host.Stdin, stdout, stderr, agentExecArgs(interactive, names.Container, "tools", "connect", request.Args[1], action)...)
+	if err != nil {
+		return err
+	}
+	if podmanTransportFailure(exit) {
+		return agentManagerError(request, fmt.Errorf("manager request failed with exit status %d", exit))
+	}
+	if exit != 0 {
+		return fmt.Errorf("tools connect %s %s failed", request.Args[1], action)
+	}
+	return nil
+}
+
+// agentExecArgs builds the Podman arguments that run the manager directly as agent with the caller's
+// input, and with a terminal when the caller has one (ADR-0006).
+func agentExecArgs(interactive bool, container string, payload ...string) []string {
+	args := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent", "-i"}
+	if interactive {
+		args = append(args, "-t")
+	}
+	return append(append(args, container, managerPath), payload...)
+}
+
+// describeToolConnect renders the account connection state of a Tool.
+func describeToolConnect(connect *catalog.ConnectStatus) string {
+	if connect == nil {
+		return ""
+	}
+	if connect.Error != "" {
+		return "; T3 Connect " + connect.Error
+	}
+	text := "; T3 Connect not signed in"
+	if connect.Authenticated {
+		text = "; T3 Connect signed in"
+		if connect.Account != "" {
+			text += " as " + connect.Account
+		}
+	}
+	if connect.Linked {
+		text += ", linked"
+	} else {
+		text += ", not linked"
+	}
+	if connect.RelayClient != "" {
+		text += "; relay client " + connect.RelayClient
+	}
+	switch {
+	case connect.Reachability == "":
+	case connect.Reachable:
+		text += "; relay reachable"
+	default:
+		text += "; relay failure: " + connect.Reachability
+	}
+	return text
 }
 
 // describeToolService renders the service state with its last failure and log location.

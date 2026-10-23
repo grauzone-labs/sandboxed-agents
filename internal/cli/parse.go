@@ -67,6 +67,7 @@ var commands = map[string]commandSpec{
 	"tools enable":        spec(2, 2, true, "channel version", ""),
 	"tools update":        spec(2, 2, true, "channel version", ""),
 	"tools status":        spec(2, 2, true, "", ""),
+	"tools connect":       spec(3, 3, true, "", ""),
 }
 
 // Parse enforces command-first grammar and step 1 checks before any Podman call.
@@ -191,6 +192,11 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 		}
 		if version := request.Options["version"]; version != "" {
 			if err := catalog.ValidatePinVersion(version); err != nil {
+				return request, err
+			}
+		}
+		if request.Command == "tools connect" {
+			if _, err := tool.ResolveConnectAction(request.Args[2]); err != nil {
 				return request, err
 			}
 		}

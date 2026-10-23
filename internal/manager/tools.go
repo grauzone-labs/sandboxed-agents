@@ -25,10 +25,11 @@ type toolSelection struct {
 	Pin     string `json:"pin,omitempty"`
 }
 
-// toolRequest is a validated tools operation with its catalog entry and at most one selector.
+// toolRequest is a validated tools operation with its catalog entry, at most one selector, the connect action of `tools connect`, and whether a status includes the connect part.
 type toolRequest struct {
-	operation, name, channel, version string
-	definition                        catalog.Tool
+	operation, name, channel, version, action string
+	connect                                   bool
+	definition                                catalog.Tool
 }
 
 // parseTools validates the Tool operation, catalog entry, and selector flags before home access.
@@ -44,7 +45,7 @@ func parseTools(args []string, stderr io.Writer) (toolRequest, bool) {
 	}
 	r.operation, r.name = args[0], args[1]
 	switch r.operation {
-	case "enable", "update", "status":
+	case "enable", "update", "status", "connect":
 	default:
 		fmt.Fprintln(stderr, "unknown tools command", r.operation)
 		return r, false
@@ -55,11 +56,25 @@ func parseTools(args []string, stderr io.Writer) (toolRequest, bool) {
 		fmt.Fprintln(stderr, err)
 		return r, false
 	}
+	if r.operation == "connect" {
+		if len(args) != 3 {
+			fmt.Fprintln(stderr, "tools connect requires TOOL ACTION")
+			return r, false
+		}
+		r.action = args[2]
+		if _, err := r.definition.ResolveConnectAction(r.action); err != nil {
+			fmt.Fprintln(stderr, err)
+			return r, false
+		}
+		return r, true
+	}
 	f := flag.NewFlagSet("tools "+r.operation, flag.ContinueOnError)
 	f.SetOutput(stderr)
 	if r.operation != "status" {
 		f.StringVar(&r.channel, "channel", "", "release channel")
 		f.StringVar(&r.version, "version", "", "exact package version")
+	} else {
+		f.BoolVar(&r.connect, "connect", false, "include the account connection state, which runs upstream's status query")
 	}
 	if err := f.Parse(args[2:]); err != nil {
 		return r, false
@@ -106,14 +121,16 @@ func tools(args []string, worker bool, stdout, stderr io.Writer, effects Effects
 		return 1
 	}
 	switch r.operation {
+	case "connect":
+		return connectTool(root, r, stdout, stderr, effects)
 	case "status":
-		status, err := toolStatus(root, r.name, effects)
+		status, err := toolStatus(home, root, r.name, r.connect, effects)
 		if err != nil {
 			return exitStatus(err, stderr)
 		}
 		return exitStatus(json.NewEncoder(stdout).Encode(status), stderr)
 	case "list":
-		statuses, err := enabledToolStatuses(root, effects)
+		statuses, err := enabledToolStatuses(home, root, effects)
 		if err != nil {
 			return exitStatus(err, stderr)
 		}
@@ -134,8 +151,9 @@ func tools(args []string, worker bool, stdout, stderr io.Writer, effects Effects
 	return 0
 }
 
-// toolStatus reads one Tool's selection and service state as a snapshot, without the manager lock.
-func toolStatus(root, name string, effects Effects) (ToolStatus, error) {
+// toolStatus reads one Tool's selection and service state as a snapshot, without the manager lock,
+// and with the account connection state when asked, which runs upstream's status query.
+func toolStatus(home, root, name string, connect bool, effects Effects) (ToolStatus, error) {
 	directory := toolDirectory(root, name)
 	current, enabled, err := readToolSelection(directory)
 	if err != nil {
@@ -146,15 +164,23 @@ func toolStatus(root, name string, effects Effects) (ToolStatus, error) {
 		if err := fillServiceStatus(&status, directory, effects); err != nil {
 			return status, err
 		}
+		if connect {
+			definition, err := catalog.Default.ResolveTool(name)
+			if err != nil {
+				return status, err
+			}
+			status.Connect = readConnectStatus(home, directory, name, current, definition, effects)
+		}
 	}
 	return status, nil
 }
 
-// enabledToolStatuses reads the status of every enabled Tool of the catalog, in name order.
-func enabledToolStatuses(root string, effects Effects) ([]ToolStatus, error) {
+// enabledToolStatuses reads the selection and service state of every enabled Tool of the catalog, in
+// name order, without the account connection state, so that `check NAME` starts no program.
+func enabledToolStatuses(home, root string, effects Effects) ([]ToolStatus, error) {
 	statuses := []ToolStatus{}
 	for _, name := range catalog.Default.ToolNames() {
-		status, err := toolStatus(root, name, effects)
+		status, err := toolStatus(home, root, name, false, effects)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}

@@ -86,7 +86,7 @@ An item that expects "nothing changes" captures the state **before** the command
 Several items share one long-lived sandbox, `chk-persist`, so that a login done early is still there when the update is observed. Run them in this order:
 
 1. [Create `chk-persist`](#the-shared-sandbox-chk-persist).
-2. The logins, all in `chk-persist`: [agent logins](#agent-logins), [GitHub](#github-login), [Azure device code](#azure-login-device-code), [Azure browser](#azure-login-browser), [Azure DevOps](#azure-devops-token).
+2. The logins, all in `chk-persist`: [agent logins](#agent-logins), [GitHub](#github-login), [Azure device code](#azure-login-device-code), [Azure browser](#azure-login-browser), [Azure DevOps](#azure-devops-token), [T3 Connect](#t3-connect-login-and-link).
 3. [Persistence and update](#persistence-and-update): the baseline round, then `stop` and `start`, then the one `build` and the `update`, with the same observations each time.
 4. [No-terminal refusals](#toolchain-requirement-and-no-terminal-refusals), which also use `chk-persist`.
 5. The independent items, each with a sandbox it removes itself: [VS Code Remote SSH](#vs-code-remote-ssh), [an interrupted update](#an-interrupted-update), the [toolchain requirement](#toolchain-requirement-and-no-terminal-refusals), the [quick guides](#quick-guides), and the [installs](#installers-issue-no-podman-call) on clean machines.
@@ -107,6 +107,7 @@ Each item has a fixed identifier. The identifier is the `name` of its check in t
 | `azure-login-device-code` | [Azure login, device code](#azure-login-device-code) | either |
 | `azure-login-browser` | [Azure login, browser](#azure-login-browser) | either |
 | `azdo-token` | [Azure DevOps token](#azure-devops-token) | either |
+| `t3-connect-link` | [T3 Connect login and link](#t3-connect-login-and-link) | either |
 | `vscode-remote-ssh` | [VS Code Remote SSH](#vs-code-remote-ssh) | either |
 | `npm-install-clean` | [npm install on a clean machine](#npm-install-on-a-clean-machine) | either |
 | `nuget-install-clean` | [NuGet install on a clean machine](#nuget-install-on-a-clean-machine) | `windows-11` |
@@ -203,9 +204,24 @@ Identifier `azdo-token`. Follow [Manual Azure DevOps login check](integrations.m
 
 The token stays until [Final cleanup](#final-cleanup).
 
+### T3 Connect login and link
+
+Identifier `t3-connect-link`. One T3 account login for the T3 Code Tool, ending in the sandbox's environment visible in the T3 mobile app, then unlinked and signed out again. This is a T3 account, not an agent provider login; the agent logins above stay as they are. You need a T3 account signed in on a phone with the T3 mobile app, and the sandbox needs outbound access to port 7844.
+
+1. `sandboxed-agents tools enable chk-persist t3code`. **Expected:** `t3code enabled: version V (channel latest); service running`, and `sandboxed-agents tools status chk-persist t3code` shows `service running` and `T3 Connect not signed in, not linked`.
+2. Start `sandboxed-agents tools connect chk-persist t3code login` in an interactive terminal, wait for the URL and the code, and press `Ctrl+C`. **Expected:** non-zero status, `t3code connect login was interrupted`, and `tools status` still shows `not signed in`.
+3. Run it again, open the URL in a browser on your machine, enter the code, and approve. **Expected:** upstream's success message and exit status zero; `tools status` shows `T3 Connect signed in`.
+4. `sandboxed-agents tools connect chk-persist t3code link`, approving in the browser when asked. **Expected:** exit status zero, `t3code service restarted; the link takes effect`, and `tools status` shows `linked` with `relay client available` and, once the relay has connected, `relay reachable`.
+5. On the phone, in the T3 mobile app signed in to the same account, the sandbox's environment appears; open it and send a short prompt to an agent in `chk-persist`. **Expected:** the environment lists the sandbox and the prompt is answered.
+6. `sandboxed-agents tools connect chk-persist t3code unlink`. **Expected:** exit status zero; `tools status` shows `signed in` and `not linked`; the environment disappears from the app or shows as unavailable.
+7. `sandboxed-agents tools connect chk-persist t3code logout`. **Expected:** exit status zero; `tools status` shows `not signed in`.
+8. In `shell chk-persist`, `gh auth status` and `az account show` report the same logins as before this item. **Expected:** unchanged; T3 Connect touched no agent or integration login.
+
+Record `t3-connect-link`. T3 Code stays enabled in `chk-persist` for the later items.
+
 ### Persistence and update
 
-Identifiers `selection-pins-persist`, `git-identity-persist`, `credentials-persist`, and `update-complete`. They run in `chk-persist`, after all five login items, so that the real agent, GitHub, Azure, and Azure DevOps logins are present when the lifecycle commands run. A fake Git credential supplements the real ones but does not prove that they survived; the real logins do.
+Identifiers `selection-pins-persist`, `git-identity-persist`, `credentials-persist`, and `update-complete`. They run in `chk-persist`, after all six login items, so that the real agent, GitHub, Azure, Azure DevOps, and T3 Connect logins are present when the lifecycle commands run. A fake Git credential supplements the real ones but does not prove that they survived; the real logins do.
 
 **Setup, once:**
 
@@ -704,7 +720,7 @@ Do this last, after every observation above. It is the only place that removes `
 2. Remove the sandbox and its volumes: `sandboxed-agents remove chk-persist --volumes`. **Expected:** the three volumes are removed (`podman volume ls` shows none for `chk-persist`).
 3. This is the removal half of `credentials-persist`. Create the sandbox again: `sandboxed-agents up chk-persist --with azure`. Open `sandboxed-agents shell chk-persist` and, **inside that shell**, check that `/home/agent/.git-credentials` is absent, that `git config --global --get user.email` prints nothing, and that `gh auth status` and `az account show` report no login. Then leave the shell with `exit`. **Back in the host terminal**, run `sandboxed-agents agents status chk-persist opencode`, which shows the agent not enabled. Then remove the sandbox for good: `sandboxed-agents remove chk-persist --volumes`.
 4. Save `images-after.txt` and compare it with `images-before.txt` for the [image check](#no-command-removes-an-image).
-5. Revoke what you granted: remove the GitHub device authorization in your GitHub settings, revoke the Azure sign-in sessions for the test account, delete the Azure DevOps personal access token, and sign out of the four agents' accounts or revoke their sessions at each provider.
+5. Revoke what you granted: remove the GitHub device authorization in your GitHub settings, revoke the Azure sign-in sessions for the test account, delete the Azure DevOps personal access token, sign out of the four agents' accounts or revoke their sessions at each provider, and remove the sandbox's environment and the CLI authorization from the T3 account if they still exist.
 6. `sandboxed-agents list` must show no sandbox of the group, and `podman ps --all` no `sandboxed-agents.manual-check.` container.
 
 ## The record
