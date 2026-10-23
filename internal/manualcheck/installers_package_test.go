@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -41,6 +42,43 @@ func TestInstallerHelperSuite(t *testing.T) {
 		t.Fatalf("installer helper suite failed: %v\n%s", err, output)
 	}
 	t.Logf("%s", lastLines(string(output), 4))
+}
+
+// TestInstallerTrustedSnapshotOnWindows proves the admin-only trusted snapshot and the protected output
+// directory of the installer package against real Windows security descriptors, accounts, links, and
+// handles: the protected descriptor they get, the item account's read-only grant, the refusal of
+// inherited, granted, and user-owned access, of junctions, and of ancestors that let another account
+// replace them, the account checks, and the bound-input reader's refusal of junctions, symbolic links,
+// and hard links. It runs test_trusted_snapshot_windows.py, which drives the real PowerShell with only
+// the trusted base substituted. It runs on Windows only, in an elevated process; with
+// SANDBOXED_AGENTS_TEST_TRUSTED_SNAPSHOT=1, as in the Windows CI job, a missing precondition fails
+// instead of skipping, and any skipped test fails the run.
+func TestInstallerTrustedSnapshotOnWindows(t *testing.T) {
+	strict := os.Getenv("SANDBOXED_AGENTS_TEST_TRUSTED_SNAPSHOT") == "1"
+	if runtime.GOOS != "windows" {
+		t.Skip("real Windows security descriptors need Windows")
+	}
+	python, err := exec.LookPath("python")
+	if err != nil {
+		python, err = exec.LookPath("python3")
+	}
+	if err != nil {
+		if strict {
+			t.Fatal("SANDBOXED_AGENTS_TEST_TRUSTED_SNAPSHOT=1 but Python 3 is missing")
+		}
+		t.Skip("the trusted-snapshot tests require Python 3")
+	}
+	command := exec.Command(python, "-I", "-B", "-m", "unittest", "discover", "-v", "-s", "tests", "-p", "test_trusted_snapshot_windows.py")
+	command.Dir = filepath.Join("windows", "installers")
+	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("trusted-snapshot tests failed: %v\n%s", err, output)
+	}
+	if strict && strings.Contains(string(output), "skipped") {
+		t.Fatalf("SANDBOXED_AGENTS_TEST_TRUSTED_SNAPSHOT=1 but tests were skipped:\n%s", output)
+	}
+	t.Logf("%s", output)
 }
 
 // lastLines returns the final n lines of text.

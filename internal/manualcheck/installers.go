@@ -398,7 +398,7 @@ func (r *Run) InstallersPrepare(configurationPath, method, captureID string) err
 	}
 	observer := filepath.Join(configuration.PackageDirectory, "Start-InstallerCapture.ps1")
 	if err := r.Checkpoint(dir,
-		fmt.Sprintf("Leave the item shell that opens now open. In a separate, interactive, elevated PowerShell 7 run: & '%s' -RunDirectory '%s'", observer, captureRun),
+		fmt.Sprintf("Leave the item shell that opens now open. In a separate, interactive PowerShell 7 elevated with a separate administrator account, run: & '%s' -RunDirectory '%s'", observer, captureRun),
 		"In the Process Monitor window: reset the filters; Enable Advanced Output off; Drop Filtered Events off; File System, Registry, and Process/Thread activity on; the Date & Time, Thread ID, and Duration columns on; the event counter increasing. Press Enter in the observer.",
 		"After CAPTURE_READY, in the item shell run, one at a time: Begin-InstallerMethod; Invoke-InstallerStep install; Invoke-InstallerStep reinstall; Invoke-InstallerStep remove.",
 		fmt.Sprintf("After CAPTURE_STOPPED run Save-InstallerMethod in the item shell, wait for REVIEW_COMPLETE, then: manual-check installers summarize --run %s --run-directory '%s'", r.ID, captureRun),
@@ -542,18 +542,32 @@ type InstallerResult struct {
 	CriterionSHA256  string `json:"criterion_sha256"`
 }
 
-// SummarizeInstallerRun reads a capture run's result and returns the observation text and whether
+// installerOutputRoot returns the directory that holds the protected output directory of every
+// capture run, below the trusted base of the elevated observer; tests replace it.
+var installerOutputRoot = func() (string, error) {
+	data, err := programDataDirectory()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(data, "sandboxed-agents-manual", "output"), nil
+}
+
+// verifyInstallerOutput refuses an output directory that the elevated observer did not create; tests
+// replace it together with installerOutputRoot.
+var verifyInstallerOutput = verifyProtectedOutput
+
+// SummarizeInstallerRun reads the result in a capture run's protected output directory and returns the observation text and whether
 // the local triage found nothing. The text is never an acceptance pass: it reports counts the
 // reviewer produced, and the verdict of the method stays with the review of the evidence.
-func SummarizeInstallerRun(runDirectory, candidate string) (string, bool, error) {
+func SummarizeInstallerRun(outputDirectory, candidate string) (string, bool, error) {
 	for _, failed := range []string{"capture.failed.json", "export.failed.json"} {
-		if data, err := os.ReadFile(filepath.Join(runDirectory, failed)); err == nil {
+		if data, err := os.ReadFile(filepath.Join(outputDirectory, failed)); err == nil {
 			return fmt.Sprintf("%s: %s", failed, strings.TrimSpace(string(data))), false, nil
 		}
 	}
 	var result InstallerResult
-	if err := readJSON(filepath.Join(runDirectory, "result.json"), &result); err != nil {
-		return "", false, fmt.Errorf("no result.json yet in %s: %w", runDirectory, err)
+	if err := readJSON(filepath.Join(outputDirectory, "result.json"), &result); err != nil {
+		return "", false, fmt.Errorf("no result.json yet in %s: %w", outputDirectory, err)
 	}
 	clean := result.TraceVerdict == "NO_FINDINGS" && result.EnvironmentVerdict == "NO_FINDINGS" && result.UnknownRows == 0 && result.OutsideChanges == 0 && result.KernelComplete && result.FakePodmanBytes == 0 && result.CapturedCommit == candidate
 	text := fmt.Sprintf("method %s: trace %s; environment %s; %d rows exported; %d bookkeeping rows; %d named-pipe rows, %d of them pipe information queries proven by the raw log%s; %d unknown rows; %d changes outside the allowed locations; kernel trace complete %t%s; fake Podman bytes %d; captured commit %s; criterion %s. Local triage only; the method passes only on the review of the evidence.",
@@ -570,7 +584,11 @@ func failureNote(failure string) string {
 	return " (" + failure + ")"
 }
 
-// InstallersSummarize records the summary of one capture run under the item directory.
+// InstallersSummarize records the summary of one capture run under the item directory. The observer
+// and the export write only into the run's protected output directory, which the item account may
+// read, so the summary reads it there, by the run directory's name, and not from the run directory.
+// The name must be a capture run ID, and the output directory and its two parents must be the
+// observer's: no link, and owned by Administrators or SYSTEM.
 func (r *Run) InstallersSummarize(runDirectory string) error {
 	if runDirectory == "" {
 		return errors.New("the capture run directory is required")
@@ -579,11 +597,22 @@ func (r *Run) InstallersSummarize(runDirectory string) error {
 	if err != nil {
 		return err
 	}
-	text, clean, err := SummarizeInstallerRun(runDirectory, r.Commit)
+	name := filepath.Base(runDirectory)
+	if !runIDPattern.MatchString(name) {
+		return fmt.Errorf("%s is not the name of a capture run directory", runDirectory)
+	}
+	root, err := installerOutputRoot()
 	if err != nil {
 		return err
 	}
-	name := filepath.Base(runDirectory)
+	output := filepath.Join(root, name)
+	if err := verifyInstallerOutput(output); err != nil {
+		return err
+	}
+	text, clean, err := SummarizeInstallerRun(output, r.Commit)
+	if err != nil {
+		return err
+	}
 	if err := writePrivate(filepath.Join(dir, name+".summary.txt"), text+"\n"); err != nil {
 		return err
 	}

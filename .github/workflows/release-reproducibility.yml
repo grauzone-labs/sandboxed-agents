@@ -146,6 +146,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Windows command, CLI, or stable gate tests failed' }
           go vet ./internal/manualcheck/...
           if ($LASTEXITCODE -ne 0) { throw 'Windows compile check of the manual-checklist runner failed' }
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - name: Run the trusted-snapshot tests of the installer package against real Windows ACLs
+        shell: pwsh
+        env:
+          SANDBOXED_AGENTS_TEST_TRUSTED_SNAPSHOT: '1'
+        run: |
+          $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+          if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'The trusted-snapshot ACL tests need an elevated Windows runner, and this runner is not elevated' }
+          python --version
+          if ($LASTEXITCODE -ne 0) { throw 'Python is missing on the Windows runner' }
+          go test ./internal/manualcheck -run '^(TestInstallerTrustedSnapshotOnWindows|TestProtectedInstallerOutputOnWindows)$' -count=1 -v
+          if ($LASTEXITCODE -ne 0) { throw 'Windows trusted-snapshot ACL tests failed' }
       - name: Run image and release tests with Git for Windows Bash
         shell: pwsh
         env:

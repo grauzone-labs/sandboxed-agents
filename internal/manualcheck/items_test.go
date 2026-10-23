@@ -549,7 +549,10 @@ func TestVSCodeVerdictKeepsAFailedStage(t *testing.T) {
 func TestVerdictBlocksStayOneLinePerField(t *testing.T) {
 	f := fake(t, "sandboxed-agents")
 	run := verifiedRun(t, f, f.path("sandboxed-agents"))
-	failed := filepath.Join(t.TempDir(), "npm-failed")
+	// The summary reads each run's protected output directory, found by the run directory's name.
+	outputs := t.TempDir()
+	t.Cleanup(manualcheck.SetInstallerOutputRoot(outputs))
+	failed := filepath.Join(outputs, "npm-failed")
 	if err := os.MkdirAll(failed, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -559,7 +562,7 @@ func TestVerdictBlocksStayOneLinePerField(t *testing.T) {
 	if err := run.InstallersSummarize(failed); err == nil {
 		t.Fatal("a failed capture summarized as clean")
 	}
-	clean := filepath.Join(t.TempDir(), "npm-clean")
+	clean := filepath.Join(outputs, "npm-clean")
 	if err := os.MkdirAll(clean, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -694,5 +697,56 @@ func TestPersistenceAccountHashIgnoresTrailingNewline(t *testing.T) {
 	}
 	if strings.TrimSpace(string(output)) != manualcheck.AccountHash("someone@example.invalid\n") {
 		t.Fatalf("shell hash %s differs from AccountHash", strings.TrimSpace(string(output)))
+	}
+}
+
+// TestInstallersSummarizeReadsTheProtectedOutputDirectory proves `installers summarize` takes the
+// result and the failure records from the run's protected output directory, found by the run
+// directory's name, and never from the run directory, which the item account can write: a clean
+// result.json planted in the run directory is not read, and a capture.failed.json in the output
+// directory decides the summary.
+func TestInstallersSummarizeReadsTheProtectedOutputDirectory(t *testing.T) {
+	f := fake(t, "sandboxed-agents")
+	run := verifiedRun(t, f, f.path("sandboxed-agents"))
+	outputs := t.TempDir()
+	t.Cleanup(manualcheck.SetInstallerOutputRoot(outputs))
+	runDirectory := filepath.Join(t.TempDir(), "npm-planted")
+	output := filepath.Join(outputs, "npm-planted")
+	for _, dir := range []string{runDirectory, output} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	clean := `{"schema_version":2,"method":"npm","trace_verdict":"NO_FINDINGS","environment_verdict":"NO_FINDINGS","kernel_complete":true,"captured_commit":"` + run.Commit + `"}`
+	if err := os.WriteFile(filepath.Join(runDirectory, "result.json"), []byte(clean), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.InstallersSummarize(runDirectory); err == nil || !strings.Contains(err.Error(), output) {
+		t.Fatalf("a result.json in the run directory was read: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(output, "capture.failed.json"), []byte(`{"failure":"budget"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.InstallersSummarize(runDirectory); err == nil {
+		t.Fatal("the failure record in the output directory was ignored")
+	}
+	summary := readFile(t, filepath.Join(run.Root, "installers-no-podman", "npm-planted.summary.txt"))
+	if !strings.Contains(summary, "capture.failed.json") {
+		t.Fatalf("summary does not come from the output directory: %s", summary)
+	}
+}
+
+// TestInstallersSummarizeRefusesANameThatIsNoCaptureRun proves `installers summarize` refuses a run
+// directory whose name is not a capture run ID before it looks for an output directory, so a name
+// such as ".." or one with other characters never selects a directory outside the output root.
+func TestInstallersSummarizeRefusesANameThatIsNoCaptureRun(t *testing.T) {
+	f := fake(t, "sandboxed-agents")
+	run := verifiedRun(t, f, f.path("sandboxed-agents"))
+	outputs := t.TempDir()
+	t.Cleanup(manualcheck.SetInstallerOutputRoot(outputs))
+	for _, name := range []string{"..", "NPM_run", "npm run"} {
+		if err := run.InstallersSummarize(filepath.Join(t.TempDir(), name)); err == nil || !strings.Contains(err.Error(), "is not the name of a capture run directory") {
+			t.Fatalf("run directory name %q was accepted: %v", name, err)
+		}
 	}
 }
