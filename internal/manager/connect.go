@@ -110,7 +110,9 @@ func runConnectAction(directory string, current toolSelection, r toolRequest, st
 		interrupts, stop = effects.NotifyInterrupt()
 		defer stop()
 	}
-	err = effects.Start(Process{Program: toolLauncher(directory, current.Version, r.definition), Args: args, Identity: agentIdentity, EnvironmentPolicy: AgentEnvironment, Environment: toolEnvironment(directory, r.definition), Stdin: effects.Stdin, Stdout: stdout, Stderr: stderr})
+	process := toolProcess(directory, current, r.definition, args)
+	process.Stdin, process.Stdout, process.Stderr = effects.Stdin, stdout, stderr
+	err = effects.Start(process)
 	if err == nil {
 		return nil
 	}
@@ -159,7 +161,9 @@ func readConnectStatus(home, directory, name string, current toolSelection, defi
 		return status
 	}
 	var output, diagnostic bytes.Buffer
-	err := effects.Start(Process{Program: toolLauncher(directory, current.Version, definition), Args: definition.ConnectStatusArgs, Identity: agentIdentity, EnvironmentPolicy: AgentEnvironment, Environment: toolEnvironment(directory, definition), Stdout: &output, Stderr: &diagnostic})
+	process := toolProcess(directory, current, definition, definition.ConnectStatusArgs)
+	process.Stdout, process.Stderr = &output, &diagnostic
+	err := effects.Start(process)
 	if err != nil {
 		status.Error = "status unavailable: " + processFailureSummary(diagnostic.String(), err)
 		return status
