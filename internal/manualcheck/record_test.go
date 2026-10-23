@@ -166,8 +166,11 @@ func TestRecordDocumentedValidatorIsTheRunnersRules(t *testing.T) {
 	}
 	text := string(doc)
 	start := strings.Index(text, "IDS='[")
+	if start < 0 {
+		t.Fatal("the documented jq validator was not found")
+	}
 	end := strings.Index(text[start:], "' manual-checklist.json")
-	if start < 0 || end < 0 {
+	if end < 0 {
 		t.Fatal("the documented jq validator was not found")
 	}
 	script := text[start : start+end+len("' manual-checklist.json")]
