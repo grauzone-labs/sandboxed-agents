@@ -66,5 +66,8 @@ func recoverUpdate(request Request, p podmanTarget, objects sandboxObjects, outp
 		return err
 	}
 	fmt.Fprintf(output, "sandbox %s interrupted update cleaned up\n", request.Name)
+	if running {
+		return restoreToolServices(request, p, output)
+	}
 	return nil
 }

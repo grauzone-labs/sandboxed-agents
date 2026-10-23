@@ -69,10 +69,10 @@ func assertNewSandbox(t *testing.T, calls [][]string, connection, group, name, t
 	workspaceMount := "type=volume,source=" + prefix + ".workspace,destination=/workspace"
 	if workspace != "" {
 		workspaceMount = "type=bind,source=" + workspace + ",destination=/workspace"
-		if len(calls) >= 3 {
-			for index, arg := range calls[len(calls)-3] {
+		if len(calls) >= 4 {
+			for index, arg := range calls[len(calls)-4] {
 				if arg == "--mount" {
-					workspaceMount = calls[len(calls)-3][index+1]
+					workspaceMount = calls[len(calls)-4][index+1]
 					break
 				}
 			}
@@ -80,6 +80,8 @@ func assertNewSandbox(t *testing.T, calls [][]string, connection, group, name, t
 	}
 	create := []string{"create", "--name", prefix, "--label", "io.sandboxed-agents.owner=" + group, "--label", "io.sandboxed-agents.name=" + name, "--label", "io.sandboxed-agents.port=" + port, "--userns=keep-id:uid=1000,gid=1000", "--user=0:0", "--security-opt=no-new-privileges", "--network=pasta:--no-map-gw", "--memory", memory, "--memory-swap", memory, "--cpus", cpus, "--pids-limit", pids, "--shm-size", shm, "--publish", "127.0.0.1:" + port + ":22/tcp", "--label", "io.sandboxed-agents.toolchains=none", "--mount", workspaceMount, "--mount", "type=volume,source=" + prefix + ".home,destination=/home/agent", "--mount", "type=volume,source=" + prefix + ".ssh,destination=/etc/ssh", tag}
 	expected = append(expected, append(append([]string{}, target...), create...), append(append([]string{}, target...), "start", prefix), append(append([]string{}, target...), "container", "inspect", prefix))
+	// The running sandbox then restores its tool services through the manager, as agent.
+	expected = append(expected, append(append([]string{}, target...), "exec", "--user=1000:1000", "--env", "HOME=/home/agent", prefix, "/usr/local/bin/sandboxed-agents-manager", "tools", "restore"))
 	// Compare every mutation argument; only the query prefix and optional build may precede these calls.
 	if len(calls) < len(expected) || !reflect.DeepEqual(calls[len(calls)-len(expected):], expected) {
 		t.Fatalf("create sequence=%v; want suffix=%v", calls, expected)

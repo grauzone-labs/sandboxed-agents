@@ -53,6 +53,12 @@ type fixture struct {
 	responses map[string]response
 }
 
+// toolRestoreCall matches the tool service restore that follows every lifecycle command, for any sandbox and connection.
+const toolRestoreCall = "*exec --user=1000:1000 --env HOME=/home/agent * /usr/local/bin/sandboxed-agents-manager tools restore"
+
+// toolListCall matches the tool service query of check NAME, for any sandbox and connection.
+const toolListCall = "*exec --user=0:0 * /usr/local/bin/sandboxed-agents-manager tools list"
+
 const linuxSubtreeControl = "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.subtree_control"
 
 // TestLinuxDelegationRequiresEnabledSubtreeControllers proves available controllers must also be enabled and subtree read failures name their path through RunWithHost's file-reader and fake Podman seams.
@@ -143,6 +149,9 @@ func linuxHost(t *testing.T) *fixture {
 		portInventory:        {Output: "[]"},
 		"--version":          {Output: "podman version 4.4.0\n"},
 		"info --format json": {Output: `{"host":{"security":{"rootless":true},"cgroupVersion":"v2"}}`},
+		// A sandbox without an enabled Tool restores nothing and lists no tool service.
+		toolRestoreCall: {},
+		toolListCall:    {Output: "[]\n"},
 	}}
 	for _, entry := range f.fakes.Env(os.Environ()) {
 		key, value, _ := strings.Cut(entry, "=")

@@ -253,14 +253,15 @@ func TestCheckInstalledSSHSetupReportsAccessProblemsWithoutChanges(t *testing.T)
 	}
 }
 
-// assertCheckQueriesOnly permits sandbox inspection and the manager's read-only version query.
+// assertCheckQueriesOnly permits sandbox inspection and the manager's read-only version and tool list queries.
 func assertCheckQueriesOnly(t *testing.T, fakes testutil.Fakes, after int) {
 	t.Helper()
 	for _, call := range testutil.Invocations(t, fakes.PodmanLog)[after:] {
 		if len(call) > 1 && call[0] == "--connection" {
 			call = call[2:]
 		}
-		manager := strings.Join(call, " ") == "exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager version"
+		joined := strings.Join(call, " ")
+		manager := joined == "exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager version" || joined == "exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager tools list"
 		if !sandboxObjectQuery(call) && !manager {
 			t.Fatalf("check issued a non-query Podman call: %v", call)
 		}

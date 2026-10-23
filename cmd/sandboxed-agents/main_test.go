@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -615,10 +616,22 @@ type scriptedAnswer struct {
 }
 
 // lifecycleHarness installs fake processes with scripted Podman responses and isolated host state.
+// A sandbox without an enabled Tool restores nothing and lists no tool service unless a test scripts otherwise.
 func lifecycleHarness(t *testing.T, responses map[string]lifecycleResponse) testutil.Fakes {
 	t.Helper()
 	fakes := testutil.Install(t, fakeExecutable)
 	state := t.TempDir()
+	if responses == nil {
+		responses = map[string]lifecycleResponse{}
+	}
+	for key, value := range map[string]lifecycleResponse{
+		"*exec --user=1000:1000 --env HOME=/home/agent * /usr/local/bin/sandboxed-agents-manager tools restore": {},
+		"*exec --user=0:0 * /usr/local/bin/sandboxed-agents-manager tools list":                                 {Output: "[]\n"},
+	} {
+		if _, scripted := responses[key]; !scripted {
+			responses[key] = value
+		}
+	}
 	data, err := json.Marshal(responses)
 	if err != nil {
 		t.Fatal(err)
@@ -809,7 +822,7 @@ func TestLifecycleStartChangesOnlyStoppedSandbox(t *testing.T) {
 				t.Fatalf("mutations=%v want=%v", got, want)
 			}
 			for _, call := range calls {
-				if call[0] == "--version" || call[0] == "info" || call[0] == "exec" {
+				if call[0] == "--version" || call[0] == "info" || (call[0] == "exec" && call[len(call)-1] != "restore") {
 					t.Fatalf("unexpected prerequisite/session query: %v", calls)
 				}
 			}
@@ -1110,7 +1123,8 @@ func TestLifecycleForceStillQueriesAndNamesEndedSessions(t *testing.T) {
 				if !reflect.DeepEqual(lifecycleMutations(calls), [][]string{{verb, "sandboxed-agents.default.demo"}}) {
 					t.Fatalf("mutations=%v", calls)
 				}
-				if !reflect.DeepEqual(calls[len(calls)-2], []string{"exec", "--user=0:0", "sandboxed-agents.default.demo", "/usr/local/bin/sandboxed-agents-manager", "sessions"}) {
+				mutation := slices.IndexFunc(calls, func(call []string) bool { return call[0] == verb })
+				if mutation < 1 || !reflect.DeepEqual(calls[mutation-1], []string{"exec", "--user=0:0", "sandboxed-agents.default.demo", "/usr/local/bin/sandboxed-agents-manager", "sessions"}) {
 					t.Fatalf("query must immediately precede mutation: %v", calls)
 				}
 			})
@@ -1151,7 +1165,7 @@ func TestLifecycleUnavailableManagerRefusesOrReportsUnknownEndedSessions(t *test
 				}
 				queries := 0
 				for _, call := range calls {
-					if call[0] == "exec" {
+					if call[0] == "exec" && call[1] == "--user=0:0" {
 						queries++
 					}
 				}

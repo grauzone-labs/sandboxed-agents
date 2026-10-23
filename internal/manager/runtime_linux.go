@@ -1,12 +1,15 @@
 package manager
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -30,7 +33,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 // newEffects binds manager requests to OS adapters with explicit credentials and operation-specific environment policies.
 func newEffects(calls systemCalls) Effects {
-	run := func(process Process) error {
+	prepare := func(process Process) (*exec.Cmd, error) {
 		command := exec.Command(process.Program, process.Args...)
 		command.Dir = process.Directory
 		command.Stdin = process.Stdin
@@ -40,7 +43,7 @@ func newEffects(calls systemCalls) Effects {
 			// Root clears supplementary groups on the way to the worker. An
 			// unprivileged worker cannot call setgroups when spawning its peers.
 			NoSetGroups: calls.Identity().UID != 0,
-		}}
+		}, Setpgid: process.ProcessGroup}
 		command.Env = agentEnvironment(calls.Environment())
 		if process.EnvironmentPolicy == GitConfigEnvironment {
 			command.Env = gitEnvironment(command.Env)
@@ -59,18 +62,25 @@ func newEffects(calls systemCalls) Effects {
 			if process.AzureSSHHost != "" {
 				path, err := calls.Executable()
 				if err != nil {
-					return err
+					return nil, err
 				}
 				// Python splits BROWSER on ':' before shlex parsing, then replaces
 				// every %s in each argument with the URL. Neither is escapable.
 				if strings.ContainsAny(path, ":\r\n\x00") || strings.Contains(path, "%s") || path == "" {
-					return fmt.Errorf("manager executable path cannot be represented in Azure's browser callback")
+					return nil, fmt.Errorf("manager executable path cannot be represented in Azure's browser callback")
 				}
 				quoted := "'" + strings.ReplaceAll(path, "'", "'\"'\"'") + "'"
 				command.Env = append(command.Env, "BROWSER="+quoted+" __azure-browser "+process.AzureSSHHost+" %s")
 			}
 		}
 		command.Env = append(command.Env, process.Environment...)
+		return command, nil
+	}
+	run := func(process Process) error {
+		command, err := prepare(process)
+		if err != nil {
+			return err
+		}
 		return calls.Start(command)
 	}
 	return Effects{Stdin: os.Stdin, HomeDirectory: func() (string, error) { return "/home/agent", nil }, Identity: calls.Identity, Groups: os.Getgroups, UIDs: unix.Getresuid, GIDs: unix.Getresgid, Start: run,
@@ -81,7 +91,86 @@ func newEffects(calls systemCalls) Effects {
 			}
 			process.Program = path
 			return run(process)
+		},
+		Spawn: func(process Process) (Child, error) {
+			command, err := prepare(process)
+			if err != nil {
+				return nil, err
+			}
+			if err := command.Start(); err != nil {
+				return nil, err
+			}
+			return startedChild{command: command, group: process.ProcessGroup}, nil
+		},
+		Detach: func(process Process) error {
+			path, err := calls.Executable()
+			if err != nil {
+				return err
+			}
+			process.Program = path
+			process.Stdin = nil
+			command, err := prepare(process)
+			if err != nil {
+				return err
+			}
+			// A new session detaches the supervisor from the calling terminal and
+			// SSH connection; the exec ending does not end it.
+			command.SysProcAttr.Setsid = true
+			if err := command.Start(); err != nil {
+				return err
+			}
+			// The supervisor is re-parented to PID 1 once this manager exits; release it now.
+			return command.Process.Release()
+		},
+		Signal: func(pid int, sig os.Signal) error {
+			signal, ok := sig.(syscall.Signal)
+			if !ok {
+				return fmt.Errorf("unsupported signal %v", sig)
+			}
+			return syscall.Kill(pid, signal)
+		},
+		PID: os.Getpid,
+		Now: time.Now,
+		Sleep: func(ctx context.Context, d time.Duration) error {
+			timer := time.NewTimer(d)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-timer.C:
+				return nil
+			}
+		},
+		Signals: func() <-chan os.Signal {
+			signals := make(chan os.Signal, 1)
+			signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+			return signals
 		}}
+}
+
+// startedChild is a spawned service process that the supervisor waits for and signals as a group.
+type startedChild struct {
+	command *exec.Cmd
+	group   bool
+}
+
+// PID returns the process ID of the spawned process.
+func (c startedChild) PID() int { return c.command.Process.Pid }
+
+// Wait waits for the spawned process and returns its exit error.
+func (c startedChild) Wait() error { return c.command.Wait() }
+
+// Signal sends the signal to the process; SIGKILL goes to the process group the service leads, so no descendant survives.
+func (c startedChild) Signal(sig os.Signal) error {
+	signal, ok := sig.(syscall.Signal)
+	if !ok {
+		return fmt.Errorf("unsupported signal %v", sig)
+	}
+	pid := c.command.Process.Pid
+	if c.group && signal == syscall.SIGKILL {
+		pid = -pid
+	}
+	return syscall.Kill(pid, signal)
 }
 
 // azureEnvironment keeps the token cache in home and removes ambient browsers.

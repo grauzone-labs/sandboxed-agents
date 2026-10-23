@@ -404,7 +404,7 @@ func TestUpdatePreservesSSHFilesAndAuthorization(t *testing.T) {
 		if call[0] == "volume" && call[1] != "exists" && call[1] != "inspect" {
 			t.Fatalf("volume changed: %v", call)
 		}
-		if call[0] == "exec" && call[len(call)-1] != "sessions" && call[len(call)-1] != "version" {
+		if call[0] == "exec" && call[len(call)-1] != "sessions" && call[len(call)-1] != "version" && call[len(call)-1] != "restore" {
 			t.Fatalf("changed in-sandbox keys: %v", call)
 		}
 	}

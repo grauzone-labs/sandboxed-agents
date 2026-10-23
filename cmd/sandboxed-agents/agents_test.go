@@ -215,7 +215,11 @@ func TestUpEnablesAgentsAfterCreation(t *testing.T) {
 					}
 				}
 				calls := agentManagerCalls(t, f)
-				wantCalls := 4
+				// The version probe, three installs, and the tool service restore of the running sandbox; a failed install exits before the restore.
+				wantCalls := 5
+				if failure == "install" {
+					wantCalls = 4
+				}
 				if failure == "manager" {
 					wantCalls = 1
 				}

@@ -37,6 +37,10 @@ func ManagerQueryArgs(container, managerPath, subcommand string, payload ...stri
 		if !(len(payload) == 1 && payload[0] == "list") && !(len(payload) == 2 && payload[0] == "status") {
 			return nil, fmt.Errorf("manager agent query requires list or status AGENT")
 		}
+	case "tools":
+		if !(len(payload) == 1 && payload[0] == "list") {
+			return nil, fmt.Errorf("manager tool query requires list")
+		}
 	default:
 		return nil, fmt.Errorf("unknown manager query %q", subcommand)
 	}

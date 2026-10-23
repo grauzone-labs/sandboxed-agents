@@ -116,6 +116,9 @@ func (plan *sandboxUpdate) replace(p podmanTarget, tag string, output io.Writer)
 			if _, err := p.query("start", names.Container); err != nil {
 				return fmt.Errorf("%w; restored sandbox %s but could not start it: %v; use start %s", cause, request.Name, err, request.Name)
 			}
+			if err := restoreToolServices(request, p, output); err != nil {
+				return fmt.Errorf("%w; restored sandbox %s to its previous state; %v", cause, request.Name, err)
+			}
 		}
 		return fmt.Errorf("%w; restored sandbox %s to its previous state", cause, request.Name)
 	}
@@ -140,6 +143,9 @@ func (plan *sandboxUpdate) replace(p podmanTarget, tag string, output io.Writer)
 		return err
 	}
 	fmt.Fprintf(output, "sandbox %s updated\n", request.Name)
+	if running {
+		return restoreToolServices(request, p, output)
+	}
 	return nil
 }
 

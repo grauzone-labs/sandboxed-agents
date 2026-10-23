@@ -33,6 +33,8 @@ func windowsHost(t *testing.T) *fixture {
 		windowsSubtreeRead:                          {Output: "cpu memory pids"},
 		windowsAutomountExists:                      {},
 		windowsAutomountRead:                        {Output: ""},
+		toolRestoreCall:                             {},
+		toolListCall:                                {Output: "[]\n"},
 	}
 	return f
 }

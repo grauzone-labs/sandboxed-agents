@@ -938,6 +938,15 @@ func TestSSHSetupRemovalMaintainsGroupIncludesAndOtherEntries(t *testing.T) {
 // scriptSetupResponses installs platform-adjusted fake Podman answers in the test environment.
 func scriptSetupResponses(t *testing.T, responses map[string]lifecycleResponse, platform string) {
 	t.Helper()
+	// A sandbox without an enabled Tool restores nothing and lists no tool service unless a test scripts otherwise.
+	for key, value := range map[string]lifecycleResponse{
+		"*exec --user=1000:1000 --env HOME=/home/agent * /usr/local/bin/sandboxed-agents-manager tools restore": {},
+		"*exec --user=0:0 * /usr/local/bin/sandboxed-agents-manager tools list":                                 {Output: "[]\n"},
+	} {
+		if _, scripted := responses[key]; !scripted {
+			responses[key] = value
+		}
+	}
 	data, err := json.Marshal(setupResponsesForPlatform(responses, platform))
 	if err != nil {
 		t.Fatal(err)

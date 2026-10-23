@@ -51,8 +51,9 @@ func TestUpdateExplicitToolchainsReplaceUnknownRecordedSet(t *testing.T) {
 						t.Fatalf("created %d containers; want only one replacement", created)
 					}
 					if failed {
+						// The restored, running sandbox restores its tool services last.
 						want := "rm --force sandboxed-agents.default.demo;rename sandboxed-agents-backup.default.demo sandboxed-agents.default.demo;start sandboxed-agents.default.demo"
-						if strings.Join(flatCalls(calls[len(calls)-3:]), ";") != want {
+						if len(calls) < 4 || strings.Join(flatCalls(calls[len(calls)-4:len(calls)-1]), ";") != want || calls[len(calls)-1][len(calls[len(calls)-1])-1] != "restore" {
 							t.Fatalf("backup not restored in place: %v", calls)
 						}
 					}
