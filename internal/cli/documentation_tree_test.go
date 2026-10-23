@@ -83,6 +83,8 @@ func commandReferenceError(document string) error {
 				example[index] = "claude"
 			case "TOOL":
 				example[index] = "t3code"
+			case "ACTION":
+				example[index] = "login"
 			case "URL":
 				example[index] = "https://dev.azure.com/contoso"
 			}

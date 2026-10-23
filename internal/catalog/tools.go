@@ -22,6 +22,51 @@ type Tool struct {
 	VersionPrefix string
 	// ServiceArgs start the Tool's service in the foreground on the sandbox's loopback.
 	ServiceArgs []string
+	// ConnectActions maps each account action of `tools connect` to the launcher arguments that run it; interactive actions are listed in InteractiveConnectActions.
+	ConnectActions map[string][]string
+	// InteractiveConnectActions are the connect actions that need a terminal because upstream shows a URL and a code and waits.
+	InteractiveConnectActions []string
+	// ConnectStatusArgs print the account connection state as JSON.
+	ConnectStatusArgs []string
+	// CredentialPath is the path, relative to the Tool's own home, of the account credential that a failed login must not leave behind.
+	CredentialPath string
+}
+
+// ConnectActionNames returns the Tool's connect actions in stable display order.
+func (t Tool) ConnectActionNames() []string {
+	names := make([]string, 0, len(t.ConnectActions))
+	for name := range t.ConnectActions {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// ResolveConnectAction rejects unknown connect actions and lists the valid ones.
+func (t Tool) ResolveConnectAction(action string) ([]string, error) {
+	args, known := t.ConnectActions[action]
+	if !known {
+		return nil, fmt.Errorf("unknown connect action %q: %s", action, ValidNames(t.ConnectActionNames()))
+	}
+	return args, nil
+}
+
+// ConnectStatus is the account connection state of a Tool, as its upstream status command reports it.
+type ConnectStatus struct {
+	// Authenticated reports whether an account login is stored.
+	Authenticated bool `json:"authenticated"`
+	// Linked reports whether the sandbox is linked as an environment of the account.
+	Linked bool `json:"linked"`
+	// Account is the account identifier upstream reports, empty without a login.
+	Account string `json:"account,omitempty"`
+	// RelayClient is the state of the relay client: available, missing, or unsupported.
+	RelayClient string `json:"relay_client,omitempty"`
+	// Reachability is upstream's reachability report, as compact JSON, or empty while no server answered.
+	Reachability string `json:"reachability,omitempty"`
+	// Reachable is true when upstream's report says other devices reach the service; false with a report means a relay failure, whose reason the report holds.
+	Reachable bool `json:"reachable,omitempty"`
+	// Error is set when the upstream status command could not be run or read.
+	Error string `json:"error,omitempty"`
 }
 
 // Service states of a Tool service, as `tools status` and `check NAME` report them.
@@ -84,4 +129,6 @@ type ToolStatus struct {
 	ServiceFailure string `json:"service_failure,omitempty"`
 	// ServiceLog is the sandbox path of the service log.
 	ServiceLog string `json:"service_log,omitempty"`
+	// Connect is the account connection state of an enabled Tool.
+	Connect *ConnectStatus `json:"connect,omitempty"`
 }

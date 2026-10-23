@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -28,7 +30,27 @@ type toolRun struct {
 	runtimeFailure string
 	installFailure bool
 	services       *fakeServices
+	// connectStatus is the JSON the fake `connect status --json` prints; empty means the unauthenticated default.
+	connectStatus string
+	// connectStatusFailure makes the fake status command fail.
+	connectStatusFailure bool
+	// connectResults scripts the exit of each connect action; a missing entry succeeds.
+	connectResults map[string]error
+	// connectLeavesPartial makes a failing login write a credential file before it fails, as an interrupted upstream run might.
+	connectLeavesPartial bool
+	// connectFailureText is what the fake upstream prints on stderr when a connect action fails, as upstream names denial, expiry, or a request failure.
+	connectFailureText string
+	// interruptDuring names the connect action during which the fake sends Ctrl+C to the manager before it fails with the scripted result.
+	interruptDuring     string
+	connectCalls        [][]string
+	connectInputs       []string
+	connectEnvironments [][]string
+	interrupts          chan os.Signal
+	interruptWatches    int
 }
+
+// defaultConnectStatus is the upstream status of a sandbox without a T3 Connect login, as the spike observed it.
+const defaultConnectStatus = `{"desired":false,"authenticated":false,"linked":false,"revoked":false,"cloudUserId":null,"relayUrl":null,"publishAgentActivity":false,"relayClient":{"status":"missing","version":"2026.10.0"},"linkMode":"managed","reachability":null}`
 
 // toolDirectory is the Tool directory of T3 Code in a test home.
 func toolDirectory(home string) string {
@@ -47,6 +69,8 @@ func toolEffects(t *testing.T, home string, registry toolRegistry, run *toolRun)
 		run.services = newFakeServices(t, home)
 	}
 	e = run.services.wire(e)
+	run.interrupts = make(chan os.Signal, 1)
+	e.NotifyInterrupt = func() (<-chan os.Signal, func()) { run.interruptWatches++; return run.interrupts, func() {} }
 	e.Start = func(p manager.Process) error {
 		if p.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
 			t.Fatalf("tool process not requested as agent: %+v", p)
@@ -94,6 +118,9 @@ func toolEffects(t *testing.T, home string, registry toolRegistry, run *toolRun)
 			}
 			t.Fatalf("unexpected npm arguments %q", p.Args)
 		}
+		if filepath.Base(p.Program) == "t3" && len(p.Args) > 0 && p.Args[0] == "connect" {
+			return run.fakeConnect(t, home, p)
+		}
 		if filepath.Base(p.Program) == "t3" {
 			if p.Program != filepath.Join(filepath.Dir(filepath.Dir(p.Program)), "bin", "t3") || !slices.Equal(p.Args, []string{"--version"}) {
 				t.Fatalf("unexpected launcher call: %+v", p)
@@ -135,6 +162,72 @@ func toolEffects(t *testing.T, home string, registry toolRegistry, run *toolRun)
 	return e
 }
 
+// fakeConnect answers the launcher's connect commands: status prints the scripted JSON, the account actions
+// record their call and input, write or remove the credential file, and exit as scripted.
+func (run *toolRun) fakeConnect(t *testing.T, home string, p manager.Process) error {
+	t.Helper()
+	toolHome := filepath.Join(toolDirectory(home), "home")
+	if !slices.Contains(p.Environment, "T3CODE_HOME="+toolHome) || p.EnvironmentPolicy != manager.AgentEnvironment {
+		t.Fatalf("connect command without the Tool's home: %+v", p)
+	}
+	if !strings.HasPrefix(p.Program, filepath.Join(toolDirectory(home), "npm")) {
+		t.Fatalf("connect command does not use the installed launcher: %s", p.Program)
+	}
+	credential := filepath.Join(toolHome, "userdata", "secrets", "cloud-cli-oauth-token.bin")
+	if slices.Equal(p.Args, []string{"connect", "status", "--json"}) {
+		if run.connectStatusFailure {
+			fmt.Fprintln(p.Stderr, "status failed")
+			return childExit(1)
+		}
+		status := run.connectStatus
+		if status == "" {
+			status = defaultConnectStatus
+		}
+		fmt.Fprintln(p.Stdout, status)
+		return nil
+	}
+	action := p.Args[1]
+	run.connectCalls = append(run.connectCalls, p.Args)
+	run.connectEnvironments = append(run.connectEnvironments, p.Environment)
+	input := ""
+	if p.Stdin != nil {
+		data, _ := io.ReadAll(p.Stdin)
+		input = string(data)
+	}
+	run.connectInputs = append(run.connectInputs, input)
+	if err := os.MkdirAll(filepath.Dir(credential), 0700); err != nil {
+		t.Fatal(err)
+	}
+	result := run.connectResults[action]
+	if run.interruptDuring == action {
+		run.interrupts <- syscall.SIGINT
+	}
+	switch action {
+	case "login":
+		fmt.Fprintln(p.Stdout, "Open https://accounts.t3.codes/device?user_code=ABCD-EFGH and enter ABCD-EFGH. Waiting for approval (expires in 10 min). Press Ctrl+C to cancel.")
+		if result == nil || run.connectLeavesPartial {
+			if err := os.WriteFile(credential, []byte("token "+fmt.Sprint(len(run.connectCalls))), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if result != nil {
+			text := run.connectFailureText
+			if text == "" {
+				text = "login did not complete"
+			}
+			fmt.Fprintln(p.Stderr, text)
+		}
+	case "logout":
+		if result == nil {
+			os.Remove(credential)
+		}
+	case "link", "unlink":
+	default:
+		t.Fatalf("unexpected connect action %q", action)
+	}
+	return result
+}
+
 // runTools exercises the public manager boundary for a tools request and checks its exit status before returning the combined output.
 func runTools(t *testing.T, e manager.Effects, want int, args ...string) string {
 	t.Helper()
@@ -146,11 +239,19 @@ func runTools(t *testing.T, e manager.Effects, want int, args ...string) string 
 	return out.String() + err.String()
 }
 
-// readToolStatus decodes the status returned by the public manager boundary.
+// readToolStatus decodes the status returned by the public manager boundary without its connect part, so that statuses compare as values; readConnectStatus reads that part.
 func readToolStatus(t *testing.T, e manager.Effects) manager.ToolStatus {
 	t.Helper()
+	status := readFullToolStatus(t, e)
+	status.Connect = nil
+	return status
+}
+
+// readFullToolStatus decodes the complete status returned by the public manager boundary.
+func readFullToolStatus(t *testing.T, e manager.Effects) manager.ToolStatus {
+	t.Helper()
 	var status manager.ToolStatus
-	if err := json.Unmarshal([]byte(runTools(t, e, 0, "status", "t3code")), &status); err != nil {
+	if err := json.Unmarshal([]byte(runTools(t, e, 0, "status", "t3code", "--connect")), &status); err != nil {
 		t.Fatal(err)
 	}
 	return status

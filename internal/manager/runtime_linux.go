@@ -145,6 +145,11 @@ func newEffects(calls systemCalls) Effects {
 			signals := make(chan os.Signal, 1)
 			signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 			return signals
+		},
+		NotifyInterrupt: func() (<-chan os.Signal, func()) {
+			interrupts := make(chan os.Signal, 1)
+			signal.Notify(interrupts, syscall.SIGINT)
+			return interrupts, func() { signal.Stop(interrupts) }
 		}}
 }
 
