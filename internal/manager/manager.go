@@ -1,4 +1,4 @@
-// Package manager owns administrative SSH requests, integration workflows, and agent session queries inside a sandbox.
+// Package manager owns administrative SSH requests, integration workflows, agent session queries, and Tool installations inside a sandbox.
 package manager
 
 import (
@@ -47,6 +47,8 @@ type Process struct {
 	Stdout, Stderr    io.Writer
 	// AzureSSHHost supplies the validated SSH alias to Azure's browser callback.
 	AzureSSHHost string
+	// Environment holds variables appended after the policy environment, such as a Tool's home variable.
+	Environment []string
 }
 
 // Effects supplies only operating-system operations; command behavior runs real.
@@ -89,6 +91,12 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 	}
 	if len(args) > 1 && args[0] == "__worker" && args[1] == "agents" {
 		return agents(args[2:], true, stdout, stderr, effects)
+	}
+	if len(args) > 0 && args[0] == "tools" {
+		return tools(args[1:], false, stdout, stderr, effects)
+	}
+	if len(args) > 1 && args[0] == "__worker" && args[1] == "tools" {
+		return tools(args[2:], true, stdout, stderr, effects)
 	}
 	if len(args) == 1 && args[0] == "sessions" {
 		if effects.Identity() == rootIdentity {

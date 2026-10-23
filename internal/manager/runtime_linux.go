@@ -70,6 +70,7 @@ func newEffects(calls systemCalls) Effects {
 				command.Env = append(command.Env, "BROWSER="+quoted+" __azure-browser "+process.AzureSSHHost+" %s")
 			}
 		}
+		command.Env = append(command.Env, process.Environment...)
 		return calls.Start(command)
 	}
 	return Effects{Stdin: os.Stdin, HomeDirectory: func() (string, error) { return "/home/agent", nil }, Identity: calls.Identity, Groups: os.Getgroups, UIDs: unix.Getresuid, GIDs: unix.Getresgid, Start: run,

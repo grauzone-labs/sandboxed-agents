@@ -113,17 +113,24 @@ func runAgentChange(request Request, p podmanTarget, stdout io.Writer, payload .
 	return outputErr
 }
 
+// managerOperationFailure tells a manager request that ran and failed on its own terms from a
+// transport failure or a timeout, which leave the manager's availability unknown.
+func managerOperationFailure(err error) bool {
+	var exit *exec.ExitError
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || !errors.As(err, &exit) {
+		return false
+	}
+	code := exit.ExitCode()
+	return code > 0 && !podmanTransportFailure(code)
+}
+
 // readAgentStatus validates the shared manager response before callers use its selection state.
 func readAgentStatus(request Request, p podmanTarget) (catalog.AgentStatus, error) {
 	var status catalog.AgentStatus
 	answer, err := requestManager(request, p, "agents", "status", request.Args[1])
 	if err != nil {
-		var exit *exec.ExitError
-		if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) && errors.As(err, &exit) {
-			code := exit.ExitCode()
-			if code > 0 && !podmanTransportFailure(code) {
-				return status, err
-			}
+		if managerOperationFailure(err) {
+			return status, err
 		}
 		return status, agentManagerError(request, err)
 	}

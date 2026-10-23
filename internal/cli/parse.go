@@ -64,6 +64,9 @@ var commands = map[string]commandSpec{
 	"agents session":      spec(2, 2, true, "", "stop"),
 	"integrations login":  spec(2, 3, true, catalog.OrganizationOption, ""),
 	"integrations config": spec(2, 3, true, "", ""),
+	"tools enable":        spec(2, 2, true, "channel version", ""),
+	"tools update":        spec(2, 2, true, "channel version", ""),
+	"tools status":        spec(2, 2, true, "", ""),
 }
 
 // Parse enforces command-first grammar and step 1 checks before any Podman call.
@@ -82,7 +85,7 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 	}
 	request.Command = args[0]
 	rest := args[1:]
-	if request.Command == "agents" || request.Command == "integrations" {
+	if request.Command == "agents" || request.Command == "integrations" || request.Command == "tools" {
 		if len(rest) == 0 {
 			return request, fmt.Errorf("%s requires a subcommand", request.Command)
 		}
@@ -166,6 +169,25 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 	if strings.HasPrefix(request.Command, "agents ") {
 		if _, err := catalog.Default.ResolveAgent(request.Args[1]); err != nil {
 			return request, err
+		}
+		if version := request.Options["version"]; version != "" {
+			if err := catalog.ValidatePinVersion(version); err != nil {
+				return request, err
+			}
+		}
+	}
+	if strings.HasPrefix(request.Command, "tools ") {
+		tool, err := catalog.Default.ResolveTool(request.Args[1])
+		if err != nil {
+			return request, err
+		}
+		if request.Options["channel"] != "" && request.Options["version"] != "" {
+			return request, fmt.Errorf("--channel and --version conflict")
+		}
+		if channel := request.Options["channel"]; channel != "" {
+			if err := tool.ValidateChannel(channel); err != nil {
+				return request, err
+			}
 		}
 		if version := request.Options["version"]; version != "" {
 			if err := catalog.ValidatePinVersion(version); err != nil {

@@ -6,11 +6,11 @@ This page tells you what the image a sandbox runs in contains, which toolchains 
 
 The base image is Debian 13 (trixie) slim with Node.js 24 LTS. It contains:
 
-- OpenSSH server and client, Git, GitHub CLI, tmux, `curl`, `jq`, `ripgrep`, `less`, `unzip`, `zip`, `xz-utils`, `file`, `procps`, Bash, coreutils, findutils, `gnupg`, and CA certificates.
+- OpenSSH server and client, Git, GitHub CLI, tmux, `curl`, `jq`, `ripgrep`, `less`, `unzip`, `zip`, `xz-utils`, `file`, `procps`, Bash, coreutils, findutils, `gnupg`, CA certificates, and `libatomic1`, the GCC atomics runtime library that the T3 Code runtime loads.
 - Node.js 24 and npm from the NodeSource repository `node_24.x`, installed after the [signing key check](#nodesource-signing-key-check).
 - The user `agent` with UID and GID 1000, the directory `/workspace` owned by `agent`, and no baked SSH host keys.
 - The in-container manager at `/usr/local/bin/sandboxed-agents-manager`.
-- No agent and none of the toolchains below.
+- No agent, no Tool, and none of the toolchains below.
 
 ### Installed version manifest
 

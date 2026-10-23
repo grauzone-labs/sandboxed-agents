@@ -1,11 +1,12 @@
 // Package catalog defines catalog data shared by the host and manager.
 package catalog
 
-// Catalog contains the delivered agents, toolchains, and integrations.
+// Catalog contains the delivered agents, toolchains, integrations, and Tools.
 type Catalog struct {
 	Agents       map[string]Agent
 	Toolchains   []string
 	Integrations map[string]Integration
+	Tools        map[string]Tool
 }
 
 // Integration declares the login and config workflows for an external service.
@@ -80,5 +81,12 @@ var Default = Catalog{
 			},
 			GitCredentialsWorkflow: {GitSettings: []GitSetting{{Key: "credential.helper", Value: GitCredentialStoreHelper}}},
 		}},
+	},
+	Tools: map[string]Tool{
+		T3CodeTool: {
+			Delivered: true, Install: Install{Kind: NPM, Package: "t3"}, Command: "t3",
+			Channels: []string{"latest", "nightly"}, HomeVariable: "T3CODE_HOME",
+			VersionArgs: []string{"--version"}, VersionPrefix: "t3 v",
+		},
 	},
 }

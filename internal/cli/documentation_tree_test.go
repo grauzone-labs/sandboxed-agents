@@ -56,7 +56,7 @@ func commandReferenceError(document string) error {
 			return fmt.Errorf("incomplete command grammar: %s", line)
 		}
 		command := words[0]
-		if command == "agents" || command == "integrations" {
+		if command == "agents" || command == "integrations" || command == "tools" {
 			if len(words) < 2 {
 				return fmt.Errorf("incomplete command grammar: %s", line)
 			}
@@ -81,6 +81,8 @@ func commandReferenceError(document string) error {
 				example[index] = "agent01"
 			case "AGENT":
 				example[index] = "claude"
+			case "TOOL":
+				example[index] = "t3code"
 			case "URL":
 				example[index] = "https://dev.azure.com/contoso"
 			}
