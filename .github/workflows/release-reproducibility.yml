@@ -144,6 +144,8 @@ jobs:
         run: |
           go test ./cmd/sandboxed-agents ./internal/cli ./internal/release/cmd/stable-gate -count=1
           if ($LASTEXITCODE -ne 0) { throw 'Windows command, CLI, or stable gate tests failed' }
+          go vet ./internal/manualcheck/...
+          if ($LASTEXITCODE -ne 0) { throw 'Windows compile check of the manual-checklist runner failed' }
       - name: Run image and release tests with Git for Windows Bash
         shell: pwsh
         env:
