@@ -4,13 +4,17 @@ The normal, non-elevated item shell of one capture run. `manual-check installers
 with the prepared environment; it warms up what the steps need before any capture, then exposes
 Begin-InstallerMethod, Invoke-InstallerStep, and Save-InstallerMethod. The elevated observer owns
 the recorders and the Procmon process; this shell only checks the observer's ready record, which
-is all a normal process can see of an elevated one.
+is all a normal process can see of an elevated one. The observer writes its records into the run's
+protected output directory, which this account may read but not change. This shell refuses an
+administrator account, because the observer must run under a separate account.
 #>
 if(-not $env:CHK_V2_RUN -or -not $env:CHK_INSTALLER_CONFIGURATION){throw 'Start with manual-check installers prepare'}
 . (Join-Path $PSScriptRoot 'Package.ps1')
 Assert-Role $false
+if(Test-AdministratorAccount){throw 'The item shell account is an administrator; run the item from a standard account and the observer from a separate administrator account'}
 $global:V2Run=$env:CHK_V2_RUN;$global:V2Tools=$PSScriptRoot
 $global:V2=Read-Prepared $V2Run
+$global:V2Output=Get-OutputDirectory $V2.run_id
 if($V2.configuration.path -ine $env:CHK_INSTALLER_CONFIGURATION){throw 'The item shell environment names another configuration'}
 Set-PSReadLineOption -HistorySaveStyle SaveNothing
 $global:V2Step=0;$global:V2Begun=$false;$global:V2Failed=$false;$global:V2Saved=$false;$global:V2Snapshots=[ordered]@{};$global:V2Results=@()
@@ -36,13 +40,13 @@ $Deadline=(Get-Date).AddSeconds(60)
 while(-not (Test-Path -LiteralPath $env:PSModuleAnalysisCachePath) -and (Get-Date) -lt $Deadline){Start-Sleep -Seconds 2}
 Start-Sleep -Seconds 10
 $Shell=Get-Process -Id $PID
-$Context=@{schema_version=2;method=$V2.method;run_id=$V2.run_id;nonce=[Guid]::NewGuid().ToString('N');pid=$PID;path=$Shell.Path;start_ticks=$Shell.StartTime.ToUniversalTime().Ticks;command_line=[Environment]::CommandLine;non_elevated=$true;install_root=$V2.install_root;completion_file=(Join-Path $V2.install_root 'logs\method-complete.json');user_sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;default_install_root=(Join-Path $env:LOCALAPPDATA 'Programs\sandboxed-agents')}
+$Context=@{schema_version=2;method=$V2.method;run_id=$V2.run_id;nonce=[Guid]::NewGuid().ToString('N');pid=$PID;path=$Shell.Path;start_ticks=$Shell.StartTime.ToUniversalTime().Ticks;command_line=[Environment]::CommandLine;non_elevated=$true;administrator_account=$false;install_root=$V2.install_root;completion_file=(Join-Path $V2.install_root 'logs\method-complete.json');user_sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;default_install_root=(Join-Path $env:LOCALAPPDATA 'Programs\sandboxed-agents')}
 Write-NewJson (Join-Path $V2Run 'item-context.private.json') $Context
 $global:V2Context=[pscustomobject]$Context
 # Begin-InstallerMethod checks the real observer's ready record and takes the initial in-memory snapshot.
 function global:Begin-InstallerMethod {
  if($V2Begun -or $V2Failed){throw 'Method already begun/failed; no repeated steps'}
- $Ready=Get-Content -Raw -LiteralPath (Join-Path $V2Run 'capture.ready.json')|ConvertFrom-Json
+ $Ready=Get-Content -Raw -LiteralPath (Join-Path $V2Output 'capture.ready.json')|ConvertFrom-Json
  [void](& (Join-Path $V2Tools 'Test-InstallerReady.ps1') -Record $Ready -Context $V2Context)
  # The elevated observer owns and monitors Procmon; a normal item shell cannot query its protected metadata.
  $global:V2Snapshots['start']=@(Get-ItemEnvironment);$global:V2Begun=$true
@@ -51,9 +55,9 @@ function global:Begin-InstallerMethod {
 # Invoke-InstallerStep runs one approved operation and records exact exits and user-environment snapshots in memory.
 function global:Invoke-InstallerStep([ValidateSet('install','reinstall','remove')][string]$Step) {
  if(-not $V2Begun -or $V2Failed -or $V2Step -ge 3 -or $Step -cne @('install','reinstall','remove')[$V2Step]){throw 'Out-of-order/repeated step; nothing ran'}
- $Ready=Get-Content -Raw -LiteralPath (Join-Path $V2Run 'capture.ready.json')|ConvertFrom-Json
+ $Ready=Get-Content -Raw -LiteralPath (Join-Path $V2Output 'capture.ready.json')|ConvertFrom-Json
  [void](& (Join-Path $V2Tools 'Test-InstallerReady.ps1') -Record $Ready -Context $V2Context)
- if(Test-Path -LiteralPath (Join-Path $V2Run 'capture.stopped.json')){throw 'Capture already stopped'}
+ if(Test-Path -LiteralPath (Join-Path $V2Output 'capture.stopped.json')){throw 'Capture already stopped'}
  $Result=[ordered]@{step=$Step;success=$false;native_exits=@();error=''}
  try {
   if($V2.method -eq 'binary') {
@@ -90,7 +94,7 @@ function global:Invoke-InstallerStep([ValidateSet('install','reinstall','remove'
 # Save-InstallerMethod writes snapshots only after the exact observer proves that both recorders stopped.
 function global:Save-InstallerMethod {
  if($V2Saved){throw 'Method already saved'}
- $Stopped=Get-Content -Raw -LiteralPath (Join-Path $V2Run 'capture.stopped.json')|ConvertFrom-Json
+ $Stopped=Get-Content -Raw -LiteralPath (Join-Path $V2Output 'capture.stopped.json')|ConvertFrom-Json
  if($Stopped.nonce -cne $V2Context.nonce -or $Stopped.procmon_stopped -ne $true -or $Stopped.wpr_stopped -ne $true){throw 'Both owned recorders not proven stopped'}
  if(@(Get-Process -Name Procmon,Procmon64,Procmon64a -ErrorAction SilentlyContinue).Count){throw 'A Procmon process is still running'}
  Write-NewJson (Join-Path $V2Run 'method.steps.private.json') @($V2Results)
@@ -100,4 +104,4 @@ function global:Save-InstallerMethod {
  Write-Host 'SAVED. Elevated observer now exports and reviews automatically. Keep this shell open.'
 }
 Write-Host "ITEM_SHELL_READY method=$($V2.method) RUN_DIRECTORY=$V2Run"
-Write-Host 'Launch the elevated observer now. After CAPTURE_READY, run Begin-InstallerMethod, then each of the three steps separately.'
+Write-Host 'Launch the elevated observer now, under a separate administrator account. After CAPTURE_READY, run Begin-InstallerMethod, then each of the three steps separately.'

@@ -19,6 +19,17 @@ func childEcho(group string) *exec.Cmd {
 	return command
 }
 
+// programDataDirectory reports that the machine's program data folder, which holds the protected
+// output of the Windows installer captures, exists only on Windows.
+func programDataDirectory() (string, error) {
+	return "", fmt.Errorf("the protected installer capture output exists only on Windows")
+}
+
+// verifyProtectedOutput reports that the protected installer capture output exists only on Windows.
+func verifyProtectedOutput(string) error {
+	return fmt.Errorf("the protected installer capture output exists only on Windows")
+}
+
 // freeBytes returns the free space of the filesystem that holds path.
 func freeBytes(path string) (uint64, error) {
 	var stat syscall.Statfs_t
