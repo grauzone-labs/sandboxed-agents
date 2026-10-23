@@ -68,6 +68,7 @@ var commands = map[string]commandSpec{
 	"tools update":        spec(2, 2, true, "channel version", ""),
 	"tools status":        spec(2, 2, true, "", ""),
 	"tools connect":       spec(3, 3, true, "", ""),
+	"tools delete":        spec(2, 2, true, "", ""),
 }
 
 // Parse enforces command-first grammar and step 1 checks before any Podman call.

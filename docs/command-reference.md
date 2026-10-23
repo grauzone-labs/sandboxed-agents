@@ -42,6 +42,7 @@ sandboxed-agents tools enable NAME TOOL [--channel CHANNEL] [--version X]
 sandboxed-agents tools update NAME TOOL [--channel CHANNEL] [--version X]
 sandboxed-agents tools status NAME TOOL
 sandboxed-agents tools connect NAME TOOL ACTION
+sandboxed-agents tools delete NAME TOOL
 ```
 
 Names:
@@ -159,18 +160,18 @@ A Tool, as [`CONTEXT.md`](../CONTEXT.md) defines it, runs beside agents in a san
 | `tools connect NAME TOOL link` | Links the sandbox's T3 Code service as an environment of the T3 Connect account, then restarts the service so that the link takes effect. It needs an interactive terminal. A restart that fails is reported and names `tools status`. |
 | `tools connect NAME TOOL unlink` | Unlinks the environment and keeps the account login. |
 | `tools connect NAME TOOL logout` | Signs out of T3 Connect and clears the login. Neither `unlink` nor `logout` touches any agent provider login. |
+| `tools delete NAME TOOL` | Removes the Tool and everything it stored: it stops the service and its supervision record, signs out of T3 Connect as a best effort (a relay-side failure is a warning; the local credentials go anyway), moves every Git repository and linked worktree found inside the Tool directory to `/home/agent/t3code-files/` with `git worktree move` and `git worktree repair`, names each moved path, and then removes the command link and the whole Tool directory with the launchers, runtimes, `cloudflared`, user data, settings, `service.env`, logs, caches, pairing codes, device sessions, and the selection. It keeps the workspace, every agent and integration with their installations and credentials, the shared npm cache, and the moved projects, which stay usable with Git. A target path that exists, a worktree whose repository cannot be found, a Git repository among the Tool's own files, a command link the Tool does not own, or a stop that fails makes the delete refuse before it removes anything; an interrupted delete reports what remains and a rerun completes it; a second delete finds nothing and exits zero. |
 
 `--channel` accepts exactly `latest` and `nightly`; `--version` accepts an exact `MAJOR.MINOR.PATCH` with an optional prerelease, and tags, ranges, and build metadata are usage errors; a well-formed version that npm does not publish fails before anything is installed or recorded. `--channel` together with `--version` is a usage error. T3 Connect credentials and the link state live only in the Tool directory inside the sandbox's home data, readable by `agent`; host state and the workspace receive nothing. `link`, `unlink`, and `logout` take the manager lock; `login` holds the Tool's connect lock for its whole run instead, so that a `tools delete` never races a login and leaves credentials behind. The T3 Connect relay needs outbound connections only, to TCP and UDP port 7844 and over HTTPS; no port is published. The selection lives in the sandbox's home data, in the Tool directory `~/.local/share/sandboxed-agents/tools/TOOL`, and survives `stop`, `start`, `restart`, and `update`; host state keeps no copy. The installation runs as `agent` under the manager lock, and a concurrent agent or Tool change is refused with "another agent or tool change is in progress; retry". Upstream's own update command is never called, and T3 Code's CLI and server do not update themselves: the installed version changes only through `tools enable` and `tools update`, and only to the exact version the recorded selection names. Every `tools` command needs a running sandbox with an answering manager, as the `agents` commands do.
 
 ## Planned Tool commands (not yet delivered)
 
-The commands below are the final command words of ADR 0009 for the rest of the Tool. Until a task delivers them, the executable rejects them as unknown, as it rejects every undelivered catalog entry, and the grammar block above lists only delivered commands. Once delivered, `tools status` adds the paired devices and the Tailscale state as decision D3 records it.
+The commands below are the final command words of ADR 0009 for the rest of the Tool. Until a task delivers them, the executable rejects them as unknown, as it rejects every undelivered catalog entry, and the grammar block above lists only delivered commands. Once delivered, `tools status` adds the paired devices and the Tailscale state as decision D3 records it, and `tools delete` removes the Tailscale state and Serve mapping that the Tool owns.
 
 | Command | What it does |
 |---|---|
 | `tools pair NAME TOOL [--ttl DURATION]` | Shows a QR code, a copyable URL, and an expiry for pairing a phone over the tailnet, then exits without learning whether the code was scanned. It needs an interactive terminal and a running service. |
 | `tools pair NAME TOOL --revoke` | Revokes every unused pairing code. `--ttl` with `--revoke` is a usage error. |
-| `tools delete NAME TOOL` | Stops the service, signs out of T3 Connect (best effort), relocates user worktrees and repositories found inside the Tool directory with Git's own commands, and removes the Tool directory and the command link. A second `delete` finds nothing and exits zero. |
 
 No `tools` command takes `--force`: `tools update` and `tools delete`, like `stop`, `restart`, and `update NAME`, stop the T3 Code service without asking, and the session guard for agent sessions applies as before ([ADR 0009, D2](adr/0009-tools-run-as-manager-supervised-services.md#d2-the-service-guard)).
 

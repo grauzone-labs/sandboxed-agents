@@ -3,9 +3,11 @@ package manager_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -76,6 +78,21 @@ func toolEffects(t *testing.T, home string, registry toolRegistry, run *toolRun)
 			t.Fatalf("tool process not requested as agent: %+v", p)
 		}
 		if p.Program == "tmux" {
+			return nil
+		}
+		if p.Program == "git" {
+			// Git runs for real: the relocation of user project files is proven with Git's own commands.
+			command := exec.Command("git", p.Args...)
+			command.Dir = p.Directory
+			command.Stdout, command.Stderr = p.Stdout, p.Stderr
+			command.Env = testGitEnvironment()
+			if err := command.Run(); err != nil {
+				var exit *exec.ExitError
+				if errors.As(err, &exit) {
+					return childExit(exit.ExitCode())
+				}
+				return err
+			}
 			return nil
 		}
 		if p.Program == "npm" {
@@ -530,7 +547,7 @@ func TestToolsRequestsValidateBeforeHomeOrProcesses(t *testing.T) {
 		for _, version := range []string{"", "latest", "^0.1.2", "0.1", "0.1.2+build.4", "0.1.2;id"} {
 			runTools(t, e, 2, "enable", "t3code", "--version", version)
 		}
-		for _, args := range [][]string{{}, {"enable"}, {"status", "t3code", "--channel", "latest"}, {"enable", "t3code", "extra"}, {"delete", "t3code"}} {
+		for _, args := range [][]string{{}, {"enable"}, {"status", "t3code", "--channel", "latest"}, {"enable", "t3code", "extra"}, {"delete"}, {"delete", "t3code", "extra"}, {"pair", "t3code"}} {
 			runTools(t, e, 2, args...)
 		}
 	}

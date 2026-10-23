@@ -30,7 +30,7 @@ func TestToolsParseRejectsInvalidRequestsBeforePodman(t *testing.T) {
 		{[]string{"tools", "enable", "demo", "t3code", "--force"}, `unknown option "--force"`},
 		{[]string{"tools", "update", "demo", "t3code", "--unpin"}, `unknown option "--unpin"`},
 		{[]string{"tools", "enable", "demo"}, "wrong number of arguments for tools enable"},
-		{[]string{"tools", "delete", "demo", "t3code"}, `unknown command "tools delete"`},
+		{[]string{"tools", "pair", "demo", "t3code"}, `unknown command "tools pair"`},
 		{[]string{"tools"}, "tools requires a subcommand"},
 	} {
 		_, err := cli.Parse(tc.args, "default")
@@ -531,5 +531,53 @@ func TestToolsStatusRendersTheConnectState(t *testing.T) {
 		if status != 0 || !strings.Contains(output, tc.want) {
 			t.Fatalf("connect=%s status=%d output=%q want %q", tc.connect, status, output, tc.want)
 		}
+	}
+}
+
+// TestToolsDeleteRunsTheManagerAsAgent proves delete runs the manager as agent without a terminal, passes its output through, needs no enabled Tool beforehand, exits non-zero with the manager's diagnostic on a failure, and refuses on a stopped sandbox or an unanswering manager, through RunWithHost and fake Podman.
+func TestToolsDeleteRunsTheManagerAsAgent(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prepare func(f *fixture)
+		status  int
+		message string
+	}{
+		{"deleted", func(f *fixture) {
+			f.responses[toolManagerPrefix+"delete t3code"] = response{Output: "moved the worktree /home/agent/.local/share/sandboxed-agents/tools/t3code/home/worktrees/repo/branch to /home/agent/t3code-files/worktrees/repo/branch\nt3code deleted: the service, the installation, the user data, the credentials, and the selection are removed\n"}
+		}, 0, "t3code deleted"},
+		{"nothing", func(f *fixture) {
+			f.responses[toolManagerPrefix+"delete t3code"] = response{Output: "t3code not enabled; nothing to delete\n"}
+		}, 0, "nothing to delete"},
+		{"refused", func(f *fixture) {
+			f.responses[toolManagerPrefix+"delete t3code"] = response{Stderr: "t3code not deleted; a T3 Connect login is in progress; cancel it or wait, then retry\n", Exit: 1}
+		}, 1, "tools delete t3code: t3code not deleted; a T3 Connect login is in progress"},
+		{"stopped", func(f *fixture) {
+			f.responses["container inspect "+shellContainer] = response{Output: containerInspectAnswer(`{"io.sandboxed-agents.owner":"default"}`, "false")}
+		}, 1, "start agent01"},
+		{"manager", func(f *fixture) { f.responses[agentWorkProbe] = response{Exit: 125} }, 1, "manager does not answer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := sandboxStateFixture(t)
+			f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+			tc.prepare(f)
+			status, output, calls := f.run(t, "tools", "delete", "agent01", "t3code")
+			if status != tc.status || !strings.Contains(output, tc.message) {
+				t.Fatalf("status=%d output=%s want %d %q", status, output, tc.status, tc.message)
+			}
+			for _, call := range calls {
+				if call[0] == "exec" && call[len(call)-1] == "t3code" && call[len(call)-2] == "delete" && (tc.name == "stopped" || tc.name == "manager") {
+					t.Fatalf("delete reached the manager: %v", call)
+				}
+				if call[0] == "exec" && strings.Contains(strings.Join(call, " "), " tools status ") {
+					t.Fatalf("delete asked for the status first: %v", call)
+				}
+			}
+			if tc.status == 0 && !reflect.DeepEqual(calls[len(calls)-1], strings.Fields(toolManagerPrefix+"delete t3code")) {
+				t.Fatalf("delete is not the last call: %v", calls)
+			}
+		})
+	}
+	if _, err := cli.Parse([]string{"tools", "delete", "demo", "t3code", "--force"}, "default"); err == nil || !strings.Contains(err.Error(), `unknown option "--force"`) {
+		t.Fatalf("delete accepted --force: %v", err)
 	}
 }

@@ -45,7 +45,7 @@ func parseTools(args []string, stderr io.Writer) (toolRequest, bool) {
 	}
 	r.operation, r.name = args[0], args[1]
 	switch r.operation {
-	case "enable", "update", "status", "connect":
+	case "enable", "update", "status", "connect", "delete":
 	default:
 		fmt.Fprintln(stderr, "unknown tools command", r.operation)
 		return r, false
@@ -55,6 +55,13 @@ func parseTools(args []string, stderr io.Writer) (toolRequest, bool) {
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return r, false
+	}
+	if r.operation == "delete" {
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, "tools delete requires TOOL")
+			return r, false
+		}
+		return r, true
 	}
 	if r.operation == "connect" {
 		if len(args) != 3 {
@@ -143,6 +150,20 @@ func tools(args []string, worker bool, stdout, stderr io.Writer, effects Effects
 	defer unlock()
 	if r.operation == "restore" {
 		return exitStatus(restoreToolServices(root, stdout, effects), stderr)
+	}
+	if r.operation == "delete" {
+		// A login holds the connect lock for its whole run; a delete that finds it taken never races it.
+		release, held, err := tryLock(filepath.Join(toolDirectory(root, r.name), "connect.lock"))
+		if err != nil && !os.IsNotExist(err) {
+			return exitStatus(err, stderr)
+		}
+		if err == nil {
+			if !held {
+				return exitStatus(fmt.Errorf("%s not deleted; a T3 Connect login is in progress; cancel it or wait, then retry", r.name), stderr)
+			}
+			defer release()
+		}
+		return exitStatus(deleteTool(home, root, r, stdout, stderr, effects), stderr)
 	}
 	if err := changeTool(home, toolDirectory(root, r.name), r, stdout, stderr, effects); err != nil {
 		fmt.Fprintln(stderr, err)

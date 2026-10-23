@@ -230,7 +230,7 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			fmt.Fprintln(stderr, err)
 		}
 		return status
-	case "tools enable", "tools update", "tools status":
+	case "tools enable", "tools update", "tools status", "tools delete":
 		target, err := selectedTarget()
 		if err != nil {
 			return 1
