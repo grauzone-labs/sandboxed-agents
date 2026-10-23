@@ -61,7 +61,7 @@ The preflight is the first command of a run and the precondition of every other 
 
 **State an item must see unchanged.** Where an item says the state is captured before and after a command, the runner writes `list`, `podman ps --all`, `podman volume ls`, and `podman inspect` of the named sandbox and of its backup container into one file each and compares the two byte for byte; any difference fails the item. A missing object makes `inspect` print an error; both captures hold the same error, so the comparison still means something.
 
-**The record.** `manual-check record` is the only writer of the record ([The record](#the-record)): `record init FILE --commit SHA` creates it, `record add FILE --name ID --result pass|fail --date YYYY-MM-DD --platform linux|windows-11` adds one check a person ran (a pass needs `--human-observed`; a rerun needs `--replace`), `record status FILE` lists the identifiers that are still not run, and `record validate FILE` applies the documented check. The top-level result becomes `pass` only when all 23 identifiers are present and passed.
+**The record.** `manual-check record` is the only writer of the record ([The record](#the-record)): `record init FILE --commit SHA` creates it, `record add FILE --name ID --result pass|fail --date YYYY-MM-DD --platform linux|windows-11` adds one check a person ran (a pass needs `--human-observed`; a rerun needs `--replace`), `record status FILE` lists the identifiers that are still not run, and `record validate FILE` applies the documented check. The top-level result becomes `pass` only when all 25 identifiers are present and passed.
 
 ## Order of the run
 
