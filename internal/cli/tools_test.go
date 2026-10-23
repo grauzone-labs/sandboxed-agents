@@ -3,6 +3,7 @@ package cli_test
 import (
 	"io"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -30,7 +31,7 @@ func TestToolsParseRejectsInvalidRequestsBeforePodman(t *testing.T) {
 		{[]string{"tools", "enable", "demo", "t3code", "--force"}, `unknown option "--force"`},
 		{[]string{"tools", "update", "demo", "t3code", "--unpin"}, `unknown option "--unpin"`},
 		{[]string{"tools", "enable", "demo"}, "wrong number of arguments for tools enable"},
-		{[]string{"tools", "pair", "demo", "t3code"}, `unknown command "tools pair"`},
+		{[]string{"tools", "pairing", "demo", "t3code"}, `unknown command "tools pairing"`},
 		{[]string{"tools"}, "tools requires a subcommand"},
 	} {
 		_, err := cli.Parse(tc.args, "default")
@@ -92,9 +93,9 @@ func TestToolsStatusRendersSelection(t *testing.T) {
 		status  int
 		message string
 	}{
-		{response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","pin":"","service_state":"running","service_log":"/home/agent/.local/share/sandboxed-agents/tools/t3code/service/service.log"}`}, 0, "t3code: enabled; version 0.1.2; channel latest; pin none; service running; log /home/agent/.local/share/sandboxed-agents/tools/t3code/service/service.log\n"},
-		{response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.1","channel":"","pin":"0.1.1","service_state":"failed","service_failure":"failed after 5 consecutive failed starts","service_log":"/home/agent/.local/share/sandboxed-agents/tools/t3code/service/service.log"}`}, 0, "t3code: enabled; version 0.1.1; channel none; pin 0.1.1; service failed: failed after 5 consecutive failed starts; log /home/agent/.local/share/sandboxed-agents/tools/t3code/service/service.log\n"},
-		{response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.1","channel":"","pin":"0.1.1","service_state":"stopped","service_log":"/x/service.log"}`}, 0, "t3code: enabled; version 0.1.1; channel none; pin 0.1.1; service stopped; log /x/service.log\n"},
+		{response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","pin":"","service_state":"running","service_log":"/home/agent/.local/share/sandboxed-agents/tools/t3code/service/service.log"}`}, 0, "t3code: enabled; version 0.1.2; channel latest; pin none; service running; log /home/agent/.local/share/sandboxed-agents/tools/t3code/service/service.log; tailnet node absent; run tools tailscale agent01 t3code login\n"},
+		{response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.1","channel":"","pin":"0.1.1","service_state":"failed","service_failure":"failed after 5 consecutive failed starts","service_log":"/home/agent/.local/share/sandboxed-agents/tools/t3code/service/service.log"}`}, 0, "t3code: enabled; version 0.1.1; channel none; pin 0.1.1; service failed: failed after 5 consecutive failed starts; log /home/agent/.local/share/sandboxed-agents/tools/t3code/service/service.log; tailnet node absent; run tools tailscale agent01 t3code login\n"},
+		{response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.1","channel":"","pin":"0.1.1","service_state":"stopped","service_log":"/x/service.log"}`}, 0, "t3code: enabled; version 0.1.1; channel none; pin 0.1.1; service stopped; log /x/service.log; tailnet node absent; run tools tailscale agent01 t3code login\n"},
 		{response{Output: `{"name":"t3code","enabled":false,"installed_version":"","channel":"","pin":""}`}, 0, "t3code: not enabled\n"},
 		{response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","pin":"0.1.2"}`}, 1, "manager does not answer"},
 		{response{Output: "not json"}, 1, "manager does not answer"},
@@ -227,15 +228,21 @@ func TestStopDoesNotTouchToolServices(t *testing.T) {
 	}
 }
 
-// TestToolsCommandsChangeNoPodmanObjects proves tools enable, tools status, and the tool service restore issue only manager execs, never a create, start, publish, device, capability, mount, or network change, through RunWithHost and fake Podman.
+// TestToolsCommandsChangeNoPodmanObjects proves tools enable, tools status, tools tailscale login, tools pair, and the tool service restore issue only manager execs, never a create, start, publish, device, capability, mount, or network change, through RunWithHost and fake Podman.
 func TestToolsCommandsChangeNoPodmanObjects(t *testing.T) {
 	f := sandboxStateFixture(t)
 	f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
 	f.responses[toolManagerPrefix+"enable t3code"] = response{Output: "t3code enabled: version 0.1.2 (channel latest); service running\n"}
 	f.responses[toolManagerPrefix+"status t3code --connect"] = response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running"}`}
-	f.responses[toolManagerPrefix+"restore"] = response{Output: "t3code service running\n"}
+	f.responses[toolManagerPrefix+"restore"] = response{Output: "t3code service running\nt3code tailnet node running\n"}
+	f.responses[toolManagerPrefix+"status t3code"] = response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running"}`}
+	f.responses[toolManagerPrefix+"status t3code --tailnet"] = response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running","tailnet":{"node":"running","backend":"Running","name":"agent01.tail1234.ts.net","origin":"https://agent01.tail1234.ts.net/","online":true,"https":"enabled"}}`}
+	f.responses["exec --user=1000:1000 --env HOME=/home/agent -i -t "+shellContainer+" "+integrationManager+" tools tailscale t3code login --hostname agent01"] = response{Output: "t3code tailnet node signed in as agent01.tail1234.ts.net; origin https://agent01.tail1234.ts.net/\n"}
+	f.responses["exec --user=1000:1000 --env HOME=/home/agent -i -t "+shellContainer+" "+integrationManager+" tools pair t3code"] = response{Output: "Pairing URL: https://agent01.tail1234.ts.net/pair#token=TOKEN\n"}
+	f.host.IsInputTerminal = func(io.Reader) bool { return true }
+	f.host.IsOutputTerminal = func(io.Writer) bool { return true }
 	var all [][]string
-	for _, args := range [][]string{{"tools", "enable", "agent01", "t3code"}, {"tools", "status", "agent01", "t3code"}, {"start", "agent01"}} {
+	for _, args := range [][]string{{"tools", "enable", "agent01", "t3code"}, {"tools", "status", "agent01", "t3code"}, {"tools", "tailscale", "agent01", "t3code", "login"}, {"tools", "pair", "agent01", "t3code"}, {"start", "agent01"}} {
 		status, output, calls := f.run(t, args...)
 		if status != 0 {
 			t.Fatalf("args=%v status=%d output=%s", args, status, output)
@@ -266,6 +273,7 @@ func TestCheckReportsToolServices(t *testing.T) {
 		{response{Output: `[{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running","service_log":"/x/service.log"}]` + "\n"}, 0, "tool t3code: version 0.1.2; channel latest; service running; log /x/service.log"},
 		{response{Output: `[{"name":"t3code","enabled":true,"installed_version":"0.1.1","pin":"0.1.1","service_state":"failed","service_failure":"failed after 5 consecutive failed starts","service_log":"/x/service.log"}]` + "\n"}, 1, "tool t3code: service failed: failed after 5 consecutive failed starts; log /x/service.log"},
 		{response{Output: "[]\n"}, 0, "manager: reachable"},
+		{response{Exit: 2, Stderr: "usage: sandboxed-agents-manager version | sessions | ssh-host-key\n"}, 0, "manager: reachable"},
 		{response{Output: "not json"}, 1, "invalid tool list answer"},
 		{response{Exit: 1, Stderr: "cannot read tool selection\n"}, 1, "tool services cannot be read"},
 		{response{Exit: 125, Stderr: "transport failed\n"}, 1, "manager does not answer the tool service query"},
@@ -519,10 +527,10 @@ func TestToolsStatusRendersTheConnectState(t *testing.T) {
 		connect string
 		want    string
 	}{
-		{`{"authenticated":false,"linked":false,"relay_client":"missing"}`, "service running; log /x/service.log; T3 Connect not signed in, not linked; relay client missing\n"},
-		{`{"authenticated":true,"linked":true,"account":"user_123","relay_client":"available","reachability":"{\"status\":\"unreachable\",\"reason\":\"cannot reach port 7844\"}"}`, "T3 Connect signed in as user_123, linked; relay client available; relay failure: {\"status\":\"unreachable\",\"reason\":\"cannot reach port 7844\"}\n"},
-		{`{"authenticated":true,"linked":true,"account":"user_123","relay_client":"available","reachability":"{\"status\":\"reachable\"}","reachable":true}`, "T3 Connect signed in as user_123, linked; relay client available; relay reachable\n"},
-		{`{"error":"status unavailable: status failed"}`, "T3 Connect status unavailable: status failed\n"},
+		{`{"authenticated":false,"linked":false,"relay_client":"missing"}`, "service running; log /x/service.log; T3 Connect not signed in, not linked; relay client missing; tailnet node absent"},
+		{`{"authenticated":true,"linked":true,"account":"user_123","relay_client":"available","reachability":"{\"status\":\"unreachable\",\"reason\":\"cannot reach port 7844\"}"}`, "T3 Connect signed in as user_123, linked; relay client available; relay failure: {\"status\":\"unreachable\",\"reason\":\"cannot reach port 7844\"}; tailnet"},
+		{`{"authenticated":true,"linked":true,"account":"user_123","relay_client":"available","reachability":"{\"status\":\"reachable\"}","reachable":true}`, "T3 Connect signed in as user_123, linked; relay client available; relay reachable; tailnet"},
+		{`{"error":"status unavailable: status failed"}`, "T3 Connect status unavailable: status failed; tailnet node absent; run tools tailscale agent01 t3code login\n"},
 	} {
 		f := sandboxStateFixture(t)
 		f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
@@ -579,5 +587,221 @@ func TestToolsDeleteRunsTheManagerAsAgent(t *testing.T) {
 	}
 	if _, err := cli.Parse([]string{"tools", "delete", "demo", "t3code", "--force"}, "default"); err == nil || !strings.Contains(err.Error(), `unknown option "--force"`) {
 		t.Fatalf("delete accepted --force: %v", err)
+	}
+}
+
+// TestToolsPairAndTailscaleParseRejectsInvalidRequestsBeforePodman proves tools pair accepts --ttl or --revoke but not both, rejects a malformed validity, tools tailscale accepts exactly login and logout, and both reject unknown options and argument counts at cli.Parse, before any Podman call.
+func TestToolsPairAndTailscaleParseRejectsInvalidRequestsBeforePodman(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"tools", "pair", "demo", "t3code", "--ttl", "10m", "--revoke"}, "--ttl and --revoke conflict"},
+		{[]string{"tools", "pair", "demo", "t3code", "--ttl", "10"}, `invalid --ttl "10": use a number with ms, s, m, h, d, or w`},
+		{[]string{"tools", "pair", "demo", "t3code", "--ttl", "15 minutes"}, `invalid --ttl "15 minutes"`},
+		{[]string{"tools", "pair", "demo", "t3code", "--tailscale"}, `unknown option "--tailscale"`},
+		{[]string{"tools", "pair", "demo", "t3code", "extra"}, "wrong number of arguments for tools pair"},
+		{[]string{"tools", "pair", "demo", "codex"}, `unknown tool "codex": valid names: t3code`},
+		{[]string{"tools", "tailscale", "demo", "t3code", "up"}, `unknown tailscale action "up": valid names: login, logout`},
+		{[]string{"tools", "tailscale", "demo", "t3code"}, "wrong number of arguments for tools tailscale"},
+		{[]string{"tools", "tailscale", "demo", "t3code", "login", "--hostname", "x"}, `unknown option "--hostname"`},
+		{[]string{"tools", "connect", "demo", "t3code", "pair"}, `unknown connect action "pair"`},
+	} {
+		if _, err := cli.Parse(tc.args, "default"); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("args=%q error=%v; want %q", tc.args, err, tc.want)
+		}
+	}
+	request, err := cli.Parse([]string{"tools", "pair", "demo", "t3code", "--ttl", "10m"}, "default")
+	if err != nil || request.Command != "tools pair" || request.Options["ttl"] != "10m" || request.Options["revoke"] != "" {
+		t.Fatalf("request=%+v error=%v", request, err)
+	}
+	request, err = cli.Parse([]string{"tools", "pair", "demo", "t3code", "--revoke"}, "default")
+	if err != nil || request.Options["revoke"] != "true" {
+		t.Fatalf("request=%+v error=%v", request, err)
+	}
+	for _, action := range []string{"login", "logout"} {
+		request, err := cli.Parse([]string{"tools", "tailscale", "demo", "t3code", action}, "default")
+		if err != nil || request.Command != "tools tailscale" || request.Args[2] != action {
+			t.Fatalf("action %s: request=%+v error=%v", action, request, err)
+		}
+	}
+}
+
+// TestToolsPairRunsTheManagerAsAgentWithTerminalRules proves pair needs an enabled Tool, a running service, and a signed-in, named, online tailnet node on a tailnet with HTTPS certificates whose Serve mapping fronts the service, each refused with its own message from the status the host read before the terminal check, needs an interactive terminal, runs the manager as agent with the caller's terminal and the validity, names an upstream failure, and that --revoke runs without a terminal and without the service, through RunWithHost and fake Podman.
+func TestToolsPairRunsTheManagerAsAgentWithTerminalRules(t *testing.T) {
+	tailnet := func(extra string) response {
+		return response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running","tailnet":{"node":"running","backend":"Running","name":"agent01.tail1234.ts.net","origin":"https://agent01.tail1234.ts.net/","online":true,"https":"enabled"` + extra + `}}`}
+	}
+	running := tailnet(``)
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		status   response
+		terminal bool
+		exit     int
+		want     string
+		exec     string
+	}{
+		{"not-enabled", []string{"tools", "pair", "agent01", "t3code"}, response{Output: `{"name":"t3code","enabled":false}`}, true, 1, "t3code not enabled; run tools enable agent01 t3code", ""},
+		{"service-stopped", []string{"tools", "pair", "agent01", "t3code"}, response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"stopped","service_failure":"service exited after 2s: exit status 1"}`}, false, 1, "t3code service is stopped; run tools enable agent01 t3code to start it, or tools status agent01 t3code for its failure", ""},
+		{"no-node", []string{"tools", "pair", "agent01", "t3code"}, response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running"}`}, false, 1, "t3code tailnet node not signed in; run tools tailscale agent01 t3code login", ""},
+		{"node-stopped", []string{"tools", "pair", "agent01", "t3code"}, response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running","tailnet":{"node":"stopped"}}`}, false, 1, "t3code tailnet node is stopped; run tools enable agent01 t3code to start it, or tools status agent01 t3code for its failure", ""},
+		{"signed-out", []string{"tools", "pair", "agent01", "t3code"}, response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running","tailnet":{"node":"running","backend":"NeedsLogin","https":"unknown"}}`}, false, 1, "t3code tailnet node not signed in (NeedsLogin); run tools tailscale agent01 t3code login", ""},
+		{"status-unavailable", []string{"tools", "pair", "agent01", "t3code"}, response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running","tailnet":{"node":"running","error":"status unavailable: failed to connect to local tailscaled"}}`}, false, 1, "t3code tailnet node status unavailable: failed to connect to local tailscaled", ""},
+		{"no-magicdns", []string{"tools", "pair", "agent01", "t3code"}, response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running","tailnet":{"node":"running","backend":"Running","online":true,"https":"enabled"}}`}, false, 1, "the tailnet has no MagicDNS name; enable MagicDNS at https://login.tailscale.com/admin/dns, then run tools pair agent01 t3code again", ""},
+		{"no-https", []string{"tools", "pair", "agent01", "t3code"}, response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running","tailnet":{"node":"running","backend":"Running","name":"agent01.tail1234.ts.net","origin":"https://agent01.tail1234.ts.net/","online":true,"https":"disabled"}}`}, false, 1, "HTTPS certificates are not enabled on the tailnet; enable them at https://login.tailscale.com/admin/dns, then run tools pair agent01 t3code again", ""},
+		{"offline", []string{"tools", "pair", "agent01", "t3code"}, response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running","tailnet":{"node":"running","backend":"Running","name":"agent01.tail1234.ts.net","origin":"https://agent01.tail1234.ts.net/","https":"enabled"}}`}, false, 1, "t3code tailnet node is offline; check the sandbox's outbound connectivity and tools status agent01 t3code", ""},
+		{"foreign-serve", []string{"tools", "pair", "agent01", "t3code"}, tailnet(`,"serve":"http://127.0.0.1:9999"`), false, 1, "the tailnet node's HTTPS port 443 already fronts http://127.0.0.1:9999, not this service; run tools tailscale agent01 t3code logout and then login to reset the node", ""},
+		{"no-terminal", []string{"tools", "pair", "agent01", "t3code"}, running, false, 1, "tools pair t3code needs an interactive terminal", ""},
+		{"paired", []string{"tools", "pair", "agent01", "t3code", "--ttl", "10m"}, running, true, 0, "upstream output", "exec --user=1000:1000 --env HOME=/home/agent -i -t " + shellContainer + " " + integrationManager + " tools pair t3code --ttl 10m"},
+		{"failed", []string{"tools", "pair", "agent01", "t3code"}, running, true, 1, "tools pair t3code failed", "exec --user=1000:1000 --env HOME=/home/agent -i -t " + shellContainer + " " + integrationManager + " tools pair t3code"},
+		{"revoke", []string{"tools", "pair", "agent01", "t3code", "--revoke"}, response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"stopped"}`}, false, 0, "upstream output", "exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " tools pair t3code --revoke"},
+		{"revoke-failed", []string{"tools", "pair", "agent01", "t3code", "--revoke"}, running, false, 1, "tools pair t3code --revoke failed", "exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " tools pair t3code --revoke"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := sandboxStateFixture(t)
+			f.host.IsInputTerminal = func(io.Reader) bool { return tc.terminal }
+			f.host.IsOutputTerminal = func(io.Writer) bool { return tc.terminal }
+			f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+			// A pairing reads the node's sign-in and Serve state for its step-8 checks; a revocation reads the records alone.
+			statusCall := toolManagerPrefix + "status t3code --tailnet"
+			if slices.Contains(tc.args, "--revoke") {
+				statusCall = toolManagerPrefix + "status t3code"
+			}
+			f.responses[statusCall] = tc.status
+			if tc.exec != "" {
+				f.responses[tc.exec] = response{Output: "upstream output\n", Exit: tc.exit}
+			}
+			status, output, calls := f.run(t, tc.args...)
+			if status != tc.exit || !strings.Contains(output, tc.want) {
+				t.Fatalf("status=%d output=%s want %d %q", status, output, tc.exit, tc.want)
+			}
+			want := append(sandboxQueryCalls(), strings.Fields(agentWorkProbe), strings.Fields(statusCall))
+			if tc.exec != "" {
+				want = append(want, strings.Fields(tc.exec))
+			}
+			if !reflect.DeepEqual(calls, want) {
+				t.Fatalf("calls=%v want=%v", calls, want)
+			}
+		})
+	}
+}
+
+// TestToolsTailscaleRunsTheManagerAsAgentWithTerminalRules proves login needs an enabled Tool and an interactive terminal and passes the sandbox name as the node's hostname, lowercased with other characters replaced by hyphens, that logout runs without a terminal, and that an upstream failure is named, through RunWithHost and fake Podman.
+func TestToolsTailscaleRunsTheManagerAsAgentWithTerminalRules(t *testing.T) {
+	enabled := response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running"}`}
+	for _, tc := range []struct {
+		name     string
+		sandbox  string
+		action   string
+		status   response
+		terminal bool
+		exit     int
+		want     string
+		exec     string
+	}{
+		{"not-enabled", "agent01", "login", response{Output: `{"name":"t3code","enabled":false}`}, true, 1, "t3code not enabled; run tools enable agent01 t3code", ""},
+		{"no-terminal", "agent01", "login", enabled, false, 1, "tools tailscale t3code login needs an interactive terminal", ""},
+		{"login", "agent01", "login", enabled, true, 0, "upstream output", "tools tailscale t3code login --hostname agent01"},
+		{"login-normalized", "My_Box.1", "login", enabled, true, 0, "upstream output", "tools tailscale t3code login --hostname my-box-1"},
+		{"login-failed", "agent01", "login", enabled, true, 1, "tools tailscale t3code login failed", "tools tailscale t3code login --hostname agent01"},
+		{"logout", "agent01", "logout", enabled, false, 0, "upstream output", "tools tailscale t3code logout"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := sandboxStateFixture(t)
+			container := "sandboxed-agents.default." + tc.sandbox
+			f.host.IsInputTerminal = func(io.Reader) bool { return tc.terminal }
+			f.host.IsOutputTerminal = func(io.Writer) bool { return tc.terminal }
+			for key, value := range f.responses {
+				if strings.Contains(key, "agent01") {
+					f.responses[strings.ReplaceAll(key, "agent01", tc.sandbox)] = value
+				}
+			}
+			f.responses["exec --user=0:0 "+container+" "+integrationManager+" version"] = response{Output: "sandboxed-agents-manager development\n"}
+			f.responses["exec --user=1000:1000 --env HOME=/home/agent "+container+" "+integrationManager+" tools status t3code"] = tc.status
+			execution := "exec --user=1000:1000 --env HOME=/home/agent -i "
+			if tc.terminal {
+				execution += "-t "
+			}
+			execution += container + " " + integrationManager + " " + tc.exec
+			if tc.exec != "" {
+				f.responses[execution] = response{Output: "upstream output\n", Exit: tc.exit}
+			}
+			status, output, calls := f.run(t, "tools", "tailscale", tc.sandbox, "t3code", tc.action)
+			if status != tc.exit || !strings.Contains(output, tc.want) {
+				t.Fatalf("status=%d output=%s want %d %q", status, output, tc.exit, tc.want)
+			}
+			last := calls[len(calls)-1]
+			if tc.exec != "" && !reflect.DeepEqual(last, strings.Fields(execution)) {
+				t.Fatalf("last call=%v want %v", last, strings.Fields(execution))
+			}
+			if tc.exec == "" && strings.Contains(strings.Join(last, " "), " tools tailscale ") {
+				t.Fatalf("action reached the manager: %v", last)
+			}
+		})
+	}
+}
+
+// TestToolsStatusRendersTheTailnetAndDevices proves status renders an absent, stopped, signed-out, and signed-in tailnet node with its origin and Serve mapping, a status that could not be read, and the paired devices, through RunWithHost and fake Podman.
+func TestToolsStatusRendersTheTailnetAndDevices(t *testing.T) {
+	for _, tc := range []struct {
+		extra string
+		want  string
+	}{
+		{``, "; T3 Connect not signed in, not linked; tailnet node absent; run tools tailscale agent01 t3code login\n"},
+		{`,"tailnet":{"node":"stopped","node_failure":"service exited after 2s: exit status 1","node_log":"/x/tailscale/service/service.log"}`, "; tailnet node stopped: service exited after 2s: exit status 1; node log /x/tailscale/service/service.log\n"},
+		{`,"tailnet":{"node":"running","backend":"NeedsLogin","https":"unknown"}`, "; tailnet node running, not signed in (NeedsLogin); run tools tailscale agent01 t3code login\n"},
+		{`,"tailnet":{"node":"running","backend":"Running","name":"agent01.tail1234.ts.net","origin":"https://agent01.tail1234.ts.net/","online":true,"https":"enabled"}`, "; tailnet node running, signed in as agent01.tail1234.ts.net, origin https://agent01.tail1234.ts.net/; no Serve mapping yet; run tools pair agent01 t3code\n"},
+		{`,"tailnet":{"node":"running","backend":"Running","name":"agent01.tail1234.ts.net","origin":"https://agent01.tail1234.ts.net/","serve":"http://127.0.0.1:3773","serves_service":true,"online":true,"https":"enabled"},"devices":{"items":[{"client":"Pixel 8","connected":true,"last_connected":"2026-10-23T12:02:00.000Z"},{"client":"tablet (iPadOS)"}]}`, "; tailnet node running, signed in as agent01.tail1234.ts.net, origin https://agent01.tail1234.ts.net/; Serve maps the origin to the service; paired devices: Pixel 8 (connected), tablet (iPadOS)\n"},
+		{`,"tailnet":{"node":"running","backend":"Running","name":"agent01.tail1234.ts.net","origin":"https://agent01.tail1234.ts.net/","serve":"http://127.0.0.1:9999","online":false,"https":"disabled"},"devices":{}`, "; tailnet node running, signed in as agent01.tail1234.ts.net, origin https://agent01.tail1234.ts.net/; Serve fronts http://127.0.0.1:9999, not the service; HTTPS certificates disabled on the tailnet; node offline; no paired device\n"},
+		{`,"tailnet":{"node":"running","error":"status unavailable: failed to connect to local tailscaled"},"devices":{"error":"devices unavailable: database locked"}`, "; tailnet node running; tailnet status unavailable: failed to connect to local tailscaled; paired devices unavailable: database locked\n"},
+	} {
+		f := sandboxStateFixture(t)
+		f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+		f.responses[toolManagerPrefix+"status t3code --connect"] = response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running","service_log":"/x/service.log","connect":{"authenticated":false,"linked":false}` + tc.extra + `}`}
+		status, output, _ := f.run(t, "tools", "status", "agent01", "t3code")
+		if status != 0 || !strings.Contains(output, tc.want) {
+			t.Fatalf("extra=%s status=%d output=%q want %q", tc.extra, status, output, tc.want)
+		}
+	}
+}
+
+// TestCheckReportsTailnetNodes proves check NAME names the tailnet node's state on the tool line and counts a failed node as a problem through RunWithHost and fake Podman.
+func TestCheckReportsTailnetNodes(t *testing.T) {
+	for _, tc := range []struct {
+		answer  string
+		status  int
+		message string
+	}{
+		{`[{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running","service_log":"/x/service.log","tailnet":{"node":"running","node_log":"/x/tailscale/service/service.log"}}]`, 0, "tool t3code: version 0.1.2; channel latest; service running; log /x/service.log; tailnet node running"},
+		{`[{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running","service_log":"/x/service.log","tailnet":{"node":"failed","node_failure":"failed after 5 consecutive failed starts","node_log":"/x/tailscale/service/service.log"}}]`, 1, "tool t3code: tailnet node failed: failed after 5 consecutive failed starts; log /x/tailscale/service/service.log"},
+	} {
+		f := sandboxStateFixture(t)
+		f.responses["container inspect "+shellContainer] = response{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}},"HostConfig":{"Memory":8589934592,"MemorySwap":8589934592,"NanoCpus":4000000000,"CpuQuota":400000,"CpuPeriod":100000,"PidsLimit":2048,"ShmSize":1073741824},"State":{"Running":true}}]`}
+		for _, volume := range sandboxVolumes {
+			f.responses["volume exists "+volume] = response{}
+		}
+		f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+		f.responses["exec --user=0:0 "+shellContainer+" "+integrationManager+" tools list"] = response{Output: tc.answer + "\n"}
+		status, output, calls := f.run(t, "check", "agent01")
+		if status != tc.status || !strings.Contains(output, tc.message) {
+			t.Fatalf("status=%d output=%s want %d %q", status, output, tc.status, tc.message)
+		}
+		noMutation(t, calls)
+	}
+}
+
+// TestRestartSucceedsAgainstAManagerWithoutTools proves restart of a sandbox whose manager predates the Tool
+// commands does not fail for the missing restore: the manager's usage text with status 2 means the sandbox has
+// no Tool, through RunWithHost and fake Podman.
+func TestRestartSucceedsAgainstAManagerWithoutTools(t *testing.T) {
+	f := sandboxStateFixture(t)
+	f.responses["container inspect "+shellContainer] = response{Output: `[{"Config":{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222","io.sandboxed-agents.toolchains":"none"}},"State":{"Running":true}}]`}
+	f.responses["restart "+shellContainer] = response{}
+	f.responses[integrationProbe] = response{}
+	f.responses[strings.Join(strings.Fields(toolManagerPrefix+"restore"), " ")] = response{Exit: 2, Stderr: "usage: sandboxed-agents-manager version | sessions | ssh-host-key\n"}
+	status, output, _ := f.run(t, "restart", "agent01")
+	if status != 0 || strings.Contains(output, "could not be restored") {
+		t.Fatalf("status=%d output=%s", status, output)
 	}
 }

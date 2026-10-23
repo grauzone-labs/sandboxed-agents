@@ -1,6 +1,6 @@
 # Maintainer notes
 
-This page is for the maintainers of `sandboxed-agents`. Here you find how the Podman version floors were confirmed, the live runs and source checks on record, the provenance and rotation of the NodeSource signing key, how release builds and CI work, what the stable release publication relies on and how to recover an interrupted one, and how to build a development executable whose images work. The user pages link here wherever a statement rests on this evidence.
+This page is for the maintainers of `sandboxed-agents`. Here you find how the Podman version floors were confirmed, the live runs and source checks on record, the provenance and rotation of the NodeSource and Tailscale signing keys, how release builds and CI work, what the stable release publication relies on and how to recover an interrupted one, and how to build a development executable whose images work. The user pages link here wherever a statement rests on this evidence.
 
 ## How the version floors were confirmed
 
@@ -88,11 +88,15 @@ The `TestLiveSuite` runs wrote `live-suite-linux.json` and `live-suite-windows-1
 - Digests of the pulled Debian image and of built images, and pinned Playwright, .NET patch, or Debian package versions. The version manifest in every image records what a build installed.
 - `scripts/release.sh` builds no Podman image.
 
-## NodeSource signing key
+## Repository signing keys
 
-The base recipe pins the NodeSource signing key by fingerprint ([images](images.md#nodesource-signing-key-check)). The expected fingerprint is `6F71F525282841EEDAF851B42F59B5F99B1BE0B4`, stored in `image/context/base/nodesource-signing-key.fingerprint`.
+The base recipe pins the signing key of each package repository it adds by fingerprint ([images](images.md#signing-key-checks)), with one script, `image/context/base/check-signing-key.sh`, and one fingerprint file per repository. The offline test `bash image/test/signing-keys/test-check-signing-key.sh` checks the script against both fingerprint files and both key fixtures; it reads the expected fingerprints from the files, so a pin update needs no edit of the test.
 
-### Provenance
+### NodeSource signing key
+
+The expected fingerprint is `6F71F525282841EEDAF851B42F59B5F99B1BE0B4`, stored in `image/context/base/nodesource-signing-key.fingerprint`.
+
+#### Provenance
 
 The key was fetched from deb.nodesource.com on 2026-10-11. It holds one primary key (`2F59B5F99B1BE0B4`, uid `NSolid <nsolid-gpg@nodesource.com>`) and one subkey. NodeSource's own repository (nodesource/distributions, at commit 9b431d8 of 2026-07-09) publishes no fingerprint of this key.
 
@@ -100,24 +104,34 @@ One source independent of deb.nodesource.com holds the same key: `files/repo/nod
 
 The pin therefore records the key as fetched and reviewed when it was added, corroborated by a dated copy in another project.
 
-### SHA-1 binding signature
+#### SHA-1 binding signature
 
 The key's subkey binding signature, created in 2016, uses SHA-1, verified with `gpg --list-packets` on the fetched key. Third-party reports say that Debian 13 refuses NodeSource repositories whose binding signatures use SHA-1, for example [nodesource/distributions#1920](https://github.com/nodesource/distributions/issues/1920). The risk was tested on 2026-10-11: the Containerfile was built with rootless Podman from `debian:trixie-slim`; apt fetched and verified the `node_24.x` repository (`InRelease`) with the pinned key, reported no key or signature warning, and installed `nodejs` 24.21.0, and the image ran `node --version` as v24.21.0. The refusal did not occur with this key on Debian 13. That build tested the key as fetched that day; a key rotation needs the same build again before the pin is updated.
 
+### Tailscale signing key
+
+The expected fingerprint is `2596A99EAAB33821893C0A79458CA832957F5868`, stored in `image/context/base/tailscale-signing-key.fingerprint`. The recipe fetches the binary keyring `https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg`, the file Tailscale's own Debian 13 instructions install, checks it, and copies it unchanged into `/etc/apt/keyrings/tailscale.gpg`.
+
+#### Provenance
+
+The keyring was fetched from pkgs.tailscale.com on 2026-10-23 for decision D3 of Story #89 ([ADR 0010](adr/0010-t3-code-pairs-over-an-in-sandbox-tailnet-node.md)). It holds one primary key (`458CA832957F5868`, RSA 4096, created 2020-02-25, uid `Tailscale Inc. (Package repository signing key) <info@tailscale.com>`) and one encryption subkey (`B1547A3DDAAF03C6`). Tailscale publishes the same keyring for every Debian and Ubuntu release it supports, and the stable and unstable tracks share it; the fingerprint itself is not printed on Tailscale's installation pages. A web search for the fingerprint and for the key id on 2026-10-23 found no record of this key independent of pkgs.tailscale.com, so the pin records the key as fetched and reviewed when it was added, as the NodeSource pin does. The fixture `image/test/signing-keys/tailscale-archive-keyring.gpg` is that fetched keyring.
+
+The Debian package `tailscale` depends on `iptables` and `iproute2`, which the image installs with it; the tailnet node of ADR 0010 runs in userspace networking mode and uses neither. The package's maintainer scripts enable a systemd unit only where systemd runs, so the image, which has no systemd, installs the package without starting a Tailscale process, and nothing in the recipe starts `tailscaled`.
+
 ### Key rotation
 
-When NodeSource rotates its key, the check fails and `build` stops ([images](images.md#nodesource-signing-key-check)). To update the pin:
+When a repository rotates its key, its check fails and `build` stops ([images](images.md#signing-key-checks)). To update a pin:
 
 1. Fetch the new key.
-2. Confirm its primary fingerprint with gpg, for example `gpg --show-keys --with-fingerprint`, in an isolated `GNUPGHOME`. When possible, confirm it from a source independent of deb.nodesource.com as well.
-3. Write the new fingerprint into `image/context/base/nodesource-signing-key.fingerprint`.
-4. Replace the fixture `image/test/nodesource/nodesource-repo.gpg.key` with the new key.
+2. Confirm its primary fingerprint with gpg, for example `gpg --show-keys --with-fingerprint`, in an isolated `GNUPGHOME`. When possible, confirm it from a source independent of the repository's host as well.
+3. Write the new fingerprint into the repository's fingerprint file in `image/context/base/`.
+4. Replace the repository's fixture in `image/test/signing-keys/` with the new key.
 5. Update the provenance above: source, date, and key details.
-6. Run the offline test, `bash image/test/nodesource/test-check-nodesource-key.sh`. It reads the expected fingerprint from the fingerprint file, so it needs no edit.
+6. Run the offline test, `bash image/test/signing-keys/test-check-signing-key.sh`.
 7. Prepare the build context as under [Development builds with the manager](#development-builds-with-the-manager), build the base image with rootless Podman (`podman build -f <prepared-context>/context/base/Containerfile <prepared-context>/context/base`), and check that apt accepts the repository. A build from the checkout itself stops at the manager guard, because the `manager.bin` in the source tree is an empty placeholder.
 8. Commit.
 
-Changing the fingerprint file changes the asset hash, so the base image gets a new tag.
+Changing a fingerprint file changes the asset hash, so the base image gets a new tag.
 
 ## Toolchain package sources
 
@@ -482,4 +496,4 @@ The live suite runs on the project's Linux and Windows hosts over their SSH conn
 
 ## Offline tests behind the pages and the image
 
-Three tests read the user pages: `TestSecurityPolicyCoversPodmanCreateOptions` checks that `SECURITY.md` names every option `up` passes to Podman create; `TestCommandReferenceMatchesCommandTree` checks the grammar block of the command reference against the parser; `TestQuickGuideCommandsParse` parses every command line of both quick guides. `image/test/nodesource/test-check-nodesource-key.sh` checks the key check script against the fingerprint file, and `go test ./image` checks the embedded `sshd_config` policy with the host's `sshd -T`, the entrypoint's host-key startup under a real shell, and the recipe contents.
+Three tests read the user pages: `TestSecurityPolicyCoversPodmanCreateOptions` checks that `SECURITY.md` names every option `up` passes to Podman create; `TestCommandReferenceMatchesCommandTree` checks the grammar block of the command reference against the parser; `TestQuickGuideCommandsParse` parses every command line of both quick guides. `image/test/signing-keys/test-check-signing-key.sh` checks the key check script against both fingerprint files, and `go test ./image` checks the embedded `sshd_config` policy with the host's `sshd -T`, the entrypoint's host-key startup under a real shell, and the recipe contents.

@@ -131,8 +131,8 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 	if len(args) > 1 && args[0] == "__worker" && args[1] == "tools" {
 		return tools(args[2:], true, stdout, stderr, effects)
 	}
-	if len(args) == 3 && args[0] == "__supervise" {
-		return supervise(args[1], args[2], stderr, effects)
+	if len(args) >= 2 && args[0] == "__supervise" {
+		return supervise(args[1:], stderr, effects)
 	}
 	if len(args) == 1 && args[0] == "sessions" {
 		if effects.Identity() == rootIdentity {

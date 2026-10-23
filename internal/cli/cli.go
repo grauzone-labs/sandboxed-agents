@@ -250,6 +250,16 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			return 1
 		}
 		return 0
+	case "tools tailscale", "tools pair":
+		target, err := selectedTarget()
+		if err != nil {
+			return 1
+		}
+		if err := runToolTerminalWork(request, target, stdout, stderr); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 
 	case "fingerprint":
 		target, err := selectedTarget()

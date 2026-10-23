@@ -15,20 +15,35 @@ RUN groupadd --gid 1000 agent \
     && mkdir -p /workspace /run/sshd \
     && chown agent:agent /workspace
 
-COPY check-nodesource-key.sh nodesource-signing-key.fingerprint /tmp/nodesource-check/
+COPY check-signing-key.sh nodesource-signing-key.fingerprint tailscale-signing-key.fingerprint /tmp/signing-key-check/
 
 RUN set -eu; \
     key_file=$(mktemp); \
     trap 'rm -f "$key_file"' EXIT; \
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o "$key_file"; \
-    bash /tmp/nodesource-check/check-nodesource-key.sh "$key_file" /tmp/nodesource-check/nodesource-signing-key.fingerprint; \
-    rm -rf /tmp/nodesource-check; \
+    bash /tmp/signing-key-check/check-signing-key.sh "$key_file" /tmp/signing-key-check/nodesource-signing-key.fingerprint NodeSource; \
     mkdir -p /etc/apt/keyrings; \
     gpg --batch --yes --dearmor --output /etc/apt/keyrings/nodesource.gpg "$key_file"; \
     printf '%s\n' 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main' \
         > /etc/apt/sources.list.d/nodesource.list; \
     apt-get update; \
     apt-get install -y --no-install-recommends nodejs; \
+    rm -rf /var/lib/apt/lists/*
+
+# Tailscale for the T3 Code Tool's tailnet node (ADR-0010): the node runs in userspace networking mode as agent, started by the manager, never at container start.
+RUN set -eu; \
+    key_file=$(mktemp); \
+    trap 'rm -f "$key_file"' EXIT; \
+    curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg -o "$key_file"; \
+    bash /tmp/signing-key-check/check-signing-key.sh "$key_file" /tmp/signing-key-check/tailscale-signing-key.fingerprint Tailscale; \
+    rm -rf /tmp/signing-key-check; \
+    mkdir -p /etc/apt/keyrings; \
+    cp "$key_file" /etc/apt/keyrings/tailscale.gpg; \
+    chmod 0644 /etc/apt/keyrings/tailscale.gpg; \
+    printf '%s\n' 'deb [signed-by=/etc/apt/keyrings/tailscale.gpg] https://pkgs.tailscale.com/stable/debian trixie main' \
+        > /etc/apt/sources.list.d/tailscale.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends tailscale; \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace

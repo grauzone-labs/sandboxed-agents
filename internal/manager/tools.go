@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
@@ -25,11 +26,14 @@ type toolSelection struct {
 	Pin     string `json:"pin,omitempty"`
 }
 
-// toolRequest is a validated tools operation with its catalog entry, at most one selector, the connect action of `tools connect`, and whether a status includes the connect part.
+// toolRequest is a validated tools operation with its catalog entry, at most one selector, the action
+// of `tools connect` or `tools tailscale`, the hostname of a tailnet login, the validity or the revoke
+// switch of `tools pair`, and the status depth: `connect` adds the account connection, the tailnet node's
+// sign-in, and the paired devices, `tailnet` the node's sign-in and Serve state alone; both run upstream queries.
 type toolRequest struct {
-	operation, name, channel, version, action string
-	connect                                   bool
-	definition                                catalog.Tool
+	operation, name, channel, version, action, hostname, ttl string
+	connect, tailnet, revoke                                 bool
+	definition                                               catalog.Tool
 }
 
 // parseTools validates the Tool operation, catalog entry, and selector flags before home access.
@@ -40,12 +44,12 @@ func parseTools(args []string, stderr io.Writer) (toolRequest, bool) {
 		return r, true
 	}
 	if len(args) < 2 {
-		fmt.Fprintln(stderr, "tools requires enable, update, or status TOOL, or restore, or list")
+		fmt.Fprintln(stderr, "tools requires enable, update, status, connect, tailscale, or delete TOOL, or restore, or list")
 		return r, false
 	}
 	r.operation, r.name = args[0], args[1]
 	switch r.operation {
-	case "enable", "update", "status", "connect", "delete":
+	case "enable", "update", "status", "connect", "tailscale", "pair", "delete":
 	default:
 		fmt.Fprintln(stderr, "unknown tools command", r.operation)
 		return r, false
@@ -75,13 +79,20 @@ func parseTools(args []string, stderr io.Writer) (toolRequest, bool) {
 		}
 		return r, true
 	}
+	if r.operation == "tailscale" {
+		return parseTailnetRequest(r, args[2:], stderr)
+	}
+	if r.operation == "pair" {
+		return parsePairRequest(r, args[2:], stderr)
+	}
 	f := flag.NewFlagSet("tools "+r.operation, flag.ContinueOnError)
 	f.SetOutput(stderr)
 	if r.operation != "status" {
 		f.StringVar(&r.channel, "channel", "", "release channel")
 		f.StringVar(&r.version, "version", "", "exact package version")
 	} else {
-		f.BoolVar(&r.connect, "connect", false, "include the account connection state, which runs upstream's status query")
+		f.BoolVar(&r.connect, "connect", false, "include the account connection, tailnet, and device state, which runs upstream's and Tailscale's status queries")
+		f.BoolVar(&r.tailnet, "tailnet", false, "include the tailnet node's sign-in and Serve state only, which runs Tailscale's status queries")
 	}
 	if err := f.Parse(args[2:]); err != nil {
 		return r, false
@@ -114,6 +125,38 @@ func parseTools(args []string, stderr io.Writer) (toolRequest, bool) {
 	return r, true
 }
 
+// parseTailnetRequest validates `tools tailscale TOOL login --hostname NAME` and `tools tailscale TOOL logout`.
+func parseTailnetRequest(r toolRequest, args []string, stderr io.Writer) (toolRequest, bool) {
+	if len(args) == 0 || !slices.Contains(catalog.TailnetActions, args[0]) {
+		fmt.Fprintln(stderr, "tools tailscale requires TOOL login|logout")
+		return r, false
+	}
+	r.action = args[0]
+	f := flag.NewFlagSet("tools tailscale "+r.action, flag.ContinueOnError)
+	f.SetOutput(stderr)
+	if r.action == "login" {
+		f.StringVar(&r.hostname, "hostname", "", "the node's hostname, the sandbox's name")
+	}
+	if err := f.Parse(args[1:]); err != nil {
+		return r, false
+	}
+	if f.NArg() != 0 {
+		fmt.Fprintln(stderr, "unexpected tools arguments")
+		return r, false
+	}
+	if r.action == "login" {
+		if r.hostname == "" {
+			fmt.Fprintln(stderr, "tools tailscale login requires --hostname")
+			return r, false
+		}
+		if !tailnetHostnameLabel.MatchString(r.hostname) {
+			fmt.Fprintf(stderr, "invalid hostname %q: a node hostname is a lowercase DNS label\n", r.hostname)
+			return r, false
+		}
+	}
+	return r, true
+}
+
 // tools sends root requests to a verified agent worker, reads a Tool selection and its service as a snapshot, or changes the selection and starts the services of enabled Tools at the manager lock boundary.
 func tools(args []string, worker bool, stdout, stderr io.Writer, effects Effects) int {
 	r, valid := parseTools(args, stderr)
@@ -130,8 +173,11 @@ func tools(args []string, worker bool, stdout, stderr io.Writer, effects Effects
 	switch r.operation {
 	case "connect":
 		return connectTool(root, r, stdout, stderr, effects)
+	case "pair":
+		// Pairing takes no lock: it changes no selection and starts no service (ADR-0009, Locking).
+		return exitStatus(pairTool(home, toolDirectory(root, r.name), r, stdout, stderr, effects), stderr)
 	case "status":
-		status, err := toolStatus(home, root, r.name, r.connect, effects)
+		status, err := toolStatus(home, root, r.name, r.connect, r.tailnet, effects)
 		if err != nil {
 			return exitStatus(err, stderr)
 		}
@@ -150,6 +196,9 @@ func tools(args []string, worker bool, stdout, stderr io.Writer, effects Effects
 	defer unlock()
 	if r.operation == "restore" {
 		return exitStatus(restoreToolServices(root, stdout, effects), stderr)
+	}
+	if r.operation == "tailscale" {
+		return exitStatus(tailnetAction(toolDirectory(root, r.name), r, stdout, stderr, effects), stderr)
 	}
 	if r.operation == "delete" {
 		// A login holds the connect lock for its whole run; a delete that finds it taken never races it.
@@ -172,9 +221,9 @@ func tools(args []string, worker bool, stdout, stderr io.Writer, effects Effects
 	return 0
 }
 
-// toolStatus reads one Tool's selection and service state as a snapshot, without the manager lock,
-// and with the account connection state when asked, which runs upstream's status query.
-func toolStatus(home, root, name string, connect bool, effects Effects) (ToolStatus, error) {
+// toolStatus reads one Tool's selection, service, and tailnet node state as a snapshot, without the
+// manager lock; `connect` adds the account connection, the node's sign-in, and the devices, `tailnet` the node's sign-in alone, both of which run upstream's queries.
+func toolStatus(home, root, name string, connect, tailnet bool, effects Effects) (ToolStatus, error) {
 	directory := toolDirectory(root, name)
 	current, enabled, err := readToolSelection(directory)
 	if err != nil {
@@ -185,12 +234,16 @@ func toolStatus(home, root, name string, connect bool, effects Effects) (ToolSta
 		if err := fillServiceStatus(&status, directory, effects); err != nil {
 			return status, err
 		}
+		definition, err := catalog.Default.ResolveTool(name)
+		if err != nil {
+			return status, err
+		}
+		if err := fillTailnetStatus(&status, directory, name, definition, connect || tailnet, effects); err != nil {
+			return status, err
+		}
 		if connect {
-			definition, err := catalog.Default.ResolveTool(name)
-			if err != nil {
-				return status, err
-			}
 			status.Connect = readConnectStatus(home, directory, name, current, definition, effects)
+			status.Devices = readPairedDevices(home, directory, name, current, definition, effects)
 		}
 	}
 	return status, nil
@@ -201,7 +254,7 @@ func toolStatus(home, root, name string, connect bool, effects Effects) (ToolSta
 func enabledToolStatuses(home, root string, effects Effects) ([]ToolStatus, error) {
 	statuses := []ToolStatus{}
 	for _, name := range catalog.Default.ToolNames() {
-		status, err := toolStatus(home, root, name, false, effects)
+		status, err := toolStatus(home, root, name, false, false, effects)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
@@ -212,8 +265,8 @@ func enabledToolStatuses(home, root string, effects Effects) ([]ToolStatus, erro
 	return statuses, nil
 }
 
-// restoreToolServices starts the service of every enabled Tool whose service is not running, as the
-// lifecycle commands do after the sandbox is ready, and reports every Tool it could not start.
+// restoreToolServices starts the service, and the tailnet node when one exists, of every enabled Tool
+// whose processes are not running, as the lifecycle commands do after the sandbox is ready, and reports every Tool it could not start.
 func restoreToolServices(root string, stdout io.Writer, effects Effects) error {
 	var failures []error
 	for _, name := range catalog.Default.ToolNames() {
@@ -227,11 +280,18 @@ func restoreToolServices(root string, stdout io.Writer, effects Effects) error {
 			continue
 		}
 		definition, _ := catalog.Default.ResolveTool(name)
-		if err := startService(directory, name, current.Version, definition, effects); err != nil {
+		if err := startSupervised(toolService(directory, name, current.Version, definition), effects); err != nil {
 			failures = append(failures, err)
 			continue
 		}
 		fmt.Fprintf(stdout, "%s service running\n", name)
+		if tailnetExists(directory) {
+			if err := startSupervised(tailnetNode(directory, name), effects); err != nil {
+				failures = append(failures, err)
+				continue
+			}
+			fmt.Fprintf(stdout, "%s tailnet node running\n", name)
+		}
 	}
 	return errors.Join(failures...)
 }
@@ -261,7 +321,7 @@ func changeTool(home, directory string, r toolRequest, stdout, stderr io.Writer,
 		// the service only when it is not running. A damaged installation is
 		// repaired at its recorded version without a resolution.
 		if healthy {
-			if err := startService(directory, r.name, current.Version, r.definition, effects); err != nil {
+			if err := startSupervised(toolService(directory, r.name, current.Version, r.definition), effects); err != nil {
 				return err
 			}
 			reportTool(stdout, r.name, current)
@@ -281,7 +341,7 @@ func changeTool(home, directory string, r toolRequest, stdout, stderr io.Writer,
 				return err
 			}
 		}
-		if err := startService(directory, r.name, version, r.definition, effects); err != nil {
+		if err := startSupervised(toolService(directory, r.name, version, r.definition), effects); err != nil {
 			return err
 		}
 		reportTool(stdout, r.name, want)
@@ -300,10 +360,10 @@ func changeTool(home, directory string, r toolRequest, stdout, stderr io.Writer,
 	}
 	if err := publishTool(home, directory, want, r.definition); err != nil {
 		if version != current.Version {
-			stopService(directory, r.name, effects)
+			stopSupervised(toolService(directory, r.name, version, r.definition), effects)
 			removeToolVersion(directory, version)
 			if enabled {
-				if restart := startService(directory, r.name, current.Version, r.definition, effects); restart != nil {
+				if restart := startSupervised(toolService(directory, r.name, current.Version, r.definition), effects); restart != nil {
 					return fmt.Errorf("%w; the previous version %s did not start again: %v", err, current.Version, restart)
 				}
 			}
@@ -318,21 +378,21 @@ func changeTool(home, directory string, r toolRequest, stdout, stderr io.Writer,
 // switchService stops the service of the installed version and starts it on the new one; when the
 // new version does not start, the previous version's service runs again.
 func switchService(directory, name, version string, current toolSelection, enabled bool, definition catalog.Tool, effects Effects) error {
-	if err := stopService(directory, name, effects); err != nil {
+	if err := stopSupervised(toolService(directory, name, current.Version, definition), effects); err != nil {
 		return err
 	}
-	err := startService(directory, name, version, definition, effects)
+	err := startSupervised(toolService(directory, name, version, definition), effects)
 	if err == nil {
 		return nil
 	}
 	// Whatever the new version left behind is stopped before the previous version runs again.
-	if stop := stopService(directory, name, effects); stop != nil {
+	if stop := stopSupervised(toolService(directory, name, version, definition), effects); stop != nil {
 		err = fmt.Errorf("%w; %v", err, stop)
 	}
 	if !enabled || version == current.Version {
 		return err
 	}
-	if restart := startService(directory, name, current.Version, definition, effects); restart != nil {
+	if restart := startSupervised(toolService(directory, name, current.Version, definition), effects); restart != nil {
 		return fmt.Errorf("%w; the previous version %s did not start again either: %v", err, current.Version, restart)
 	}
 	return fmt.Errorf("%w; the previous version %s is running again", err, current.Version)
