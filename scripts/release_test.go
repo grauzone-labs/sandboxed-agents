@@ -263,6 +263,10 @@ func createReleaseRepository(t *testing.T, root string) string {
 	runGit(t, checkout, "config", "user.name", "Release Test")
 	runGit(t, checkout, "config", "user.email", "release-test@example.invalid")
 	runGit(t, checkout, "config", "core.autocrlf", "false")
+	// Automatic garbage collection can run detached after a command returns and still write into the
+	// fixture when the test removes it, which fails the cleanup of t.TempDir; the fixture never needs it.
+	runGit(t, checkout, "config", "gc.auto", "0")
+	runGit(t, checkout, "config", "gc.autoDetach", "false")
 	runGit(t, checkout, "add", ".")
 	runGit(t, checkout, "commit", "--quiet", "-m", "test(release): prepare source fixture")
 	return checkout
