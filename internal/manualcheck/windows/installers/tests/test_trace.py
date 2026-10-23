@@ -78,20 +78,67 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(report['verdict'],'INCOMPLETE')
 
     def test_named_pipe_communication_does_not_hide_unknown_operations(self):
-        specs=[('CreatePipe',r'\Device\NamedPipe','SUCCESS',''),('SetPipeInformation',r'\Device\NamedPipe','SUCCESS',''),('WriteFile',r'\Device\NamedPipe','SUCCESS','Length: 57'),('FileSystemControl',r'\Device\NamedPipe\known','PIPE CONNECTED','Control: FSCTL_PIPE_LISTEN'),('<Unknown>',r'\Device\NamedPipe\known','SUCCESS',''),('CreatePipe',r'C:\outside','SUCCESS','')]
+        specs=[('CreatePipe',r'\Device\NamedPipe','SUCCESS',''),('SetPipeInformation',r'\Device\NamedPipe','SUCCESS',''),('WriteFile',r'\Device\NamedPipe','SUCCESS','Length: 57'),('FileSystemControl',r'\Device\NamedPipe\known','PIPE CONNECTED','Control: FSCTL_PIPE_LISTEN'),('<Unknown>',r'\Device\NamedPipe\known','SUCCESS',''),('CreatePipe',r'C:\outside','SUCCESS',''),('<Unknown>',r'\Device\NamedPipe','SUCCESS','')]
         rows=[{'Process Name':'node.exe','PID':10,'Operation':op,'Path':path,'Result':result,'Detail':detail} for op,path,result,detail in specs]
         result,report=self.run_trace(rows,'-BookkeepingCriterion','windows-bookkeeping-v1','-CriterionSha256','a'*64)
         self.assertEqual(result.returncode,0,result.stderr+result.stdout)
-        self.assertEqual(report['unknown_rows'],4)
+        # The anonymous pipe, its mode, its write, and the listen are communication; the two <Unknown>
+        # rows have no raw-log proof here, and a pipe created on a file path is no pipe at all.
+        self.assertEqual(report['named_pipe_rows'],4)
+        self.assertEqual(report['pipe_query_rows'],0)
+        self.assertEqual(report['unknown_rows'],3)
         self.assertEqual(report['outside_changes'],0)
         self.assertEqual(report['verdict'],'INCOMPLETE')
 
-    def test_bare_pipe_open_that_creates_is_not_communication(self):
-        rows=[{'Process Name':'node.exe','PID':10,'Operation':'CreatePipe','Path':r'\Device\NamedPipe','Result':'SUCCESS','Detail':''},{'Process Name':'node.exe','PID':10,'Operation':'CreateFile','Path':r'\Device\NamedPipe','Result':'SUCCESS','Detail':'Desired Access: Generic Write, Disposition: Create, OpenResult: Created'},{'Process Name':'node.exe','PID':10,'Operation':'WriteFile','Path':r'\Device\NamedPipe','Result':'SUCCESS','Detail':'Length: 5'}]
+    def test_pipe_listen_is_accepted_only_for_the_exact_control_and_results(self):
+        instance=r'\Device\NamedPipe\uv\0-10'
+        specs=[(instance,'PIPE CONNECTED','Control: FSCTL_PIPE_LISTEN'),(instance,'SUCCESS','Control: FSCTL_PIPE_LISTEN'),(instance,'PIPE LISTENING','Control: FSCTL_PIPE_LISTEN'),(instance,'SUCCESS','Control: FSCTL_PIPE_DISCONNECT'),(instance,'SUCCESS','Control: FSCTL_PIPE_IMPERSONATE'),(r'\Device\NamedPipe','PIPE CONNECTED','Control: FSCTL_PIPE_LISTEN'),(instance,'SUCCESS','Control: FSCTL_PIPE_LISTEN_EX'),(instance,'SUCCESS','Control: 0x110008')]
+        rows=[{'Process Name':'node.exe','PID':10,'Operation':'FileSystemControl','Path':path,'Result':result,'Detail':detail} for path,result,detail in specs]
         result,report=self.run_trace(rows,'-BookkeepingCriterion','windows-bookkeeping-v1','-CriterionSha256','a'*64)
         self.assertEqual(result.returncode,0,result.stderr+result.stdout)
-        self.assertEqual(report['unknown_rows'],2)
+        self.assertEqual(report['named_pipe_rows'],2)
+        self.assertEqual(report['unknown_rows'],6)
         self.assertEqual(report['verdict'],'INCOMPLETE')
+
+    def inherited_pipe_rows(self, order=('create-pipe','create-child'), creator=11, writer=12, grandchild=False):
+        """inherited_pipe_rows builds the item shell 10 -> cmd 11 -> node 12 (-> node 13) tree in which cmd
+        creates an anonymous pipe and a descendant sets its mode and writes to it."""
+        def event(pid,operation,path,detail='',name='pwsh.exe',result='SUCCESS'):
+            return {'Process Name':name,'PID':pid,'Operation':operation,'Path':path,'Result':result,'Detail':detail}
+        rows=[event(10,'Process Create',r'C:\Windows\System32\cmd.exe','PID: 11, Command line: cmd /c npm.cmd'),event(11,'Process Start','','Parent PID: 10, Command line: cmd /c npm.cmd','cmd.exe')]
+        if creator==13: rows.append(event(10,'Process Create',r'C:\Windows\System32\cmd.exe','PID: 13, Command line: cmd /c other'));rows.append(event(13,'Process Start','','Parent PID: 10, Command line: cmd /c other','cmd.exe'))
+        steps={'create-pipe':[event(creator,'CreatePipe',r'\Device\NamedPipe','','cmd.exe')],
+               'create-child':[event(11,'Process Create',r'C:\node.exe','PID: 12, Command line: node npm-prefix.js','cmd.exe'),event(12,'Process Start','','Parent PID: 11, Command line: node npm-prefix.js','node.exe')]}
+        for step in order: rows+=steps[step]
+        if grandchild: rows+=[event(12,'Process Create',r'C:\node.exe','PID: 14, Command line: node child.js','node.exe'),event(14,'Process Start','','Parent PID: 12, Command line: node child.js','node.exe')]
+        rows+=[event(writer,'SetPipeInformation',r'\Device\NamedPipe','','node.exe'),event(writer,'WriteFile',r'\Device\NamedPipe','Length: 5','node.exe')]
+        return rows
+
+    def test_inherited_anonymous_pipe_ends_need_an_earlier_ancestor_create(self):
+        result,report=self.run_trace(self.inherited_pipe_rows(),'-ShellPid','10','-BookkeepingCriterion','windows-bookkeeping-v1','-CriterionSha256','a'*64,full_export=True)
+        self.assertEqual(result.returncode,0,result.stderr+result.stdout)
+        self.assertEqual(report['named_pipe_rows'],3)
+        self.assertEqual(report['unknown_rows'],0)
+        self.assertEqual(report['verdict'],'NO_FINDINGS')
+        result,report=self.run_trace(self.inherited_pipe_rows(grandchild=True,writer=14),'-ShellPid','10','-BookkeepingCriterion','windows-bookkeeping-v1','-CriterionSha256','a'*64,full_export=True)
+        self.assertEqual(result.returncode,0,result.stderr+result.stdout)
+        self.assertEqual(report['named_pipe_rows'],3)
+        self.assertEqual(report['unknown_rows'],0)
+        for name,rows in [('child created before the pipe',self.inherited_pipe_rows(order=('create-child','create-pipe'))),('no pipe created',self.inherited_pipe_rows(order=('create-child',))),('pipe created by a sibling, not an ancestor',self.inherited_pipe_rows(creator=13))]:
+            with self.subTest(case=name):
+                result,report=self.run_trace(rows,'-ShellPid','10','-BookkeepingCriterion','windows-bookkeeping-v1','-CriterionSha256','a'*64,full_export=True)
+                self.assertEqual(result.returncode,0,result.stderr+result.stdout)
+                self.assertEqual(report['unknown_rows'],2,name)
+                self.assertEqual(report['verdict'],'INCOMPLETE')
+
+    def test_bare_pipe_rows_outside_the_listed_operations_stay_unknown(self):
+        rows=self.inherited_pipe_rows()+[{'Process Name':'node.exe','PID':12,'Operation':'SetEndOfFileInformationFile','Path':r'\Device\NamedPipe','Result':'SUCCESS','Detail':''},{'Process Name':'node.exe','PID':12,'Operation':'FileSystemControl','Path':r'\Device\NamedPipe','Result':'SUCCESS','Detail':'Control: FSCTL_PIPE_LISTEN'},{'Process Name':'node.exe','PID':12,'Operation':'CreateFile','Path':r'\Device\NamedPipe','Result':'SUCCESS','Detail':'Desired Access: Generic Write, Disposition: Create, OpenResult: Created'},{'Process Name':'node.exe','PID':12,'Operation':'WriteFile','Path':r'C:\outside.txt','Result':'SUCCESS','Detail':'Length: 5'}]
+        result,report=self.run_trace(rows,'-ShellPid','10','-BookkeepingCriterion','windows-bookkeeping-v1','-CriterionSha256','a'*64,full_export=True)
+        self.assertEqual(result.returncode,0,result.stderr+result.stdout)
+        self.assertEqual(report['named_pipe_rows'],3)
+        self.assertEqual(report['unknown_rows'],3)
+        self.assertEqual(report['outside_changes'],1)
+        self.assertEqual(report['verdict'],'FAIL')
 
     def test_kernel_cache_requires_matching_stacks_and_exact_ea_query(self):
         target=r'C:\Program Files\PowerShell\7\Microsoft.CodeAnalysis.dll'

@@ -52,19 +52,22 @@ class Fixture:
         self.vol={'drive':'C:','nt_device':r'\Device\HarddiskVolume3','filesystem':'NTFS','drive_type':'Fixed','windows_directory':r'C:\Windows','utc':'2026-10-22T00:59:00Z'}
         self.after=copy.deepcopy(self.vol);self.after['utc']='2026-10-22T01:06:00Z'
         self.artifact_change=None;self.pin_change=None
+        # pml holds synthetic backing-log bytes for the pipe-query reader; xml_rows replaces the rows the
+        # XML export shows so that a CSV/XML disagreement can be staged.
+        self.pml=None;self.xml_rows=None
     def save(self):
         r=self.root;csvpath=r/'procmon.csv'
         with csvpath.open('w',newline='') as s:
             w=csv.DictWriter(s,fieldnames=list(self.rows[0]));w.writeheader();w.writerows(self.rows)
         pm=Element('procmon');el=SubElement(pm,'eventlist')
-        for i,row in enumerate(self.rows):
+        for i,row in enumerate(self.rows if self.xml_rows is None else self.xml_rows):
             e=SubElement(el,'event')
             for k,v in row.items():SubElement(e,k.replace(' ','_')).text=str(v)
             st=SubElement(e,'stack')
             for path in self.frames if row['Operation']=='WriteFile' else []:SubElement(SubElement(st,'frame'),'path').text=path
         (r/'procmon.xml').write_bytes(tostring(pm))
         et=Element('Events');et.extend(self.events);(r/'kernel.rawtime.xml').write_bytes(tostring(et))
-        for f in ['procmon.pml','kernel.etl','kernel.summary.xml']: (r/f).write_bytes(b'synthetic raw file, never acceptance evidence')
+        for f in ['procmon.pml','kernel.etl','kernel.summary.xml']: (r/f).write_bytes(self.pml if f=='procmon.pml' and self.pml is not None else b'synthetic raw file, never acceptance evidence')
         for name,obj in [('capture.json',self.capture),('volume-before.json',self.vol),('volume-after.json',self.after)]: (r/name).write_text(json.dumps(obj))
         pins={'schema_version':2,'created_utc':'2026-10-22T00:58:00Z','files':[{'path':str(p),'sha256':digest(p)} for p in sorted(ROOT.rglob('*')) if p.is_file() and p.suffix in ('.ps1','.cs','.py','.wprp')]}
         # Synthetic immutable tool artifacts exercise public hash provenance; none is executable or run.

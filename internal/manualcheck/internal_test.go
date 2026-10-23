@@ -97,12 +97,12 @@ func TestGhVersionAtLeast(t *testing.T) {
 // commit to be the candidate.
 func TestSummarizeInstallerRunNeverPasses(t *testing.T) {
 	dir := t.TempDir()
-	result := `{"schema_version":2,"method":"binary","trace_verdict":"NO_FINDINGS","environment_verdict":"NO_FINDINGS","exported_rows":10,"bookkeeping_rows":1,"unknown_rows":0,"outside_changes":0,"kernel_complete":true,"kernel_failure":"","fake_podman_bytes":0,"captured_commit":"` + strings.Repeat("a", 40) + `","criterion_sha256":"` + strings.Repeat("c", 64) + `"}`
+	result := `{"schema_version":2,"method":"binary","trace_verdict":"NO_FINDINGS","environment_verdict":"NO_FINDINGS","exported_rows":10,"bookkeeping_rows":1,"named_pipe_rows":3,"pipe_query_rows":2,"pipe_query_failure":"","unknown_rows":0,"outside_changes":0,"kernel_complete":true,"kernel_failure":"","fake_podman_bytes":0,"captured_commit":"` + strings.Repeat("a", 40) + `","criterion_sha256":"` + strings.Repeat("c", 64) + `"}`
 	if err := os.WriteFile(filepath.Join(dir, "result.json"), []byte(result), 0600); err != nil {
 		t.Fatal(err)
 	}
 	text, clean, err := SummarizeInstallerRun(dir, strings.Repeat("a", 40))
-	if err != nil || !clean || !strings.Contains(text, "Local triage only") || !strings.Contains(text, "environment NO_FINDINGS;") {
+	if err != nil || !clean || !strings.Contains(text, "Local triage only") || !strings.Contains(text, "environment NO_FINDINGS;") || !strings.Contains(text, "3 named-pipe rows, 2 of them pipe information queries proven by the raw log;") {
 		t.Fatalf("%v %t %s", err, clean, text)
 	}
 	// The environment reviewer's verdict closes the summary: FAIL, INCOMPLETE, or an absent value is never clean.
@@ -137,7 +137,7 @@ func TestInstallerConfigurationPinsEverything(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(pkg, "tests"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"Package.ps1", "Installer-ItemShell.ps1", "Start-InstallerCapture.ps1", "Export-InstallerCapture.ps1", "Review-InstallerTrace.ps1", "Read-KernelTraceEvidence.ps1", "KernelTrace.cs", "InstallerJournal.wprp", "tests/test_x.py", "README.txt"} {
+	for _, name := range append(append([]string{}, requiredPackageFiles...), "tests/test_x.py", "README.txt") {
 		if err := os.WriteFile(filepath.Join(pkg, name), []byte(name), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -180,7 +180,7 @@ func TestInstallerConfigurationPinsEverything(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(configuration.PackageFiles) != 9 || configuration.NodeDirectoryName != "node-v1" || configuration.Inputs["binary"].SHA256 != files["binary"] {
+	if len(configuration.PackageFiles) != len(requiredPackageFiles)+1 || configuration.NodeDirectoryName != "node-v1" || configuration.Inputs["binary"].SHA256 != files["binary"] {
 		t.Fatalf("configuration %+v", configuration)
 	}
 	if _, err := LoadInstallerConfiguration(options.Output); err != nil {
@@ -207,6 +207,13 @@ func TestInstallerConfigurationPinsEverything(t *testing.T) {
 	options.Candidate = strings.Repeat("b", 40)
 	if _, err := InstallerConfigure(options); err == nil {
 		t.Fatal("a manifest of another commit was configured")
+	}
+	options.Candidate = strings.Repeat("a", 40)
+	if err := os.Remove(filepath.Join(pkg, "Read-PmlPipeQueries.ps1")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InstallerConfigure(options); err == nil {
+		t.Fatal("a package without the raw-log reader of pipe queries was configured")
 	}
 }
 

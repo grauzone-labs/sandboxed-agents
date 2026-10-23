@@ -65,24 +65,37 @@ foreach ($Column in $Required) {
 $AllRows = $Rows
 for($FullIndex=0;$FullIndex -lt $AllRows.Count;$FullIndex++){ $AllRows[$FullIndex]|Add-Member -NotePropertyName FullOrdinal -NotePropertyValue ($FullIndex+1) }
 $Owned = [Collections.Generic.HashSet[int]]::new()
+# Process edges and the full ordinal of each Process Create row serve the scope inference and the
+# inherited anonymous-pipe rule, whatever the scope mode.
+$Edges = @()
+$CreateOrdinal = @{}
+foreach ($Event in $AllRows) {
+    $EventId = 0
+    if (-not [int]::TryParse([string]$Event.PID, [ref]$EventId)) { throw 'INCOMPLETE: invalid PID in full export' }
+    if ($Event.Operation -eq 'Process Create' -and $Event.Detail -match '(?:^|,\s*)PID:\s*(\d+)') {
+        $Edges += [pscustomobject]@{ Parent=$EventId; Child=[int]$Matches[1] }
+        if (-not $CreateOrdinal.ContainsKey([int]$Matches[1])) { $CreateOrdinal[[int]$Matches[1]] = [long]$Event.FullOrdinal }
+    } elseif ($Event.Operation -eq 'Process Start' -and $Event.Detail -match '(?:^|,\s*)Parent PID:\s*(\d+)') {
+        $Edges += [pscustomobject]@{ Parent=[int]$Matches[1]; Child=$EventId }
+    }
+}
 if ($ShellPid -gt 0) {
     [void]$Owned.Add($ShellPid)
-    $Edges = @()
-    foreach ($Event in $AllRows) {
-        $EventId = 0
-        if (-not [int]::TryParse([string]$Event.PID, [ref]$EventId)) { throw 'INCOMPLETE: invalid PID in full export' }
-        if ($Event.Operation -eq 'Process Create' -and $Event.Detail -match '(?:^|,\s*)PID:\s*(\d+)') {
-            $Edges += [pscustomobject]@{ Parent=$EventId; Child=[int]$Matches[1] }
-        } elseif ($Event.Operation -eq 'Process Start' -and $Event.Detail -match '(?:^|,\s*)Parent PID:\s*(\d+)') {
-            $Edges += [pscustomobject]@{ Parent=[int]$Matches[1]; Child=$EventId }
-        }
-    }
     do {
         $Added = $false
         foreach ($Edge in $Edges) { if ($Owned.Contains($Edge.Parent) -and $Owned.Add($Edge.Child)) { $Added=$true } }
     } while ($Added)
     $ProcessIds = @($Owned | Sort-Object)
 } else { foreach ($Value in $ProcessIds) { [void]$Owned.Add($Value) } }
+# ParentOf maps an attributed child to its one attributed parent; a child with two parents has none.
+$ParentOf = @{}
+$AmbiguousParent = [Collections.Generic.HashSet[int]]::new()
+foreach ($Edge in $Edges) {
+    if (-not ($Owned.Contains($Edge.Parent) -and $Owned.Contains($Edge.Child)) -or $Edge.Parent -eq $Edge.Child) { continue }
+    if ($ParentOf.ContainsKey($Edge.Child) -and $ParentOf[$Edge.Child] -ne $Edge.Parent) { [void]$AmbiguousParent.Add($Edge.Child) }
+    $ParentOf[$Edge.Child] = $Edge.Parent
+}
+foreach ($Child in $AmbiguousParent) { $ParentOf.Remove($Child) }
 $OwnedEvents = @($AllRows | Where-Object { $Owned.Contains([int]$_.PID) })
 foreach ($Value in $ProcessIds) {
     if (-not @($OwnedEvents | Where-Object { [int]$_.PID -eq $Value }).Count) { throw "INCOMPLETE: expected PID $Value absent" }
@@ -233,7 +246,36 @@ if($KernelTraceEvidence) {
     $KernelProof=& (Join-Path $PSScriptRoot 'Read-KernelTraceEvidence.ps1') -Evidence $KernelTraceEvidence -Csv $CsvPath -Owners ([uint32[]]$ProcessIds) -Method $Method -CriterionSha256 $CriterionSha256 -Candidate $Candidate
 }
 
-$PipeRootPids=[Collections.Generic.HashSet[int]]::new()
+$PipeQueryProof=$null
+if($KernelTraceEvidence){
+    $PipeQueryProof=& (Join-Path $PSScriptRoot 'Read-PmlPipeQueries.ps1') -Evidence $KernelTraceEvidence -Csv $CsvPath -Rows $AllRows -Owners ([uint32[]]$ProcessIds)
+}
+$AcceptedPipeQueries=[Collections.Generic.HashSet[long]]::new()
+if($PipeQueryProof -and $PipeQueryProof.complete){ foreach($Ordinal in @($PipeQueryProof.accepted_full_ordinals)){ [void]$AcceptedPipeQueries.Add([long]$Ordinal) } }
+
+# BarePipeCreates lists each successful CreatePipe on the bare \Device\NamedPipe, an anonymous pipe,
+# by attributed process and full ordinal, in log order.
+$BarePipeCreates=@()
+# Test-InheritedBarePipe tells whether a row on the bare \Device\NamedPipe can use an anonymous pipe:
+# the same process created one earlier, or an attributed ancestor created one before it created the
+# next process on the chain down to the row's process, so that the handle could be inherited. It
+# claims nothing about which pipe the handle is; the log does not name anonymous pipes.
+function Test-InheritedBarePipe([int]$RowPid,[long]$RowOrdinal) {
+    foreach($Create in $BarePipeCreates) {
+        if($Create.Ordinal -ge $RowOrdinal){continue}
+        if($Create.Pid -eq $RowPid){return $true}
+        $Child=$RowPid;$Hops=0
+        while($ParentOf.ContainsKey($Child) -and $Hops -lt 64) {
+            $Parent=$ParentOf[$Child]
+            if($Parent -eq $Create.Pid) {
+                if($CreateOrdinal.ContainsKey($Child) -and $CreateOrdinal[$Child] -gt $Create.Ordinal -and $CreateOrdinal[$Child] -lt $RowOrdinal){return $true}
+                break
+            }
+            $Child=$Parent;$Hops++
+        }
+    }
+    return $false
+}
 $Seen = [Collections.Generic.HashSet[int]]::new()
 $Classified = for ($Index = 0; $Index -lt $Rows.Count; $Index++) {
     $Row = $Rows[$Index]
@@ -251,12 +293,14 @@ $Classified = for ($Index = 0; $Index -lt $Rows.Count; $Index++) {
     $Op = ([string]$Row.Operation).Trim()
     $Result = ([string]$Row.Result).Trim()
     $Detail = [string]$Row.Detail
-    if($Row.Operation -eq 'CreatePipe' -and $Row.Result -eq 'SUCCESS' -and $Row.Path -ieq '\Device\NamedPipe') { [void]$PipeRootPids.Add($EventPid) }
     $Location = Get-LocationClass ([string]$Row.Path)
-    if($BookkeepingCriterion -ne 'literal' -and $Row.Path -ieq '\Device\NamedPipe' -and $PipeRootPids.Contains($EventPid)) { $Location='NamedPipe' }
+    $BareCreate = $Op -eq 'CreatePipe' -and $Result -eq 'SUCCESS' -and $Row.Path -ieq '\Device\NamedPipe'
+    if($BookkeepingCriterion -ne 'literal' -and $Row.Path -ieq '\Device\NamedPipe' -and ($BareCreate -or (Test-InheritedBarePipe $EventPid ([long]$Row.FullOrdinal)))) { $Location='NamedPipe' }
+    if($BareCreate) { $BarePipeCreates+=@{Pid=$EventPid;Ordinal=[long]$Row.FullOrdinal} }
     $Category = 'NeedsReview'
     $Reason = 'Unresolved operation, result, or details'
     $IsChange = $false
+    $PipeQuery = $false
     $BookkeepingKind=''
     $KnownMutation = ($SingleTargetChanges -contains $Op) -or ($ComplexChanges -contains $Op) -or ($Conditional -contains $Op)
 
@@ -287,10 +331,16 @@ $Classified = for ($Index = 0; $Index -lt $Rows.Count; $Index++) {
         ($Op -eq 'CreateFile' -and $Result -in @('NAME INVALID','DELETE PENDING')) -or
         ($Op -in @('SetDispositionInformationEx','SetDispositionInformationFile') -and $Result -eq 'NOT EMPTY'))) {
         $Category='FailedNoChange';$Reason='Specific rejected open/delete/unsupported request; successful or different requests remain reviewed'
-    } elseif($BookkeepingCriterion -ne 'literal' -and $Location -eq 'NamedPipe' -and (
-        ($Op -eq 'CreatePipe' -and $Row.Path -ine '\Device\NamedPipe' -and $Result -in @('SUCCESS','INSTANCE NOT AVAILABLE')) -or
-        ($Op -eq 'SetPipeInformation' -and $Result -eq 'SUCCESS'))) {
-        $Category='NamedPipeCommunication';$Reason='Known pipe creation/mode/listen operation on verified pipe namespace; unknown pipe operations remain blocked'
+    } elseif($BookkeepingCriterion -ne 'literal' -and $Location -eq 'NamedPipe' -and $Row.Path -ine '\Device\NamedPipe' -and (
+        ($Op -eq 'CreatePipe' -and $Result -in @('SUCCESS','INSTANCE NOT AVAILABLE')) -or
+        ($Op -eq 'SetPipeInformation' -and $Result -eq 'SUCCESS') -or
+        ($Op -eq 'FileSystemControl' -and $Detail -match '^Control:\s*FSCTL_PIPE_LISTEN(?:,|$)' -and $Result -in @('SUCCESS','PIPE CONNECTED')))) {
+        $Category='NamedPipeCommunication';$Reason='Known pipe creation/mode/listen operation on a named pipe instance; unknown pipe operations remain blocked'
+    } elseif($BookkeepingCriterion -ne 'literal' -and $Location -eq 'NamedPipe' -and $Row.Path -ieq '\Device\NamedPipe' -and (
+        $BareCreate -or ($Op -eq 'SetPipeInformation' -and $Result -eq 'SUCCESS'))) {
+        $Category='NamedPipeCommunication';$Reason='Anonymous pipe created by this process, or whose creation by an attributed ancestor preceded the creation of the next process on the chain; other bare-device operations stay unknown'
+    } elseif($BookkeepingCriterion -ne 'literal' -and $Op -eq '<Unknown>' -and $Location -eq 'NamedPipe' -and $Row.Path -ine '\Device\NamedPipe' -and $AcceptedPipeQueries.Contains([long]$Row.FullOrdinal)) {
+        $Category='ReadQueryClose';$PipeQuery=$true;$Reason='Pipe information query (FilePipeInformation or FilePipeLocalInformation) proven at this ordinal by the raw log, the CSV row, and the XML event'
     } elseif($BookkeepingCriterion -ne 'literal' -and $Op -eq 'SetEAFile' -and $Result -eq 'SUCCESS' -and $Location -eq 'OutsideInstallRoot') {
         $BookkeepingKind='ci-signature-cache-ea'
         if($CachePaths.Contains([string]$Row.Path)) { $Category='KernelBookkeeping';$Reason='All EA rows have system CI.dll stacks and exact post-test kernel signature-cache EA query; historical payload not recorded' }
@@ -378,7 +428,7 @@ $Classified = for ($Index = 0; $Index -lt $Rows.Count; $Index++) {
         }
     }
     [pscustomobject]@{
-        Row = $Index + 1; FullRow=$Row.FullOrdinal; TID=[string]$Row.TID; PID = $EventPid; ProcessName=[string]$Row.'Process Name'; Operation = $Op; Result = $Result; BookkeepingKind=$BookkeepingKind
+        Row = $Index + 1; FullRow=$Row.FullOrdinal; TID=[string]$Row.TID; PID = $EventPid; ProcessName=[string]$Row.'Process Name'; Operation = $Op; Result = $Result; BookkeepingKind=$BookkeepingKind; PipeQuery=$PipeQuery
         Location = $Location; Category = $Category; Reason = $Reason
         Path = [string]$Row.Path; Detail = $Detail
     }
@@ -441,6 +491,9 @@ $Summary = [ordered]@{
     criterion_sha256=$CriterionSha256
     bookkeeping_rows=@($Classified|Where-Object { $_.Category -in @('HandleBookkeeping','KernelBookkeeping') }).Count
     kernel_trace=$KernelProof
+    pipe_query_proof=$PipeQueryProof
+    pipe_query_rows=@($Classified|Where-Object PipeQuery).Count
+    named_pipe_rows=@($Classified|Where-Object Category -eq NamedPipeCommunication).Count
     kernel_trace_evidence_sha256=$(if($KernelTraceEvidence){(Get-FileHash -LiteralPath $KernelTraceEvidence).Hash.ToLowerInvariant()}else{''})
     stable_row_number_basis='FullRow is one-based full CSV/XML ordinal; Row retains the v1 attributed file/registry index'
     bookkeeping_evidence_sha256=$EvidenceSha256
