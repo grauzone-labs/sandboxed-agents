@@ -217,7 +217,7 @@ func (s *fakeServices) spawn(p manager.Process) (manager.Child, error) {
 
 // detach runs the supervisor as a goroutine with its own fake process ID and signal channel.
 func (s *fakeServices) detach(p manager.Process) error {
-	if p.Identity != (manager.Identity{UID: 1000, GID: 1000}) || len(p.Args) != 3 || p.Args[0] != "__supervise" {
+	if p.Identity != (manager.Identity{UID: 1000, GID: 1000}) || len(p.Args) < 3 || p.Args[0] != "__supervise" {
 		s.t.Errorf("supervisor not detached as agent: %+v", p)
 	}
 	if p.Stdin != nil || p.Stdout == nil || p.Stderr == nil {
@@ -314,7 +314,7 @@ func TestToolsEnableStartsOneDetachedServiceAsAgent(t *testing.T) {
 	if services.spawns != 1 || !slices.Equal(services.spawnArgs[0], want) || !slices.Contains(services.spawnEnv[0], "T3CODE_HOME="+filepath.Join(toolDirectory(home), "home")) {
 		t.Fatalf("service spawn=%v env=%v", services.spawnArgs, services.spawnEnv)
 	}
-	if !slices.Equal(services.detachArgs[0], []string{"__supervise", "t3code", "0.1.2"}) {
+	if !slices.Equal(services.detachArgs[0], []string{"__supervise", "t3code", "service", "0.1.2"}) {
 		t.Fatalf("supervisor args=%v", services.detachArgs)
 	}
 	status := readToolStatus(t, e)
@@ -523,11 +523,11 @@ func TestToolsListAndRestoreSkipDisabledTools(t *testing.T) {
 	}
 }
 
-// TestSupervisorRequestsValidateBeforeHome proves the supervisor entry point rejects unknown tools, invalid versions, and other identities before reading home at RunWithEffects.
+// TestSupervisorRequestsValidateBeforeHome proves the supervisor entry point rejects unknown tools, unknown kinds, invalid versions, a tailnet request with a version, and other identities before reading home at RunWithEffects.
 func TestSupervisorRequestsValidateBeforeHome(t *testing.T) {
 	e := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
 	e.HomeDirectory = func() (string, error) { t.Error("validation read home"); return "", nil }
-	for _, args := range [][]string{{"__supervise", "unknown", "0.1.2"}, {"__supervise", "t3code", "latest"}, {"__supervise", "t3code"}} {
+	for _, args := range [][]string{{"__supervise", "unknown", "service", "0.1.2"}, {"__supervise", "t3code", "service", "latest"}, {"__supervise", "t3code", "service"}, {"__supervise", "t3code", "0.1.2"}, {"__supervise", "t3code", "tailnet", "0.1.2"}, {"__supervise", "t3code"}} {
 		var out bytes.Buffer
 		if status := manager.RunWithEffects(args, &out, &out, e); status != 2 {
 			t.Fatalf("args=%q status=%d output=%s", args, status, &out)
@@ -536,7 +536,7 @@ func TestSupervisorRequestsValidateBeforeHome(t *testing.T) {
 	root := noProcesses(t, manager.Identity{UID: 0, GID: 0})
 	root.HomeDirectory = func() (string, error) { t.Error("root supervisor read home"); return "", nil }
 	var out bytes.Buffer
-	if status := manager.RunWithEffects([]string{"__supervise", catalog.T3CodeTool, "0.1.2"}, &out, &out, root); status != 1 {
+	if status := manager.RunWithEffects([]string{"__supervise", catalog.T3CodeTool, "service", "0.1.2"}, &out, &out, root); status != 1 {
 		t.Fatalf("root supervisor status=%d output=%s", status, &out)
 	}
 }
@@ -583,7 +583,7 @@ func TestToolsStatusNeverReportsADeadServiceAsRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := readToolStatus(t, e)
-	if got.ServiceState != "stopped" || !strings.Contains(got.ServiceFailure, "supervisor is restarting the service; last: service exited after 0s") {
+	if got.ServiceState != "stopped" || !strings.Contains(got.ServiceFailure, "supervisor is restarting the process; last: service exited after 0s") {
 		t.Fatalf("dead service reported as %+v", got)
 	}
 }

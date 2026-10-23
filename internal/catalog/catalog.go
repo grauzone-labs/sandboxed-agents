@@ -95,6 +95,11 @@ var Default = Catalog{
 			InteractiveConnectActions: []string{"login", "link"},
 			ConnectStatusArgs:         []string{"connect", "status", "--json"},
 			CredentialPath:            "userdata/secrets/cloud-cli-oauth-token.bin",
+			ServiceOrigin:             "http://127.0.0.1:3773",
+			PairArgs:                  []string{"pair", "--tailscale"}, TTLOption: "--ttl",
+			PairingListArgs:   []string{"auth", "pairing", "list", "--json"},
+			PairingRevokeArgs: []string{"auth", "pairing", "revoke"},
+			SessionListArgs:   []string{"auth", "session", "list", "--json"},
 		},
 	},
 }

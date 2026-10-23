@@ -68,6 +68,8 @@ var commands = map[string]commandSpec{
 	"tools update":        spec(2, 2, true, "channel version", ""),
 	"tools status":        spec(2, 2, true, "", ""),
 	"tools connect":       spec(3, 3, true, "", ""),
+	"tools tailscale":     spec(3, 3, true, "", ""),
+	"tools pair":          spec(2, 2, true, "ttl", "revoke"),
 	"tools delete":        spec(2, 2, true, "", ""),
 }
 
@@ -199,6 +201,19 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 		if request.Command == "tools connect" {
 			if _, err := tool.ResolveConnectAction(request.Args[2]); err != nil {
 				return request, err
+			}
+		}
+		if request.Command == "tools tailscale" && !slices.Contains(catalog.TailnetActions, request.Args[2]) {
+			return request, fmt.Errorf("unknown tailscale action %q: %s", request.Args[2], catalog.ValidNames(catalog.TailnetActions))
+		}
+		if request.Command == "tools pair" {
+			if request.Options["ttl"] != "" && request.Options["revoke"] != "" {
+				return request, fmt.Errorf("--ttl and --revoke conflict")
+			}
+			if ttl := request.Options["ttl"]; ttl != "" {
+				if err := catalog.ValidatePairingTTL(ttl); err != nil {
+					return request, err
+				}
 			}
 		}
 	}

@@ -3,11 +3,14 @@ set -euo pipefail
 
 test_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 base_dir="$test_dir/../../context/base"
-checker="$base_dir/check-nodesource-key.sh"
+checker="$base_dir/check-signing-key.sh"
 containerfile="$base_dir/Containerfile"
 expected_file="$base_dir/nodesource-signing-key.fingerprint"
 fixture="$test_dir/nodesource-repo.gpg.key"
+tailscale_expected_file="$base_dir/tailscale-signing-key.fingerprint"
+tailscale_fixture="$test_dir/tailscale-archive-keyring.gpg"
 expected_fingerprint=$(< "$expected_file")
+tailscale_fingerprint=$(< "$tailscale_expected_file")
 last_digit=${expected_fingerprint: -1}
 if [[ "$last_digit" == 0 ]]; then
     wrong_fingerprint="${expected_fingerprint:0:39}1"
@@ -24,7 +27,7 @@ printf '%s\n' "$wrong_fingerprint" > "$scratch/wrong.fingerprint"
 failures=0
 
 run_check() {
-    if "$checker" "$1" "$2" > "$scratch/stdout" 2> "$scratch/stderr"; then
+    if "$checker" "$1" "$2" "${3:-NodeSource}" > "$scratch/stdout" 2> "$scratch/stderr"; then
         check_status=0
     else
         check_status=$?
@@ -45,7 +48,7 @@ report() {
 expect_refusal() {
     local name=$1 key_file=$2 expected_path=$3 passed=false text
     shift 3
-    run_check "$key_file" "$expected_path"
+    run_check "$key_file" "$expected_path" "${SOURCE_NAME:-NodeSource}"
     if [[ "$check_status" -ne 0 ]]; then
         passed=true
         for text in "$@"; do
@@ -64,7 +67,30 @@ report 'fixture with expected fingerprint is accepted silently' "$passed"
 
 expect_refusal 'different fingerprint is refused with expected and found fingerprints' \
     "$fixture" "$scratch/wrong.fingerprint" \
-    "expected $wrong_fingerprint, found $expected_fingerprint"
+    "NodeSource signing key fingerprint mismatch: expected $wrong_fingerprint, found $expected_fingerprint"
+
+run_check "$tailscale_fixture" "$tailscale_expected_file" Tailscale
+passed=false
+if [[ "$check_status" -eq 0 && ! -s "$scratch/stdout" ]]; then
+    passed=true
+fi
+report 'Tailscale binary keyring with expected fingerprint is accepted silently' "$passed"
+
+SOURCE_NAME=Tailscale expect_refusal 'Tailscale keyring against the NodeSource fingerprint is refused naming Tailscale' \
+    "$tailscale_fixture" "$expected_file" \
+    "Tailscale signing key fingerprint mismatch: expected $expected_fingerprint, found $tailscale_fingerprint"
+
+expect_refusal 'NodeSource key against the Tailscale fingerprint is refused' \
+    "$fixture" "$tailscale_expected_file" \
+    "expected $tailscale_fingerprint, found $expected_fingerprint"
+
+passed=false
+if "$checker" "$fixture" "$expected_file" > "$scratch/stdout" 2> "$scratch/stderr"; then
+    :
+elif grep -Fq 'usage:' "$scratch/stderr"; then
+    passed=true
+fi
+report 'a missing source name is a usage error' "$passed"
 
 two_keys_ready=false
 if gpg --homedir "$gnupg_home" --batch --passphrase '' \
@@ -102,15 +128,17 @@ expect_refusal 'empty key file is refused with count 0 and the expected fingerpr
     "expected exactly one primary key in $scratch/empty.key, found 0" \
     "expected fingerprint $expected_fingerprint, found none"
 
-passed=false
-if [[ $(wc -c < "$expected_file") -eq 41 ]] &&
-    LC_ALL=C grep -Eq '^[0-9A-F]{40}$' "$expected_file"; then
-    passed=true
-fi
-report 'expected fingerprint file has exactly 40 uppercase hex characters and one LF' "$passed"
+for fingerprint_file in "$expected_file" "$tailscale_expected_file"; do
+    passed=false
+    if [[ $(wc -c < "$fingerprint_file") -eq 41 ]] &&
+        LC_ALL=C grep -Eq '^[0-9A-F]{40}$' "$fingerprint_file"; then
+        passed=true
+    fi
+    report "$(basename -- "$fingerprint_file") has exactly 40 uppercase hex characters and one LF" "$passed"
+done
 
-# Static: the recipe runs the check before it writes the keyring or the source list.
-check_line=$(grep -n 'check-nodesource-key.sh "\$key_file"' "$containerfile" | head -1 | cut -d: -f1 || true)
+# Static: the recipe runs each check before it writes that repository's keyring or source list.
+check_line=$(grep -n 'check-signing-key.sh "\$key_file" /tmp/signing-key-check/nodesource-signing-key.fingerprint NodeSource' "$containerfile" | head -1 | cut -d: -f1 || true)
 dearmor_line=$(grep -n 'gpg --batch --yes --dearmor' "$containerfile" | head -1 | cut -d: -f1 || true)
 source_line=$(grep -n 'sources.list.d/nodesource.list' "$containerfile" | head -1 | cut -d: -f1 || true)
 passed=false
@@ -118,7 +146,17 @@ if [[ -n "$check_line" && -n "$dearmor_line" && -n "$source_line" &&
     "$check_line" -lt "$dearmor_line" && "$check_line" -lt "$source_line" ]]; then
     passed=true
 fi
-report 'Containerfile runs the check before it writes the keyring and the source list (static)' "$passed"
+report 'Containerfile runs the NodeSource check before it writes the keyring and the source list (static)' "$passed"
+
+tailscale_check_line=$(grep -n 'check-signing-key.sh "\$key_file" /tmp/signing-key-check/tailscale-signing-key.fingerprint Tailscale' "$containerfile" | head -1 | cut -d: -f1 || true)
+tailscale_keyring_line=$(grep -n 'cp "\$key_file" /etc/apt/keyrings/tailscale.gpg' "$containerfile" | head -1 | cut -d: -f1 || true)
+tailscale_source_line=$(grep -n 'sources.list.d/tailscale.list' "$containerfile" | head -1 | cut -d: -f1 || true)
+passed=false
+if [[ -n "$tailscale_check_line" && -n "$tailscale_keyring_line" && -n "$tailscale_source_line" &&
+    "$tailscale_check_line" -lt "$tailscale_keyring_line" && "$tailscale_check_line" -lt "$tailscale_source_line" ]]; then
+    passed=true
+fi
+report 'Containerfile runs the Tailscale check before it writes the keyring and the source list (static)' "$passed"
 
 if [[ "$failures" -ne 0 ]]; then
     exit 1

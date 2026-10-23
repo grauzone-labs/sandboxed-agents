@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$#" -ne 2 ]]; then
-    printf 'usage: %s KEY_FILE FINGERPRINT_FILE\n' "$0" >&2
+if [[ "$#" -ne 3 ]]; then
+    printf 'usage: %s KEY_FILE FINGERPRINT_FILE SOURCE_NAME\n' "$0" >&2
     exit 1
 fi
 
 key_file=$1
 fingerprint_file=$2
+source_name=$3
 gnupg_home=$(mktemp -d)
 trap 'rm -rf -- "$gnupg_home"' EXIT
 chmod 700 "$gnupg_home"
@@ -32,13 +33,13 @@ primary_fingerprints=$(awk -F: '
 
 if [[ "$primary_count" -ne 1 ]]; then
     found_list=$(awk 'NF { list = list (list == "" ? "" : ", ") $0 } END { print (list == "" ? "none" : list) }' <<< "$primary_fingerprints")
-    printf 'NodeSource signing key check failed: expected exactly one primary key in %s, found %s; expected fingerprint %s, found %s\n' \
-        "$key_file" "$primary_count" "$expected" "$found_list" >&2
+    printf '%s signing key check failed: expected exactly one primary key in %s, found %s; expected fingerprint %s, found %s\n' \
+        "$source_name" "$key_file" "$primary_count" "$expected" "$found_list" >&2
     exit 1
 fi
 
 if [[ "${expected^^}" != "${primary_fingerprints^^}" ]]; then
-    printf 'NodeSource signing key fingerprint mismatch: expected %s, found %s\n' "$expected" "$primary_fingerprints" >&2
+    printf '%s signing key fingerprint mismatch: expected %s, found %s\n' "$source_name" "$expected" "$primary_fingerprints" >&2
     exit 1
 fi
 

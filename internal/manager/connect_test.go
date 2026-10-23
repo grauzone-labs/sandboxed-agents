@@ -211,14 +211,14 @@ func TestConnectLinkRestartsTheServiceUnderTheManagerLock(t *testing.T) {
 	if out := runTools(t, e, 1, "connect", "t3code", "link"); !strings.Contains(out, "t3code connect link failed with exit status 1") {
 		t.Fatalf("failed link output=%s", out)
 	}
-	supervisors = len(services.detachArgs)
 	run.connectResults = nil
 	// The service runs again, so the stop is what fails when the manager cannot signal.
 	runTools(t, e, 0, "restore")
+	supervisors = len(services.detachArgs)
 	unavailable := e
 	unavailable.Signal = nil
-	if out := runTools(t, unavailable, 1, "connect", "t3code", "link"); !strings.Contains(out, "link recorded, but the service did not stop for its restart") || !strings.Contains(out, "tools status NAME t3code") {
-		t.Fatalf("failed stop output=%s", out)
+	if out := runTools(t, unavailable, 1, "connect", "t3code", "link"); !strings.Contains(out, "link recorded, but the service did not stop for its restart") || !strings.Contains(out, "tools status NAME t3code") || len(services.detachArgs) != supervisors {
+		t.Fatalf("failed stop output=%s restarted=%t", out, len(services.detachArgs) != supervisors)
 	}
 	supervisors = len(services.detachArgs)
 	run.connectResults, run.interruptDuring = map[string]error{"link": childExit(130)}, "link"

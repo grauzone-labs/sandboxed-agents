@@ -44,7 +44,7 @@ Install methods: the downloaded binary (both quick guides show download, checksu
 | [Manual checklist](docs/manual-checklist.md) | Checks by hand before a stable release |
 | [Security policy](SECURITY.md) | Threat model, default Podman options, limits |
 | [Maintainer notes](docs/maintainers.md) | For maintainers: how the version floors were confirmed, live runs and source checks on record, key rotation, release builds and CI |
-| [Glossary](CONTEXT.md) and [decisions](docs/adr/0004-command-first-cli-grammar.md) | Terms and architecture decisions (ADR 0001 to 0009) |
+| [Glossary](CONTEXT.md) and [decisions](docs/adr/0004-command-first-cli-grammar.md) | Terms and architecture decisions (ADR 0001 to 0010) |
 
 ## Limitations
 
@@ -53,7 +53,7 @@ Install methods: the downloaded binary (both quick guides show download, checksu
 - **Not a defense against hostile code.** A sandbox shares a kernel with the host (on Windows, with the WSL2 machine). Use a dedicated virtual machine for hostile code.
 - **Outbound networking is open.** An agent can send what it can read to any server it can reach.
 - **Agents in one sandbox share everything:** the user, the home data, the credentials, and the workspace. Use separate sandboxes to separate them.
-- **Only SSH is published**, on host loopback. There are no managed services and no port forwarding.
+- **Only SSH is published**, on host loopback. No port is forwarded. A Tool's service, such as T3 Code's, listens on the sandbox's loopback. Once a Tool's tailnet node is signed in, peers that your tailnet's policy allows can reach the sandbox's `sshd` and that service through the node ([command reference](docs/command-reference.md#the-tailnet-node)).
 - **No command removes old images.** Remove unused ones yourself, for example with `podman image prune` ([images](docs/images.md#no-image-removal)).
 - **Owner conflicts are reported and not repaired.** You resolve them with Podman ([command reference](docs/command-reference.md#ownership-and-names)).
 - **Linux amd64 and Windows 11 x64 only.** ARM64, a self-update command, and install methods for agents other than npm are not part of the first version.

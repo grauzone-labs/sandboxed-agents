@@ -49,6 +49,60 @@ type toolRun struct {
 	connectEnvironments [][]string
 	interrupts          chan os.Signal
 	interruptWatches    int
+	// tailnet scripts the fake Tailscale CLI.
+	tailnet tailnetRun
+	// pairing scripts the fake upstream pairing and session commands.
+	pairing pairingRun
+}
+
+// pairingRun scripts the fake `t3 pair`, `t3 auth pairing`, and `t3 auth session` commands and records their calls.
+type pairingRun struct {
+	// codes are the ids of the unused pairing codes; a successful pair appends one, a revoke removes one.
+	codes []string
+	// issued counts the codes ever issued, to name the next one.
+	issued int
+	// pairResult scripts the exit of `pair`; pairText is what a failing pair prints on stderr.
+	pairResult error
+	pairText   string
+	// interruptPair sends Ctrl+C to the manager while `pair` runs; the fake then exits as interrupted without a code.
+	interruptPair bool
+	// noServe makes a successful pair leave the node's Serve configuration untouched, as a pair whose mapping did not take would.
+	noServe bool
+	// issueBeforeFailure makes a failing pair record a code before it fails, as an upstream that minted the code and then died would.
+	issueBeforeFailure bool
+	// listResult, revokeResult, and sessionsResult script the exits of the list and revoke commands.
+	listResult, revokeResult, sessionsResult error
+	// sessions is the JSON `auth session list --json` prints; empty prints an empty list.
+	sessions string
+	// interactivePairs counts the pair calls that received the caller's standard input.
+	interactivePairs int
+	calls            [][]string
+	environments     [][]string
+}
+
+// tailnetRun scripts the fake `tailscale` command of the sandbox image and records its calls.
+type tailnetRun struct {
+	// missing makes every call fail as a program that is not installed.
+	missing bool
+	// loggedIn is set by a successful `up` and cleared by `logout`; status reports Running while it holds.
+	loggedIn bool
+	// name is the MagicDNS name status reports, with upstream's trailing dot; empty means no MagicDNS name.
+	name string
+	// offline makes status report the node as not connected to the control plane.
+	offline bool
+	// noHTTPS makes status report a capability map without the https capability; noCapMap omits the map.
+	noHTTPS, noCapMap bool
+	// serve is the JSON `serve status --json` prints; empty prints an empty configuration.
+	serve string
+	// upResult, logoutResult, and statusResult script the exits of those commands; nil succeeds.
+	upResult, logoutResult, statusResult error
+	// upText is what a failing `up` prints on stderr.
+	upText string
+	// interruptUp sends Ctrl+C to the manager while `up` runs.
+	interruptUp bool
+	// interactiveUps counts the `up` calls that received the caller's standard input.
+	interactiveUps int
+	calls          [][]string
 }
 
 // defaultConnectStatus is the upstream status of a sandbox without a T3 Connect login, as the spike observed it.
@@ -137,6 +191,12 @@ func toolEffects(t *testing.T, home string, registry toolRegistry, run *toolRun)
 		}
 		if filepath.Base(p.Program) == "t3" && len(p.Args) > 0 && p.Args[0] == "connect" {
 			return run.fakeConnect(t, home, p)
+		}
+		if filepath.Base(p.Program) == "t3" && len(p.Args) > 0 && (p.Args[0] == "pair" || p.Args[0] == "auth") {
+			return run.fakePairing(t, home, p)
+		}
+		if p.Program == "/usr/bin/tailscale" {
+			return run.fakeTailscale(t, home, p)
 		}
 		if filepath.Base(p.Program) == "t3" {
 			if p.Program != filepath.Join(filepath.Dir(filepath.Dir(p.Program)), "bin", "t3") || !slices.Equal(p.Args, []string{"--version"}) {
@@ -245,6 +305,182 @@ func (run *toolRun) fakeConnect(t *testing.T, home string, p manager.Process) er
 	return result
 }
 
+// fakeTailscale answers the Tool's `tailscale` calls: every call names the Tool's socket, `version` proves the
+// installation, `status --json` reports the scripted node, `up` signs in interactively, `logout` signs out, and
+// `serve status --json` prints the scripted Serve configuration.
+func (run *toolRun) fakeTailscale(t *testing.T, home string, p manager.Process) error {
+	t.Helper()
+	ts := &run.tailnet
+	if ts.missing {
+		return &exec.Error{Name: p.Program, Err: exec.ErrNotFound}
+	}
+	if p.EnvironmentPolicy != manager.AgentEnvironment {
+		t.Fatalf("tailscale without the agent environment: %+v", p)
+	}
+	socket := "--socket=" + filepath.Join(toolDirectory(home), "tailscale", "tailscaled.sock")
+	if len(p.Args) == 1 && p.Args[0] == "version" {
+		fmt.Fprintln(p.Stdout, "1.104.2")
+		return nil
+	}
+	if len(p.Args) < 2 || p.Args[0] != socket {
+		t.Fatalf("tailscale call does not name the Tool's socket: %q", p.Args)
+	}
+	ts.calls = append(ts.calls, p.Args[1:])
+	switch strings.Join(p.Args[1:], " ") {
+	case "status --json":
+		if ts.statusResult != nil {
+			fmt.Fprintln(p.Stderr, "failed to connect to local tailscaled; it doesn't appear to be running")
+			return ts.statusResult
+		}
+		backend, name := "NeedsLogin", ""
+		if ts.loggedIn {
+			backend, name = "Running", ts.name
+			if name == "" {
+				name = "agent01.tail1234.ts.net."
+			}
+		}
+		capMap := `,"CapMap":{"https":null,"funnel":null}`
+		if ts.noHTTPS {
+			capMap = `,"CapMap":{"funnel":null}`
+		}
+		if ts.noCapMap {
+			capMap = ""
+		}
+		fmt.Fprintf(p.Stdout, `{"Version":"1.104.2","BackendState":%q,"AuthURL":"","Self":{"DNSName":%q,"HostName":"agent01","Online":%t,"TailscaleIPs":["100.101.102.103"]%s},"MagicDNSSuffix":"tail1234.ts.net"}`+"\n", backend, name, !ts.offline, capMap)
+		return nil
+	case "serve status --json":
+		if ts.serve == "" {
+			fmt.Fprintln(p.Stdout, "{}")
+			return nil
+		}
+		fmt.Fprintln(p.Stdout, ts.serve)
+		return nil
+	case "logout":
+		if ts.logoutResult != nil {
+			fmt.Fprintln(p.Stderr, "logout failed: control server unreachable")
+			return ts.logoutResult
+		}
+		ts.loggedIn = false
+		return nil
+	}
+	if p.Args[1] == "up" {
+		if p.Stdin != nil {
+			ts.interactiveUps++
+		}
+		fmt.Fprint(p.Stderr, "\nTo authenticate, visit:\n\n\thttps://login.tailscale.com/a/0123abcd4567\n\n")
+		if ts.interruptUp {
+			// Ctrl+C reaches the manager and the child alike; the child exits with the interrupt status.
+			run.interrupts <- syscall.SIGINT
+			return childExit(130)
+		}
+		if ts.upResult != nil {
+			if ts.upText != "" {
+				fmt.Fprintln(p.Stderr, ts.upText)
+			}
+			return ts.upResult
+		}
+		ts.loggedIn = true
+		fmt.Fprintln(p.Stdout, "Success.")
+		return nil
+	}
+	t.Fatalf("unexpected tailscale call %q", p.Args)
+	return nil
+}
+
+// fakePairing answers the launcher's pairing commands: `pair --tailscale` prints upstream's QR output for the
+// tailnet origin and records a Serve mapping and a new code, `auth pairing list` and `revoke` act on the recorded
+// codes, and `auth session list` prints the scripted device sessions.
+func (run *toolRun) fakePairing(t *testing.T, home string, p manager.Process) error {
+	t.Helper()
+	pr := &run.pairing
+	toolHome := filepath.Join(toolDirectory(home), "home")
+	if !slices.Contains(p.Environment, "T3CODE_HOME="+toolHome) || p.EnvironmentPolicy != manager.AgentEnvironment {
+		t.Fatalf("pairing command without the Tool's home: %+v", p)
+	}
+	if !strings.HasPrefix(p.Program, filepath.Join(toolDirectory(home), "npm")) {
+		t.Fatalf("pairing command does not use the installed launcher: %s", p.Program)
+	}
+	pr.calls = append(pr.calls, p.Args)
+	pr.environments = append(pr.environments, p.Environment)
+	switch {
+	case p.Args[0] == "pair":
+		if len(p.Args) < 2 || p.Args[1] != "--tailscale" || (len(p.Args) != 2 && (len(p.Args) != 4 || p.Args[2] != "--ttl")) {
+			t.Fatalf("unexpected pair arguments %q", p.Args)
+		}
+		if p.Stdin != nil {
+			pr.interactivePairs++
+		}
+		fmt.Fprint(p.Stdout, "Pairing with agent01 (http://127.0.0.1:3773).\n\n█▀▀▀▀▀█ QR █▀▀▀▀▀█\n\n")
+		if pr.interruptPair {
+			run.interrupts <- syscall.SIGINT
+			return childExit(130)
+		}
+		if pr.pairResult != nil {
+			if pr.issueBeforeFailure {
+				pr.issued++
+				pr.codes = append(pr.codes, fmt.Sprintf("pc_%d", pr.issued))
+			}
+			fmt.Fprintln(p.Stderr, pr.pairText)
+			return pr.pairResult
+		}
+		if !pr.noServe {
+			run.tailnet.serve = `{"TCP":{"443":{"HTTPS":true}},"Web":{"agent01.tail1234.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3773"}}}}}`
+		}
+		pr.issued++
+		code := fmt.Sprintf("pc_%d", pr.issued)
+		pr.codes = append(pr.codes, code)
+		// The expiry follows the validity from the fake's clock: five minutes by default, or the --ttl duration.
+		validity := 5 * time.Minute
+		if len(p.Args) == 4 {
+			parsed, err := time.ParseDuration(p.Args[3])
+			if err != nil {
+				t.Fatalf("fake pair cannot read --ttl %q: %v", p.Args[3], err)
+			}
+			validity = parsed
+		}
+		expires := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC).Add(validity).Format("2006-01-02T15:04:05.000Z")
+		fmt.Fprintf(p.Stdout, "Pairing URL: https://agent01.tail1234.ts.net/pair#token=TOKEN%d\nToken: TOKEN%d\nExpires: %s\n\nNote: Tailscale Serve now maps https://agent01.tail1234.ts.net/ to this server and persists across restarts.\n\nNote: The HTTPS endpoint has not answered yet. First use can take a moment while Tailscale provisions certificates.\n", pr.issued, pr.issued, expires)
+		return nil
+	case slices.Equal(p.Args, []string{"auth", "pairing", "list", "--json"}):
+		if pr.listResult != nil {
+			fmt.Fprintln(p.Stderr, "database locked")
+			return pr.listResult
+		}
+		entries := make([]string, 0, len(pr.codes))
+		for _, code := range pr.codes {
+			entries = append(entries, fmt.Sprintf(`{"id":%q,"label":"t3 pair","scopes":["threads:read"],"createdAt":"2026-10-23T12:00:00.000Z","expiresAt":"2026-10-23T12:05:00.000Z"}`, code))
+		}
+		fmt.Fprintf(p.Stdout, "[%s]\n", strings.Join(entries, ","))
+		return nil
+	case len(p.Args) == 4 && slices.Equal(p.Args[:3], []string{"auth", "pairing", "revoke"}):
+		if pr.revokeResult != nil {
+			fmt.Fprintln(p.Stderr, "database locked")
+			return pr.revokeResult
+		}
+		index := slices.Index(pr.codes, p.Args[3])
+		if index < 0 {
+			fmt.Fprintf(p.Stdout, "No active pairing credential found for %s.\n", p.Args[3])
+			return nil
+		}
+		pr.codes = slices.Delete(pr.codes, index, index+1)
+		fmt.Fprintf(p.Stdout, "Revoked pairing credential %s.\n", p.Args[3])
+		return nil
+	case slices.Equal(p.Args, []string{"auth", "session", "list", "--json"}):
+		if pr.sessionsResult != nil {
+			fmt.Fprintln(p.Stderr, "database locked")
+			return pr.sessionsResult
+		}
+		if pr.sessions == "" {
+			fmt.Fprintln(p.Stdout, "[]")
+			return nil
+		}
+		fmt.Fprintln(p.Stdout, pr.sessions)
+		return nil
+	}
+	t.Fatalf("unexpected pairing call %q", p.Args)
+	return nil
+}
+
 // runTools exercises the public manager boundary for a tools request and checks its exit status before returning the combined output.
 func runTools(t *testing.T, e manager.Effects, want int, args ...string) string {
 	t.Helper()
@@ -256,11 +492,11 @@ func runTools(t *testing.T, e manager.Effects, want int, args ...string) string 
 	return out.String() + err.String()
 }
 
-// readToolStatus decodes the status returned by the public manager boundary without its connect part, so that statuses compare as values; readConnectStatus reads that part.
+// readToolStatus decodes the status returned by the public manager boundary without its connect, tailnet, and device parts, so that statuses compare as values; readFullToolStatus keeps them.
 func readToolStatus(t *testing.T, e manager.Effects) manager.ToolStatus {
 	t.Helper()
 	status := readFullToolStatus(t, e)
-	status.Connect = nil
+	status.Connect, status.Tailnet, status.Devices = nil, nil, nil
 	return status
 }
 
@@ -547,7 +783,7 @@ func TestToolsRequestsValidateBeforeHomeOrProcesses(t *testing.T) {
 		for _, version := range []string{"", "latest", "^0.1.2", "0.1", "0.1.2+build.4", "0.1.2;id"} {
 			runTools(t, e, 2, "enable", "t3code", "--version", version)
 		}
-		for _, args := range [][]string{{}, {"enable"}, {"status", "t3code", "--channel", "latest"}, {"enable", "t3code", "extra"}, {"delete"}, {"delete", "t3code", "extra"}, {"pair", "t3code"}} {
+		for _, args := range [][]string{{}, {"enable"}, {"status", "t3code", "--channel", "latest"}, {"enable", "t3code", "extra"}, {"delete"}, {"delete", "t3code", "extra"}, {"pair"}, {"pair", "t3code", "extra"}, {"pair", "t3code", "--ttl", "5x"}, {"pair", "t3code", "--ttl", "5m", "--revoke"}, {"tailscale", "t3code"}, {"tailscale", "t3code", "up"}, {"tailscale", "t3code", "login"}, {"tailscale", "t3code", "login", "--hostname", "Agent_01"}, {"tailscale", "t3code", "logout", "--hostname", "agent01"}} {
 			runTools(t, e, 2, args...)
 		}
 	}

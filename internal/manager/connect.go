@@ -85,10 +85,10 @@ func connectLink(directory string, current toolSelection, r toolRequest, stdout,
 	if err := runConnectAction(directory, current, r, stdout, stderr, effects); err != nil {
 		return err
 	}
-	if err := stopService(directory, r.name, effects); err != nil {
+	if err := stopSupervised(toolService(directory, r.name, current.Version, r.definition), effects); err != nil {
 		return fmt.Errorf("%s link recorded, but the service did not stop for its restart: %w; use tools status NAME %s", r.name, err, r.name)
 	}
-	if err := startService(directory, r.name, current.Version, r.definition, effects); err != nil {
+	if err := startSupervised(toolService(directory, r.name, current.Version, r.definition), effects); err != nil {
 		return fmt.Errorf("%s link recorded, but the service did not start again: %w; use tools status NAME %s", r.name, err, r.name)
 	}
 	fmt.Fprintf(stdout, "%s service restarted; the link takes effect\n", r.name)
@@ -105,34 +105,17 @@ func runConnectAction(directory string, current toolSelection, r toolRequest, st
 		return err
 	}
 	var interrupts <-chan os.Signal
-	if slices.Contains(r.definition.InteractiveConnectActions, r.action) && effects.NotifyInterrupt != nil {
+	if slices.Contains(r.definition.InteractiveConnectActions, r.action) {
 		var stop func()
-		interrupts, stop = effects.NotifyInterrupt()
+		interrupts, stop = watchInterrupts(effects)
 		defer stop()
 	}
 	process := toolProcess(directory, current, r.definition, args)
 	process.Stdin, process.Stdout, process.Stderr = effects.Stdin, stdout, stderr
-	err = effects.Start(process)
-	if err == nil {
-		return nil
+	if err := effects.Start(process); err != nil {
+		return interactiveFailure(r.name+" connect "+r.action, err, interrupts)
 	}
-	interrupted := false
-	if interrupts != nil {
-		select {
-		case <-interrupts:
-			interrupted = true
-		default:
-		}
-	}
-	var exit interface{ ExitCode() int }
-	hasExit := errors.As(err, &exit)
-	if interrupted || (hasExit && exit.ExitCode() < 0) {
-		return fmt.Errorf("%s connect %s was interrupted", r.name, r.action)
-	}
-	if hasExit {
-		return fmt.Errorf("%s connect %s failed with exit status %d", r.name, r.action, exit.ExitCode())
-	}
-	return fmt.Errorf("%s connect %s could not run: %w", r.name, r.action, err)
+	return nil
 }
 
 // upstreamConnectStatus is the part of the upstream status JSON that the Tool reports. Upstream

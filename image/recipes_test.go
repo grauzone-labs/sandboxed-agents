@@ -11,7 +11,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/image"
 )
 
-// TestBaseRecipeSuppliesRuntimeContents proves the agreed runtime, agent identity, manager and version manifest are installed without baked SSH host keys through the embedded recipe seam.
+// TestBaseRecipeSuppliesRuntimeContents proves the agreed runtime, the T3 Code Tool's runtime library and Tailscale package behind its fingerprint-checked repository, agent identity, manager and version manifest are installed without baked SSH host keys or a start of tailscaled through the embedded recipe seam.
 func TestBaseRecipeSuppliesRuntimeContents(t *testing.T) {
 	data, err := fs.ReadFile(image.Context(), "base/Containerfile")
 	if err != nil {
@@ -23,6 +23,7 @@ func TestBaseRecipeSuppliesRuntimeContents(t *testing.T) {
 		"groupadd --gid 1000 agent", "useradd --uid 1000 --gid 1000", "rm -f /etc/ssh/ssh_host_*",
 		"COPY --chmod=0755 manager.bin /usr/local/bin/sandboxed-agents-manager",
 		"/usr/local/share/sandboxed-agents/versions.txt", "dpkg-query", "node --version", "npm --version",
+		"libatomic1", "pkgs.tailscale.com/stable/debian trixie main", "apt-get install -y --no-install-recommends tailscale", "tailscale-signing-key.fingerprint Tailscale",
 	} {
 		if !strings.Contains(recipe, required) {
 			t.Errorf("base recipe is missing %q", required)
@@ -34,12 +35,16 @@ func TestBaseRecipeSuppliesRuntimeContents(t *testing.T) {
 		}
 	}
 	// The manager changes with every executable; the package layers above it stay cached across those changes.
-	manager, node := strings.Index(recipe, "COPY --chmod=0755 manager.bin"), strings.Index(recipe, "deb.nodesource.com/node_24.x")
-	if manager < 0 || node < 0 {
-		t.Fatalf("base recipe anchors missing: manager=%d node=%d", manager, node)
+	manager, node, tailscale := strings.Index(recipe, "COPY --chmod=0755 manager.bin"), strings.Index(recipe, "deb.nodesource.com/node_24.x"), strings.Index(recipe, "pkgs.tailscale.com/stable/debian")
+	if manager < 0 || node < 0 || tailscale < 0 {
+		t.Fatalf("base recipe anchors missing: manager=%d node=%d tailscale=%d", manager, node, tailscale)
 	}
-	if manager < node {
-		t.Error("base recipe copies the manager before the Node.js layer, so a manager change invalidates the package layers")
+	if manager < node || manager < tailscale {
+		t.Error("base recipe copies the manager before the package layers, so a manager change invalidates them")
+	}
+	// The sandbox never starts tailscaled at container start: the manager starts it as agent for the T3 Code Tool only.
+	if strings.Contains(recipe, "tailscaled") {
+		t.Error("base recipe mentions tailscaled; the tailnet node is started by the manager, not the image")
 	}
 }
 

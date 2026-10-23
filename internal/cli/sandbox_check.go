@@ -98,7 +98,7 @@ func checkSandbox(request Request, p podmanTarget, output io.Writer) error {
 	return errors.Join(problems...)
 }
 
-// reportToolServices lists every enabled Tool with its service state and reports a failed service as a problem.
+// reportToolServices lists every enabled Tool with its service and tailnet node state and reports a failed service or node as a problem.
 func reportToolServices(p podmanTarget, container string, output io.Writer) []error {
 	args, err := ManagerQueryArgs(container, managerPath, "tools", "list")
 	if err != nil {
@@ -106,6 +106,10 @@ func reportToolServices(p podmanTarget, container string, output io.Writer) []er
 	}
 	answer, err := queryManagerArgs(p, args)
 	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && managerWithoutTools(exit.ExitCode(), err.Error()) {
+			return nil
+		}
 		if managerOperationFailure(err) {
 			return []error{fmt.Errorf("container %s: tool services cannot be read: %w", container, err)}
 		}
@@ -121,9 +125,19 @@ func reportToolServices(p podmanTarget, container string, output io.Writer) []er
 		if status.Pin != "" {
 			selection = "pin " + status.Pin
 		}
-		fmt.Fprintf(output, "tool %s: version %s; %s; %s\n", status.Name, status.InstalledVersion, selection, describeToolService(status))
+		node := "; tailnet node absent"
+		if status.Tailnet != nil {
+			node = "; tailnet node " + status.Tailnet.Node
+			if status.Tailnet.Node != catalog.ServiceRunning && status.Tailnet.NodeFailure != "" {
+				node += ": " + status.Tailnet.NodeFailure
+			}
+		}
+		fmt.Fprintf(output, "tool %s: version %s; %s; %s%s\n", status.Name, status.InstalledVersion, selection, describeToolService(status), node)
 		if status.ServiceState == catalog.ServiceFailed {
 			problems = append(problems, fmt.Errorf("tool %s: service failed: %s; log %s", status.Name, status.ServiceFailure, status.ServiceLog))
+		}
+		if status.Tailnet != nil && status.Tailnet.Node == catalog.ServiceFailed {
+			problems = append(problems, fmt.Errorf("tool %s: tailnet node failed: %s; log %s", status.Name, status.Tailnet.NodeFailure, status.Tailnet.NodeLog))
 		}
 	}
 	return problems

@@ -86,7 +86,7 @@ An item that expects "nothing changes" captures the state **before** the command
 Several items share one long-lived sandbox, `chk-persist`, so that a login done early is still there when the update is observed. Run them in this order:
 
 1. [Create `chk-persist`](#the-shared-sandbox-chk-persist).
-2. The logins, all in `chk-persist`: [agent logins](#agent-logins), [GitHub](#github-login), [Azure device code](#azure-login-device-code), [Azure browser](#azure-login-browser), [Azure DevOps](#azure-devops-token), [T3 Connect](#t3-connect-login-and-link).
+2. The logins, all in `chk-persist`: [agent logins](#agent-logins), [GitHub](#github-login), [Azure device code](#azure-login-device-code), [Azure browser](#azure-login-browser), [Azure DevOps](#azure-devops-token), [T3 Connect](#t3-connect-login-and-link), [QR pairing over the tailnet](#qr-pairing-over-the-tailnet).
 3. [Persistence and update](#persistence-and-update): the baseline round, then `stop` and `start`, then the one `build` and the `update`, with the same observations each time.
 4. [No-terminal refusals](#toolchain-requirement-and-no-terminal-refusals), which also use `chk-persist`.
 5. The independent items, each with a sandbox it removes itself: [VS Code Remote SSH](#vs-code-remote-ssh), [an interrupted update](#an-interrupted-update), the [toolchain requirement](#toolchain-requirement-and-no-terminal-refusals), the [quick guides](#quick-guides), and the [installs](#installers-issue-no-podman-call) on clean machines.
@@ -108,6 +108,7 @@ Each item has a fixed identifier. The identifier is the `name` of its check in t
 | `azure-login-browser` | [Azure login, browser](#azure-login-browser) | either |
 | `azdo-token` | [Azure DevOps token](#azure-devops-token) | either |
 | `t3-connect-link` | [T3 Connect login and link](#t3-connect-login-and-link) | either |
+| `t3-qr-pair` | [QR pairing over the tailnet](#qr-pairing-over-the-tailnet) | either |
 | `vscode-remote-ssh` | [VS Code Remote SSH](#vs-code-remote-ssh) | either |
 | `npm-install-clean` | [npm install on a clean machine](#npm-install-on-a-clean-machine) | either |
 | `nuget-install-clean` | [NuGet install on a clean machine](#nuget-install-on-a-clean-machine) | `windows-11` |
@@ -219,9 +220,26 @@ Identifier `t3-connect-link`. One T3 account login for the T3 Code Tool, ending 
 
 Record `t3-connect-link`. T3 Code stays enabled in `chk-persist` for the later items.
 
+### QR pairing over the tailnet
+
+Identifier `t3-qr-pair`. A phone in your tailnet scans the QR code of `chk-persist` and opens the sandbox's T3 Code over the tailnet origin, which the T3 Connect item above does not exercise. You need a Tailscale account with MagicDNS and HTTPS certificates enabled at `https://login.tailscale.com/admin/dns`, a phone in that tailnet with the T3 mobile app, and a browser to approve the node. Each sandbox becomes its own device in your tailnet ([ADR 0010](adr/0010-t3-code-pairs-over-an-in-sandbox-tailnet-node.md)).
+
+1. `sandboxed-agents tools status chk-persist t3code`. **Expected:** `tailnet node absent; run tools tailscale chk-persist t3code login`.
+2. `sandboxed-agents tools pair chk-persist t3code`. **Expected:** non-zero status, `t3code tailnet node not signed in; run tools tailscale NAME t3code login`, and no code: `tools pair chk-persist t3code --revoke` prints `no unused pairing code`.
+3. Start `sandboxed-agents tools tailscale chk-persist t3code login` in an interactive terminal, wait for `To authenticate, visit:` with the URL, and press `Ctrl+C`. **Expected:** non-zero status, `t3code tailscale login was interrupted`, and `tools status` shows `tailnet node absent` again.
+4. Run it again, open the URL in a browser, and approve the device. **Expected:** `t3code tailnet node signed in as chk-persist.<your tailnet>.ts.net; origin https://chk-persist.<your tailnet>.ts.net/`, exit status zero, and the device `chk-persist` appears in your tailnet admin console.
+5. `sandboxed-agents tools pair chk-persist t3code`. **Expected:** upstream's QR code, `Pairing URL: https://chk-persist.<your tailnet>.ts.net/pair#token=…`, `Expires:` five minutes ahead, and the note that the code is single-use and that the command does not confirm the scan. Upstream's note that the HTTPS endpoint has not answered yet may appear; it is expected.
+6. Scan the QR code with the T3 mobile app on the phone within five minutes. **Expected:** the phone pairs and opens the sandbox's T3 Code; send a short prompt to an agent in `chk-persist` and get an answer. `tools status chk-persist t3code` shows `Serve maps the origin to the service` and the phone under `paired devices`.
+7. Scan the same code again, or open its URL again on the phone. **Expected:** the phone reports the code as invalid; `tools pair chk-persist t3code --ttl 1m` issues a new one, which you leave unscanned.
+8. `sandboxed-agents tools pair chk-persist t3code --revoke`. **Expected:** `revoked 1 unused pairing code`; the paired phone stays connected.
+9. `sandboxed-agents restart chk-persist`. **Expected:** `t3code service running` and `t3code tailnet node running`; on the phone the sandbox's T3 Code is reachable again without a new pairing.
+10. `sandboxed-agents up chk-pair2 --with none`, `tools enable chk-pair2 t3code`, `tools tailscale chk-pair2 t3code login` with approval, and `tools pair chk-pair2 t3code`. **Expected:** the origin is `https://chk-pair2.<your tailnet>.ts.net/`, distinct from the first; the phone scans it and sees `chk-pair2`'s T3 Code, not `chk-persist`'s. Then `remove chk-pair2 --volumes`, and remove the device `chk-pair2` from the tailnet admin console if it is still listed.
+
+Record `t3-qr-pair`. The node of `chk-persist` stays signed in for the later items.
+
 ### Persistence and update
 
-Identifiers `selection-pins-persist`, `git-identity-persist`, `credentials-persist`, and `update-complete`. They run in `chk-persist`, after all six login items, so that the real agent, GitHub, Azure, Azure DevOps, and T3 Connect logins are present when the lifecycle commands run. A fake Git credential supplements the real ones but does not prove that they survived; the real logins do.
+Identifiers `selection-pins-persist`, `git-identity-persist`, `credentials-persist`, and `update-complete`. They run in `chk-persist`, after all seven login items, so that the real agent, GitHub, Azure, Azure DevOps, T3 Connect, and tailnet logins are present when the lifecycle commands run. A fake Git credential supplements the real ones but does not prove that they survived; the real logins do.
 
 **Setup, once:**
 
@@ -720,7 +738,7 @@ Do this last, after every observation above. It is the only place that removes `
 2. Remove the sandbox and its volumes: `sandboxed-agents remove chk-persist --volumes`. **Expected:** the three volumes are removed (`podman volume ls` shows none for `chk-persist`).
 3. This is the removal half of `credentials-persist`. Create the sandbox again: `sandboxed-agents up chk-persist --with azure`. Open `sandboxed-agents shell chk-persist` and, **inside that shell**, check that `/home/agent/.git-credentials` is absent, that `git config --global --get user.email` prints nothing, and that `gh auth status` and `az account show` report no login. Then leave the shell with `exit`. **Back in the host terminal**, run `sandboxed-agents agents status chk-persist opencode`, which shows the agent not enabled. Then remove the sandbox for good: `sandboxed-agents remove chk-persist --volumes`.
 4. Save `images-after.txt` and compare it with `images-before.txt` for the [image check](#no-command-removes-an-image).
-5. Revoke what you granted: remove the GitHub device authorization in your GitHub settings, revoke the Azure sign-in sessions for the test account, delete the Azure DevOps personal access token, sign out of the four agents' accounts or revoke their sessions at each provider, and remove the sandbox's environment and the CLI authorization from the T3 account if they still exist.
+5. Revoke what you granted: remove the GitHub device authorization in your GitHub settings, revoke the Azure sign-in sessions for the test account, delete the Azure DevOps personal access token, sign out of the four agents' accounts or revoke their sessions at each provider, remove the sandbox's environment and the CLI authorization from the T3 account if they still exist, remove the paired phone's session in the T3 mobile app, and remove the devices `chk-persist` and `chk-pair2` from your tailnet admin console if they are still listed (the `remove chk-persist --volumes` above took the node's state without a sign-out).
 6. `sandboxed-agents list` must show no sandbox of the group, and `podman ps --all` no `sandboxed-agents.manual-check.` container.
 
 ## The record
@@ -747,7 +765,7 @@ Each object of `checks` has exactly these fields, and no others:
 Rules:
 
 - **A missing or an additional field is rejected**, in the record and in a check. No field can hold a note, a name, a host, a URL, or a token.
-- The top-level `result` is `pass` only when the record has one check for each of the 23 identifiers and every check passed. In every other case it is `fail`. (The stable release check reads the top-level `result`, the shape of the record, and the commit; the completeness of the list is this checklist's rule, not something the check enforces.)
+- The top-level `result` is `pass` only when the record has one check for each of the 25 identifiers and every check passed. In every other case it is `fail`. (The stable release check reads the top-level `result`, the shape of the record, and the commit; the completeness of the list is this checklist's rule, not something the check enforces.)
 - A check is recorded only after you ran it. A check you have not run has no entry. A record in progress, or one with any failed check, has the top-level `result` `fail`. An item counts as passed only after a rerun on the commit under test shows it passing; a defect found during the run is filed as its own issue.
 - The record marks every item as checked by hand. Nothing in it comes from the offline suite or the live suite.
 - **The repository holds no passing record, and none may be committed.** A record exists only as an upload to a preview prerelease.
@@ -766,10 +784,10 @@ The shape, with placeholders that are not values to copy (`FULL_COMMIT_SHA` stan
 }
 ```
 
-Before you upload, check the file against the schema with `jq`. The check requires exactly the fields above, a `result` of `pass` or `fail` at both levels, only the 23 identifiers of this document, each at most once, the fixed platform of the platform-bound identifiers, and, for a record that says `pass`, all 23 identifiers present and every check passed. It also requires the top-level `result` to be `fail` when any check failed:
+Before you upload, check the file against the schema with `jq`. The check requires exactly the fields above, a `result` of `pass` or `fail` at both levels, only the 25 identifiers of this document, each at most once, the fixed platform of the platform-bound identifiers, and, for a record that says `pass`, all 25 identifiers present and every check passed. It also requires the top-level `result` to be `fail` when any check failed:
 
 ```sh
-IDS='["agent-login-copilot","agent-login-claude","agent-login-codex","agent-login-opencode","github-login","azure-login-device-code","azure-login-browser","azdo-token","vscode-remote-ssh","npm-install-clean","nuget-install-clean","quick-guide-linux","quick-guide-windows","selection-pins-persist","git-identity-persist","credentials-persist","update-complete","update-interrupted","azure-toolchain-required","login-needs-terminal","no-image-removal","installers-no-podman","preview-attestation"]'
+IDS='["agent-login-copilot","agent-login-claude","agent-login-codex","agent-login-opencode","github-login","azure-login-device-code","azure-login-browser","azdo-token","t3-connect-link","t3-qr-pair","vscode-remote-ssh","npm-install-clean","nuget-install-clean","quick-guide-linux","quick-guide-windows","selection-pins-persist","git-identity-persist","credentials-persist","update-complete","update-interrupted","azure-toolchain-required","login-needs-terminal","no-image-removal","installers-no-podman","preview-attestation"]'
 jq -e --argjson ids "$IDS" '
   (keys == ["checks","commit","kind","result","schema_version"])
   and .schema_version == 1 and .kind == "manual-checklist"

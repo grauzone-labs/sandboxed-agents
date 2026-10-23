@@ -432,3 +432,30 @@ func TestToolsDeleteReportsFailedRemovalsAndCompletesOnRerun(t *testing.T) {
 	}
 	assertUsableWithGit(t, f.workspace, filepath.Join(f.home, "t3code-files", "worktrees", "workspace", "feature-inside"))
 }
+
+// TestToolsDeleteKeepsAWorktreeNestedInARepositoryUsable proves delete moves a Git repository inside the Tool's home together with a linked worktree nested in its working tree, and that the worktree stays usable with Git and listed by the moved repository, at RunWithEffects with real Git.
+func TestToolsDeleteKeepsAWorktreeNestedInARepositoryUsable(t *testing.T) {
+	f, _, e, _ := newDeleteFixture(t)
+	nested := filepath.Join(f.insideRepository, "nested")
+	gitIn(t, f.insideRepository, "worktree", "add", "-q", "-b", "nested", nested)
+	runTools(t, e, 0, "delete", "t3code")
+	movedRepository := filepath.Join(f.home, "t3code-files", "projects", "created-in-app")
+	movedNested := filepath.Join(movedRepository, "nested")
+	if _, err := os.Stat(filepath.Join(movedNested, "app.txt")); err != nil {
+		t.Fatalf("the nested worktree lost its files: %v", err)
+	}
+	assertUsableWithGit(t, movedRepository, movedNested)
+	gitIn(t, movedRepository, "status", "--short")
+}
+
+// TestToolsDeleteRepairsAnOutsideWorktreeInsideAMovedRepository proves delete moves a repository inside the Tool's home together with a linked worktree of a repository outside the Tool directory, and that the outside repository lists the worktree at its new path, so that it stays usable with Git, at RunWithEffects with real Git.
+func TestToolsDeleteRepairsAnOutsideWorktreeInsideAMovedRepository(t *testing.T) {
+	f, _, e, _ := newDeleteFixture(t)
+	outside := filepath.Join(f.insideRepository, "outside-topic")
+	gitIn(t, f.workspace, "worktree", "add", "-q", "-b", "outside-topic", outside)
+	runTools(t, e, 0, "delete", "t3code")
+	movedRepository := filepath.Join(f.home, "t3code-files", "projects", "created-in-app")
+	movedOutside := filepath.Join(movedRepository, "outside-topic")
+	assertUsableWithGit(t, f.workspace, movedOutside)
+	assertUsableWithGit(t, movedRepository, movedRepository)
+}
