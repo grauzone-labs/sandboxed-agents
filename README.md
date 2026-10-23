@@ -44,7 +44,7 @@ Install methods: the downloaded binary (both quick guides show download, checksu
 | [Manual checklist](docs/manual-checklist.md) | Checks by hand before a stable release |
 | [Security policy](SECURITY.md) | Threat model, default Podman options, limits |
 | [Maintainer notes](docs/maintainers.md) | For maintainers: how the version floors were confirmed, live runs and source checks on record, key rotation, release builds and CI |
-| [Glossary](CONTEXT.md) and [decisions](docs/adr/0004-command-first-cli-grammar.md) | Terms and architecture decisions (ADR 0001 to 0008) |
+| [Glossary](CONTEXT.md) and [decisions](docs/adr/0004-command-first-cli-grammar.md) | Terms and architecture decisions (ADR 0001 to 0009) |
 
 ## Limitations
 

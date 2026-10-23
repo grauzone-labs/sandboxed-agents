@@ -35,11 +35,11 @@ The exact version of an agent's package that the user requested with `agents ena
 _Avoid_: Version lock, version constraint
 
 **Manager**:
-The trusted Go program in a sandbox's image that handles the executable's administrative requests and agent work. It handles administrative requests as container root and changes to the user `agent` before it reads home data or does work for an agent.
+The trusted Go program in a sandbox's image that handles the executable's administrative requests, agent work, and Tool work. It handles administrative requests as container root and changes to the user `agent` before it reads home data or does work for an agent or a Tool.
 _Avoid_: Daemon, agent (for the manager itself)
 
 **Manager lock**:
-The one lock with which a sandbox's manager serializes installation changes (enabling, updating, or disabling an agent) and session changes (starting or ending an agent session). Attaching to a running agent session does not take it.
+The one lock with which a sandbox's manager serializes installation changes (enabling, updating, or disabling an agent; enabling, updating, or deleting a Tool), session changes (starting or ending an agent session), and Tool service and T3 Connect changes (starting or stopping a service, `link`, `unlink`, `logout`). Attaching to a running agent session, `tools status`, `tools pair`, and `tools connect … login` do not take it; the login holds the Tool's connect lock instead (ADR-0009).
 _Avoid_: Install lock, session lock
 
 **Integration**:
@@ -54,7 +54,48 @@ An optional set of SDKs or system packages built into a sandbox's image, such as
 _Avoid_: Tool, image option, capability
 
 **Tool**:
-Reserved for installable programs and managed services that run beside agents. The first version ships none.
+An installable program or managed service from the Tool catalog that runs beside agents in a sandbox, installed into the home data after the sandbox exists and run as `agent`. T3 Code, tool name `t3code`, is the first Tool, and `tools delete` removes a Tool completely (ADR-0009).
+_Avoid_: Plugin, extension, add-on
+
+**Tool catalog**:
+The tool data embedded in the executable: per Tool its npm package, command, service, and connect actions. During development it may hold entries not delivered yet; those count as unknown, and only delivered entries can be enabled.
+_Avoid_: Tool registry, tool list
+
+**Tool directory**:
+The one directory in the sandbox's home data that holds everything a Tool installs and stores, `~/.local/share/sandboxed-agents/tools/TOOL`: the Tool selection, the npm prefixes, the Tool's own home (`T3CODE_HOME` for T3 Code), and the service state and logs. `tools delete` removes it entirely after relocating the user project files found inside; host state keeps nothing about a Tool.
+_Avoid_: Tool home (T3 Code's own home is one subdirectory of it), install prefix
+
+**Tool selection**:
+The record of an enabled Tool in its Tool directory: its channel or Tool pin and the installed version. It survives `stop`, `start`, `restart`, and `update`; host state keeps no copy.
+_Avoid_: Tool config, enabled tools list
+
+**Channel**:
+The release line a Tool is installed from: `latest`, upstream's stable line, or `nightly`; the upstream `preview` line is no channel. A channel selection moves to the newest release of its line on `tools update` and never to another line.
+_Avoid_: Train, release track, dist-tag (the npm mechanism behind a channel)
+
+**Tool pin**:
+The exact version of a Tool requested with `--version` on `tools enable` or `tools update`, recorded in the Tool selection and kept until another `--version` or a `--channel` replaces it. There is no unpin option: `tools update --channel` returns to a channel.
+_Avoid_: Version lock, pinned channel
+
+**T3 Code service**:
+The T3 Code server, `t3 serve`, kept running in the background on the sandbox's loopback by its service supervisor while T3 Code is enabled. It runs as `agent` and is `running`, `stopped`, or `failed`; a crashed service never counts as running.
+_Avoid_: Daemon, systemd service, T3 server
+
+**Service supervisor**:
+The detached manager process, one per Tool service, that starts the service as `agent`, restarts it after a crash within a bound, stops it on request, and records its state and logs in the Tool directory. `up`, `start`, `restart`, and `update` start it again after the sandbox is ready (ADR-0009).
+_Avoid_: Init system, daemon manager, watchdog
+
+**T3 Connect**:
+T3 Code's account and managed-connection service, driven with `tools connect NAME t3code login|link|unlink|logout`, whose login is a T3 account login with a device code, and whose connections then run over an outbound relay. It is not an agent provider login: provider sign-in stays `agents login NAME AGENT`, and T3 Connect authenticates no provider.
+_Avoid_: Provider login, cloud login, remote access (ambiguous with QR pairing)
+
+**T3 Connect link**:
+Authorizing a sandbox's T3 Code service as an environment of the T3 Connect account with `tools connect NAME t3code link`, after which the phone, signed in to the same account, picks the environment without any QR code. `unlink` keeps the login, `logout` clears it.
+_Avoid_: Pairing, binding, registering
+
+**QR pairing**:
+A one-time pairing of a phone directly with the sandbox's T3 Code service over the tailnet, started with `tools pair NAME t3code`: a terminal QR code, a copyable URL, and an expiry, after which the command exits without learning whether the code was scanned. It is separate from the T3 Connect account login.
+_Avoid_: Linking, connecting, device login
 
 **Image**:
 The container filesystem a sandbox is created from: the base contents every sandbox needs plus the sandbox's toolchains. Sandboxes with the same toolchain set share one image.
