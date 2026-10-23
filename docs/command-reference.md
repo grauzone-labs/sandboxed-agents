@@ -141,6 +141,26 @@ The options belong to their workflow. `--name` and `--email` are options of the 
 
 Credentials live in the sandbox's home volume. They survive `update` and are removed by `remove NAME --volumes`.
 
+## Tool commands (planned, not yet delivered)
+
+A Tool, as [`CONTEXT.md`](../CONTEXT.md) defines it, runs beside agents in a sandbox and is installed into the home data after the sandbox exists ([ADR 0009](adr/0009-tools-run-as-manager-supervised-services.md)). The first Tool is T3 Code, tool name `t3code` ([Story #89](https://github.com/grauzone-labs/sandboxed-agents/issues/89)). The commands below are the final command words for it. They are not delivered yet: until a task delivers them, the executable rejects `tools` as an unknown command, as it rejects every undelivered catalog entry, and the grammar block above lists only delivered commands.
+
+| Command | What it does |
+|---|---|
+| `tools enable NAME TOOL [--channel latest\|nightly \| --version X]` | Installs the Tool and starts its service. Without a selector it records channel `latest`; `--channel` records a channel, `--version X` an exact version as a Tool pin. Repeated without a selector on an enabled Tool it keeps the selection and starts the service only when it is not running. A selector that differs from the recorded one switches to that release: the new selection is recorded only after the install, the runtime download, and the service start on the new version have succeeded, and a failed switch keeps the previous installation, selection, and running service and exits non-zero naming the failing step. |
+| `tools update NAME TOOL [--channel latest\|nightly \| --version X]` | Moves a channel selection to the newest release of its channel, reinstalls a pinned version only when its installation is missing or damaged, or switches to the given selection. `--channel` is the way back from a pin; there is no unpin option. A failed switch keeps the previous installation, selection, and running service. |
+| `tools status NAME TOOL` | Reports the installed version, the channel or Tool pin, the service state (`running`, `stopped`, or `failed`) with the last failure and the log location, the T3 Connect state, the paired devices, and the Tailscale state as decision D3 records it. |
+| `tools connect NAME TOOL login` | Signs in to T3 Connect, the T3 account, with the headless device flow. It needs an interactive terminal. It is not an agent provider login; that stays `agents login NAME AGENT`. |
+| `tools connect NAME TOOL link` / `unlink` | Links the sandbox as an environment of the T3 Connect account, or unlinks it. `link` restarts the service. `unlink` keeps the login. |
+| `tools connect NAME TOOL logout` | Signs out of T3 Connect and clears the login. |
+| `tools pair NAME TOOL [--ttl DURATION]` | Shows a QR code, a copyable URL, and an expiry for pairing a phone over the tailnet, then exits without learning whether the code was scanned. It needs an interactive terminal and a running service. |
+| `tools pair NAME TOOL --revoke` | Revokes every unused pairing code. `--ttl` with `--revoke` is a usage error. |
+| `tools delete NAME TOOL` | Stops the service, signs out of T3 Connect (best effort), relocates user worktrees and repositories found inside the Tool directory with Git's own commands, and removes the Tool directory and the command link. A second `delete` finds nothing and exits zero. |
+
+`--channel` accepts exactly `latest` and `nightly`; `--version` accepts an exact `MAJOR.MINOR.PATCH` with an optional prerelease, and tags, ranges, and build metadata are usage errors; a well-formed version that npm does not publish fails before anything changes. `--channel` together with `--version` is a usage error. No `tools` command takes `--force`: `tools update` and `tools delete`, like `stop`, `restart`, and `update NAME`, stop the T3 Code service without asking, and the session guard for agent sessions applies as before ([ADR 0009, D2](adr/0009-tools-run-as-manager-supervised-services.md#d2-the-service-guard)).
+
+The places of the `tools` commands in the [order of checks](#order-of-checks) are fixed in [ADR 0009, Command surface](adr/0009-tools-run-as-manager-supervised-services.md#command-surface). The `tools` commands take the manager lock inside the sandbox, not the lifecycle lock; `tools status` and `tools pair` take no lock, and `tools connect … login` holds the Tool's connect lock instead.
+
 ## Exit status
 
 Exit status zero means the command did what was asked, or the requested state already held. Non-zero means the command could not do it, it refused, or a checking command (`check`, `check NAME`) found a problem. Only `agents run` and `shell` pass through another program's exit status. The first version defines no distinct codes per kind of failure; a usage error happens to exit with 2.
