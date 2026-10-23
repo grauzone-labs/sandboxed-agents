@@ -59,7 +59,8 @@ func (r *Run) inspectConfig(sandbox string) (string, error) {
 	return first + "\n" + second + "\n", nil
 }
 
-// loadPersistence reads the configuration that PersistenceSetup wrote.
+// loadPersistence reads the configuration that PersistenceSetup wrote and refuses one whose setup
+// noted no Azure account hash.
 func (r *Run) loadPersistence() (string, *PersistenceConfig, error) {
 	dir, err := r.ItemDir("persistence")
 	if err != nil {
@@ -68,6 +69,11 @@ func (r *Run) loadPersistence() (string, *PersistenceConfig, error) {
 	var config PersistenceConfig
 	if err := readJSON(filepath.Join(dir, "config.json"), &config); err != nil {
 		return "", nil, fmt.Errorf("run the persistence setup first: %w", err)
+	}
+	// An empty hash would match every account hash a round prints, so a setup that noted no Azure
+	// account ends the persistence items of this run.
+	if !sha256Pattern.MatchString(config.AzureAccountSHA256) {
+		return "", nil, errors.New("the persistence setup noted no Azure account; continue the persistence items in a new run")
 	}
 	return dir, &config, nil
 }

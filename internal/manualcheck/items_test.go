@@ -619,6 +619,33 @@ func TestPersistenceSetupStoresTheProbedAccountHash(t *testing.T) {
 	}
 }
 
+// TestPersistenceObserveRefusesAConfigWithoutAccountHash proves a round refuses, before it runs
+// anything in the sandbox, a persistence configuration whose setup noted no Azure account, so that
+// an empty hash can never match every printed account hash, through the fake executable.
+func TestPersistenceObserveRefusesAConfigWithoutAccountHash(t *testing.T) {
+	f := fake(t, "sandboxed-agents", "podman")
+	run := verifiedRun(t, f, f.path("sandboxed-agents"))
+	dir := filepath.Join(run.Root, "persistence")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := `{"sandbox":"chk-persist","opencode_version":"1.19.3","github_repo":"https://github.com/o/r.git","azdo_organization":"https://dev.azure.com/o","azdo_repo":"https://dev.azure.com/o/p/_git/r","azure_account_sha256":"","setup_utc":"x"}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f.script(t, "sandboxed-agents", map[string]response{"*": {Output: "az exit 0\naz-account-sha256 " + strings.Repeat("e", 64) + "\n"}})
+	err := run.PersistenceObserve(1)
+	if err == nil || !strings.Contains(err.Error(), "no Azure account") {
+		t.Fatalf("a configuration without an account hash was used: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "round-1")); !os.IsNotExist(statErr) {
+		t.Fatal("the round ran before the refusal")
+	}
+	if calls := f.calls(t, "sandboxed-agents"); len(calls) != 0 {
+		t.Fatalf("the round called the executable before the refusal: %v", calls)
+	}
+}
+
 // TestPreflightWritesRunOnlyAfterChecks proves a preflight whose executable prints another version
 // leaves no run.json, so it can be repeated with the same run ID, and that a verified preflight
 // records the run with the inventory and the group proof, through fake tools.
