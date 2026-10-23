@@ -77,6 +77,11 @@ var requiredInputs = []string{"binary", "second_binary", "npm_package", "nuget_p
 // packageExtensions are the file kinds of the package that are pinned before a capture.
 var packageExtensions = []string{".ps1", ".cs", ".py", ".wprp"}
 
+// requiredPackageFiles are the package files every configuration must pin: the shared functions,
+// the item shell, the observer, the export, the trace reviewer, the kernel-trace reader, the raw-log
+// reader of pipe information queries, and the recording profile.
+var requiredPackageFiles = []string{"Package.ps1", "Installer-ItemShell.ps1", "Start-InstallerCapture.ps1", "Export-InstallerCapture.ps1", "Review-InstallerTrace.ps1", "Read-KernelTraceEvidence.ps1", "KernelTrace.cs", "Read-PmlPipeQueries.ps1", "PmlPipeQueries.cs", "InstallerJournal.wprp"}
+
 // packageFiles lists the package's pinned files relative to its directory, sorted.
 func packageFiles(directory string) ([]PinnedFile, error) {
 	var files []PinnedFile
@@ -158,7 +163,7 @@ func InstallerConfigure(options InstallerConfigureOptions) (*InstallerConfigurat
 	if configuration.PackageFiles, err = packageFiles(packageDirectory); err != nil {
 		return nil, err
 	}
-	for _, required := range []string{"Package.ps1", "Installer-ItemShell.ps1", "Start-InstallerCapture.ps1", "Export-InstallerCapture.ps1", "Review-InstallerTrace.ps1", "Read-KernelTraceEvidence.ps1", "KernelTrace.cs", "InstallerJournal.wprp"} {
+	for _, required := range requiredPackageFiles {
 		if !slices.ContainsFunc(configuration.PackageFiles, func(file PinnedFile) bool { return file.Path == required }) {
 			return nil, fmt.Errorf("package file %s is missing from %s", required, packageDirectory)
 		}
@@ -526,9 +531,15 @@ type InstallerResult struct {
 	OutsideChanges     int    `json:"outside_changes"`
 	KernelComplete     bool   `json:"kernel_complete"`
 	KernelFailure      string `json:"kernel_failure"`
-	FakePodmanBytes    int64  `json:"fake_podman_bytes"`
-	CapturedCommit     string `json:"captured_commit"`
-	CriterionSHA256    string `json:"criterion_sha256"`
+	// NamedPipeRows counts the rows accepted as communication over named pipes, and PipeQueryRows
+	// the pipe information queries among the <Unknown> rows that the raw log proved; a failure of
+	// that proof is reported, and no row is accepted on its account.
+	NamedPipeRows    int    `json:"named_pipe_rows"`
+	PipeQueryRows    int    `json:"pipe_query_rows"`
+	PipeQueryFailure string `json:"pipe_query_failure"`
+	FakePodmanBytes  int64  `json:"fake_podman_bytes"`
+	CapturedCommit   string `json:"captured_commit"`
+	CriterionSHA256  string `json:"criterion_sha256"`
 }
 
 // SummarizeInstallerRun reads a capture run's result and returns the observation text and whether
@@ -545,8 +556,8 @@ func SummarizeInstallerRun(runDirectory, candidate string) (string, bool, error)
 		return "", false, fmt.Errorf("no result.json yet in %s: %w", runDirectory, err)
 	}
 	clean := result.TraceVerdict == "NO_FINDINGS" && result.EnvironmentVerdict == "NO_FINDINGS" && result.UnknownRows == 0 && result.OutsideChanges == 0 && result.KernelComplete && result.FakePodmanBytes == 0 && result.CapturedCommit == candidate
-	text := fmt.Sprintf("method %s: trace %s; environment %s; %d rows exported; %d bookkeeping rows; %d unknown rows; %d changes outside the allowed locations; kernel trace complete %t%s; fake Podman bytes %d; captured commit %s; criterion %s. Local triage only; the method passes only on the review of the evidence.",
-		result.Method, result.TraceVerdict, orDefaultPath(result.EnvironmentVerdict, "MISSING"), result.ExportedRows, result.BookkeepingRows, result.UnknownRows, result.OutsideChanges, result.KernelComplete, failureNote(result.KernelFailure), result.FakePodmanBytes, result.CapturedCommit, result.CriterionSHA256)
+	text := fmt.Sprintf("method %s: trace %s; environment %s; %d rows exported; %d bookkeeping rows; %d named-pipe rows, %d of them pipe information queries proven by the raw log%s; %d unknown rows; %d changes outside the allowed locations; kernel trace complete %t%s; fake Podman bytes %d; captured commit %s; criterion %s. Local triage only; the method passes only on the review of the evidence.",
+		result.Method, result.TraceVerdict, orDefaultPath(result.EnvironmentVerdict, "MISSING"), result.ExportedRows, result.BookkeepingRows, result.NamedPipeRows, result.PipeQueryRows, failureNote(result.PipeQueryFailure), result.UnknownRows, result.OutsideChanges, result.KernelComplete, failureNote(result.KernelFailure), result.FakePodmanBytes, result.CapturedCommit, result.CriterionSHA256)
 	return text, clean, nil
 }
 

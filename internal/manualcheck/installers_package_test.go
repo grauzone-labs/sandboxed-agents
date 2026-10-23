@@ -9,9 +9,10 @@ import (
 )
 
 // TestInstallerHelperSuite proves the Windows installer evidence helpers (the Procmon trace
-// reviewer, the environment reviewer, the readiness guards, the kernel-trace reader, and the
-// process identity guard) through their Python test suite, which drives the real PowerShell
-// scripts with synthetic exports and substituted operating-system boundaries only.
+// reviewer, the environment reviewer, the readiness guards, the kernel-trace reader, the raw-log
+// reader of pipe information queries, and the process identity guard) through their Python test
+// suite, which drives the real PowerShell scripts with synthetic exports, synthetic saved logs, and
+// substituted operating-system boundaries only.
 func TestInstallerHelperSuite(t *testing.T) {
 	if testing.Short() {
 		t.Skip("the installer helper suite takes a few minutes; skipped with -short")
