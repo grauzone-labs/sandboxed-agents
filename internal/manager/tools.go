@@ -34,8 +34,12 @@ type toolRequest struct {
 // parseTools validates the Tool operation, catalog entry, and selector flags before home access.
 func parseTools(args []string, stderr io.Writer) (toolRequest, bool) {
 	var r toolRequest
+	if len(args) == 1 && (args[0] == "restore" || args[0] == "list") {
+		r.operation = args[0]
+		return r, true
+	}
 	if len(args) < 2 {
-		fmt.Fprintln(stderr, "tools requires enable, update, or status TOOL")
+		fmt.Fprintln(stderr, "tools requires enable, update, or status TOOL, or restore, or list")
 		return r, false
 	}
 	r.operation, r.name = args[0], args[1]
@@ -88,7 +92,7 @@ func parseTools(args []string, stderr io.Writer) (toolRequest, bool) {
 	return r, true
 }
 
-// tools sends root requests to a verified agent worker and reads or changes a Tool selection at the manager lock boundary.
+// tools sends root requests to a verified agent worker, reads a Tool selection and its service as a snapshot, or changes the selection and starts the services of enabled Tools at the manager lock boundary.
 func tools(args []string, worker bool, stdout, stderr io.Writer, effects Effects) int {
 	r, valid := parseTools(args, stderr)
 	if !valid {
@@ -101,25 +105,88 @@ func tools(args []string, worker bool, stdout, stderr io.Writer, effects Effects
 	if !ok {
 		return 1
 	}
-	directory := toolDirectory(root, r.name)
-	if r.operation == "status" {
-		current, enabled, err := readToolSelection(directory)
+	switch r.operation {
+	case "status":
+		status, err := toolStatus(root, r.name, effects)
 		if err != nil {
 			return exitStatus(err, stderr)
 		}
-		status := ToolStatus{Name: r.name, Enabled: enabled, InstalledVersion: current.Version, Channel: current.Channel, Pin: current.Pin}
 		return exitStatus(json.NewEncoder(stdout).Encode(status), stderr)
+	case "list":
+		statuses, err := enabledToolStatuses(root, effects)
+		if err != nil {
+			return exitStatus(err, stderr)
+		}
+		return exitStatus(json.NewEncoder(stdout).Encode(statuses), stderr)
 	}
 	unlock, err := lockAgentData(root)
 	if err != nil {
 		return exitStatus(err, stderr)
 	}
 	defer unlock()
-	if err := changeTool(home, directory, r, stdout, stderr, effects); err != nil {
+	if r.operation == "restore" {
+		return exitStatus(restoreToolServices(root, stdout, effects), stderr)
+	}
+	if err := changeTool(home, toolDirectory(root, r.name), r, stdout, stderr, effects); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	return 0
+}
+
+// toolStatus reads one Tool's selection and service state as a snapshot, without the manager lock.
+func toolStatus(root, name string, effects Effects) (ToolStatus, error) {
+	directory := toolDirectory(root, name)
+	current, enabled, err := readToolSelection(directory)
+	if err != nil {
+		return ToolStatus{}, err
+	}
+	status := ToolStatus{Name: name, Enabled: enabled, InstalledVersion: current.Version, Channel: current.Channel, Pin: current.Pin}
+	if enabled {
+		if err := fillServiceStatus(&status, directory, effects); err != nil {
+			return status, err
+		}
+	}
+	return status, nil
+}
+
+// enabledToolStatuses reads the status of every enabled Tool of the catalog, in name order.
+func enabledToolStatuses(root string, effects Effects) ([]ToolStatus, error) {
+	statuses := []ToolStatus{}
+	for _, name := range catalog.Default.ToolNames() {
+		status, err := toolStatus(root, name, effects)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		if status.Enabled {
+			statuses = append(statuses, status)
+		}
+	}
+	return statuses, nil
+}
+
+// restoreToolServices starts the service of every enabled Tool whose service is not running, as the
+// lifecycle commands do after the sandbox is ready, and reports every Tool it could not start.
+func restoreToolServices(root string, stdout io.Writer, effects Effects) error {
+	var failures []error
+	for _, name := range catalog.Default.ToolNames() {
+		directory := toolDirectory(root, name)
+		current, enabled, err := readToolSelection(directory)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("%s: %w", name, err))
+			continue
+		}
+		if !enabled {
+			continue
+		}
+		definition, _ := catalog.Default.ResolveTool(name)
+		if err := startService(directory, name, current.Version, definition, effects); err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		fmt.Fprintf(stdout, "%s service running\n", name)
+	}
+	return errors.Join(failures...)
 }
 
 // changeTool resolves the requested selection, installs the exact version it names when the
@@ -143,9 +210,13 @@ func changeTool(home, directory string, r toolRequest, stdout, stderr io.Writer,
 	case !enabled:
 		want = toolSelection{Channel: r.definition.DefaultChannel()}
 	case r.operation == "enable":
-		// A repeated enable keeps the installation and the selection. A damaged
-		// installation is repaired at its recorded version without a resolution.
+		// A repeated enable keeps the installation and the selection and starts
+		// the service only when it is not running. A damaged installation is
+		// repaired at its recorded version without a resolution.
 		if healthy {
+			if err := startService(directory, r.name, current.Version, r.definition, effects); err != nil {
+				return err
+			}
 			reportTool(stdout, r.name, current)
 			return nil
 		}
@@ -163,21 +234,61 @@ func changeTool(home, directory string, r toolRequest, stdout, stderr io.Writer,
 				return err
 			}
 		}
+		if err := startService(directory, r.name, version, r.definition, effects); err != nil {
+			return err
+		}
 		reportTool(stdout, r.name, want)
 		return nil
 	}
 	if err := installTool(home, directory, version, current.Version, r, effects, stderr); err != nil {
 		return err
 	}
-	if err := publishTool(home, directory, want, r.definition); err != nil {
+	// The selection and the command link change only once the service runs on
+	// the new version. Until then a failure reinstates the previous version.
+	if err := switchService(directory, r.name, version, current, enabled, r.definition, effects); err != nil {
 		if version != current.Version {
 			removeToolVersion(directory, version)
+		}
+		return err
+	}
+	if err := publishTool(home, directory, want, r.definition); err != nil {
+		if version != current.Version {
+			stopService(directory, r.name, effects)
+			removeToolVersion(directory, version)
+			if enabled {
+				if restart := startService(directory, r.name, current.Version, r.definition, effects); restart != nil {
+					return fmt.Errorf("%w; the previous version %s did not start again: %v", err, current.Version, restart)
+				}
+			}
 		}
 		return err
 	}
 	pruneToolInstallations(directory, version)
 	reportTool(stdout, r.name, want)
 	return nil
+}
+
+// switchService stops the service of the installed version and starts it on the new one; when the
+// new version does not start, the previous version's service runs again.
+func switchService(directory, name, version string, current toolSelection, enabled bool, definition catalog.Tool, effects Effects) error {
+	if err := stopService(directory, name, effects); err != nil {
+		return err
+	}
+	err := startService(directory, name, version, definition, effects)
+	if err == nil {
+		return nil
+	}
+	// Whatever the new version left behind is stopped before the previous version runs again.
+	if stop := stopService(directory, name, effects); stop != nil {
+		err = fmt.Errorf("%w; %v", err, stop)
+	}
+	if !enabled || version == current.Version {
+		return err
+	}
+	if restart := startService(directory, name, current.Version, definition, effects); restart != nil {
+		return fmt.Errorf("%w; the previous version %s did not start again either: %v", err, current.Version, restart)
+	}
+	return fmt.Errorf("%w; the previous version %s is running again", err, current.Version)
 }
 
 // resolveToolVersion asks npm for the exact version the selection names: the newest release of a
@@ -401,11 +512,11 @@ func writeToolSelection(directory string, selection toolSelection) error {
 	return writeJSONFile(filepath.Join(directory, "selection.json"), ".selection-", selection)
 }
 
-// reportTool prints the installed version and the channel or Tool pin of a Tool.
+// reportTool prints the installed version, the channel or Tool pin, and the running service of a Tool.
 func reportTool(stdout io.Writer, name string, current toolSelection) {
 	if current.Pin != "" {
-		fmt.Fprintf(stdout, "%s enabled: version %s (pin %s)\n", name, current.Version, current.Pin)
+		fmt.Fprintf(stdout, "%s enabled: version %s (pin %s); service running\n", name, current.Version, current.Pin)
 		return
 	}
-	fmt.Fprintf(stdout, "%s enabled: version %s (channel %s)\n", name, current.Version, current.Channel)
+	fmt.Fprintf(stdout, "%s enabled: version %s (channel %s); service running\n", name, current.Version, current.Channel)
 }

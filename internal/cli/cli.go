@@ -139,6 +139,10 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
+		if err := restoreToolServices(request, target, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 		return 0
 	case "start", "stop", "restart", "remove":
 		target, err := selectedTarget()
@@ -154,6 +158,12 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		if err := changeSandboxState(request, target, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
+		}
+		if request.Command == "start" || request.Command == "restart" {
+			if err := restoreToolServices(request, target, stdout); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
 		}
 		return 0
 	case "update":

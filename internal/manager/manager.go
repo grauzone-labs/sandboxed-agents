@@ -2,10 +2,13 @@
 package manager
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
@@ -49,6 +52,18 @@ type Process struct {
 	AzureSSHHost string
 	// Environment holds variables appended after the policy environment, such as a Tool's home variable.
 	Environment []string
+	// ProcessGroup starts the process as the leader of its own process group, so a supervisor can end every descendant.
+	ProcessGroup bool
+}
+
+// Child is a started process that a supervisor waits for and signals.
+type Child interface {
+	// PID is the process ID of the started process.
+	PID() int
+	// Wait blocks until the process exits and returns its exit error.
+	Wait() error
+	// Signal sends the signal to the process; SIGKILL reaches its whole process group when it leads one.
+	Signal(os.Signal) error
 }
 
 // Effects supplies only operating-system operations; command behavior runs real.
@@ -68,6 +83,21 @@ type Effects struct {
 	ReadFile             func(string) ([]byte, error)
 	ReplaceAuthorizedKey func([]byte) error
 	RemoveAuthorizedKey  func() error
+	// Spawn starts a process without waiting for it; the service supervisor uses it for the service.
+	Spawn func(Process) (Child, error)
+	// Detach starts this same trusted manager executable in a new session, with no terminal and no
+	// standard input, its output on the given files, and returns once it is started; it ignores Program.
+	Detach func(Process) error
+	// Signal sends a signal to a process by ID; signal zero probes whether it is alive.
+	Signal func(pid int, signal os.Signal) error
+	// PID is the manager's own process ID.
+	PID func() int
+	// Now is the clock the supervisor's restart policy reads.
+	Now func() time.Time
+	// Sleep waits for the duration or until the context ends.
+	Sleep func(context.Context, time.Duration) error
+	// Signals delivers the termination signals the supervisor reacts to.
+	Signals func() <-chan os.Signal
 }
 
 // RunWithEffects returns the manager command's exit status at injected OS seams.
@@ -97,6 +127,9 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 	}
 	if len(args) > 1 && args[0] == "__worker" && args[1] == "tools" {
 		return tools(args[2:], true, stdout, stderr, effects)
+	}
+	if len(args) == 3 && args[0] == "__supervise" {
+		return supervise(args[1], args[2], stderr, effects)
 	}
 	if len(args) == 1 && args[0] == "sessions" {
 		if effects.Identity() == rootIdentity {

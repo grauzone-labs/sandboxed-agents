@@ -75,7 +75,7 @@ func readToolStatus(request Request, p podmanTarget) (catalog.ToolStatus, error)
 	return status, nil
 }
 
-// printToolStatus renders the installed version and the channel or pin, or an absent selection.
+// printToolStatus renders the installed version, the channel or pin, and the service state, or an absent selection.
 func printToolStatus(request Request, p podmanTarget, stdout io.Writer) error {
 	status, err := readToolStatus(request, p)
 	if err != nil {
@@ -92,6 +92,45 @@ func printToolStatus(request Request, p podmanTarget, stdout io.Writer) error {
 	if pin == "" {
 		pin = "none"
 	}
-	_, err = fmt.Fprintf(stdout, "%s: enabled; version %s; channel %s; pin %s\n", status.Name, status.InstalledVersion, channel, pin)
+	_, err = fmt.Fprintf(stdout, "%s: enabled; version %s; channel %s; pin %s; %s\n", status.Name, status.InstalledVersion, channel, pin, describeToolService(status))
 	return err
+}
+
+// describeToolService renders the service state with its last failure and log location.
+func describeToolService(status catalog.ToolStatus) string {
+	text := "service " + status.ServiceState
+	if status.ServiceState != catalog.ServiceRunning && status.ServiceFailure != "" {
+		text += ": " + status.ServiceFailure
+	}
+	if status.ServiceLog != "" {
+		text += "; log " + status.ServiceLog
+	}
+	return text
+}
+
+// toolRestoreFailure reports a running sandbox whose Tool services could not be restored; the lifecycle work before it succeeded.
+type toolRestoreFailure struct{ cause error }
+
+// Error returns the cause's message.
+func (e toolRestoreFailure) Error() string { return e.cause.Error() }
+
+// Unwrap exposes the underlying failure.
+func (e toolRestoreFailure) Unwrap() error { return e.cause }
+
+// restoreToolServices asks the manager, as agent, to start the service of every enabled Tool after
+// the sandbox is ready; a failure keeps the sandbox running and names tools status.
+func restoreToolServices(request Request, p podmanTarget, stdout io.Writer) error {
+	var output, diagnostic bytes.Buffer
+	exit, err := p.run(nil, &output, &diagnostic, toolManagerArgs(request, "restore")...)
+	if err != nil || podmanTransportFailure(exit) {
+		if err == nil {
+			err = fmt.Errorf("manager request failed with exit status %d: %s", exit, strings.TrimSpace(diagnostic.String()))
+		}
+		return toolRestoreFailure{fmt.Errorf("sandbox %s is running, but its tool services could not be restored: %w; use tools status %s %s", request.Name, agentManagerError(request, err), request.Name, catalog.T3CodeTool)}
+	}
+	_, outputErr := io.Copy(stdout, &output)
+	if exit != 0 {
+		return toolRestoreFailure{errors.Join(fmt.Errorf("sandbox %s is running, but a tool service did not start: %s; use tools status %s %s", request.Name, strings.TrimSpace(diagnostic.String()), request.Name, catalog.T3CodeTool), outputErr)}
+	}
+	return outputErr
 }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
 // checkSandbox reports read-only sandbox diagnostics and returns all detected problems.
@@ -83,6 +86,7 @@ func checkSandbox(request Request, p podmanTarget, output io.Writer) error {
 				problems = append(problems, fmt.Errorf("container %s: manager does not answer: %w", names.Container, err))
 			} else {
 				fmt.Fprintln(output, "manager: reachable")
+				problems = append(problems, reportToolServices(p, names.Container, output)...)
 			}
 		} else {
 			fmt.Fprintln(output, "manager: not checked (sandbox stopped)")
@@ -92,6 +96,37 @@ func checkSandbox(request Request, p podmanTarget, output io.Writer) error {
 		problems = append(problems, err)
 	}
 	return errors.Join(problems...)
+}
+
+// reportToolServices lists every enabled Tool with its service state and reports a failed service as a problem.
+func reportToolServices(p podmanTarget, container string, output io.Writer) []error {
+	args, err := ManagerQueryArgs(container, managerPath, "tools", "list")
+	if err != nil {
+		return []error{err}
+	}
+	answer, err := queryManagerArgs(p, args)
+	if err != nil {
+		if managerOperationFailure(err) {
+			return []error{fmt.Errorf("container %s: tool services cannot be read: %w", container, err)}
+		}
+		return []error{fmt.Errorf("container %s: manager does not answer the tool service query: %w", container, err)}
+	}
+	var statuses []catalog.ToolStatus
+	if err := json.Unmarshal([]byte(answer), &statuses); err != nil {
+		return []error{fmt.Errorf("container %s: invalid tool list answer", container)}
+	}
+	var problems []error
+	for _, status := range statuses {
+		selection := "channel " + status.Channel
+		if status.Pin != "" {
+			selection = "pin " + status.Pin
+		}
+		fmt.Fprintf(output, "tool %s: version %s; %s; %s\n", status.Name, status.InstalledVersion, selection, describeToolService(status))
+		if status.ServiceState == catalog.ServiceFailed {
+			problems = append(problems, fmt.Errorf("tool %s: service failed: %s; log %s", status.Name, status.ServiceFailure, status.ServiceLog))
+		}
+	}
+	return problems
 }
 
 // reportResources prints recorded limits and reports any missing resource fields.

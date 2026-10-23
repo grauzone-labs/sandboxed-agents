@@ -330,6 +330,11 @@ func TestImageBuildDeclaresSSHD(t *testing.T) {
 		if len(entrypoint) != 3 || entrypoint[0] != "sh" || entrypoint[1] != "-c" || !strings.Contains(entrypoint[2], "exec /usr/sbin/sshd -D -e -f /usr/local/etc/sandboxed-agents/sshd_config") {
 			t.Fatalf("materialized Containerfile lacks foreground sshd: %q", entrypoint)
 		}
+		// Tool services are supervised by the manager after the sandbox runs (ADR 0009);
+		// PID 1 stays sshd, and the entrypoint starts neither the manager nor a Tool.
+		if strings.Count(string(containerfile), "ENTRYPOINT") != 1 || strings.Contains(entrypoint[2], "sandboxed-agents-manager") || strings.Contains(entrypoint[2], "t3") || strings.Contains(entrypoint[2], "tools") {
+			t.Fatalf("entrypoint changed for Tool supervision: %q", entrypoint)
+		}
 		return nil
 	})
 	if err != nil {

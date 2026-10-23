@@ -27,6 +27,7 @@ type toolRun struct {
 	// runtimeFailure is "", "exit", "no-marker", or "wrong-marker".
 	runtimeFailure string
 	installFailure bool
+	services       *fakeServices
 }
 
 // toolDirectory is the Tool directory of T3 Code in a test home.
@@ -34,7 +35,7 @@ func toolDirectory(home string) string {
 	return filepath.Join(home, ".local", "share", "sandboxed-agents", "tools", "t3code")
 }
 
-// toolEffects requires Linux for the real manager lock, then fakes npm and the launcher at the process seam, writing installation artifacts and the runtime marker into the test home.
+// toolEffects requires Linux for the real manager lock, then fakes npm and the launcher at the process seam, writing installation artifacts and the runtime marker into the test home, with a fake service system behind the supervisor.
 func toolEffects(t *testing.T, home string, registry toolRegistry, run *toolRun) manager.Effects {
 	t.Helper()
 	if runtime.GOOS != "linux" {
@@ -42,6 +43,10 @@ func toolEffects(t *testing.T, home string, registry toolRegistry, run *toolRun)
 	}
 	e := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
 	e.HomeDirectory = func() (string, error) { return home, nil }
+	if run.services == nil {
+		run.services = newFakeServices(t, home)
+	}
+	e = run.services.wire(e)
 	e.Start = func(p manager.Process) error {
 		if p.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
 			t.Fatalf("tool process not requested as agent: %+v", p)
@@ -195,7 +200,7 @@ func TestToolsEnableResolvesChannelAndCommitsSelection(t *testing.T) {
 		t.Fatalf("enable output=%s", out)
 	}
 	status := readToolStatus(t, e)
-	want := manager.ToolStatus{Name: "t3code", Enabled: true, InstalledVersion: "0.1.2", Channel: "latest"}
+	want := manager.ToolStatus{Name: "t3code", Enabled: true, InstalledVersion: "0.1.2", Channel: "latest", ServiceState: "running", ServiceLog: filepath.Join(toolDirectory(home), "service", "service.log")}
 	if status != want {
 		t.Fatalf("status=%+v want=%+v", status, want)
 	}

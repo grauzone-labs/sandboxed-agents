@@ -74,6 +74,10 @@ func TestUpdateCleanupRestoresRecordedState(t *testing.T) {
 				}
 				got := []string{}
 				for _, call := range calls {
+					if call[0] == "exec" && call[len(call)-1] == "restore" {
+						got = append(got, "restore")
+						continue
+					}
 					if call[0] == "exec" {
 						got = append(got, "ready")
 						continue
@@ -92,6 +96,8 @@ func TestUpdateCleanupRestoresRecordedState(t *testing.T) {
 				want = append(want, "ready", "rm sandboxed-agents-backup.default.demo")
 				if !previous {
 					want = append(want, "stop sandboxed-agents.default.demo")
+				} else {
+					want = append(want, "restore")
 				}
 				if !reflect.DeepEqual(got, want) {
 					t.Fatalf("actions=%v want=%v", got, want)

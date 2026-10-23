@@ -230,9 +230,9 @@ func assertExpectedBuildAndNoOtherMutations(t *testing.T, calls [][]string, buil
 	arguments := append(append([]string{}, call[:len(prefix)]...), call[len(prefix)+1:]...)
 	noMutation(t, [][]string{arguments})
 	remaining := append(append([][]string{}, calls[:buildIndex]...), calls[buildIndex+1:]...)
-	if len(calls) > 1 && calls[len(calls)-2][len(calls[len(calls)-2])-2] == "start" {
+	if len(calls) > 2 && calls[len(calls)-3][len(calls[len(calls)-3])-2] == "start" {
 		assertNewSandbox(t, calls, connection, "default", "demo", tag, "", "2222", "8589934592", "4", "2048", "1073741824")
-		remaining = remaining[:len(remaining)-9]
+		remaining = remaining[:len(remaining)-10]
 	}
 	noMutation(t, remaining)
 }

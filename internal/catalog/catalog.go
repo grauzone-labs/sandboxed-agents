@@ -87,6 +87,7 @@ var Default = Catalog{
 			Delivered: true, Install: Install{Kind: NPM, Package: "t3"}, Command: "t3",
 			Channels: []string{"latest", "nightly"}, HomeVariable: "T3CODE_HOME",
 			VersionArgs: []string{"--version"}, VersionPrefix: "t3 v",
+			ServiceArgs: []string{"serve", "--host", "127.0.0.1", "--port", "3773"},
 		},
 	},
 }
