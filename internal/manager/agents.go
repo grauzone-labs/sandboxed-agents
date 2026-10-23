@@ -301,9 +301,6 @@ func readSelection(root string) (map[string]installation, error) {
 
 // installAgent stages a catalog npm package and verifies its version and command before publication.
 func installAgent(root string, r agentRequest, effects Effects, stderr io.Writer) (installation, error) {
-	if r.definition.Install.Kind != catalog.NPM {
-		return installation{}, fmt.Errorf("unsupported installation kind %q", r.definition.Install.Kind)
-	}
 	prefix, err := os.MkdirTemp(root, "installation-")
 	if err != nil {
 		return installation{}, err
@@ -314,35 +311,48 @@ func installAgent(root string, r agentRequest, effects Effects, stderr io.Writer
 			os.RemoveAll(prefix)
 		}
 	}()
-	packageSpec := r.definition.Install.Package
-	if r.version != "" {
-		packageSpec += "@" + r.version
-	}
-	err = effects.Start(Process{Program: "npm", Args: []string{"install", "--global", "--prefix", prefix, "--", packageSpec}, Identity: agentIdentity, EnvironmentPolicy: NPMEnvironment, Stdout: stderr, Stderr: stderr})
+	version, err := installNPMPackage(prefix, r.name, r.definition.Install, r.definition.Command, r.version, effects, stderr)
 	if err != nil {
-		return installation{}, fmt.Errorf("%s installation failed: %w", r.name, err)
+		return installation{}, err
 	}
-	data, err := os.ReadFile(filepath.Join(prefix, "lib", "node_modules", r.definition.Install.Package, "package.json"))
+	keep = true
+	return installation{Version: version, Pin: r.version, Prefix: filepath.Base(prefix)}, nil
+}
+
+// installNPMPackage installs a catalog npm package into a prefix as agent, at the requested exact
+// version when one is given, and verifies the installed version and command before returning the version.
+func installNPMPackage(prefix, name string, install catalog.Install, command, version string, effects Effects, stderr io.Writer) (string, error) {
+	if install.Kind != catalog.NPM {
+		return "", fmt.Errorf("unsupported installation kind %q", install.Kind)
+	}
+	packageSpec := install.Package
+	if version != "" {
+		packageSpec += "@" + version
+	}
+	err := effects.Start(Process{Program: "npm", Args: []string{"install", "--global", "--prefix", prefix, "--", packageSpec}, Identity: agentIdentity, EnvironmentPolicy: NPMEnvironment, Stdout: stderr, Stderr: stderr})
 	if err != nil {
-		return installation{}, fmt.Errorf("cannot read installed %s version: %w", r.name, err)
+		return "", fmt.Errorf("%s installation failed: %w", name, err)
+	}
+	data, err := os.ReadFile(filepath.Join(prefix, "lib", "node_modules", install.Package, "package.json"))
+	if err != nil {
+		return "", fmt.Errorf("cannot read installed %s version: %w", name, err)
 	}
 	var metadata struct {
 		Version string `json:"version"`
 	}
 	if err := json.Unmarshal(data, &metadata); err != nil {
-		return installation{}, err
+		return "", err
 	}
 	if err := catalog.ValidateVersion(metadata.Version); err != nil {
-		return installation{}, fmt.Errorf("invalid installed package version: %w", err)
+		return "", fmt.Errorf("invalid installed package version: %w", err)
 	}
-	if r.version != "" && metadata.Version != r.version {
-		return installation{}, fmt.Errorf("installed %s version %s differs from requested %s", r.name, metadata.Version, r.version)
+	if version != "" && metadata.Version != version {
+		return "", fmt.Errorf("installed %s version %s differs from requested %s", name, metadata.Version, version)
 	}
-	if _, err := os.Stat(filepath.Join(prefix, "bin", r.definition.Command)); err != nil {
-		return installation{}, fmt.Errorf("installed command %s is missing: %w", r.definition.Command, err)
+	if _, err := os.Stat(filepath.Join(prefix, "bin", command)); err != nil {
+		return "", fmt.Errorf("installed command %s is missing: %w", command, err)
 	}
-	keep = true
-	return installation{Version: metadata.Version, Pin: r.version, Prefix: filepath.Base(prefix)}, nil
+	return metadata.Version, nil
 }
 
 // publishInstallation replaces a managed command link and commits its selection entry.
@@ -416,13 +426,18 @@ func replaceLink(path, target string) error {
 	return os.Rename(name, path)
 }
 
-// writeSelection syncs staged JSON before atomically replacing the selection file.
+// writeSelection atomically replaces the agent selection file.
 func writeSelection(root string, selection map[string]installation) error {
-	data, err := json.Marshal(selection)
+	return writeJSONFile(filepath.Join(root, "selection.json"), ".selection-", selection)
+}
+
+// writeJSONFile syncs staged JSON in a sibling temporary file before atomically replacing the target.
+func writeJSONFile(path, pattern string, value any) error {
+	data, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(root, ".selection-")
+	file, err := os.CreateTemp(filepath.Dir(path), pattern)
 	if err != nil {
 		return err
 	}
@@ -437,7 +452,7 @@ func writeSelection(root string, selection map[string]installation) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(file.Name(), filepath.Join(root, "selection.json"))
+	return os.Rename(file.Name(), path)
 }
 
 // commandPath locates the managed command link in the agent home.

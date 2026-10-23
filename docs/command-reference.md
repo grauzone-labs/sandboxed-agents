@@ -38,12 +38,16 @@ sandboxed-agents integrations login NAME azure browser
 sandboxed-agents integrations login NAME azdo --organization URL
 sandboxed-agents integrations config NAME git identity [--name PERSON] [--email EMAIL]
 sandboxed-agents integrations config NAME git credentials
+sandboxed-agents tools enable NAME TOOL [--channel CHANNEL] [--version X]
+sandboxed-agents tools update NAME TOOL [--channel CHANNEL] [--version X]
+sandboxed-agents tools status NAME TOOL
 ```
 
 Names:
 
 - **Sandbox `NAME`.** It starts with a letter or digit and continues with letters, digits, `_`, `.`, and `-`. No name is reserved.
 - **Controller group.** The environment variable `SANDBOXED_AGENTS_GROUP` selects the controller group. It defaults to `default` and must match `^[a-z0-9][a-z0-9-]*$`. Each controller group is its own namespace; see [Ownership and names](#ownership-and-names).
+- **`TOOL`.** A Tool of the Tool catalog: `t3code`. An unknown name fails before Podman is called and lists the valid names.
 - **`SET` and `LIST`.** Both are comma-separated names. `--with SET` names toolchains: `dotnet`, `playwright`, `azure`, and `native`, or `none` alone for the base image without toolchains. `--agents LIST` names agents of the catalog: `copilot`, `claude`, `codex`, and `opencode`. An unknown name fails before Podman is called and lists the valid names.
 - **Parsing.** An unknown option, a duplicate option, a missing value, and a value on a switch are usage errors. After `--`, every argument is a positional argument.
 
@@ -141,15 +145,24 @@ The options belong to their workflow. `--name` and `--email` are options of the 
 
 Credentials live in the sandbox's home volume. They survive `update` and are removed by `remove NAME --volumes`.
 
-## Tool commands (planned, not yet delivered)
+## Tool commands
 
-A Tool, as [`CONTEXT.md`](../CONTEXT.md) defines it, runs beside agents in a sandbox and is installed into the home data after the sandbox exists ([ADR 0009](adr/0009-tools-run-as-manager-supervised-services.md)). The first Tool is T3 Code, tool name `t3code` ([Story #89](https://github.com/grauzone-labs/sandboxed-agents/issues/89)). The commands below are the final command words for it. They are not delivered yet: until a task delivers them, the executable rejects `tools` as an unknown command, as it rejects every undelivered catalog entry, and the grammar block above lists only delivered commands.
+A Tool, as [`CONTEXT.md`](../CONTEXT.md) defines it, runs beside agents in a sandbox and is installed into the home data after the sandbox exists ([ADR 0009](adr/0009-tools-run-as-manager-supervised-services.md)). The first Tool is T3 Code, tool name `t3code` ([Story #89](https://github.com/grauzone-labs/sandboxed-agents/issues/89)). The commands in this first table are delivered as far as the installation goes; the service, T3 Connect, QR pairing, and the complete delete follow in the [planned commands](#planned-tool-commands-not-yet-delivered) below.
 
 | Command | What it does |
 |---|---|
-| `tools enable NAME TOOL [--channel latest\|nightly \| --version X]` | Installs the Tool and starts its service. Without a selector it records channel `latest`; `--channel` records a channel, `--version X` an exact version as a Tool pin. Repeated without a selector on an enabled Tool it keeps the selection and starts the service only when it is not running. A selector that differs from the recorded one switches to that release: the new selection is recorded only after the install, the runtime download, and the service start on the new version have succeeded, and a failed switch keeps the previous installation, selection, and running service and exits non-zero naming the failing step. |
-| `tools update NAME TOOL [--channel latest\|nightly \| --version X]` | Moves a channel selection to the newest release of its channel, reinstalls a pinned version only when its installation is missing or damaged, or switches to the given selection. `--channel` is the way back from a pin; there is no unpin option. A failed switch keeps the previous installation, selection, and running service. |
-| `tools status NAME TOOL` | Reports the installed version, the channel or Tool pin, the service state (`running`, `stopped`, or `failed`) with the last failure and the log location, the T3 Connect state, the paired devices, and the Tailscale state as decision D3 records it. |
+| `tools enable NAME TOOL` | Installs the Tool into the sandbox's home data. Without a selector it records channel `latest`; `--channel latest\|nightly` records a channel, `--version X` an exact version as a Tool pin. A channel resolves to one exact version at install time, and the installation always uses that exact version. Repeated without a selector on an enabled Tool it keeps the installation and the selection and reports both; a damaged installation is repaired at its recorded version. A selector that differs from the recorded one switches to that release; the new selection is recorded only after the install and the verified runtime download have succeeded, and a failed switch keeps the previous installation and selection and exits non-zero naming the failing step. |
+| `tools update NAME TOOL` | Moves a channel selection to the newest release of its channel, reinstalls a pinned version only when its installation is missing or damaged, or switches to the given `--channel` or `--version`. `--channel` is the way back from a pin; there is no unpin option. An update without a selector never changes the selection. |
+| `tools status NAME TOOL` | Reports whether the Tool is enabled, its installed version, and its channel or Tool pin. It reads the selection as one consistent snapshot and takes no lock. |
+
+`--channel` accepts exactly `latest` and `nightly`; `--version` accepts an exact `MAJOR.MINOR.PATCH` with an optional prerelease, and tags, ranges, and build metadata are usage errors; a well-formed version that npm does not publish fails before anything is installed or recorded. `--channel` together with `--version` is a usage error. The selection lives in the sandbox's home data, in the Tool directory `~/.local/share/sandboxed-agents/tools/TOOL`, and survives `stop`, `start`, `restart`, and `update`; host state keeps no copy. The installation runs as `agent` under the manager lock, and a concurrent agent or Tool change is refused with "another agent or tool change is in progress; retry". Upstream's own update command is never called, and T3 Code's CLI and server do not update themselves: the installed version changes only through `tools enable` and `tools update`, and only to the exact version the recorded selection names. Every `tools` command needs a running sandbox with an answering manager, as the `agents` commands do.
+
+## Planned Tool commands (not yet delivered)
+
+The commands below are the final command words of ADR 0009 for the rest of the Tool. Until a task delivers them, the executable rejects them as unknown, as it rejects every undelivered catalog entry, and the grammar block above lists only delivered commands. Once delivered, `tools enable` also starts the T3 Code service, and `tools status` adds the service state (`running`, `stopped`, or `failed`) with the last failure and the log location, the T3 Connect state, the paired devices, and the Tailscale state as decision D3 records it.
+
+| Command | What it does |
+|---|---|
 | `tools connect NAME TOOL login` | Signs in to T3 Connect, the T3 account, with the headless device flow. It needs an interactive terminal. It is not an agent provider login; that stays `agents login NAME AGENT`. |
 | `tools connect NAME TOOL link` / `unlink` | Links the sandbox as an environment of the T3 Connect account, or unlinks it. `link` restarts the service. `unlink` keeps the login. |
 | `tools connect NAME TOOL logout` | Signs out of T3 Connect and clears the login. |
@@ -157,7 +170,7 @@ A Tool, as [`CONTEXT.md`](../CONTEXT.md) defines it, runs beside agents in a san
 | `tools pair NAME TOOL --revoke` | Revokes every unused pairing code. `--ttl` with `--revoke` is a usage error. |
 | `tools delete NAME TOOL` | Stops the service, signs out of T3 Connect (best effort), relocates user worktrees and repositories found inside the Tool directory with Git's own commands, and removes the Tool directory and the command link. A second `delete` finds nothing and exits zero. |
 
-`--channel` accepts exactly `latest` and `nightly`; `--version` accepts an exact `MAJOR.MINOR.PATCH` with an optional prerelease, and tags, ranges, and build metadata are usage errors; a well-formed version that npm does not publish fails before anything changes. `--channel` together with `--version` is a usage error. No `tools` command takes `--force`: `tools update` and `tools delete`, like `stop`, `restart`, and `update NAME`, stop the T3 Code service without asking, and the session guard for agent sessions applies as before ([ADR 0009, D2](adr/0009-tools-run-as-manager-supervised-services.md#d2-the-service-guard)).
+No `tools` command takes `--force`: `tools update` and `tools delete`, like `stop`, `restart`, and `update NAME`, stop the T3 Code service without asking, and the session guard for agent sessions applies as before ([ADR 0009, D2](adr/0009-tools-run-as-manager-supervised-services.md#d2-the-service-guard)).
 
 The places of the `tools` commands in the [order of checks](#order-of-checks) are fixed in [ADR 0009, Command surface](adr/0009-tools-run-as-manager-supervised-services.md#command-surface). The `tools` commands take the manager lock inside the sandbox, not the lifecycle lock; `tools status` and `tools pair` take no lock, and `tools connect … login` holds the Tool's connect lock instead.
 

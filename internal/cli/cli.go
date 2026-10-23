@@ -220,6 +220,16 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			fmt.Fprintln(stderr, err)
 		}
 		return status
+	case "tools enable", "tools update", "tools status":
+		target, err := selectedTarget()
+		if err != nil {
+			return 1
+		}
+		if err := administerTool(request, target, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 
 	case "fingerprint":
 		target, err := selectedTarget()

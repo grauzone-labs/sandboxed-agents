@@ -6,7 +6,7 @@ ENV PATH="${PATH}:/home/agent/.local/bin"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl gnupg git \
         gh tmux openssh-server openssh-client \
-        bash coreutils findutils procps jq ripgrep less unzip zip xz-utils file \
+        bash coreutils findutils procps jq ripgrep less unzip zip xz-utils file libatomic1 \
     && rm -f /etc/ssh/ssh_host_* \
     && rm -rf /var/lib/apt/lists/*
 

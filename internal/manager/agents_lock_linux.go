@@ -17,7 +17,7 @@ func lockManager(path string) (func(), error) {
 	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		file.Close()
 		if errors.Is(err, unix.EWOULDBLOCK) {
-			return nil, fmt.Errorf("another agent change is in progress; retry")
+			return nil, fmt.Errorf("another agent or tool change is in progress; retry")
 		}
 		return nil, err
 	}

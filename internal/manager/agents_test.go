@@ -382,7 +382,7 @@ func TestConcurrentEnablesPreserveSelection(t *testing.T) {
 	select {
 	case got := <-secondDone:
 		secondFinished = true
-		if got.status != 1 || !strings.Contains(got.output, "another agent change is in progress; retry") {
+		if got.status != 1 || !strings.Contains(got.output, "another agent or tool change is in progress; retry") {
 			t.Fatalf("competing enable=%+v", got)
 		}
 	case <-time.After(200 * time.Millisecond):
