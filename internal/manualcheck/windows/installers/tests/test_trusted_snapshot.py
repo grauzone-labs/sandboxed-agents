@@ -391,7 +391,7 @@ class BoundInputTests(unittest.TestCase):
         pending = self.held("$B=Read-BoundInput '%s' 'item.saved.json' -PendingWhileWritten\nif($null -eq $B){'PENDING'}else{'READ'}" % self.run)
         self.assertIn('PENDING', pending.stdout, pending.stdout + pending.stderr)
         strict = self.held("$B=Read-BoundInput '%s' 'item.saved.json'\n'READ'" % self.run)
-        self.assertNotIn('READ', strict.stdout)
+        self.assertNotIn('READ', strict.stdout.splitlines())
         self.assertIn('being used by another process', strict.stdout)
 
     @unittest.skipIf(hasattr(os, 'geteuid') and os.geteuid() == 0, 'root reads a file without read permission')
@@ -400,7 +400,7 @@ class BoundInputTests(unittest.TestCase):
         (self.run / 'item.saved.json').chmod(0)
         self.addCleanup((self.run / 'item.saved.json').chmod, 0o600)
         result = self.read_pending()
-        self.assertNotIn('PENDING', result.stdout)
+        self.assertNotIn('PENDING', result.stdout.splitlines())
         self.assertIn('ERROR=', result.stdout)
 
     def read_pending(self):

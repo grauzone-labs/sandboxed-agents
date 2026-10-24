@@ -85,6 +85,21 @@ class WindowsTrustedSnapshotTests(unittest.TestCase):
         """acl returns every descriptor the script printed, in order."""
         return [json.loads(line[4:]) for line in result.stdout.splitlines() if line.startswith('ACL=')]
 
+    def assertNoLine(self, line, result):
+        """assertNoLine asserts the script never printed line on a line of its own; a refusal message such
+        as REFUSED=... may contain the same letters."""
+        self.assertNotIn(line, result.stdout.splitlines(), result.stdout)
+
+    def assertInherits(self, child, parent, reader):
+        """assertInherits asserts a file created in an admin-only directory is owned by Administrators
+        and carries only rules inherited from that directory, with the same principals and rights, so
+        the reader again has no change right."""
+        self.assertEqual(child['owner'], 'S-1-5-32-544', child)
+        self.assertTrue(child['rules'] and all(r['inherited'] for r in child['rules']), child)
+        self.assertEqual(sorted((r['sid'], r['rights'], r['allow']) for r in child['rules']),
+                         sorted((r['sid'], r['rights'], r['allow']) for r in parent['rules']), (child, parent))
+        self.assertTrue(all(r['rights'] & CHANGE_RIGHTS == 0 for r in child['rules'] if r['sid'] == reader), child)
+
     def assertAdminOnly(self, descriptor, reader=None):
         """assertAdminOnly asserts a descriptor is owned by Administrators, blocks inheritance, allows
         full control only to Administrators and SYSTEM, and gives a reader, if any, no change right."""
@@ -115,15 +130,16 @@ class WindowsTrustedSnapshotTests(unittest.TestCase):
             self.assertFalse(any(r['inherited'] for r in descriptor['rules']), descriptor)
 
     def test_output_directory_is_readable_by_the_item_account_only(self):
-        """The output directory grants its reader read access only, stays admin-only, and a file the
-        observer writes into it inherits exactly that descriptor."""
+        """The output directory grants its reader read access only and stays admin-only, and a file the
+        observer writes into it inherits exactly the directory's rules and is admin-only too."""
         result = self.run_real(
             "Initialize-TrustedDirectory (Get-TrustedBase)\n$O=Join-Path (Get-TrustedBase) 'out';New-AdminOnlyDirectory $O '%s'\n"
-            "Write-NewJson (Join-Path $O 'capture.ready.json') @{ready=$true}\nAcl $O;Acl (Join-Path $O 'capture.ready.json')\n'ADMIN_ONLY='+(Test-AdminOnlyPath $O)" % USERS)
+            "Write-NewJson (Join-Path $O 'capture.ready.json') @{ready=$true}\nAcl $O;Acl (Join-Path $O 'capture.ready.json')\n'ADMIN_ONLY='+(Test-AdminOnlyPath $O)\n'RECORD_ADMIN_ONLY='+(Test-AdminOnlyPath (Join-Path $O 'capture.ready.json'))" % USERS)
         self.assertIn('ADMIN_ONLY=True', result.stdout, result.stdout + result.stderr)
+        self.assertIn('RECORD_ADMIN_ONLY=True', result.stdout)
         directory, record = self.acl(result)
         self.assertAdminOnly(directory, USERS)
-        self.assertAdminOnly(record, USERS)
+        self.assertInherits(record, directory, USERS)
 
     def test_inherited_granted_or_user_owned_access_is_not_admin_only(self):
         """A directory that inherits the program data descriptor, grants Users write, or is owned by the
@@ -141,7 +157,7 @@ class WindowsTrustedSnapshotTests(unittest.TestCase):
         self.assertIn('INHERITED=False', output)
         self.assertIn('REFUSED=Trusted directory', output)
         self.assertIn('not admin-only', output)
-        self.assertNotIn('USED', result.stdout)
+        self.assertNoLine('USED', result)
         self.assertIn('GRANTED=False', output)
         self.assertNotEqual(self.acl(result)[0]['owner'], 'S-1-5-32-544', output)
         self.assertIn('OWNED=False', output)
@@ -159,7 +175,8 @@ class WindowsTrustedSnapshotTests(unittest.TestCase):
         self.assertIn('ANCESTOR=Trusted directory ancestor', output)
         self.assertIn('is a reparse point', output)
         self.assertIn('BASE=Trusted directory', output)
-        self.assertNotIn('_USED', result.stdout)
+        self.assertNoLine('ANCESTOR_USED', result)
+        self.assertNoLine('BASE_USED', result)
 
     def test_ancestor_that_grants_delete_child_is_refused(self):
         """An ancestor that lets Users delete its children is refused, because a child could be renamed away and replaced."""
@@ -169,7 +186,7 @@ class WindowsTrustedSnapshotTests(unittest.TestCase):
             "try{Assert-AncestorsCannotReplace (Join-Path $P 'child');'ANCESTOR_USED'}catch{'ANCESTOR='+$_.Exception.Message}")
         output = result.stdout + result.stderr
         self.assertIn('lets another account replace what lies below it', output)
-        self.assertNotIn('ANCESTOR_USED', result.stdout)
+        self.assertNoLine('ANCESTOR_USED', result)
 
     def test_the_observer_refuses_the_item_shell_account_and_reads_real_accounts(self):
         """Get-ProcessOwnerSid reads the real account of a process, Assert-SeparateObserver refuses an
@@ -183,7 +200,7 @@ class WindowsTrustedSnapshotTests(unittest.TestCase):
         self.assertIn('SAME=True', output)
         self.assertIn('ADMIN=True', output)
         self.assertIn("REFUSED=The observer runs under the item shell's account", output)
-        self.assertNotIn('SEPARATE_USED', result.stdout)
+        self.assertNoLine('SEPARATE_USED', result)
 
     def test_bound_input_refuses_junctions_links_and_second_names(self):
         """Read-BoundInput reads the bound file and refuses a run directory replaced by a junction, a
