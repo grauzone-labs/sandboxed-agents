@@ -1,12 +1,12 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # T3 Code pairs over an in-sandbox tailnet node in userspace networking mode
 
 Phone QR pairing of the T3 Code Tool needs an origin that a phone can reach. Upstream's `t3 pair` issues a code for the server's bind address unless `--tailscale` makes it publish the server through Tailscale Serve and issue the code for the node's tailnet HTTPS origin (Story [#89](https://github.com/grauzone-labs/sandboxed-agents/issues/89), E12 and E16). Inside a sandbox the bind address is loopback, so the tailnet origin is the only phone-reachable origin in the evidence, and task [#95](https://github.com/grauzone-labs/sandboxed-agents/issues/95) has to find a topology that gives the sandbox such an origin within the sandbox rules. This is decision **D3** of the Story, which [ADR 0009](0009-tools-run-as-manager-supervised-services.md) constrained and left open.
 
-The status of this decision is **proposed** until a live run proves it: the topology below is implemented and proven offline, and the live run of #95 (two sandboxes on one host, a tailnet client reaching each QR origin, the origins surviving `restart` and `update NAME`, and the phone scan of the manual checklist) needs the user's Tailscale account, because the node signs in through the user's browser. The ADR moves to **accepted** with that run's record, or is revised with what the run showed.
+The decision is **accepted** on the record of the live run of #95 on 2026-10-23 and 2026-10-24, at revision `aace960`, on a Linux host (rootless Podman 5.4.2) and a Windows 11 host (Podman 6.1.4, WSL 2.7.12). On both hosts each of two sandboxes signed its own node in through the user's browser and got its own origin, `https://live-a.<tailnet>.ts.net/` and `https://live-b.<tailnet>.ts.net/`; a phone in the same tailnet scanned each QR code and opened the matching sandbox's T3 Code, and `tools delete` signed each node out and removed everything. The run added no publish, device, capability, or network-mode change. Two checks of the planned run are not on record yet and stay with #95: that an origin works again after `restart` and after `update NAME` without a second pairing, and whether Serve keeps working under `--shields-up`. On Linux the run first lost its sandbox whenever the user's last login session ended, because the host had no lingering; that is a host prerequisite of every rootless sandbox and not part of this decision ([#118](https://github.com/grauzone-labs/sandboxed-agents/issues/118)).
 
 ## Hard limits
 
@@ -50,4 +50,4 @@ In userspace networking mode `tailscaled` forwards an inbound TCP connection tha
 - The command surface of ADR 0009 gains `tools tailscale NAME TOOL login|logout`; `login` takes the manager lock and needs a terminal, `logout` takes the lock. `tools pair` keeps its place: no lock, a terminal for the issuing form only.
 - `CONTEXT.md` gains the terms tailnet node and tailnet origin, and the user documentation names the Tailscale admin console settings a pairing needs: MagicDNS and HTTPS certificates.
 - The node's device appears in the user's tailnet admin console under the sandbox's name and stays there after a failed sign-out until it expires or is removed by hand.
-- Decision D3 stays **proposed** until the live run of #95 is on record; until then the Story's Tailscale and QR criteria stay open, as ADR 0009 requires.
+- Decision D3 is accepted on the live run of #95. The Story's criteria for the origin after `restart` and `update NAME` stay open until that check is on record.
