@@ -8,6 +8,14 @@ func SetReadinessDeadline(deadline time.Duration) {
 	readinessDeadline = deadline
 }
 
+// SetMachineQueryTimeout shortens the bound of one Podman machine SSH query for tests that drive
+// a transport that never answers, and returns a function that restores the previous bound.
+func SetMachineQueryTimeout(timeout time.Duration) func() {
+	previous := machineQueryTimeout
+	machineQueryTimeout = timeout
+	return func() { machineQueryTimeout = previous }
+}
+
 // SetToolStatusTimeouts shortens the limits of the host's Tool status query for tests that drive the
 // executable boundary, and returns a function that restores the previous limits.
 func SetToolStatusTimeouts(records, upstream time.Duration) func() {

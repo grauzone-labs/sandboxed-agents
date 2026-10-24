@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/capture"
 )
 
 var (
@@ -186,19 +188,21 @@ func Step(dir, name string, stdin io.Reader, command *exec.Cmd) (StepResult, err
 		return StepResult{}, err
 	}
 	defer file.Close()
-	command.Stdout, command.Stderr = file, file
 	if stdin != nil {
 		command.Stdin = stdin
 	}
 	result := StepResult{Name: name, Command: strings.Join(command.Args, " "), StartedUTC: utcNow(), Log: log}
-	if err := command.Start(); err != nil {
+	// Both streams reach the log through the capture package: on Windows an inherited log file
+	// handle would block the OpenSSH client of the SSH steps (ADR-0008).
+	wait, err := capture.Start(command, file, file)
+	if err != nil {
 		result.FinishedUTC, result.Exit = utcNow(), -1
 		fmt.Fprintf(file, "could not start: %v\n", err)
 		_ = writePrivateJSON(filepath.Join(dir, name+".json"), result)
 		return result, err
 	}
 	result.PID = command.Process.Pid
-	err = command.Wait()
+	err = wait()
 	result.FinishedUTC = utcNow()
 	var exit *exec.ExitError
 	switch {
