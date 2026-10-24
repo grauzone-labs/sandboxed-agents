@@ -62,12 +62,13 @@ func (host liveHost) assertSSHServer(t *testing.T, name, hostKey string) {
 		t.Fatalf("invalid server-state host key: %q", hostKey)
 	}
 	// Follow ADR-0008: a recorded key alone precedes signature verification.
-	// NEWKEYS proves the exchange completed; authentication is disabled.
+	// NEWKEYS proves the exchange completed; authentication is disabled. The client
+	// logs to ssh.log (-E) because the Windows client blocks on an inherited pipe.
 	deadline := time.Now().Add(15 * time.Second)
 	var diagnostics []byte
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		command := exec.CommandContext(ctx, "ssh", "-v", "-F", "none", "-p", port,
+		command := exec.CommandContext(ctx, "ssh", "-v", "-F", "none", "-E", "ssh.log", "-p", port,
 			"-o", "BatchMode=yes", "-o", "ConnectTimeout=2", "-o", "StrictHostKeyChecking=accept-new",
 			"-o", "UserKnownHostsFile=known_hosts", "-o", "GlobalKnownHostsFile=none",
 			"-o", "HostKeyAlgorithms=ssh-ed25519", "-o", "IdentityAgent=none",
@@ -79,6 +80,9 @@ func (host liveHost) assertSSHServer(t *testing.T, name, hostKey string) {
 		command.WaitDelay = time.Second
 		diagnostics, _ = command.CombinedOutput()
 		cancel()
+		log, _ := os.ReadFile(filepath.Join(directory, "ssh.log"))
+		diagnostics = append(diagnostics, log...)
+		_ = os.Remove(filepath.Join(directory, "ssh.log"))
 		known, readErr := os.ReadFile(filepath.Join(directory, "known_hosts"))
 		fields := strings.Fields(string(known))
 		if readErr == nil && len(fields) == 3 && fields[0] == "[127.0.0.1]:"+port &&
