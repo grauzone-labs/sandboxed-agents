@@ -236,7 +236,8 @@ Identifier `t3-qr-pair`. A phone in your tailnet scans the QR code of `chk-persi
 7. Scan the same code again, or open its URL again on the phone. **Expected:** the phone reports the code as invalid; `tools pair chk-persist t3code --ttl 1m` issues a new one, which you leave unscanned.
 8. `sandboxed-agents tools pair chk-persist t3code --revoke`. **Expected:** `revoked 1 unused pairing code`; the paired phone stays connected.
 9. `sandboxed-agents restart chk-persist`. **Expected:** `t3code service running` and `t3code tailnet node running`; on the phone the sandbox's T3 Code is reachable again without a new pairing.
-10. `sandboxed-agents up chk-pair2 --with none`, `tools enable chk-pair2 t3code`, `tools tailscale chk-pair2 t3code login` with approval, and `tools pair chk-pair2 t3code`. **Expected:** the origin is `https://chk-pair2.<your tailnet>.ts.net/`, distinct from the first; the phone scans it and sees `chk-pair2`'s T3 Code, not `chk-persist`'s. Then `remove chk-pair2 --volumes`, and remove the device `chk-pair2` from the tailnet admin console if it is still listed.
+10. `sandboxed-agents update chk-persist`. **Expected:** the same two lines, `tools status chk-persist t3code` shows the same origin and `Serve maps the origin to the service`, and the phone reaches the sandbox's T3 Code again without a new pairing.
+11. `sandboxed-agents up chk-pair2 --with none`, `tools enable chk-pair2 t3code`, `tools tailscale chk-pair2 t3code login` with approval, and `tools pair chk-pair2 t3code`. **Expected:** the origin is `https://chk-pair2.<your tailnet>.ts.net/`, distinct from the first; the phone scans it and sees `chk-pair2`'s T3 Code, not `chk-persist`'s. Then `remove chk-pair2 --volumes`, and remove the device `chk-pair2` from the tailnet admin console if it is still listed.
 
 Record `t3-qr-pair`. The node of `chk-persist` stays signed in for the later items.
 

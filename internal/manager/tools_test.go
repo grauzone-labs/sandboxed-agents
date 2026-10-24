@@ -66,8 +66,8 @@ type pairingRun struct {
 	pairText   string
 	// interruptPair sends Ctrl+C to the manager while `pair` runs; the fake then exits as interrupted without a code.
 	interruptPair bool
-	// noServe makes a successful pair leave the node's Serve configuration untouched, as a pair whose mapping did not take would.
-	noServe bool
+	// clearServe makes a successful pair leave the node without a Serve mapping, as an upstream that replaced or dropped the mapping would.
+	clearServe bool
 	// issueBeforeFailure makes a failing pair record a code before it fails, as an upstream that minted the code and then died would.
 	issueBeforeFailure bool
 	// listResult, revokeResult, and sessionsResult script the exits of the list and revoke commands.
@@ -94,6 +94,9 @@ type tailnetRun struct {
 	noHTTPS, noCapMap bool
 	// serve is the JSON `serve status --json` prints; empty prints an empty configuration.
 	serve string
+	// serveResult scripts the exit of `serve --bg`; serveIgnored makes a successful one leave the configuration untouched, as a mapping that did not take would.
+	serveResult  error
+	serveIgnored bool
 	// upResult, logoutResult, and statusResult script the exits of those commands; nil succeeds.
 	upResult, logoutResult, statusResult error
 	// upText is what a failing `up` prints on stderr.
@@ -104,6 +107,9 @@ type tailnetRun struct {
 	interactiveUps int
 	calls          [][]string
 }
+
+// serviceServeConfig is the node's Serve configuration once HTTPS port 443 fronts the T3 Code service.
+const serviceServeConfig = `{"TCP":{"443":{"HTTPS":true}},"Web":{"agent01.tail1234.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3773"}}}}}`
 
 // defaultConnectStatus is the upstream status of a sandbox without a T3 Connect login, as the spike observed it.
 const defaultConnectStatus = `{"desired":false,"authenticated":false,"linked":false,"revoked":false,"cloudUserId":null,"relayUrl":null,"publishAgentActivity":false,"relayClient":{"status":"missing","version":"2026.10.0"},"linkMode":"managed","reachability":null}`
@@ -355,6 +361,15 @@ func (run *toolRun) fakeTailscale(t *testing.T, home string, p manager.Process) 
 		}
 		fmt.Fprintln(p.Stdout, ts.serve)
 		return nil
+	case "serve --bg --https=443 http://127.0.0.1:3773":
+		if ts.serveResult != nil {
+			fmt.Fprintln(p.Stderr, "serve config denied")
+			return ts.serveResult
+		}
+		if !ts.serveIgnored {
+			ts.serve = serviceServeConfig
+		}
+		return nil
 	case "logout":
 		if ts.logoutResult != nil {
 			fmt.Fprintln(p.Stderr, "logout failed: control server unreachable")
@@ -423,8 +438,9 @@ func (run *toolRun) fakePairing(t *testing.T, home string, p manager.Process) er
 			fmt.Fprintln(p.Stderr, pr.pairText)
 			return pr.pairResult
 		}
-		if !pr.noServe {
-			run.tailnet.serve = `{"TCP":{"443":{"HTTPS":true}},"Web":{"agent01.tail1234.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3773"}}}}}`
+		run.tailnet.serve = serviceServeConfig
+		if pr.clearServe {
+			run.tailnet.serve = ""
 		}
 		pr.issued++
 		code := fmt.Sprintf("pc_%d", pr.issued)
