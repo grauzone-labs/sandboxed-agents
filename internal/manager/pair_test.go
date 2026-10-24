@@ -53,7 +53,7 @@ func pairCalls(run *toolRun) []string {
 	return calls
 }
 
-// TestToolsPairIssuesACodeForTheTailnetOriginOnly proves pair runs upstream's `t3 pair --tailscale` as agent with the Tool's tailscale command first on its PATH and the caller's terminal, passes `--ttl` through and prints the expiry it moves, prints upstream's QR code, URL, and expiry followed by the single-use note, records the Serve mapping and the paired devices in the status, takes no manager lock, and that `--revoke` revokes every unused code and then finds none, at RunWithEffects.
+// TestToolsPairIssuesACodeForTheTailnetOriginOnly proves pair runs upstream's `t3 pair --tailscale` as agent with the Tool's tailscale command first on its PATH and the caller's terminal, maps the node's HTTPS port 443 to the service with `tailscale serve` before upstream runs and only when no such mapping exists, passes `--ttl` through and prints the expiry it moves, prints upstream's QR code, URL, and expiry followed by the single-use note, records the Serve mapping and the paired devices in the status, takes no manager lock, and that `--revoke` revokes every unused code and then finds none, at RunWithEffects.
 func TestToolsPairIssuesACodeForTheTailnetOriginOnly(t *testing.T) {
 	home, run, e, _ := pairedTool(t)
 	release, held, err := lockFor(t, home)
@@ -70,6 +70,11 @@ func TestToolsPairIssuesACodeForTheTailnetOriginOnly(t *testing.T) {
 	if !slices.Equal(pairCalls(run), []string{"auth pairing", "pair --tailscale"}) || run.pairing.interactivePairs != 1 || run.interruptWatches != 2 {
 		t.Fatalf("pair calls=%v interactive=%d watches=%d", run.pairing.calls, run.pairing.interactivePairs, run.interruptWatches)
 	}
+	serveCall := []string{"serve", "--bg", "--https=443", "http://127.0.0.1:3773"}
+	if serves := slices.IndexFunc(run.tailnet.calls, func(args []string) bool { return slices.Equal(args, serveCall) }); serves < 0 || slices.ContainsFunc(run.tailnet.calls[serves+1:], func(args []string) bool { return slices.Equal(args, serveCall) }) {
+		t.Fatalf("pair did not map the origin once before upstream ran: %v", run.tailnet.calls)
+	}
+	serveCalls := len(run.tailnet.calls)
 	path := ""
 	for _, entry := range run.pairing.environments[1] {
 		if strings.HasPrefix(entry, "PATH=") {
@@ -81,6 +86,9 @@ func TestToolsPairIssuesACodeForTheTailnetOriginOnly(t *testing.T) {
 	}
 	if out := runTools(t, e, 0, "pair", "t3code", "--ttl", "90m"); !strings.Contains(out, "TOKEN2") || !strings.Contains(out, "Expires: 2026-10-23T13:30:00.000Z") || !slices.Equal(run.pairing.calls[len(run.pairing.calls)-1], []string{"pair", "--tailscale", "--ttl", "90m"}) {
 		t.Fatalf("pair with ttl output=%s calls=%v", out, run.pairing.calls)
+	}
+	if slices.ContainsFunc(run.tailnet.calls[serveCalls:], func(args []string) bool { return slices.Equal(args, serveCall) }) {
+		t.Fatalf("pair remapped an origin that already fronts the service: %v", run.tailnet.calls[serveCalls:])
 	}
 	run.pairing.sessions = `[{"sessionId":"s1","method":"pairing","scopes":["threads:read"],"subject":"one-time-token","client":{"label":"Pixel 8","deviceType":"mobile","os":"Android"},"connected":true,"issuedAt":"2026-10-23T12:01:00.000Z","expiresAt":"2026-11-22T12:01:00.000Z","lastConnectedAt":"2026-10-23T12:02:00.000Z"},{"sessionId":"s2","method":"pairing","scopes":[],"subject":"one-time-token","client":{"deviceType":"tablet","os":"iPadOS"},"connected":false,"issuedAt":"2026-10-23T12:03:00.000Z","expiresAt":"2026-11-22T12:03:00.000Z","lastConnectedAt":null}]`
 	full := readFullToolStatus(t, e)
@@ -108,7 +116,7 @@ func TestToolsPairIssuesACodeForTheTailnetOriginOnly(t *testing.T) {
 	}
 }
 
-// TestToolsPairRefusesWithDistinctMessagesAndIssuesNoCode proves a Tool that is not enabled, a stopped service, a missing, stopped, or signed-out tailnet node, a missing MagicDNS name, disabled HTTPS certificates, an offline node, a Serve mapping that fronts another target, an upstream failure, Ctrl+C, an upstream that minted a code and then failed, and a mapping that did not take each exit non-zero with their own message, that none of them leaves a code this pairing issued, and that earlier codes stay, at RunWithEffects.
+// TestToolsPairRefusesWithDistinctMessagesAndIssuesNoCode proves a Tool that is not enabled, a stopped service, a missing, stopped, or signed-out tailnet node, a missing MagicDNS name, disabled HTTPS certificates, an offline node, a Serve mapping that fronts another target, an upstream failure, Ctrl+C, a `tailscale serve` that fails or whose mapping does not take, both before upstream runs, an upstream that minted a code and then failed, and a mapping upstream lost each exit non-zero with their own message, that none of them leaves a code this pairing issued, and that earlier codes stay, at RunWithEffects.
 func TestToolsPairRefusesWithDistinctMessagesAndIssuesNoCode(t *testing.T) {
 	disabled, disabledRun := t.TempDir(), &toolRun{}
 	if out := runTools(t, toolEffects(t, disabled, toolRegistry{}, disabledRun), 1, "pair", "t3code"); !strings.Contains(out, "t3code not enabled; run tools enable NAME t3code") {
@@ -151,9 +159,15 @@ func TestToolsPairRefusesWithDistinctMessagesAndIssuesNoCode(t *testing.T) {
 		{"upstream-failure-after-issue", func(home string, run *toolRun, e manager.Effects, services *fakeServices) {
 			run.pairing.codes, run.pairing.pairResult, run.pairing.pairText, run.pairing.issueBeforeFailure = []string{"pc_earlier"}, childExit(1), "died after minting", true
 		}, "t3code pair failed with exit status 1; the code it issued was revoked", true},
-		{"mapping-missing", func(home string, run *toolRun, e manager.Effects, services *fakeServices) {
+		{"serve-failure", func(home string, run *toolRun, e manager.Effects, services *fakeServices) {
+			run.tailnet.serveResult = childExit(1)
+		}, "t3code pair: tailscale serve failed: serve config denied; no code was issued; see tools status NAME t3code", false},
+		{"mapping-not-taken", func(home string, run *toolRun, e manager.Effects, services *fakeServices) {
+			run.tailnet.serveIgnored = true
+		}, "t3code pair: the tailnet node does not front the service after tailscale serve; no code was issued; see tools status NAME t3code", false},
+		{"mapping-lost-after-pair", func(home string, run *toolRun, e manager.Effects, services *fakeServices) {
 			// An earlier, still valid code must survive the failure; only the code this pairing issued goes.
-			run.pairing.codes, run.pairing.noServe = []string{"pc_earlier"}, true
+			run.pairing.codes, run.pairing.clearServe = []string{"pc_earlier"}, true
 		}, "t3code pair: the tailnet node does not front the service after the pairing; the issued code was revoked; see tools status NAME t3code", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

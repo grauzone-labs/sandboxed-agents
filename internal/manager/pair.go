@@ -58,6 +58,9 @@ func pairTool(home, directory string, r toolRequest, stdout, stderr io.Writer, e
 	if err := checkPairingPrerequisites(directory, r, effects); err != nil {
 		return err
 	}
+	if err := ensureServeMapping(directory, r, effects); err != nil {
+		return err
+	}
 	// The codes that exist before the pairing stay when it fails afterwards; only the one it issued is revoked then.
 	before, err := listPairingCodes(directory, current, r.definition, effects)
 	if err != nil {
@@ -74,7 +77,7 @@ func pairTool(home, directory string, r toolRequest, stdout, stderr io.Writer, e
 	}
 	// Upstream probes the origin from inside the sandbox, which has no route to the tailnet in userspace
 	// networking mode, so its note that the endpoint has not answered yet is expected; the node's own Serve
-	// configuration is the check that the mapping took.
+	// configuration is the check that the mapping still fronts the service after upstream ran.
 	target, err := tailnetServeTarget(directory, effects)
 	if err != nil || target != r.definition.ServiceOrigin {
 		if _, revoke := revokeIssued(directory, current, r.definition, before, effects); revoke != nil {
@@ -102,6 +105,26 @@ func checkPairingPrerequisites(directory string, r toolRequest, effects Effects)
 		return err
 	}
 	return catalog.PairingPrerequisites(unknownSandboxName, status)
+}
+
+// ensureServeMapping maps the node's HTTPS port 443 to the service with the same `tailscale serve` call
+// upstream makes, unless the mapping exists, and reads the node's Serve configuration back, so a mapping that
+// does not take refuses before upstream mints a code (ADR-0010); the pre-checks already refused a foreign one.
+func ensureServeMapping(directory string, r toolRequest, effects Effects) error {
+	if target, err := tailnetServeTarget(directory, effects); err == nil && target == r.definition.ServiceOrigin {
+		return nil
+	}
+	if _, err := tailnetOutput(directory, effects, "serve", "--bg", "--https=443", r.definition.ServiceOrigin); err != nil {
+		return fmt.Errorf("%s pair: tailscale serve failed: %v; no code was issued; see tools status NAME %s", r.name, err, r.name)
+	}
+	target, err := tailnetServeTarget(directory, effects)
+	if err != nil {
+		return fmt.Errorf("%s pair: cannot read the tailnet node's Serve configuration: %v; no code was issued", r.name, err)
+	}
+	if target != r.definition.ServiceOrigin {
+		return fmt.Errorf("%s pair: the tailnet node does not front the service after tailscale serve; no code was issued; see tools status NAME %s", r.name, r.name)
+	}
+	return nil
 }
 
 // runPair runs upstream's `t3 pair --tailscale` on the caller's terminal, with the Tool's tailscale
