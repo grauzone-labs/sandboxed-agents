@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -112,14 +111,17 @@ func waitReadiness(ctx context.Context, p podmanTarget, container string, port u
 	}
 }
 
-// probeSSH requires the verified exchange and the matching Ed25519 known_hosts entry.
+// probeSSH requires the verified exchange and the matching Ed25519 known_hosts entry. The
+// client writes its exchange log to ssh.log in its working directory (-E) because the Windows
+// OpenSSH client blocks when its logging goes through an inherited pipe or file handle; nothing
+// the client writes to its stdout or stderr is used (ADR-0008).
 func probeSSH(ctx context.Context, port uint16, run func(context.Context, *exec.Cmd) ([]byte, error)) error {
 	dir, err := os.MkdirTemp("", "sandboxed-agents-readiness-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	cmd := exec.CommandContext(ctx, "ssh", "-v", "-F", "none",
+	cmd := exec.CommandContext(ctx, "ssh", "-v", "-F", "none", "-E", "ssh.log",
 		"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "IdentityAgent=none",
 		"-o", "UserKnownHostsFile=known_hosts", "-o", "GlobalKnownHostsFile=none", "-o", "HostKeyAlgorithms=ssh-ed25519",
 		"-o", "PubkeyAuthentication=no", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no",
@@ -130,14 +132,12 @@ func probeSSH(ctx context.Context, port uint16, run func(context.Context, *exec.
 	if deadline, ok := ctx.Deadline(); ok {
 		cmd.WaitDelay = min(cmd.WaitDelay, max(time.Nanosecond, time.Until(deadline)/10))
 	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	output, _ := run(ctx, cmd)
-	output = append(stderr.Bytes(), output...)
+	_, _ = run(ctx, cmd)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if !slices.Contains(strings.Split(strings.ReplaceAll(string(output), "\r\n", "\n"), "\n"), "debug1: SSH2_MSG_NEWKEYS received") {
+	log, _ := os.ReadFile(filepath.Join(dir, "ssh.log"))
+	if !slices.Contains(strings.Split(strings.ReplaceAll(string(log), "\r\n", "\n"), "\n"), "debug1: SSH2_MSG_NEWKEYS received") {
 		return fmt.Errorf("SSH key exchange did not complete")
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "known_hosts"))

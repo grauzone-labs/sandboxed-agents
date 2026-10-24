@@ -110,7 +110,14 @@ func main() {
 		}
 		return
 	}
-	fmt.Fprint(os.Stdout, os.Getenv(prefix+"_OUTPUT"))
+	// Like ssh -E, a log file named after -E receives the client's output instead of stdout.
+	if logFile := slices.Index(os.Args, "-E"); prefix == "TEST_SSH" && logFile > 0 && logFile+1 < len(os.Args) {
+		if err := os.WriteFile(os.Args[logFile+1], []byte(os.Getenv(prefix+"_OUTPUT")), 0600); err != nil {
+			panic(err)
+		}
+	} else {
+		fmt.Fprint(os.Stdout, os.Getenv(prefix+"_OUTPUT"))
+	}
 	if prefix == "TEST_SSH" && os.Getenv("TEST_SSH_KNOWN_HOSTS") != "" {
 		if err := os.WriteFile("known_hosts", []byte(os.Getenv("TEST_SSH_KNOWN_HOSTS")), 0600); err != nil {
 			panic(err)
