@@ -51,6 +51,8 @@ type fixture struct {
 	fakes     testutil.Fakes
 	files     map[string]string
 	responses map[string]response
+	// sshResponses scripts the fake ssh on PATH, keyed like responses by its joined argv.
+	sshResponses map[string]response
 }
 
 // toolRestoreCall matches the tool service restore that follows every lifecycle command, for any sandbox and connection.
@@ -187,9 +189,22 @@ func (f *fixture) run(t *testing.T, args ...string) (int, string, [][]string) {
 		t.Fatal(err)
 	}
 	t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+	if f.sshResponses != nil {
+		scripted, err := json.Marshal(f.sshResponses)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("TEST_SSH_RESPONSES", string(scripted))
+	}
 	var output bytes.Buffer
 	status := cli.RunWithHost(args, &output, &output, f.host)
 	return status, output.String(), testutil.Invocations(t, f.fakes.PodmanLog)
+}
+
+// sshCalls returns the argv of every ssh process the fixture's fake ssh recorded.
+func (f *fixture) sshCalls(t *testing.T) [][]string {
+	t.Helper()
+	return testutil.Invocations(t, f.fakes.SSHLog)
 }
 
 // noMutation rejects recorded Podman mutations and mounts outside the permitted named-volume

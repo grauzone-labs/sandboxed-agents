@@ -18,9 +18,9 @@ import (
 
 // Start starts command with its standard output and standard error delivered to stdout and
 // stderr and returns the wait for its end; a nil writer discards its stream. Both streams pass
-// through named pipes opened for overlapped I/O, so a descendant such as the inbox Windows OpenSSH
-// client under podman machine ssh completes its writes instead of blocking on an inherited
-// synchronous handle (ADR-0008). After the process exits, the wait stops copying at
+// through named pipes opened for overlapped I/O, so the child, such as the inbox Windows OpenSSH
+// client that the preflight starts for its machine queries, completes its writes instead of
+// blocking on a synchronous handle (ADR-0008). After the process exits, the wait stops copying at
 // command.WaitDelay when a descendant keeps a pipe open; a failure of the process itself is
 // reported first, otherwise exec.ErrWaitDelay reports the cut.
 func Start(command *exec.Cmd, stdout, stderr io.Writer) (func() error, error) {

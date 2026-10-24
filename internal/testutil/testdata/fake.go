@@ -78,6 +78,22 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(125)
 	}
+	// Tests that care where a process ran, such as a private known_hosts directory, read one
+	// working directory per call from the optional working-directory log.
+	if path := os.Getenv(prefix + "_CWD_LOG"); path != "" {
+		directory, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(125)
+		}
+		log, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(125)
+		}
+		fmt.Fprintln(log, directory)
+		log.Close()
+	}
 	// Live rollback injection must not intercept Podman's own machine transport.
 	if prefix == "TEST_SSH" && os.Getenv("TEST_SSH_REAL_EXECUTABLE") != "" {
 		args := os.Args[1:]
@@ -110,23 +126,13 @@ func main() {
 		}
 		return
 	}
-	// Like ssh -E, a log file named after -E receives the client's output instead of stdout.
-	if logFile := slices.Index(os.Args, "-E"); prefix == "TEST_SSH" && logFile > 0 && logFile+1 < len(os.Args) {
-		if err := os.WriteFile(os.Args[logFile+1], []byte(os.Getenv(prefix+"_OUTPUT")), 0600); err != nil {
-			panic(err)
-		}
-	} else {
-		fmt.Fprint(os.Stdout, os.Getenv(prefix+"_OUTPUT"))
-	}
-	if prefix == "TEST_SSH" && os.Getenv("TEST_SSH_KNOWN_HOSTS") != "" {
-		if err := os.WriteFile("known_hosts", []byte(os.Getenv("TEST_SSH_KNOWN_HOSTS")), 0600); err != nil {
-			panic(err)
-		}
-	}
-	code, err := strconv.Atoi(os.Getenv(prefix + "_EXIT"))
-	if err != nil {
-		code = 0
-	}
+	// A scripted answer for this argv replaces the environment-driven output and status. An argv
+	// outside the script is a test failure, with one scoped exception: an ssh call that names an
+	// -E log file, the shape of the readiness probe and the sandbox SSH check, stays
+	// environment-driven beside scripted machine queries, which name no log file.
+	var response scriptedResponse
+	scripted := false
+	readinessShaped := prefix == "TEST_SSH" && slices.Index(os.Args, "-E") > 0
 	if script := os.Getenv(prefix + "_RESPONSES"); script != "" {
 		var responses map[string]scriptedResponse
 		if err := json.Unmarshal([]byte(script), &responses); err != nil {
@@ -134,8 +140,8 @@ func main() {
 			os.Exit(125)
 		}
 		key := strings.Join(os.Args[1:], " ")
-		response, ok := responses[key]
-		if !ok {
+		response, scripted = responses[key]
+		if !scripted {
 			var keys []string
 			for candidate := range responses {
 				keys = append(keys, candidate)
@@ -148,100 +154,119 @@ func main() {
 			})
 			for _, candidate := range keys {
 				if strings.Contains(candidate, "*") && regexp.MustCompile("^"+strings.ReplaceAll(regexp.QuoteMeta(candidate), `\*`, ".*")+"$").MatchString(key) {
-					response, ok = responses[candidate], true
+					response, scripted = responses[candidate], true
 					break
 				}
 			}
 		}
-		if ok {
-			if response.FailOnce && priorInvocations(prefix) > 1 {
-				response.Exit = 0
-				response.Output = ""
-			}
-			if len(response.Sequence) > 0 {
-				// The same argv answers differently over time; the last answer repeats.
-				answer := response.Sequence[min(priorInvocations(prefix)-1, len(response.Sequence)-1)]
-				response.Output, response.Stderr, response.Exit = answer.Output, answer.Stderr, answer.Exit
-			}
-			if response.HoldOutputUntil != "" {
-				executable, err := os.Executable()
-				if err != nil {
-					fmt.Fprintln(os.Stderr, err)
-					os.Exit(125)
-				}
-				child := exec.Command(executable, "--test-hold-output", response.HoldOutputUntil)
-				child.Stdout, child.Stderr = os.Stdout, os.Stderr
-				if err := child.Start(); err != nil {
-					fmt.Fprintln(os.Stderr, err)
-					os.Exit(125)
-				}
-				if err := child.Process.Release(); err != nil {
-					fmt.Fprintln(os.Stderr, err)
-					os.Exit(125)
-				}
-			}
-			if response.ReadyFile != "" {
-				if err := os.WriteFile(response.ReadyFile, nil, 0600); err != nil {
-					fmt.Fprintln(os.Stderr, err)
-					os.Exit(125)
-				}
-			}
-			if response.WaitFor != "" {
-				deadline := time.Now().Add(10 * time.Second)
-				for {
-					if _, err := os.Stat(response.WaitFor); err == nil {
-						break
-					}
-					if time.Now().After(deadline) {
-						fmt.Fprintln(os.Stderr, "fake rendezvous timed out")
-						os.Exit(125)
-					}
-					time.Sleep(10 * time.Millisecond)
-				}
-			}
-			fmt.Fprint(os.Stdout, response.Output)
-			fmt.Fprint(os.Stderr, response.Stderr)
-			if response.ExpectedStdin != "" {
-				data, err := io.ReadAll(os.Stdin)
-				if err != nil || string(data) != response.ExpectedStdin {
-					fmt.Fprintln(os.Stderr, "fake stdin mismatch")
-					os.Exit(125)
-				}
-				if response.EchoStdin {
-					fmt.Fprint(os.Stdout, string(data))
-				}
-			} else if response.EchoStdin {
-				if _, err := io.Copy(os.Stdout, os.Stdin); err != nil {
-					fmt.Fprintln(os.Stderr, err)
-					os.Exit(125)
-				}
-			}
-			if response.EchoLine {
-				// One typed line proves a terminal forwards input without needing an end of file.
-				line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-				if err != nil {
-					fmt.Fprintln(os.Stderr, err)
-					os.Exit(125)
-				}
-				fmt.Fprintf(os.Stdout, "line: %s\n", strings.TrimRight(line, "\r\n"))
-			}
-			if response.ExitOnInput != "" {
-				// Model a terminal program that returns on a key sequence, such as a tmux detach.
-				reader := bufio.NewReader(os.Stdin)
-				var typed []byte
-				for !strings.HasSuffix(string(typed), response.ExitOnInput) {
-					next, err := reader.ReadByte()
-					if err != nil {
-						fmt.Fprintln(os.Stderr, "fake input ended before", strconv.Quote(response.ExitOnInput))
-						os.Exit(125)
-					}
-					typed = append(typed, next)
-				}
-			}
-			code = response.Exit
-		} else {
+		if !scripted && !readinessShaped {
 			fmt.Fprintln(os.Stderr, "unscripted fake call", os.Args[1:])
-			code = 125
+			os.Exit(125)
+		}
+	}
+	code := 0
+	if scripted {
+		if response.FailOnce && priorInvocations(prefix) > 1 {
+			response.Exit = 0
+			response.Output = ""
+		}
+		if len(response.Sequence) > 0 {
+			// The same argv answers differently over time; the last answer repeats.
+			answer := response.Sequence[min(priorInvocations(prefix)-1, len(response.Sequence)-1)]
+			response.Output, response.Stderr, response.Exit = answer.Output, answer.Stderr, answer.Exit
+		}
+		if response.HoldOutputUntil != "" {
+			executable, err := os.Executable()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(125)
+			}
+			child := exec.Command(executable, "--test-hold-output", response.HoldOutputUntil)
+			child.Stdout, child.Stderr = os.Stdout, os.Stderr
+			if err := child.Start(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(125)
+			}
+			if err := child.Process.Release(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(125)
+			}
+		}
+		if response.ReadyFile != "" {
+			if err := os.WriteFile(response.ReadyFile, nil, 0600); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(125)
+			}
+		}
+		if response.WaitFor != "" {
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				if _, err := os.Stat(response.WaitFor); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					fmt.Fprintln(os.Stderr, "fake rendezvous timed out")
+					os.Exit(125)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+		fmt.Fprint(os.Stdout, response.Output)
+		fmt.Fprint(os.Stderr, response.Stderr)
+		if response.ExpectedStdin != "" {
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil || string(data) != response.ExpectedStdin {
+				fmt.Fprintln(os.Stderr, "fake stdin mismatch")
+				os.Exit(125)
+			}
+			if response.EchoStdin {
+				fmt.Fprint(os.Stdout, string(data))
+			}
+		} else if response.EchoStdin {
+			if _, err := io.Copy(os.Stdout, os.Stdin); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(125)
+			}
+		}
+		if response.EchoLine {
+			// One typed line proves a terminal forwards input without needing an end of file.
+			line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(125)
+			}
+			fmt.Fprintf(os.Stdout, "line: %s\n", strings.TrimRight(line, "\r\n"))
+		}
+		if response.ExitOnInput != "" {
+			// Model a terminal program that returns on a key sequence, such as a tmux detach.
+			reader := bufio.NewReader(os.Stdin)
+			var typed []byte
+			for !strings.HasSuffix(string(typed), response.ExitOnInput) {
+				next, err := reader.ReadByte()
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "fake input ended before", strconv.Quote(response.ExitOnInput))
+					os.Exit(125)
+				}
+				typed = append(typed, next)
+			}
+		}
+		code = response.Exit
+	} else {
+		// Like ssh -E, a log file named after -E receives the client's output instead of stdout.
+		if logFile := slices.Index(os.Args, "-E"); prefix == "TEST_SSH" && logFile > 0 && logFile+1 < len(os.Args) {
+			if err := os.WriteFile(os.Args[logFile+1], []byte(os.Getenv(prefix+"_OUTPUT")), 0600); err != nil {
+				panic(err)
+			}
+		} else {
+			fmt.Fprint(os.Stdout, os.Getenv(prefix+"_OUTPUT"))
+		}
+		if prefix == "TEST_SSH" && os.Getenv("TEST_SSH_KNOWN_HOSTS") != "" {
+			if err := os.WriteFile("known_hosts", []byte(os.Getenv("TEST_SSH_KNOWN_HOSTS")), 0600); err != nil {
+				panic(err)
+			}
+		}
+		if parsed, err := strconv.Atoi(os.Getenv(prefix + "_EXIT")); err == nil {
+			code = parsed
 		}
 	}
 	if path := os.Getenv(prefix + "_ENV_LOG"); path != "" {

@@ -24,7 +24,7 @@ func run(command *exec.Cmd) {
 	}
 }
 
-// main emulates Podman and SSH subprocess transport for live update interception tests.
+// main emulates the executable, its machine queries, and SSH subprocess transport for live update interception tests.
 func main() {
 	name := strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe")
 	if name == "ssh" {
@@ -44,22 +44,19 @@ func main() {
 		fmt.Print("transport-ok")
 		return
 	}
-	if name == "podman" {
-		// Model Podman's child SSH lookup, preserving remote command arguments.
-		args := append([]string{"-i", "machine key with spaces", "-p", "54321", "core@127.0.0.1"}, os.Args[4:]...)
-		run(exec.Command("ssh", args...))
-		return
-	}
 	if len(os.Args) > 1 && os.Args[1] == "forward" {
 		run(exec.Command("ssh", os.Args[2:]...))
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "windows" {
+		// Model the Windows preflight's machine queries: the executable's own ssh client with the
+		// machine's identity, port, and user and a private known_hosts file, which the readiness
+		// injection must leave alone although it names the same known_hosts option.
 		for _, query := range [][]string{{"id", "-u"}, {"cat", "/sys/fs/cgroup/cgroup.controllers"}, {"test", "-e", "/etc/wsl.conf"}} {
-			args := append([]string{"machine", "ssh", "podman-machine-default"}, query...)
-			out, err := exec.Command("podman", args...).CombinedOutput()
+			args := append([]string{"-F", "none", "-o", "UserKnownHostsFile=known_hosts", "-i", "machine key with spaces", "-p", "54321", "core@localhost"}, query...)
+			out, err := exec.Command("ssh", args...).CombinedOutput()
 			if err != nil {
-				fmt.Printf("step 2: podman %s: %v: %s", strings.Join(args, " "), err, out)
+				fmt.Printf("step 2: ssh %s: %v: %s", strings.Join(args, " "), err, out)
 				os.Exit(1)
 			}
 			fmt.Print(string(out))

@@ -1,11 +1,14 @@
 // Package capture runs a child process and delivers its standard output and standard error to
-// writers through handles on which every descendant can complete its writes.
+// writers through handles on which the child and the descendants that inherit them can complete
+// their writes.
 //
 // On Linux the package assigns the writers to the command, as exec.Cmd does. On Windows the
-// streams pass through named pipes opened for overlapped I/O: the inbox Windows OpenSSH client,
-// which podman machine ssh starts with the handles it inherited, waits for the asynchronous
-// completion of each write and blocks for ever on a pipe or file that the parent created without
-// FILE_FLAG_OVERLAPPED, as Go's exec and os.Create do (ADR-0008).
+// streams pass through named pipes opened for overlapped I/O: the inbox Windows OpenSSH client
+// waits for the asynchronous completion of each write and blocks for ever on a pipe or file that
+// its parent created without FILE_FLAG_OVERLAPPED, as Go's exec and os.Create do (ADR-0008). The
+// handles reach only the processes that inherit them: a program in between that creates its own
+// pipes for its child, as podman machine ssh does for the client, is not covered, which is why the
+// preflight starts the client itself.
 package capture
 
 import (

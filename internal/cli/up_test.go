@@ -108,8 +108,16 @@ func runUpExecutable(t *testing.T, f *fixture, args ...string) (int, string, [][
 	if err != nil {
 		t.Fatal(err)
 	}
+	environment := map[string]string{"TEST_UP_EXECUTABLE": "1", "TEST_UP_ARGS": string(arguments), "TEST_UP_FILES": string(files), "TEST_UP_PLATFORM": f.host.Platform, "TEST_PODMAN_RESPONSES": string(responses)}
+	if f.sshResponses != nil {
+		scripted, err := json.Marshal(f.sshResponses)
+		if err != nil {
+			t.Fatal(err)
+		}
+		environment["TEST_SSH_RESPONSES"] = string(scripted)
+	}
 	command := exec.Command(program, "-test.run=^TestUpExecutableBoundary$")
-	command.Env = testutil.Env(os.Environ(), map[string]string{"TEST_UP_EXECUTABLE": "1", "TEST_UP_ARGS": string(arguments), "TEST_UP_FILES": string(files), "TEST_UP_PLATFORM": f.host.Platform, "TEST_PODMAN_RESPONSES": string(responses)})
+	command.Env = testutil.Env(os.Environ(), environment)
 	output, err := command.CombinedOutput()
 	status := 0
 	if err != nil {
@@ -378,7 +386,7 @@ func TestUpBindsWorkspaceWhenTempRootIsMissing(t *testing.T) {
 // TestWindowsUnboundUpAcceptsCustomAutomount proves a volume-only sandbox keeps the preflight-selected connection even with a custom WSL automount root through RunWithHost and all fake Podman argv.
 func TestWindowsUnboundUpAcceptsCustomAutomount(t *testing.T) {
 	f := windowsHost(t)
-	f.responses[windowsAutomountRead] = response{Output: "[automount]\nroot=/custom/drives/\n"}
+	f.sshResponses[windowsAutomountRead] = response{Output: "[automount]\nroot=/custom/drives/\n"}
 	scriptNewSandbox(t, f, "default", "agent01")
 	status, output, calls := f.run(t, "up", "agent01")
 	if status != 0 {
@@ -458,8 +466,10 @@ func TestUpVerifiesRunningStateAfterStart(t *testing.T) {
 				if err := mountBoundaryError(calls, name, ""); err != nil {
 					t.Fatal(err)
 				}
-				if calls := testutil.Invocations(t, f.fakes.SSHLog); len(calls) != 0 {
-					t.Fatalf("unexpected host SSH calls: %v", calls)
+				for _, call := range f.sshCalls(t) {
+					if machineArgv(call) == nil {
+						t.Fatalf("unexpected host SSH call beyond the machine queries: %v", call)
+					}
 				}
 			})
 		}

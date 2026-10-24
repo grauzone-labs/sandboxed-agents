@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,24 +28,83 @@ func windowsHost(t *testing.T) *fixture {
 		"--connection chosen " + portInventory:      {Output: "[]"},
 		"--version":                                 {Output: "podman version 4.7.0"},
 		"machine list --format json":                {Output: `[{"Name":"chosen","Default":true,"VMType":"wsl"}]`},
-		"machine inspect chosen":                    {Output: `[{"Name":"chosen","State":"running","Rootful":false}]`},
+		"machine inspect chosen":                    {Output: machineInspectAnswer},
 		"--connection chosen version --format json": {Output: `{"Client":{"Version":"4.7.0"},"Server":{"Version":"4.7.0"}}`},
 		"--connection chosen info --format json":    {Output: `{"host":{"security":{"rootless":true},"cgroupVersion":"v2"}}`},
-		"machine ssh chosen id -u":                  {Output: "1000\n"},
-		"machine ssh chosen cat /proc/self/cgroup":  {Output: "0::/user.slice/user-1000.slice/session-1.scope\n"},
-		windowsControllerRead:                       {Output: "cpu memory pids"},
-		windowsSubtreeRead:                          {Output: "cpu memory pids"},
-		windowsAutomountExists:                      {},
-		windowsAutomountRead:                        {Output: ""},
 		toolRestoreCall:                             {},
 		toolListCall:                                {Output: "[]\n"},
+	}
+	f.sshResponses = map[string]response{
+		windowsUIDRead:         {Output: "1000\n"},
+		windowsCgroupRead:      {Output: "0::/user.slice/user-1000.slice/session-1.scope\n"},
+		windowsControllerRead:  {Output: "cpu memory pids"},
+		windowsSubtreeRead:     {Output: "cpu memory pids"},
+		windowsAutomountExists: {},
+		windowsAutomountRead:   {Output: ""},
 	}
 	return f
 }
 
+// machineIdentity is the selected machine's inspected identity file; its spaces prove the path
+// travels as one argument.
+const machineIdentity = `C:\machine key with spaces\machine`
+
+// machineInspectAnswer is the fake inspect answer of a running rootless machine with its SSH
+// configuration, as Podman reports it.
+const machineInspectAnswer = `[{"Name":"chosen","State":"running","Rootful":false,"SSHConfig":{"IdentityPath":"C:\\machine key with spaces\\machine","Port":54321,"RemoteUsername":"core"}}]`
+
+// machineQueryPrefix matches the host ssh invocation of one machine query up to its remote
+// command: any client options, then the inspected identity, port, and user.
+const machineQueryPrefix = "* -i " + machineIdentity + " -p 54321 core@localhost "
+
+// windowsUIDRead and windowsCgroupRead name the delegation discovery queries inside the machine.
+const windowsUIDRead = machineQueryPrefix + "id -u"
+const windowsCgroupRead = machineQueryPrefix + "cat /proc/self/cgroup"
+
 // windowsControllerRead names the read-only delegated controller query.
-const windowsControllerRead = "machine ssh chosen cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers"
-const windowsSubtreeRead = "machine ssh chosen cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.subtree_control"
+const windowsControllerRead = machineQueryPrefix + "cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers"
+const windowsSubtreeRead = machineQueryPrefix + "cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.subtree_control"
+
+// machineQueryOptions are the client options every machine query carries: no user configuration,
+// a private known_hosts file in the query directory that pins the machine's Ed25519 key on first
+// contact and refuses a changed key, no agent, no terminal, and a quiet client.
+var machineQueryOptions = []string{"-F", "none", "-o", "BatchMode=yes", "-o", "RequestTTY=no", "-o", "StrictHostKeyChecking=accept-new", "-o", "UpdateHostKeys=no", "-o", "UserKnownHostsFile=known_hosts", "-o", "GlobalKnownHostsFile=none", "-o", "HostKeyAlgorithms=ssh-ed25519", "-o", "IdentityAgent=none", "-o", "IdentitiesOnly=yes", "-o", "CheckHostIP=no", "-o", "LogLevel=ERROR", "-o", "SetEnv=LC_ALL="}
+
+// machineArgv returns the remote command of a recorded host ssh call that addresses the fixture's
+// machine with the expected options, identity, port, and user, or nil for any other call.
+func machineArgv(call []string) []string {
+	destination := slices.Index(call, "core@localhost")
+	if destination < 0 {
+		return nil
+	}
+	expected := append(append([]string{}, machineQueryOptions...), "-i", machineIdentity, "-p", "54321", "core@localhost")
+	if !reflect.DeepEqual(call[:destination+1], expected) {
+		return nil
+	}
+	return call[destination+1:]
+}
+
+// machineQueryCalls returns the remote commands of every recorded machine query, in order.
+func machineQueryCalls(t *testing.T, f *fixture) [][]string {
+	t.Helper()
+	var queries [][]string
+	for _, call := range f.sshCalls(t) {
+		if argv := machineArgv(call); argv != nil {
+			queries = append(queries, argv)
+		}
+	}
+	return queries
+}
+
+// noMachineSSHThroughPodman rejects any Podman call that runs a command inside the machine.
+func noMachineSSHThroughPodman(t *testing.T, calls [][]string) {
+	t.Helper()
+	for _, call := range calls {
+		if len(call) > 1 && call[0] == "machine" && call[1] == "ssh" {
+			t.Fatalf("machine command through podman machine ssh: %v", call)
+		}
+	}
+}
 
 // TestWindowsDelegationRequiresEnabledSubtreeControllers proves machine controllers must also be enabled and failed subtree reads identify their path through RunWithHost and fake machine SSH processes.
 func TestWindowsDelegationRequiresEnabledSubtreeControllers(t *testing.T) {
@@ -59,7 +119,7 @@ func TestWindowsDelegationRequiresEnabledSubtreeControllers(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := windowsHost(t)
-			f.responses[windowsSubtreeRead] = tc.value
+			f.sshResponses[windowsSubtreeRead] = tc.value
 			status, output, calls := f.run(t, "check")
 			if status != tc.status || !strings.Contains(output, tc.message) {
 				t.Fatalf("status=%d output=%q; want status=%d message=%q", status, output, tc.status, tc.message)
@@ -72,22 +132,23 @@ func TestWindowsDelegationRequiresEnabledSubtreeControllers(t *testing.T) {
 	}
 }
 
-const windowsAutomountRead = "machine ssh chosen cat /etc/wsl.conf"
-const windowsAutomountExists = "machine ssh chosen test -e /etc/wsl.conf"
+const windowsAutomountRead = machineQueryPrefix + "cat /etc/wsl.conf"
+const windowsAutomountExists = machineQueryPrefix + "test -e /etc/wsl.conf"
 
 // TestWindowsAbsentAutomountFileUsesDefaultWithoutRead proves an absent wsl.conf defaults to /mnt/ after an existence check without a read through RunWithHost and fake Podman processes.
 func TestWindowsAbsentAutomountFileUsesDefaultWithoutRead(t *testing.T) {
 	f := windowsHost(t)
-	f.responses[windowsAutomountExists] = response{Exit: 1}
+	f.sshResponses[windowsAutomountExists] = response{Exit: 1}
 	status, output, calls := f.run(t, "check")
 	if status != 0 || !strings.Contains(output, "machine chosen automount root /mnt/") {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
+	noMachineSSHThroughPodman(t, calls)
 	existenceQueries := 0
-	for _, call := range calls {
-		if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "test", "-e", "/etc/wsl.conf"}) {
+	for _, call := range f.sshCalls(t) {
+		if reflect.DeepEqual(machineArgv(call), []string{"test", "-e", "/etc/wsl.conf"}) {
 			existenceQueries++
-		} else if len(call) > 3 && call[0] == "machine" && call[1] == "ssh" && (call[3] == "sh" || reflect.DeepEqual(call[3:], []string{"cat", "/etc/wsl.conf"})) {
+		} else if argv := machineArgv(call); len(argv) > 0 && (argv[0] == "sh" || reflect.DeepEqual(argv, []string{"cat", "/etc/wsl.conf"})) {
 			t.Fatalf("absent configuration was read: %v", call)
 		}
 	}
@@ -100,17 +161,18 @@ func TestWindowsAbsentAutomountFileUsesDefaultWithoutRead(t *testing.T) {
 // TestWindowsAbsentAutomountFileIgnoresStderrWarning proves exit status 1 with empty stdout still defaults without reading despite stderr warnings through RunWithHost and fake Podman processes.
 func TestWindowsAbsentAutomountFileIgnoresStderrWarning(t *testing.T) {
 	f := windowsHost(t)
-	f.responses[windowsAutomountExists] = response{Stderr: "logrus warning\n", Exit: 1}
+	f.sshResponses[windowsAutomountExists] = response{Stderr: "logrus warning\n", Exit: 1}
 	status, output, calls := f.run(t, "check")
 	if status != 0 || !strings.Contains(output, "machine chosen automount root /mnt/") {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
+	noMachineSSHThroughPodman(t, calls)
 	existenceQueries := 0
-	for _, call := range calls {
-		if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "test", "-e", "/etc/wsl.conf"}) {
+	for _, call := range f.sshCalls(t) {
+		if reflect.DeepEqual(machineArgv(call), []string{"test", "-e", "/etc/wsl.conf"}) {
 			existenceQueries++
 		}
-		if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "cat", "/etc/wsl.conf"}) {
+		if reflect.DeepEqual(machineArgv(call), []string{"cat", "/etc/wsl.conf"}) {
 			t.Fatalf("absent configuration was read: %v", calls)
 		}
 	}
@@ -126,14 +188,14 @@ func TestWindowsAutomountExistenceFailureStopsWork(t *testing.T) {
 		for _, args := range [][]string{{"check"}, {"build"}, {"up", "demo"}} {
 			t.Run(strings.Join(args, "-")+"-"+strconv.Itoa(code), func(t *testing.T) {
 				f := windowsHost(t)
-				f.responses[windowsAutomountExists] = response{Output: "transport unavailable", Exit: code}
+				f.sshResponses[windowsAutomountExists] = response{Output: "transport unavailable", Exit: code}
 				status, output, calls := f.run(t, args...)
 				if status != 1 || !strings.Contains(output, "automount root") || !strings.Contains(output, "chosen") || !strings.Contains(output, "transport unavailable") {
 					t.Fatalf("status=%d output=%q", status, output)
 				}
-				for _, call := range calls {
-					if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "cat", "/etc/wsl.conf"}) {
-						t.Fatalf("configuration read after failed existence query: %v", calls)
+				for _, call := range f.sshCalls(t) {
+					if reflect.DeepEqual(machineArgv(call), []string{"cat", "/etc/wsl.conf"}) {
+						t.Fatalf("configuration read after failed existence query: %v", call)
 					}
 				}
 				noMutation(t, calls)
@@ -174,7 +236,7 @@ func TestWindowsAutomountConfigFailureStopsWork(t *testing.T) {
 	for _, config := range []string{"[automount]\nroot = \n", "[automount\nroot=/custom/\n", "\x00"} {
 		t.Run(config, func(t *testing.T) {
 			f := windowsHost(t)
-			f.responses[windowsAutomountRead] = response{Output: config}
+			f.sshResponses[windowsAutomountRead] = response{Output: config}
 			status, output, calls := f.run(t, "up", "demo")
 			if status != 1 || !strings.Contains(output, "automount root") || !strings.Contains(output, "chosen") {
 				t.Fatalf("status=%d output=%q", status, output)
@@ -214,13 +276,13 @@ func TestWindowsPreflightMissingPrerequisites(t *testing.T) {
 			f.responses["--connection chosen info --format json"] = response{Output: `{"host":{"security":{"rootless":true},"cgroupVersion":"v1"}}`}
 		}},
 		{"machine-cpu", "delegated cgroup cpu controller", func(t *testing.T, f *fixture) {
-			f.responses[windowsControllerRead] = response{Output: "memory pids"}
+			f.sshResponses[windowsControllerRead] = response{Output: "memory pids"}
 		}},
 		{"machine-memory", "delegated cgroup memory controller", func(t *testing.T, f *fixture) {
-			f.responses[windowsControllerRead] = response{Output: "cpu pids"}
+			f.sshResponses[windowsControllerRead] = response{Output: "cpu pids"}
 		}},
 		{"machine-pids", "delegated cgroup pids controller", func(t *testing.T, f *fixture) {
-			f.responses[windowsControllerRead] = response{Output: "cpu memory"}
+			f.sshResponses[windowsControllerRead] = response{Output: "cpu memory"}
 		}},
 		{"podman", "podman is required on PATH", func(t *testing.T, f *fixture) { os.Remove(fakePath(f, "podman")) }},
 		{"ssh", "ssh is required on PATH", func(t *testing.T, f *fixture) { os.Remove(fakePath(f, "ssh")) }},
@@ -297,19 +359,24 @@ func TestWindowsQueriesFailClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name, key string
 		value     response
+		ssh       bool
 	}{
-		{"list-failed", "machine list --format json", response{Exit: 125}},
-		{"list-malformed", "machine list --format json", response{Output: "{"}},
-		{"multiple-defaults", "machine list --format json", response{Output: `[{"Name":"one","Default":true},{"Name":"two","Default":true}]`}},
-		{"inspect-failed", "machine inspect chosen", response{Exit: 125}},
-		{"inspect-malformed", "machine inspect chosen", response{Output: "{"}},
-		{"server-missing", "--connection chosen version --format json", response{Output: `{"Client":{"Version":"9.0.0"}}`}},
-		{"server-failed", "--connection chosen version --format json", response{Exit: 125}},
-		{"controllers-failed", windowsControllerRead, response{Exit: 125}},
+		{"list-failed", "machine list --format json", response{Exit: 125}, false},
+		{"list-malformed", "machine list --format json", response{Output: "{"}, false},
+		{"multiple-defaults", "machine list --format json", response{Output: `[{"Name":"one","Default":true},{"Name":"two","Default":true}]`}, false},
+		{"inspect-failed", "machine inspect chosen", response{Exit: 125}, false},
+		{"inspect-malformed", "machine inspect chosen", response{Output: "{"}, false},
+		{"server-missing", "--connection chosen version --format json", response{Output: `{"Client":{"Version":"9.0.0"}}`}, false},
+		{"server-failed", "--connection chosen version --format json", response{Exit: 125}, false},
+		{"controllers-failed", windowsControllerRead, response{Exit: 125}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := windowsHost(t)
-			f.responses[tc.key] = tc.value
+			if tc.ssh {
+				f.sshResponses[tc.key] = tc.value
+			} else {
+				f.responses[tc.key] = tc.value
+			}
 			status, output, calls := f.run(t, "up", "demo")
 			if status != 1 || !strings.Contains(output, "step 2:") {
 				t.Fatalf("status=%d output=%q", status, output)
@@ -319,26 +386,49 @@ func TestWindowsQueriesFailClosed(t *testing.T) {
 	}
 }
 
-// TestWindowsMachineQueryWithoutAnswerFailsWithinBound proves a machine SSH query whose
-// transport never answers fails the preflight within the query bound, naming the query and the
-// exceeded deadline, instead of stalling the command, through RunWithHost and a fake Podman that
-// waits for a rendezvous file that never appears.
+// TestWindowsMachineQueryWithoutAnswerFailsWithinBound proves a machine query whose ssh client
+// never answers fails the preflight within the query bound, naming the query and the exceeded
+// deadline, instead of stalling the command, through RunWithHost and a fake ssh that waits for a
+// rendezvous file that never appears.
 func TestWindowsMachineQueryWithoutAnswerFailsWithinBound(t *testing.T) {
 	defer cli.SetMachineQueryTimeout(300 * time.Millisecond)()
 	f := windowsHost(t)
-	f.responses["machine ssh chosen id -u"] = response{Output: "1000\n", WaitFor: filepath.Join(t.TempDir(), "never")}
+	f.sshResponses[windowsUIDRead] = response{Output: "1000\n", WaitFor: filepath.Join(t.TempDir(), "never")}
 	start := time.Now()
 	status, output, calls := f.run(t, "check")
 	elapsed := time.Since(start)
 	if status != 1 || elapsed > 5*time.Second {
 		t.Fatalf("status=%d after %v output=%q", status, elapsed, output)
 	}
-	if !strings.Contains(output, "podman machine ssh chosen id -u: context deadline exceeded") {
+	if !strings.Contains(output, "machine chosen: ssh id -u: context deadline exceeded") {
 		t.Fatalf("output lacks the bounded query failure: %q", output)
 	}
 	for _, requirement := range requiredControllerRequirements() {
 		if !strings.Contains(output, requirement) {
 			t.Fatalf("output lacks %q after the unanswered query: %q", requirement, output)
+		}
+	}
+	noMutation(t, calls)
+}
+
+// TestWindowsAutomountExistenceTimeoutIsNotAbsence proves an existence query whose client the
+// query bound stops, which also ends with exit status 1 and no output, fails the automount read
+// with the exceeded deadline instead of defaulting to /mnt/, through RunWithHost and a fake ssh
+// that waits for a rendezvous file that never appears.
+func TestWindowsAutomountExistenceTimeoutIsNotAbsence(t *testing.T) {
+	defer cli.SetMachineQueryTimeout(300 * time.Millisecond)()
+	f := windowsHost(t)
+	f.sshResponses[windowsAutomountExists] = response{Exit: 1, WaitFor: filepath.Join(t.TempDir(), "never")}
+	status, output, calls := f.run(t, "check")
+	if status != 1 || strings.Contains(output, "automount root /mnt/") {
+		t.Fatalf("status=%d output=%q; a stopped existence query must not default the root", status, output)
+	}
+	if !strings.Contains(output, `read automount root for machine "chosen"`) || !strings.Contains(output, "test -e /etc/wsl.conf: context deadline exceeded") {
+		t.Fatalf("output lacks the bounded existence query failure: %q", output)
+	}
+	for _, call := range f.sshCalls(t) {
+		if reflect.DeepEqual(machineArgv(call), []string{"cat", "/etc/wsl.conf"}) {
+			t.Fatalf("configuration read after a stopped existence query: %v", call)
 		}
 	}
 	noMutation(t, calls)
@@ -354,44 +444,136 @@ func requiredControllerRequirements() []string {
 	return requirements
 }
 
-// TestWindowsControllerQueriesUseSimpleMachineCommands proves delegation discovery uses simple machine-named read-only argv through RunWithHost and fake Podman.
+// TestWindowsControllerQueriesUseSimpleMachineCommands proves delegation discovery uses simple read-only argv inside the machine, each one host ssh call, through RunWithHost, fake Podman, and fake ssh.
 func TestWindowsControllerQueriesUseSimpleMachineCommands(t *testing.T) {
 	f := windowsHost(t)
 	status, output, calls := f.run(t, "check")
 	if status != 0 {
 		t.Fatalf("status=%d output=%q", status, output)
 	}
-	queries := 0
+	noMachineSSHThroughPodman(t, calls)
 	var delegationQueries [][]string
 	automountExistenceQueries, automountReadQueries := 0, 0
-	for _, call := range calls {
-		if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "test", "-e", "/etc/wsl.conf"}) {
+	for _, argv := range machineQueryCalls(t, f) {
+		if reflect.DeepEqual(argv, []string{"test", "-e", "/etc/wsl.conf"}) {
 			automountExistenceQueries++
 			continue
 		}
-		if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "cat", "/etc/wsl.conf"}) {
+		if reflect.DeepEqual(argv, []string{"cat", "/etc/wsl.conf"}) {
 			automountReadQueries++
 			continue
 		}
-		if len(call) > 2 && call[0] == "machine" && call[1] == "ssh" {
-			queries++
-			delegationQueries = append(delegationQueries, call)
-			if len(call) != 5 || (call[3] != "id" && call[3] != "cat") {
-				t.Fatalf("unexpected delegation argv: %v", call)
-			}
+		delegationQueries = append(delegationQueries, argv)
+		if len(argv) != 2 || (argv[0] != "id" && argv[0] != "cat") {
+			t.Fatalf("unexpected delegation argv: %v", argv)
 		}
 	}
-	if queries != 4 {
-		t.Fatalf("queries=%d calls=%v", queries, calls)
-	}
-	expectedDelegation := [][]string{{"machine", "ssh", "chosen", "id", "-u"}, {"machine", "ssh", "chosen", "cat", "/proc/self/cgroup"}, strings.Fields(windowsControllerRead), strings.Fields(windowsSubtreeRead)}
+	expectedDelegation := [][]string{{"id", "-u"}, {"cat", "/proc/self/cgroup"}, {"cat", "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers"}, {"cat", "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.subtree_control"}}
 	if !reflect.DeepEqual(delegationQueries, expectedDelegation) {
 		t.Fatalf("delegation queries=%v; want %v", delegationQueries, expectedDelegation)
 	}
 	if automountExistenceQueries != 1 || automountReadQueries != 1 {
-		t.Fatalf("automount existence queries=%d read queries=%d calls=%v", automountExistenceQueries, automountReadQueries, calls)
+		t.Fatalf("automount existence queries=%d read queries=%d", automountExistenceQueries, automountReadQueries)
 	}
 	noMutation(t, calls)
+}
+
+// TestWindowsMachineQueriesRunTheHostSSHClientDirectly proves check answers its six machine
+// queries through the host's ssh client started by the executable itself, with the identity,
+// port, and user that podman machine inspect reported and one private known_hosts directory for
+// the whole preflight that is gone afterwards, and never through podman machine ssh, through
+// RunWithHost, fake Podman, and fake ssh.
+func TestWindowsMachineQueriesRunTheHostSSHClientDirectly(t *testing.T) {
+	f := windowsHost(t)
+	directories := filepath.Join(t.TempDir(), "ssh-directories.jsonl")
+	t.Setenv("TEST_SSH_CWD_LOG", directories)
+	status, output, calls := f.run(t, "check")
+	if status != 0 || !strings.Contains(output, "host prerequisites satisfied") {
+		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
+	}
+	noMachineSSHThroughPodman(t, calls)
+	sshCalls := f.sshCalls(t)
+	expected := [][]string{{"id", "-u"}, {"cat", "/proc/self/cgroup"}, {"cat", "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers"}, {"cat", "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.subtree_control"}, {"test", "-e", "/etc/wsl.conf"}, {"cat", "/etc/wsl.conf"}}
+	if len(sshCalls) != len(expected) {
+		t.Fatalf("ssh calls=%v; want %d machine queries", sshCalls, len(expected))
+	}
+	for i, call := range sshCalls {
+		if argv := machineArgv(call); !reflect.DeepEqual(argv, expected[i]) {
+			t.Fatalf("ssh call %d=%v; want machine query %v with the inspected identity, port, and user", i, call, expected[i])
+		}
+	}
+	data, err := os.ReadFile(directories)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != len(expected) {
+		t.Fatalf("ssh working directories=%v; want one per query", lines)
+	}
+	for _, line := range lines {
+		if line != lines[0] {
+			t.Fatalf("machine queries used different known_hosts directories: %v", lines)
+		}
+	}
+	if _, err := os.Stat(lines[0]); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("private known_hosts directory %q remains after the preflight: %v", lines[0], err)
+	}
+	noMutation(t, calls)
+}
+
+// TestWindowsMachineQueryOutsideTheScriptFailsTheFixture proves the fake ssh refuses a machine
+// query whose argv the fixture did not script, here one with a port the inspect answer changed,
+// with exit status 125 that the preflight reports, so a changed client command line cannot pass
+// unnoticed; the readiness probe's environment-driven answer beside such scripts is covered by
+// the Windows update tests. Exercised through RunWithHost, fake Podman, and fake ssh.
+func TestWindowsMachineQueryOutsideTheScriptFailsTheFixture(t *testing.T) {
+	f := windowsHost(t)
+	f.responses["machine inspect chosen"] = response{Output: strings.Replace(machineInspectAnswer, `"Port":54321`, `"Port":54322`, 1)}
+	status, output, calls := f.run(t, "check")
+	if status != 1 || !strings.Contains(output, "unscripted fake call") || !strings.Contains(output, "machine chosen: ssh id -u: exit status 125") {
+		t.Fatalf("status=%d output=%q", status, output)
+	}
+	if queries := machineQueryCalls(t, f); len(queries) != 0 {
+		t.Fatalf("calls with the scripted port were recorded: %v", queries)
+	}
+	noMutation(t, calls)
+}
+
+// TestWindowsInvalidMachineSSHConfigurationFailsWithoutSSH proves a selected machine whose
+// inspected SSH configuration is missing or unsafe fails the preflight naming that
+// configuration, leaves the controller and automount facts unverified, and starts no ssh,
+// through RunWithHost, fake Podman, and fake ssh.
+func TestWindowsInvalidMachineSSHConfigurationFailsWithoutSSH(t *testing.T) {
+	for _, tc := range []struct{ name, inspect string }{
+		{"absent", `[{"Name":"chosen","State":"running","Rootful":false}]`},
+		{"port-zero", `[{"Name":"chosen","State":"running","Rootful":false,"SSHConfig":{"IdentityPath":"C:\\keys\\machine","Port":0,"RemoteUsername":"core"}}]`},
+		{"port-range", `[{"Name":"chosen","State":"running","Rootful":false,"SSHConfig":{"IdentityPath":"C:\\keys\\machine","Port":70000,"RemoteUsername":"core"}}]`},
+		{"user-destination", `[{"Name":"chosen","State":"running","Rootful":false,"SSHConfig":{"IdentityPath":"C:\\keys\\machine","Port":54321,"RemoteUsername":"core@evil"}}]`},
+		{"user-empty", `[{"Name":"chosen","State":"running","Rootful":false,"SSHConfig":{"IdentityPath":"C:\\keys\\machine","Port":54321,"RemoteUsername":""}}]`},
+		{"identity-empty", `[{"Name":"chosen","State":"running","Rootful":false,"SSHConfig":{"IdentityPath":"","Port":54321,"RemoteUsername":"core"}}]`},
+		{"identity-option", `[{"Name":"chosen","State":"running","Rootful":false,"SSHConfig":{"IdentityPath":"-oProxyCommand=evil","Port":54321,"RemoteUsername":"core"}}]`},
+		{"identity-relative", `[{"Name":"chosen","State":"running","Rootful":false,"SSHConfig":{"IdentityPath":"keys\\machine","Port":54321,"RemoteUsername":"core"}}]`},
+		{"identity-line-break", `[{"Name":"chosen","State":"running","Rootful":false,"SSHConfig":{"IdentityPath":"C:\\keys\\ma\nchine","Port":54321,"RemoteUsername":"core"}}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := windowsHost(t)
+			f.responses["machine inspect chosen"] = response{Output: tc.inspect}
+			status, output, calls := f.run(t, "check")
+			if status != 1 || !strings.Contains(output, `machine "chosen" SSH configuration`) {
+				t.Fatalf("status=%d output=%q", status, output)
+			}
+			for _, requirement := range append(requiredControllerRequirements(), `read automount root for machine "chosen"`) {
+				if !strings.Contains(output, requirement) || !strings.Contains(output, "cannot verify") {
+					t.Fatalf("output lacks %q as unverified: %q", requirement, output)
+				}
+			}
+			if sshCalls := f.sshCalls(t); len(sshCalls) != 0 {
+				t.Fatalf("ssh started with an unsafe machine configuration: %v", sshCalls)
+			}
+			noMachineSSHThroughPodman(t, calls)
+			noMutation(t, calls)
+		})
+	}
 }
 
 // TestWindowsPreflightReportsMissingPodmanDependencies proves a missing client reports every dependent Windows prerequisite as unverifiable without querying or starting a machine through RunWithHost.
@@ -484,7 +666,7 @@ func TestWindowsFailedInfoReportsUnverifiedPrerequisites(t *testing.T) {
 // TestWindowsCheckReportsCustomAutomountRoot proves a selected machine's configured root is recorded and reported without refusal through RunWithHost and fake Podman.
 func TestWindowsCheckReportsCustomAutomountRoot(t *testing.T) {
 	f := windowsHost(t)
-	f.responses[windowsAutomountRead] = response{Output: "[automount]\nroot = /custom/drives/\n"}
+	f.sshResponses[windowsAutomountRead] = response{Output: "[automount]\nroot = /custom/drives/\n"}
 	status, output, calls := f.run(t, "check")
 	if status != 0 || !strings.Contains(output, "machine chosen automount root /custom/drives/") {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
@@ -497,18 +679,18 @@ func TestWindowsCheckReportsDefaultAutomountRoot(t *testing.T) {
 	for _, config := range []string{"", "[automount]\nenabled = true\n", "[network]\nroot=/unrelated/\n"} {
 		t.Run(config, func(t *testing.T) {
 			f := windowsHost(t)
-			f.responses[windowsAutomountRead] = response{Output: config}
+			f.sshResponses[windowsAutomountRead] = response{Output: config}
 			status, output, calls := f.run(t, "check")
 			if status != 0 || !strings.Contains(output, "machine chosen automount root /mnt/") {
 				t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 			}
 			var rootQueries [][]string
-			for _, call := range calls {
-				if reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "test", "-e", "/etc/wsl.conf"}) || reflect.DeepEqual(call, []string{"machine", "ssh", "chosen", "cat", "/etc/wsl.conf"}) {
-					rootQueries = append(rootQueries, call)
+			for _, call := range f.sshCalls(t) {
+				if argv := machineArgv(call); reflect.DeepEqual(argv, []string{"test", "-e", "/etc/wsl.conf"}) || reflect.DeepEqual(argv, []string{"cat", "/etc/wsl.conf"}) {
+					rootQueries = append(rootQueries, argv)
 				}
 			}
-			expected := [][]string{{"machine", "ssh", "chosen", "test", "-e", "/etc/wsl.conf"}, {"machine", "ssh", "chosen", "cat", "/etc/wsl.conf"}}
+			expected := [][]string{{"test", "-e", "/etc/wsl.conf"}, {"cat", "/etc/wsl.conf"}}
 			if !reflect.DeepEqual(rootQueries, expected) {
 				t.Fatalf("automount queries=%v; want %v", rootQueries, expected)
 			}
@@ -522,7 +704,7 @@ func TestWindowsExistingAutomountFileReadFailureStopsWork(t *testing.T) {
 	for _, args := range [][]string{{"check"}, {"build"}, {"up", "demo"}} {
 		t.Run(strings.Join(args, "-"), func(t *testing.T) {
 			f := windowsHost(t)
-			f.responses[windowsAutomountRead] = response{Output: "cat: /etc/wsl.conf: Permission denied", Exit: 1}
+			f.sshResponses[windowsAutomountRead] = response{Output: "cat: /etc/wsl.conf: Permission denied", Exit: 1}
 			status, output, calls := f.run(t, args...)
 			if status != 1 || !strings.Contains(output, "automount root") || !strings.Contains(output, "chosen") || !strings.Contains(output, "Permission denied") {
 				t.Fatalf("status=%d output=%q", status, output)
@@ -537,7 +719,7 @@ func TestWindowsAutomountQueryFailureStopsWork(t *testing.T) {
 	for _, args := range [][]string{{"check"}, {"build"}, {"up", "demo"}} {
 		t.Run(strings.Join(args, "-"), func(t *testing.T) {
 			f := windowsHost(t)
-			f.responses[windowsAutomountRead] = response{Output: "transport unavailable", Exit: 125}
+			f.sshResponses[windowsAutomountRead] = response{Output: "transport unavailable", Exit: 125}
 			status, output, calls := f.run(t, args...)
 			if status != 1 || !strings.Contains(output, "automount root") || !strings.Contains(output, "chosen") || !strings.Contains(output, "transport unavailable") {
 				t.Fatalf("status=%d output=%q", status, output)
