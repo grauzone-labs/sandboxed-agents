@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +43,10 @@ func TestReadinessRetriesOnlyPendingProbes(t *testing.T) {
 					if err := os.WriteFile(filepath.Join(cmd.Dir, "known_hosts"), []byte(readinessHostKey), 0600); err != nil {
 						t.Fatal(err)
 					}
-					return []byte("debug1: SSH2_MSG_NEWKEYS received\n"), fmt.Errorf("authentication refused")
+					if err := os.WriteFile(filepath.Join(cmd.Dir, cmd.Args[slices.Index(cmd.Args, "-E")+1]), []byte("debug1: SSH2_MSG_NEWKEYS received\n"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					return nil, fmt.Errorf("authentication refused")
 				}
 				p := targetForHost((Host{}).defaults())
 				err := waitReadiness(context.Background(), p, "sandboxed-agents.default.demo", 2222, r)
@@ -103,7 +107,7 @@ func TestReadinessCancellationStopsProbes(t *testing.T) {
 	}
 }
 
-// TestSSHReadinessRequiresVerifiedEd25519Exchange proves a host key alone, debug lookalikes, wrong ports and malformed keys cannot pass through the SSH process boundary.
+// TestSSHReadinessRequiresVerifiedEd25519Exchange proves a host key alone, log lookalikes, wrong ports and malformed keys cannot pass through the SSH process boundary.
 func TestSSHReadinessRequiresVerifiedEd25519Exchange(t *testing.T) {
 	for _, tc := range []struct {
 		name, log, key string
@@ -128,13 +132,53 @@ func TestSSHReadinessRequiresVerifiedEd25519Exchange(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(directory, "known_hosts"), []byte(tc.key), 0600); err != nil {
 					t.Fatal(err)
 				}
-				return []byte(tc.log), fmt.Errorf("authentication failed")
+				if err := os.WriteFile(filepath.Join(cmd.Dir, cmd.Args[slices.Index(cmd.Args, "-E")+1]), []byte(tc.log), 0600); err != nil {
+					t.Fatal(err)
+				}
+				return nil, fmt.Errorf("authentication failed")
 			})
 			if (err == nil) != tc.ok {
 				t.Fatalf("error=%v wantOK=%v", err, tc.ok)
 			}
 			if _, err := os.Stat(directory); !os.IsNotExist(err) {
 				t.Fatalf("temporary directory remains: %v", err)
+			}
+		})
+	}
+}
+
+// TestSSHReadinessReadsExchangeLogFromClientFile proves the SSH probe recognizes the completed key exchange only through the log file the client writes itself (-E, named relative to the probe's temporary directory), never through the client's stdout or stderr, via the probeSSH process seam.
+func TestSSHReadinessReadsExchangeLogFromClientFile(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		logFile, pipe string
+		ok            bool
+	}{
+		{"log file", "debug1: SSH2_MSG_NEWKEYS received\n", "", true},
+		{"pipe only", "", "debug1: SSH2_MSG_NEWKEYS received\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := probeSSH(context.Background(), 2222, func(_ context.Context, cmd *exec.Cmd) ([]byte, error) {
+				index := slices.Index(cmd.Args, "-E")
+				if index < 0 || index+1 >= len(cmd.Args) {
+					t.Fatalf("no -E log file in %q", cmd.Args)
+				}
+				// Like known_hosts, the log is named relative to the probe directory so the
+				// command line holds no path to quote (ADR-0008).
+				logFile := cmd.Args[index+1]
+				if strings.ContainsAny(logFile, `/\`) {
+					t.Fatalf("log file %q is a path", logFile)
+				}
+				if err := os.WriteFile(filepath.Join(cmd.Dir, logFile), []byte(tc.logFile), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(cmd.Dir, "known_hosts"), []byte(readinessHostKey), 0600); err != nil {
+					t.Fatal(err)
+				}
+				return []byte(tc.pipe), fmt.Errorf("authentication refused")
+			})
+			if (err == nil) != tc.ok {
+				t.Fatalf("error=%v wantOK=%v", err, tc.ok)
 			}
 		})
 	}
