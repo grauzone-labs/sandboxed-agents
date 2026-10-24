@@ -34,4 +34,4 @@ Every test function (`func Test...`) has a comment that starts with the function
 
 ## Pull request reviews
 
-After pushing fixes for CodeRabbit findings on a pull request, comment on that pull request tagging `@coderabbitai`: name each finding fixed, give the fix commit's short SHA, and ask it to re-review the latest commit. Post the comment only once the fix is pushed and the pull request head matches it.
+Codex reviews every pull request: its summary comment lists a Code Review and a Security Review per head commit. A pull request merges only after both reviews have completed on its current head with no open suggestion. After pushing fixes for Codex findings, comment on that pull request with `@codex review`, and also `@codex security review` when a security finding was fixed: name each finding fixed and give the fix commit's short SHA. Post the comment only once the fix is pushed and the pull request head matches it.
