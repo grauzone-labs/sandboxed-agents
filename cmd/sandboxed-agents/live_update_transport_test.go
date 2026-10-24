@@ -12,7 +12,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
-// TestLiveUpdateFailurePreservesMachineSSH proves the live suite's readiness injection preserves nested Podman machine SSH through liveHost.cli and executable process fixtures.
+// TestLiveUpdateFailurePreservesMachineSSH proves the live suite's readiness injection passes the preflight's own machine SSH queries through unchanged, although they name the same known_hosts option, through liveHost.cli and executable process fixtures.
 func TestLiveUpdateFailurePreservesMachineSSH(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "transport path with spaces")
 	if err := os.Mkdir(dir, 0700); err != nil {
@@ -27,7 +27,7 @@ func TestLiveUpdateFailurePreservesMachineSSH(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"driver", "podman", "ssh"} {
+	for _, name := range []string{"driver", "ssh"} {
 		if err := os.WriteFile(filepath.Join(dir, name+suffix), data, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -52,7 +52,7 @@ func TestLiveUpdateFailurePreservesMachineSSH(t *testing.T) {
 			}
 			if platform == "windows" {
 				for i, query := range [][]string{{"id", "-u"}, {"cat", "/sys/fs/cgroup/cgroup.controllers"}, {"test", "-e", "/etc/wsl.conf"}} {
-					expected := append([]string{"-i", "machine key with spaces", "-p", "54321", "core@127.0.0.1"}, query...)
+					expected := append([]string{"-F", "none", "-o", "UserKnownHostsFile=known_hosts", "-i", "machine key with spaces", "-p", "54321", "core@localhost"}, query...)
 					if !slices.Equal(calls[i], expected) {
 						t.Fatalf("machine argv changed: %v", calls[i])
 					}

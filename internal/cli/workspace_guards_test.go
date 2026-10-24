@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -54,7 +55,7 @@ func TestWindowsWorkspaceRefusesCustomAutomountAfterPreflight(t *testing.T) {
 	scriptNewSandbox(t, f, "default", "agent01")
 	f.responses["--connection chosen image exists "+baseTag(t)] = response{Exit: 1}
 	f.responses["--connection chosen build *"] = response{}
-	f.responses[windowsAutomountRead] = response{Output: "[automount]\nroot=/custom/drives/\n"}
+	f.sshResponses[windowsAutomountRead] = response{Output: "[automount]\nroot=/custom/drives/\n"}
 	directory := t.TempDir()
 	f.host.WorkspacePath = func(path string) (string, error) {
 		if path != directory {
@@ -70,13 +71,13 @@ func TestWindowsWorkspaceRefusesCustomAutomountAfterPreflight(t *testing.T) {
 	if status != 1 || !strings.HasPrefix(output, "step 2:") || !strings.Contains(output, "custom WSL automount root") || !strings.Contains(output, "/custom/drives/") {
 		t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 	}
-	expectedLast := strings.Fields(windowsAutomountRead)
-	if len(calls) != 11 || strings.Join(calls[len(calls)-1], " ") != strings.Join(expectedLast, " ") {
+	if len(calls) != 5 || !reflect.DeepEqual(calls[len(calls)-1], []string{"--connection", "chosen", "info", "--format", "json"}) {
 		t.Fatalf("refusal must follow full preflight and precede sandbox/build work: %v", calls)
 	}
 	noMutation(t, calls)
-	if calls := testutil.Invocations(t, f.fakes.SSHLog); len(calls) != 0 {
-		t.Fatalf("unexpected host SSH calls: %v", calls)
+	queries := machineQueryCalls(t, f)
+	if sshCalls := f.sshCalls(t); len(sshCalls) != 6 || len(queries) != 6 || !reflect.DeepEqual(queries[5], []string{"cat", "/etc/wsl.conf"}) {
+		t.Fatalf("host SSH calls must be the six machine queries ending with the automount read: %v", sshCalls)
 	}
 }
 

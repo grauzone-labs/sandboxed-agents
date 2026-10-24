@@ -1,15 +1,20 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/capture"
 )
 
 const minimumWindowsPodmanVersion = "4.7.0"
@@ -104,34 +109,46 @@ func windowsPreflight(p podmanTarget) (podmanTarget, error) {
 			}
 		}
 
-		local := p
-		local.connection = ""
-		controllers, controllerErr := machineControllers(local, p.connection)
-		failures = append(failures, controllerFailures(controllers, controllerErr)...)
-		root, automountErr := machineAutomountRoot(local, p.connection)
-		if automountErr != nil {
-			failures = append(failures, fmt.Errorf("read automount root for machine %q: %w", p.connection, automountErr))
+		queries, queryErr := newMachineQueries(p.connection, p.machine)
+		if queryErr != nil {
+			cause := fmt.Errorf("machine %q SSH configuration: %w", p.connection, queryErr)
+			failures = append(failures, cause)
+			for _, name := range requiredCgroupControllers {
+				failures = append(failures, unverifiedPrerequisites(cause, controllerRequirement(name))...)
+			}
+			failures = append(failures, fmt.Errorf("read automount root for machine %q: cannot verify: %w", p.connection, cause))
 		} else {
-			// Preflight accepts and records custom roots. Only a workspace bind
-			// requires the default root, checked after all prerequisites pass.
-			p.automountRoot = root
+			controllers, controllerErr := machineControllers(queries)
+			failures = append(failures, controllerFailures(controllers, controllerErr)...)
+			root, automountErr := machineAutomountRoot(queries)
+			queries.close()
+			if automountErr != nil {
+				failures = append(failures, fmt.Errorf("read automount root for machine %q: %w", p.connection, automountErr))
+			} else {
+				// Preflight accepts and records custom roots. Only a workspace bind
+				// requires the default root, checked after all prerequisites pass.
+				p.automountRoot = root
+			}
 		}
 	}
 	return p, errors.Join(failures...)
 }
 
 // machineAutomountRoot checks existence before reading so an absent file uses
-// defaults while an unreadable existing file fails. Plain argv remain safe when
-// the transport joins arguments; live Windows confirmation is still pending.
-func machineAutomountRoot(local podmanTarget, name string) (string, error) {
-	if output, err := machineSSH(local, name, "test", "-e", "/etc/wsl.conf"); err != nil {
+// defaults while an unreadable existing file fails. Only the command's own exit
+// status 1 with no output means absence: a client that the query bound stopped
+// also ends with status 1, and that is a failed query, never the default root.
+// Plain argv remain safe when the transport joins arguments for the machine's shell.
+func machineAutomountRoot(queries *machineQueries) (string, error) {
+	if output, err := queries.run("test", "-e", "/etc/wsl.conf"); err != nil {
 		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() == 1 && strings.TrimSpace(output) == "" {
+		stopped := errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+		if !stopped && errors.As(err, &exit) && exit.ExitCode() == 1 && strings.TrimSpace(output) == "" {
 			return "/mnt/", nil
 		}
 		return "", err
 	}
-	config, err := machineSSH(local, name, "cat", "/etc/wsl.conf")
+	config, err := queries.run("cat", "/etc/wsl.conf")
 	if err != nil {
 		return "", err
 	}
@@ -225,6 +242,47 @@ type machine struct {
 	VMType  string
 }
 
+// machineSSHConfig is the SSH endpoint of a Podman machine as podman machine inspect reports it
+// under SSHConfig: the identity file Podman created for the machine, the loopback port its sshd
+// is forwarded to, and the machine user.
+type machineSSHConfig struct {
+	IdentityPath   string
+	Port           int
+	RemoteUsername string
+}
+
+// machineUserPattern admits machine user names that cannot change the meaning of the ssh
+// destination USER@localhost.
+var machineUserPattern = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
+
+// windowsDrivePath recognizes an absolute Windows path by its drive, so the check does not depend
+// on the platform that runs it.
+var windowsDrivePath = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
+
+// validate refuses an SSH configuration that would change what the ssh command line means: an
+// out-of-range port, a user that is not a plain user name, and an identity path that is empty,
+// relative, option-shaped, or holds a line break or NUL. Spaces in the path are allowed; it travels
+// as one argument.
+func (c machineSSHConfig) validate() error {
+	if c.Port < 1 || c.Port > 65535 {
+		return fmt.Errorf("port %d is out of range", c.Port)
+	}
+	if !machineUserPattern.MatchString(c.RemoteUsername) {
+		return fmt.Errorf("invalid machine user %q", c.RemoteUsername)
+	}
+	switch {
+	case c.IdentityPath == "":
+		return fmt.Errorf("identity file is not reported")
+	case strings.ContainsAny(c.IdentityPath, "\x00\r\n"):
+		return fmt.Errorf("identity file path holds a line break or NUL")
+	case strings.HasPrefix(c.IdentityPath, "-"):
+		return fmt.Errorf("identity file path %q starts like an option", c.IdentityPath)
+	case !filepath.IsAbs(c.IdentityPath) && !windowsDrivePath.MatchString(c.IdentityPath):
+		return fmt.Errorf("identity file path %q is not absolute", c.IdentityPath)
+	}
+	return nil
+}
+
 // selectWindowsTarget selects the sole or uniquely default machine and requires a running
 // rootless WSL2 target.
 func selectWindowsTarget(p podmanTarget) (podmanTarget, error) {
@@ -268,6 +326,7 @@ func selectWindowsTarget(p podmanTarget) (podmanTarget, error) {
 	var inspected []struct {
 		Name, State string
 		Rootful     *bool
+		SSHConfig   machineSSHConfig
 	}
 	if err := json.Unmarshal([]byte(output), &inspected); err != nil || len(inspected) != 1 || inspected[0].Name != chosen.Name {
 		cause := fmt.Errorf("read Podman machine inspect: invalid answer")
@@ -286,13 +345,14 @@ func selectWindowsTarget(p podmanTarget) (podmanTarget, error) {
 	}
 
 	p.connection = chosen.Name
+	p.machine = inspected[0].SSHConfig
 	return p, nil
 }
 
 // machineControllers uses simple read-only commands so the machine transport
 // does not need to preserve a shell script's argument quoting.
-func machineControllers(local podmanTarget, name string) (string, error) {
-	output, err := machineSSH(local, name, "id", "-u")
+func machineControllers(queries *machineQueries) (string, error) {
+	output, err := queries.run("id", "-u")
 	if err != nil {
 		return "", err
 	}
@@ -307,25 +367,86 @@ func machineControllers(local podmanTarget, name string) (string, error) {
 		if !machineReadPath.MatchString(path) {
 			return nil, fmt.Errorf("unsupported machine cgroup path %q", path)
 		}
-		output, err := machineSSH(local, name, "cat", path)
+		output, err := queries.run("cat", path)
 		return []byte(output), err
 	}
 	return delegatedControllers(readFile, uid)
 }
 
-// machineQueryTimeout bounds one read-only query through Podman machine SSH, whose answer arrives
-// within a second on a running machine; a transport that never answers must not stall the command.
+// machineQueryTimeout bounds one read-only query inside the machine, whose answer arrives within
+// a second on a running machine; a client that never answers must not stall the command.
 var machineQueryTimeout = 30 * time.Second
 
-// machineQueryWaitDelay bounds the wait for the machine transport's output after it exits.
+// machineQueryWaitDelay bounds the wait for the client's output after it exits.
 var machineQueryWaitDelay = time.Second
 
-// machineSSH runs a command through Podman machine SSH using the local client target, bounded by
-// machineQueryTimeout so a transport that never answers fails the query instead of the command.
-func machineSSH(local podmanTarget, name string, argv ...string) (string, error) {
+// machineQueries runs the preflight's read-only commands inside the selected machine. Each
+// command is one host ssh client that the executable starts itself with the machine's inspected
+// identity, port, and user, instead of podman machine ssh, whose own pipes the inbox Windows
+// OpenSSH client never finishes writing to (ADR-0008). The client reads no user or system SSH
+// configuration and no agent, allocates no terminal, and keeps the machine's host key in a
+// private known_hosts file in the query directory: the first query of a preflight records the
+// key, every later one must see the same key, and the directory is removed with close.
+type machineQueries struct {
+	name    string
+	machine machineSSHConfig
+	dir     string
+}
+
+// newMachineQueries validates the inspected SSH configuration of the named machine and creates the
+// query directory; a configuration that fails validation runs no client.
+func newMachineQueries(name string, machine machineSSHConfig) (*machineQueries, error) {
+	if err := machine.validate(); err != nil {
+		return nil, err
+	}
+	dir, err := os.MkdirTemp("", "sandboxed-agents-machine-")
+	if err != nil {
+		return nil, fmt.Errorf("create the machine query directory: %w", err)
+	}
+	return &machineQueries{name: name, machine: machine, dir: dir}, nil
+}
+
+// close removes the query directory with its private known_hosts file.
+func (q *machineQueries) close() {
+	os.RemoveAll(q.dir)
+}
+
+// run executes one read-only command inside the machine and returns its standard output; the
+// error of a failed query names the machine and the command and carries the client's exit status
+// and diagnostics. The client's output passes through the capture package, and the query ends at
+// machineQueryTimeout, which stops the client itself.
+func (q *machineQueries) run(argv ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), machineQueryTimeout)
 	defer cancel()
-	return local.queryContext(ctx, machineQueryWaitDelay, append([]string{"machine", "ssh", name}, argv...)...)
+	args := append(machineQueryOptions(), "-i", q.machine.IdentityPath, "-p", strconv.Itoa(q.machine.Port), q.machine.RemoteUsername+"@localhost")
+	command := exec.CommandContext(ctx, "ssh", append(args, argv...)...)
+	command.Dir = q.dir
+	command.WaitDelay = machineQueryWaitDelay
+	var stdout, stderr bytes.Buffer
+	err := capture.Run(command, &stdout, &stderr)
+	if err != nil {
+		if ctx.Err() != nil {
+			err = fmt.Errorf("%w (%v)", ctx.Err(), err)
+		}
+		diagnostics := strings.TrimSpace(stderr.String())
+		if answer := strings.TrimSpace(stdout.String()); answer != "" {
+			diagnostics = strings.TrimSpace(answer + "\n" + diagnostics)
+		}
+		return stdout.String(), fmt.Errorf("machine %s: ssh %s: %w: %s", q.name, strings.Join(argv, " "), err, diagnostics)
+	}
+	return stdout.String(), nil
+}
+
+// machineQueryOptions are the client options of every machine query: no configuration files, no
+// prompts, no terminal, the private known_hosts file of the query directory that accepts the
+// machine's Ed25519 key on first contact and refuses a changed one, no agent, only the machine's
+// identity, a quiet client, and a neutral locale for the command's output.
+func machineQueryOptions() []string {
+	return []string{"-F", "none", "-o", "BatchMode=yes", "-o", "RequestTTY=no",
+		"-o", "StrictHostKeyChecking=accept-new", "-o", "UpdateHostKeys=no",
+		"-o", "UserKnownHostsFile=known_hosts", "-o", "GlobalKnownHostsFile=none", "-o", "HostKeyAlgorithms=ssh-ed25519",
+		"-o", "IdentityAgent=none", "-o", "IdentitiesOnly=yes", "-o", "CheckHostIP=no",
+		"-o", "LogLevel=ERROR", "-o", "SetEnv=LC_ALL="}
 }
 
 var machineReadPath = regexp.MustCompile(`^/[A-Za-z0-9_./:@-]+$`)

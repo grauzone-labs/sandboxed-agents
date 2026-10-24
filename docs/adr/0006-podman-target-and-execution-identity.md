@@ -46,6 +46,7 @@ Offline tests check the arguments that the executable passes to Podman, but they
 ## Consequences
 
 - On Windows, commands without a preflight issue read-only machine queries before their first lookup.
+- On Windows, the preflight's commands inside the selected machine run the host's `ssh` with the identity file, port, and user that `podman machine inspect NAME` reports, not `podman machine ssh` (ADR-0008). The machine is still selected and inspected only through Podman, and the inspected SSH configuration is validated before any client starts; the lifecycle commands that only select the target never use it. Linux is unchanged.
 - A Windows user with several Podman machines has to mark one as the default before the commands act on any of them.
 - Agent installation, the status probe, running an agent once, agent sessions with their session query, `shell`, and every integration workflow run as UID and GID 1000, and their offline tests check the requested identity. Any further agent work must run as UID and GID 1000 as well, and its tests must check it. Only administrative control calls use container root.
 - The user documentation states the target binding, its name-based limit, the two identities, and the unattested reuse of owned containers as plainly as the protections.

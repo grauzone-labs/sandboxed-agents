@@ -317,6 +317,10 @@ type podmanTarget struct {
 	connection    string
 	automountRoot string
 	environment   func() []string
+	// machine is the selected Windows machine's SSH endpoint as podman machine inspect reported
+	// it; the preflight's machine queries validate and use it (ADR-0008), other commands only
+	// carry it.
+	machine machineSSHConfig
 }
 
 // arguments prepends the selected Podman connection when one is bound.
@@ -358,9 +362,9 @@ func (p podmanTarget) query(args ...string) (string, error) {
 func (p podmanTarget) queryContext(ctx context.Context, waitDelay time.Duration, args ...string) (string, error) {
 	command := p.command(ctx, waitDelay, args...)
 	// Only stdout is query data. Preserve both streams in failure diagnostics so
-	// stderr warnings cannot corrupt successful JSON or plain-text responses. The
-	// capture package hands Podman's descendants, such as the Windows OpenSSH client
-	// under machine ssh, handles they complete their writes on (ADR-0008).
+	// stderr warnings cannot corrupt successful JSON or plain-text responses. On
+	// Windows the capture package gives the child handles it completes its writes
+	// on (ADR-0008).
 	var stdout, stderr bytes.Buffer
 	err := capture.Run(command, &stdout, &stderr)
 	if err != nil {

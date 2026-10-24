@@ -1634,17 +1634,26 @@ func TestWindowsWorkspaceAutomountRefusalPrecedesHeldLifecycleLock(t *testing.T)
 	responses := map[string]lifecycleResponse{
 		"--version":                                 {Output: "podman version 4.7.0"},
 		"machine list --format json":                {Output: `[{"Name":"chosen","Default":true,"VMType":"wsl"}]`},
-		"machine inspect chosen":                    {Output: `[{"Name":"chosen","State":"running","Rootful":false}]`},
+		"machine inspect chosen":                    {Output: `[{"Name":"chosen","State":"running","Rootful":false,"SSHConfig":{"IdentityPath":"C:\\keys\\machine","Port":54321,"RemoteUsername":"core"}}]`},
 		"--connection chosen version --format json": {Output: `{"Server":{"Version":"4.7.0"}}`},
 		"--connection chosen info --format json":    {Output: `{"host":{"security":{"rootless":true},"cgroupVersion":"v2"}}`},
-		"machine ssh chosen id -u":                  {Output: "1000"},
-		"machine ssh chosen cat /proc/self/cgroup":  {Output: "0::/user.slice/user-1000.slice/user@1000.service"},
-		"machine ssh chosen cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers":     {Output: "cpu memory pids"},
-		"machine ssh chosen cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.subtree_control": {Output: "cpu memory pids"},
-		"machine ssh chosen test -e /etc/wsl.conf": {},
-		"machine ssh chosen cat /etc/wsl.conf":     {Output: "[automount]\nroot=/custom/drives/\n"},
+	}
+	// The machine queries run the host's ssh client with the inspected identity, port, and user.
+	const machineQuery = "* -i C:\\keys\\machine -p 54321 core@localhost "
+	sshResponses := map[string]lifecycleResponse{
+		machineQuery + "id -u":                 {Output: "1000"},
+		machineQuery + "cat /proc/self/cgroup": {Output: "0::/user.slice/user-1000.slice/user@1000.service"},
+		machineQuery + "cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers":     {Output: "cpu memory pids"},
+		machineQuery + "cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.subtree_control": {Output: "cpu memory pids"},
+		machineQuery + "test -e /etc/wsl.conf": {},
+		machineQuery + "cat /etc/wsl.conf":     {Output: "[automount]\nroot=/custom/drives/\n"},
 	}
 	fakes := lifecycleHarness(t, responses)
+	scripted, err := json.Marshal(sshResponses)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_SSH_RESPONSES", string(scripted))
 	lifecycleLinuxHost(t, fakes) // Install the prerequisite fakes that the preflight looks up on PATH.
 	stateRoot := t.TempDir()
 	t.Setenv("LOCALAPPDATA", stateRoot)
@@ -1678,12 +1687,21 @@ func TestWindowsWorkspaceAutomountRefusalPrecedesHeldLifecycleLock(t *testing.T)
 			}
 		})
 	}
-	preflight := [][]string{{"--version"}, {"machine", "list", "--format", "json"}, {"machine", "inspect", "chosen"}, {"--connection", "chosen", "version", "--format", "json"}, {"--connection", "chosen", "info", "--format", "json"}, {"machine", "ssh", "chosen", "id", "-u"}, {"machine", "ssh", "chosen", "cat", "/proc/self/cgroup"}, {"machine", "ssh", "chosen", "cat", "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers"}, {"machine", "ssh", "chosen", "cat", "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.subtree_control"}, {"machine", "ssh", "chosen", "test", "-e", "/etc/wsl.conf"}, {"machine", "ssh", "chosen", "cat", "/etc/wsl.conf"}}
+	preflight := [][]string{{"--version"}, {"machine", "list", "--format", "json"}, {"machine", "inspect", "chosen"}, {"--connection", "chosen", "version", "--format", "json"}, {"--connection", "chosen", "info", "--format", "json"}}
 	want := append(append([][]string{}, preflight...), preflight...)
 	if calls := testutil.Invocations(t, fakes.PodmanLog); !reflect.DeepEqual(calls, want) {
 		t.Fatalf("Podman calls=%v; want only two read-only preflights=%v", calls, want)
 	}
-	if calls := testutil.Invocations(t, fakes.SSHLog); len(calls) != 0 {
-		t.Fatalf("unexpected host SSH calls: %v", calls)
+	queries := [][]string{{"id", "-u"}, {"cat", "/proc/self/cgroup"}, {"cat", "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers"}, {"cat", "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.subtree_control"}, {"test", "-e", "/etc/wsl.conf"}, {"cat", "/etc/wsl.conf"}}
+	wantQueries := append(append([][]string{}, queries...), queries...)
+	sshCalls := testutil.Invocations(t, fakes.SSHLog)
+	if len(sshCalls) != len(wantQueries) {
+		t.Fatalf("host SSH calls=%v; want the machine queries of two preflights=%v", sshCalls, wantQueries)
+	}
+	for i, call := range sshCalls {
+		destination := slices.Index(call, "core@localhost")
+		if destination < 0 || !slices.Contains(call, "-F") || !slices.Equal(call[destination-4:destination], []string{"-i", `C:\keys\machine`, "-p", "54321"}) || !slices.Equal(call[destination+1:], wantQueries[i]) {
+			t.Fatalf("host SSH call %d=%v; want the machine query %v with the inspected identity, port, and user", i, call, wantQueries[i])
+		}
 	}
 }
