@@ -2,10 +2,13 @@ package cli_test
 
 import (
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
 )
@@ -803,5 +806,35 @@ func TestRestartSucceedsAgainstAManagerWithoutTools(t *testing.T) {
 	status, output, _ := f.run(t, "restart", "agent01")
 	if status != 0 || strings.Contains(output, "could not be restored") {
 		t.Fatalf("status=%d output=%s", status, output)
+	}
+}
+
+// TestToolsStatusWaitsLongerForUpstreamQueries proves the status query that runs upstream's status commands gets the longer upstream limit, so an answer slower than the records limit still renders, and that a query that exceeds the upstream limit names the slow upstream queries instead of an unanswering manager, through RunWithHost, fake Podman, and the status limit hook.
+func TestToolsStatusWaitsLongerForUpstreamQueries(t *testing.T) {
+	restore := cli.SetToolStatusTimeouts(200*time.Millisecond, 3*time.Second)
+	defer restore()
+	answer := `{"name":"t3code","enabled":true,"installed_version":"0.1.2","channel":"latest","service_state":"running","service_log":"/x/service.log","connect":{"authenticated":false,"linked":false}}`
+
+	slow := sandboxStateFixture(t)
+	release := filepath.Join(t.TempDir(), "release")
+	slow.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+	slow.responses[toolManagerPrefix+"status t3code --connect"] = response{Output: answer, WaitFor: release}
+	go func() {
+		time.Sleep(600 * time.Millisecond)
+		os.WriteFile(release, nil, 0600)
+	}()
+	status, output, _ := slow.run(t, "tools", "status", "agent01", "t3code")
+	if status != 0 || !strings.Contains(output, "t3code: enabled; version 0.1.2") {
+		t.Fatalf("slow upstream status: status=%d output=%s", status, output)
+	}
+
+	restoreShort := cli.SetToolStatusTimeouts(200*time.Millisecond, 400*time.Millisecond)
+	defer restoreShort()
+	hung := sandboxStateFixture(t)
+	hung.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+	hung.responses[toolManagerPrefix+"status t3code --connect"] = response{Output: answer, WaitFor: filepath.Join(t.TempDir(), "never-created")}
+	status, output, _ = hung.run(t, "tools", "status", "agent01", "t3code")
+	if status != 1 || !strings.Contains(output, "tools status t3code: upstream's status queries did not answer within 0.4s") || strings.Contains(output, "manager does not answer") {
+		t.Fatalf("hung upstream status: status=%d output=%s", status, output)
 	}
 }

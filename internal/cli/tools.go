@@ -58,21 +58,36 @@ func administerTool(request Request, p podmanTarget, stdout io.Writer) error {
 	return outputErr
 }
 
+// Limits of the host's Tool status query (#119). A query of the records alone starts no program in the
+// sandbox and keeps the short limit of the other manager queries. A query that runs upstream's status
+// commands waits for T3 Code's launcher and the tailnet node, which take several seconds right after an
+// enable or a start.
+var (
+	toolRecordQueryTimeout   = 3 * time.Second
+	toolUpstreamQueryTimeout = 30 * time.Second
+)
+
 // readToolStatus asks the manager, as agent, for the Tool selection, service, and node state, with the
 // upstream queries the flag selects (`--connect` for everything, `--tailnet` for the node's sign-in and
-// Serve state, none for the records alone), and validates the answer before callers use it.
+// Serve state, none for the records alone), and validates the answer before callers use it. A query with
+// upstream parts that runs out of time is reported as slow upstream queries, not as an unanswering manager.
 func readToolStatus(request Request, p podmanTarget, query string) (catalog.ToolStatus, error) {
 	var status catalog.ToolStatus
 	payload := []string{"status", request.Args[1]}
+	limit := toolRecordQueryTimeout
 	if query != "" {
 		payload = append(payload, query)
+		limit = toolUpstreamQueryTimeout
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	answer, err := p.queryContext(ctx, time.Second, toolManagerArgs(request, payload...)...)
 	if err != nil {
 		if ctx.Err() == nil && managerOperationFailure(err) {
 			return status, err
+		}
+		if query != "" && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return status, fmt.Errorf("tools status %s: upstream's status queries did not answer within %gs; the manager itself may still answer, see check %s", request.Args[1], limit.Seconds(), request.Name)
 		}
 		return status, agentManagerError(request, errors.Join(err, ctx.Err()))
 	}
