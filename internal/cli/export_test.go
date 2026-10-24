@@ -7,3 +7,11 @@ import "time"
 func SetReadinessDeadline(deadline time.Duration) {
 	readinessDeadline = deadline
 }
+
+// SetToolStatusTimeouts shortens the limits of the host's Tool status query for tests that drive the
+// executable boundary, and returns a function that restores the previous limits.
+func SetToolStatusTimeouts(records, upstream time.Duration) func() {
+	previousRecords, previousUpstream := toolRecordQueryTimeout, toolUpstreamQueryTimeout
+	toolRecordQueryTimeout, toolUpstreamQueryTimeout = records, upstream
+	return func() { toolRecordQueryTimeout, toolUpstreamQueryTimeout = previousRecords, previousUpstream }
+}
