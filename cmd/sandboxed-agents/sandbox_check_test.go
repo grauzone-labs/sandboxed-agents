@@ -239,7 +239,7 @@ func TestCheckInstalledSSHSetupReportsAccessProblemsWithoutChanges(t *testing.T)
 			}
 			if probe {
 				joined := strings.Join(calls[0], " ")
-				for _, want := range []string{"BatchMode=yes", "StrictHostKeyChecking=yes", "UpdateHostKeys=no", "ConnectTimeout=3", "ControlPath=none", "demo", "true"} {
+				for _, want := range []string{"-E ssh.log", "BatchMode=yes", "StrictHostKeyChecking=yes", "UpdateHostKeys=no", "ConnectTimeout=3", "ControlPath=none", "demo", "true"} {
 					if !strings.Contains(joined, want) {
 						t.Fatalf("missing read-only SSH option %q: %v", want, calls)
 					}

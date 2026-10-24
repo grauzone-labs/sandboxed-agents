@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -195,14 +196,23 @@ func reportSSHSetup(request Request, p podmanTarget, objects sandboxObjects, out
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, "ssh", "-F", s.userConfig,
+	// The client logs its failure to ssh.log in a private working directory (-E): the Windows
+	// OpenSSH client blocks when its log goes through an inherited pipe (ADR-0008).
+	dir, err := os.MkdirTemp("", "sandboxed-agents-check-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	command := exec.CommandContext(ctx, "ssh", "-F", s.userConfig, "-E", "ssh.log",
 		"-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o", "ConnectionAttempts=1",
 		"-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no",
 		"-o", "ControlMaster=no", "-o", "ControlPath=none",
 		"-o", "PermitLocalCommand=no", "-o", "ClearAllForwardings=yes", sshHostName(request), "true")
+	command.Dir = dir
 	command.WaitDelay = time.Second
 	if answer, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("sandbox %s: SSH connection failed: %w: %s", request.Name, err, strings.TrimSpace(string(answer)))
+		log, _ := os.ReadFile(filepath.Join(dir, "ssh.log"))
+		return fmt.Errorf("sandbox %s: SSH connection failed: %w: %s", request.Name, err, strings.TrimSpace(string(answer)+string(log)))
 	}
 	fmt.Fprintln(output, "SSH connection: reachable")
 	return nil
