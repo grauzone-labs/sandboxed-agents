@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const minimumWindowsPodmanVersion = "4.7.0"
@@ -311,9 +313,19 @@ func machineControllers(local podmanTarget, name string) (string, error) {
 	return delegatedControllers(readFile, uid)
 }
 
-// machineSSH runs a command through Podman machine SSH using the local client target.
+// machineQueryTimeout bounds one read-only query through Podman machine SSH, whose answer arrives
+// within a second on a running machine; a transport that never answers must not stall the command.
+var machineQueryTimeout = 30 * time.Second
+
+// machineQueryWaitDelay bounds the wait for the machine transport's output after it exits.
+var machineQueryWaitDelay = time.Second
+
+// machineSSH runs a command through Podman machine SSH using the local client target, bounded by
+// machineQueryTimeout so a transport that never answers fails the query instead of the command.
 func machineSSH(local podmanTarget, name string, argv ...string) (string, error) {
-	return local.query(append([]string{"machine", "ssh", name}, argv...)...)
+	ctx, cancel := context.WithTimeout(context.Background(), machineQueryTimeout)
+	defer cancel()
+	return local.queryContext(ctx, machineQueryWaitDelay, append([]string{"machine", "ssh", name}, argv...)...)
 }
 
 var machineReadPath = regexp.MustCompile(`^/[A-Za-z0-9_./:@-]+$`)

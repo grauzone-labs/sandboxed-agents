@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/capture"
 )
 
 // Host supplies platform facts, shell input and terminal detection, and read-only
@@ -356,18 +358,22 @@ func (p podmanTarget) query(args ...string) (string, error) {
 func (p podmanTarget) queryContext(ctx context.Context, waitDelay time.Duration, args ...string) (string, error) {
 	command := p.command(ctx, waitDelay, args...)
 	// Only stdout is query data. Preserve both streams in failure diagnostics so
-	// stderr warnings cannot corrupt successful JSON or plain-text responses.
-	var stderr bytes.Buffer
-	command.Stderr = &stderr
-	output, err := command.Output()
+	// stderr warnings cannot corrupt successful JSON or plain-text responses. The
+	// capture package hands Podman's descendants, such as the Windows OpenSSH client
+	// under machine ssh, handles they complete their writes on (ADR-0008).
+	var stdout, stderr bytes.Buffer
+	err := capture.Run(command, &stdout, &stderr)
 	if err != nil {
-		diagnostics := strings.TrimSpace(stderr.String())
-		if stdout := strings.TrimSpace(string(output)); stdout != "" {
-			diagnostics = strings.TrimSpace(stdout + "\n" + diagnostics)
+		if ctx.Err() != nil {
+			err = fmt.Errorf("%w (%v)", ctx.Err(), err)
 		}
-		return string(output), fmt.Errorf("podman %s: %w: %s", strings.Join(command.Args[1:], " "), err, diagnostics)
+		diagnostics := strings.TrimSpace(stderr.String())
+		if answer := strings.TrimSpace(stdout.String()); answer != "" {
+			diagnostics = strings.TrimSpace(answer + "\n" + diagnostics)
+		}
+		return stdout.String(), fmt.Errorf("podman %s: %w: %s", strings.Join(command.Args[1:], " "), err, diagnostics)
 	}
-	return string(output), nil
+	return stdout.String(), nil
 }
 
 // command constructs a Podman command with the selected connection, environment, and pipe wait

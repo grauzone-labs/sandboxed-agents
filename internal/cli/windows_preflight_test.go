@@ -9,6 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
 )
 
 // windowsHost creates a passing Windows host fixture with a selected running rootless WSL2
@@ -314,6 +317,41 @@ func TestWindowsQueriesFailClosed(t *testing.T) {
 			noMutation(t, calls)
 		})
 	}
+}
+
+// TestWindowsMachineQueryWithoutAnswerFailsWithinBound proves a machine SSH query whose
+// transport never answers fails the preflight within the query bound, naming the query and the
+// exceeded deadline, instead of stalling the command, through RunWithHost and a fake Podman that
+// waits for a rendezvous file that never appears.
+func TestWindowsMachineQueryWithoutAnswerFailsWithinBound(t *testing.T) {
+	defer cli.SetMachineQueryTimeout(300 * time.Millisecond)()
+	f := windowsHost(t)
+	f.responses["machine ssh chosen id -u"] = response{Output: "1000\n", WaitFor: filepath.Join(t.TempDir(), "never")}
+	start := time.Now()
+	status, output, calls := f.run(t, "check")
+	elapsed := time.Since(start)
+	if status != 1 || elapsed > 5*time.Second {
+		t.Fatalf("status=%d after %v output=%q", status, elapsed, output)
+	}
+	if !strings.Contains(output, "podman machine ssh chosen id -u: context deadline exceeded") {
+		t.Fatalf("output lacks the bounded query failure: %q", output)
+	}
+	for _, requirement := range requiredControllerRequirements() {
+		if !strings.Contains(output, requirement) {
+			t.Fatalf("output lacks %q after the unanswered query: %q", requirement, output)
+		}
+	}
+	noMutation(t, calls)
+}
+
+// requiredControllerRequirements lists the delegated controller prerequisites an unanswered
+// machine query leaves unverified.
+func requiredControllerRequirements() []string {
+	var requirements []string
+	for _, name := range []string{"cpu", "memory", "pids"} {
+		requirements = append(requirements, "delegated cgroup "+name+" controller is required")
+	}
+	return requirements
 }
 
 // TestWindowsControllerQueriesUseSimpleMachineCommands proves delegation discovery uses simple machine-named read-only argv through RunWithHost and fake Podman.
