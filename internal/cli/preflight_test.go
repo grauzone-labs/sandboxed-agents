@@ -420,3 +420,30 @@ func TestLinuxMissingPodmanReportsUnverifiedPrerequisites(t *testing.T) {
 		t.Fatalf("unexpected SSH calls: %v", calls)
 	}
 }
+
+// TestLinuxPreflightRequiresLingering proves check on a Linux host whose PID 1 is systemd fails at step 2 when the current user has no lingering and names loginctl enable-linger, passes once the linger file exists or when PID 1 is not systemd, and changes nothing, through RunWithHost and the host file-reader seam.
+func TestLinuxPreflightRequiresLingering(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+		fail  bool
+	}{
+		{"systemd-without-linger", map[string]string{"/proc/1/comm": "systemd\n"}, true},
+		{"systemd-with-linger", map[string]string{"/proc/1/comm": "systemd\n", "/var/lib/systemd/linger/tester": ""}, false},
+		{"no-systemd", map[string]string{"/proc/1/comm": "init\n"}, false},
+		{"pid1-unreadable", map[string]string{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := linuxHost(t)
+			for path, content := range tc.files {
+				f.files[path] = content
+			}
+			status, output, calls := f.run(t, "check")
+			failure := "step 2: lingering is required for tester, because rootless sandboxes stop when the last login session of tester ends; enable it with loginctl enable-linger tester"
+			if tc.fail != (status == 1 && strings.Contains(output, failure)) || tc.fail == strings.Contains(output, "host prerequisites satisfied") {
+				t.Fatalf("status=%d output=%q want failure=%t", status, output, tc.fail)
+			}
+			noMutation(t, calls)
+		})
+	}
+}

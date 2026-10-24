@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/user"
@@ -164,7 +165,30 @@ func linuxPreflight(p podmanTarget) error {
 		controllers, err := delegatedControllers(h.ReadFile, account.Uid)
 		failures = append(failures, controllerFailures(controllers, err)...)
 	}
+	if err := lingerFailure(h); err != nil {
+		failures = append(failures, err)
+	}
 	return errors.Join(failures...)
+}
+
+// lingerFailure returns a preflight failure when the current user of a Linux host whose PID 1 is systemd
+// has no lingering, read from the linger file systemd-logind keeps per user. Without lingering, systemd stops
+// the user manager shortly after the user's last login session ends and with it every rootless sandbox (#118).
+// It returns nothing when lingering is on, the host runs no systemd, or a fact cannot be read; the
+// executable never enables lingering, because it changes no host configuration.
+func lingerFailure(h Host) error {
+	init, err := h.ReadFile("/proc/1/comm")
+	if err != nil || strings.TrimSpace(string(init)) != "systemd" {
+		return nil
+	}
+	account, err := h.CurrentUser()
+	if err != nil || account == nil || account.Username == "" || strings.ContainsAny(account.Username, "/\x00") {
+		return nil
+	}
+	if _, err := h.ReadFile(path.Join("/var/lib/systemd/linger", account.Username)); !errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return fmt.Errorf("lingering is required for %s, because rootless sandboxes stop when the last login session of %s ends; enable it with loginctl enable-linger %s", account.Username, account.Username, account.Username)
 }
 
 var requiredCgroupControllers = [...]string{"cpu", "memory", "pids"}
