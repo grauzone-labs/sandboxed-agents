@@ -8,25 +8,32 @@ import (
 	"testing"
 )
 
-// TestLiveToolProbeRejectsExposedIPv6Listener proves an IPv6 wildcard listener makes the actual Tool probe fail at its filesystem and HTTP boundaries, without a sandbox or network access.
-func TestLiveToolProbeRejectsExposedIPv6Listener(t *testing.T) {
+// liveToolProbeNode locates Node.js for executing the actual JavaScript probe offline, or skips when unavailable.
+func liveToolProbeNode(t *testing.T) string {
+	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("Node.js is needed to execute the JavaScript probe offline")
 	}
-	command := exec.Command(node, "testdata/live_t3code_probe_harness.js", "ipv6-any")
-	output, err := command.CombinedOutput()
-	if err == nil || !strings.Contains(string(output), "IPv6 service is not bound to loopback") {
-		t.Fatalf("exposed IPv6 probe: %v %s; want a loopback failure", err, output)
+	return node
+}
+
+// TestLiveToolProbeRejectsExposedIPv6Listener proves IPv6 wildcard and nonloopback listeners make the actual Tool probe fail at its filesystem and HTTP boundaries, without a sandbox or network access.
+func TestLiveToolProbeRejectsExposedIPv6Listener(t *testing.T) {
+	node := liveToolProbeNode(t)
+	for _, scenario := range []string{"ipv6-any", "ipv6-nonloopback"} {
+		t.Run(scenario, func(t *testing.T) {
+			output, err := exec.Command(node, "testdata/live_t3code_probe_harness.js", scenario).CombinedOutput()
+			if err == nil || !strings.Contains(string(output), "IPv6 service is not bound to loopback") {
+				t.Fatalf("exposed IPv6 probe: %v %s; want a loopback failure", err, output)
+			}
+		})
 	}
 }
 
-// TestLiveToolProbeReportsObservedIdentity proves the actual JavaScript probe reports the service's parsed identity with IPv4-only, loopback IPv6, and unavailable IPv6 tables through supplied filesystem and HTTP boundaries.
+// TestLiveToolProbeReportsObservedIdentity proves the actual JavaScript probe reports the service's parsed identity with IPv4-only, loopback IPv6, and unavailable IPv6 tables and ignores IPv6 entries for other ports or established connections through supplied filesystem and HTTP boundaries.
 func TestLiveToolProbeReportsObservedIdentity(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("Node.js is needed to execute the JavaScript probe offline")
-	}
+	node := liveToolProbeNode(t)
 	for _, scenario := range []string{"ipv4-only", "ipv6-loopback", "ipv6-unavailable", "unrelated-ipv6", "connected-ipv6"} {
 		t.Run(scenario, func(t *testing.T) {
 			output, err := exec.Command(node, "testdata/live_t3code_probe_harness.js", scenario).CombinedOutput()
@@ -44,24 +51,9 @@ func TestLiveToolProbeReportsObservedIdentity(t *testing.T) {
 	}
 }
 
-// TestLiveToolProbeRejectsNonloopbackIPv6 proves a nonloopback IPv6 listener makes the actual probe fail through supplied filesystem and HTTP boundaries.
-func TestLiveToolProbeRejectsNonloopbackIPv6(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("Node.js is needed to execute the JavaScript probe offline")
-	}
-	output, err := exec.Command(node, "testdata/live_t3code_probe_harness.js", "ipv6-nonloopback").CombinedOutput()
-	if err == nil || !strings.Contains(string(output), "IPv6 service is not bound to loopback") {
-		t.Fatalf("nonloopback IPv6 probe: %v %s; want a loopback failure", err, output)
-	}
-}
-
 // TestLiveToolProbeRejectsProcessIdentityMismatch proves every real, effective, saved, and filesystem UID/GID of the supervisor, service, and descendants must be 1000 through the actual probe's supplied filesystem and HTTP boundaries.
 func TestLiveToolProbeRejectsProcessIdentityMismatch(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("Node.js is needed to execute the JavaScript probe offline")
-	}
+	node := liveToolProbeNode(t)
 	for _, processKind := range []string{"supervisor", "service", "child"} {
 		for _, field := range []string{"uid", "gid"} {
 			for index := range 4 {

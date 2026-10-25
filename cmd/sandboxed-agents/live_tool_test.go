@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,12 +19,12 @@ import (
 
 // liveToolObservation holds only the selection and independently observed service identity.
 type liveToolObservation struct {
-	Version, Channel, Pin, Origin string
-	SupervisorPID                 int   `json:"supervisor_pid"`
-	ServicePID                    int   `json:"service_pid"`
-	PIDs                          []int `json:"pids"`
-	UID, GID                      int
-	HTTPStatus                    int `json:"http_status"`
+	Version, Channel, Pin string
+	SupervisorPID         int   `json:"supervisor_pid"`
+	ServicePID            int   `json:"service_pid"`
+	PIDs                  []int `json:"pids"`
+	UID, GID              int
+	HTTPStatus            int `json:"http_status"`
 }
 
 // liveToolEvidence is supplemental sanitized evidence, separate from the release gate's fixed schema.
@@ -221,7 +222,7 @@ func (host liveHost) runningTool(t *testing.T, name, channel, pin string) liveTo
 	if err := json.Unmarshal([]byte(output), &status); err != nil {
 		t.Fatalf("read Tool probe: %v %s", err, output)
 	}
-	if status.Version != match[1] || status.Channel != channel || status.Pin != pin || status.UID != 1000 || status.GID != 1000 || status.Origin != "http://127.0.0.1:3773" || status.HTTPStatus < 100 || status.HTTPStatus > 599 || status.SupervisorPID <= 1 || status.ServicePID <= 1 || !slices.Contains(status.PIDs, status.SupervisorPID) || !slices.Contains(status.PIDs, status.ServicePID) {
+	if status.Version != match[1] || status.Channel != channel || status.Pin != pin || status.UID != 1000 || status.GID != 1000 || status.HTTPStatus < 100 || status.HTTPStatus > 599 || status.SupervisorPID <= 1 || status.ServicePID <= 1 || !slices.Contains(status.PIDs, status.SupervisorPID) || !slices.Contains(status.PIDs, status.ServicePID) {
 		t.Fatalf("Tool service observation disagrees with CLI status or containment: %+v", status)
 	}
 	return status
@@ -260,7 +261,7 @@ func (host liveHost) assertToolContainment(t *testing.T, name string, container 
 	// Podman includes named volumes in HostConfig.Binds as name:destination[:options].
 	// Mounts independently proves their type, and no host path is accepted as a name here.
 	if len(container.HostConfig.Binds) != 0 {
-		remaining := map[string]string{"/workspace": names.Workspace, "/home/agent": names.Home, "/etc/ssh": names.SSH}
+		remaining := maps.Clone(want)
 		for _, bind := range container.HostConfig.Binds {
 			fields := strings.Split(bind, ":")
 			if len(fields) < 2 || len(fields) > 3 || remaining[fields[1]] == "" || remaining[fields[1]] != fields[0] {

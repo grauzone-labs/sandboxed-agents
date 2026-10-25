@@ -81,7 +81,7 @@ if (mode === 'break-install') {
     const serviceIdentity = identities.get(state.service_pid);
     return {version: selection.version, channel: selection.channel || '', pin: selection.pin || '',
       supervisor_pid: state.supervisor_pid, service_pid: state.service_pid, pids: [...pids], uid: serviceIdentity.uid[0], gid: serviceIdentity.gid[0],
-      origin: 'http://127.0.0.1:3773', http_status: httpStatus};
+      http_status: httpStatus};
   };
   const deadline = Date.now() + 15000;
   const probe = () => {

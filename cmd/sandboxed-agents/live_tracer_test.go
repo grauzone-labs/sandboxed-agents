@@ -120,7 +120,7 @@ func tracerToolResponses(t *testing.T, executableResponses, podmanResponses map[
 		if failIdentity && index == 0 {
 			uid = 1001
 		}
-		probe, err := json.Marshal(liveToolObservation{Version: selection.version, Channel: selection.channel, Pin: selection.pin, UID: uid, GID: 1000, SupervisorPID: 200, ServicePID: 201, PIDs: []int{200, 201, 202}, Origin: "http://127.0.0.1:3773", HTTPStatus: 200})
+		probe, err := json.Marshal(liveToolObservation{Version: selection.version, Channel: selection.channel, Pin: selection.pin, UID: uid, GID: 1000, SupervisorPID: 200, ServicePID: 201, PIDs: []int{200, 201, 202}, HTTPStatus: 200})
 		if err != nil {
 			t.Fatal(err)
 		}
