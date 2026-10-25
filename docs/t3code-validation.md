@@ -4,14 +4,16 @@ This page is for maintainers. It tells you how to run and record the live valida
 
 The run list of #97 is covered by **recorded runs**, not by an extension of the live suite. The live suite, its records, and the release gate schema stay as they are ([releases](releases.md#live-suite)).
 
-**No run is claimed here.** This page is a procedure and an empty record. Nothing in it, in an issue comment, or in an ADR narrative of an earlier manual run substitutes for a record made by this procedure.
+**No run is claimed here.** This page is a procedure and an empty record. Earlier live observations, such as the ones ADRs 0009 and 0010 narrate, and the issue comments about them, are context. They do not substitute for a record made by this procedure, and they are not erased by it.
 
-## Three kinds of evidence
+## Kinds of evidence
+
+Three kinds exist for the Tool; this page owns only the second.
 
 | Kind | Covers | Recorded in | Counts toward #97 |
 |---|---|---|---|
 | **The live suite**, `TestLiveSuite` | `preflight`, `lifecycle`, `update` (one `update NAME` and one forced rollback), `agent`, and `images`, all **without a Tool**. It never runs `tools`. | `live-suite-linux.json`, `live-suite-windows-11.json` | No. It shows the sandbox lifecycle that the Tool restore is built on, and nothing about T3 Code. Do not edit it, and do not read a pass of it as Tool coverage. |
-| **Recorded Tool runs**, this page | Everything in the run list of #97 that a maintainer can run and observe on a host. | One [supplementary record](#supplementary-record) per host, posted on #97, with host-private evidence kept on the host | Yes, only when a record exists for the commit, platform, and versions. |
+| **Recorded Tool runs**, this page | Everything in the run list of #97 that a maintainer can run and observe on a host. | One [supplementary record](#supplementary-record) per host, posted on #97, with host-private evidence kept on the host | Yes, only when a record exists for the commit, platform, and versions, and the run meets [the counting rule](#supplementary-record). |
 | **The human phone checks** | The T3 Connect phone link and the phone's QR scan over Tailscale. | The [manual checklist](manual-checklist.md) items `t3-connect-link` and `t3-qr-pair`, in the manual-checklist record | Yes, and only those. A recorded Tool run never claims them. |
 
 A tailnet client's request to an origin in this runbook proves the origin reaches the service. It does not prove that the phone's app pairs and opens T3 Code; only the manual checklist does.
@@ -43,7 +45,7 @@ A tailnet client's request to an origin in this runbook proves the origin reache
    go build -overlay "$context\overlay.json" -o "$env:USERPROFILE\t3-record\sandboxed-agents.exe" ./cmd/sandboxed-agents
    ```
 
-   Run every `sandboxed-agents` command below with that executable, and record the output of `sandboxed-agents version`: the version and the `asset-sha256`.
+   Run every `sandboxed-agents` command below with that executable. Call it by its full path, or put its directory first on `PATH` and confirm with `command -v sandboxed-agents` (`Get-Command sandboxed-agents` in PowerShell) that no other copy answers. Record the output of `sandboxed-agents version`: the version and the `asset-sha256`.
 5. **The host is ready and measured.** Rootless Podman as [host prerequisites](host-prerequisites.md) says, lingering on Linux, and `check` passing. Before any build, take what the skill's step 2 and [Measurement and Inventory](../.agents/skills/live-validation/SKILL.md#image-cleanup) require: the free space of the filesystem that holds Podman's storage (on Windows the host drive that holds the machine's disk, and the machine's own image filesystem), `podman system df`, the engine-wide `podman images --all --no-trunc` with each image's labels, and `podman ps --all` with the image each container references. Free space must exceed the bound the skill requires; this run builds the `native` toolchain and the base image once, if they are missing. Keep the build output, because it is the only proof which images this run created.
 6. **A Tailscale account with MagicDNS and HTTPS certificates enabled**, a browser to approve devices, and a **tailnet client**: a second device in the tailnet with `curl`, or the phone's browser, that is not the host under test. Record which. Use a throwaway tailnet or one whose access policy you may read.
 7. **An interactive terminal** on the host for `login`, `link`, and `pair`. If you drive the host over SSH, allocate a pseudo-terminal (`ssh -t`), or work in a local console, and record which you used.
@@ -59,16 +61,18 @@ sandboxed-agents up t3-b --with native
 
 Take the [Podman configuration](#helpers) baseline of each sandbox now, before any `tools` command. Run `sandboxed-agents check` for the group and keep its output.
 
+**Registry queries run in the sandbox.** Every `npm view` below runs in `sandboxed-agents shell t3-a`, which is available once `up` has finished. It runs as `agent` with the sandbox's own Node.js and npm, so the host needs no npm, which a Windows host may not have, and the answer is the one the installation itself would get.
+
 ### Versions to record
 
-At the start of the run, and again before any step that depends on a tag, record:
+At the start of the run, and again before any step that depends on a tag, record, from `sandboxed-agents shell t3-a`:
 
 ```sh
 npm view t3 dist-tags --json
 npm view t3 versions --json
 ```
 
-Name the exact versions the run uses: `LATEST` and `NIGHTLY` (the tags' heads, which move), `PIN` (a published exact version, older than `LATEST`), and `PIN2` (another published exact version). Record the Podman version, the host OS build, and on Windows the WSL version. Record Node.js and `tailscale version` from `sandboxed-agents shell t3-a`. After every step that installs, `tools status` states the installed version; record that, never the tag.
+Name the exact versions the run uses: `LATEST` and `NIGHTLY` (the tags' heads, which move), `PIN` (a published exact version, older than `LATEST`), and `PIN2` (another published exact version). Record the Podman version, the host OS build, and on Windows the WSL version. Record `node --version` and `tailscale version` in the same shell. After every step that installs, `tools status` states the installed version; record that, never the tag.
 
 ## Helpers
 
@@ -79,17 +83,25 @@ cat ~/.local/share/sandboxed-agents/tools/t3code/selection.json
 cat ~/.local/share/sandboxed-agents/tools/t3code/service/state.json
 ```
 
-`state.json` holds `state`, the `supervisor_pid` and `service_pid`, `started`, `last_exit`, `last_failure`, and `restarts`. A **real restart** changes both process IDs and `started`. `restarts` counts crash restarts and must stay `0` in this run.
+`state.json` holds `state`, the `supervisor_pid` and `service_pid`, `started`, `last_exit`, `last_failure`, and `restarts`. `restarts` counts crash restarts and must stay `0` in this run.
 
-**Process identity**, from `sandboxed-agents shell SANDBOX`:
+**Judge a restart by its records, never by PID inequality.** The numbers of a container's process IDs can be reused after `stop`/`start`, `restart`, or a replaced container, so a PID that happens to repeat is no failure. A step that **expects a restart** passes when the container's `State.StartedAt` changed (a sandbox restart), the service's `started` in `state.json` changed, the state is `running`, and the identity helper below finds one live supervisor and its service tree at `1000 1000`. A step that **expects no restart** (the terminal closing, a repeated `enable`, a healthy pinned `update`, a resolution failure) passes only when `supervisor_pid`, `service_pid`, and `started` are all unchanged. A version switch inside a running container passes on the new `selection.json`, the new version in `tools status`, and a live, correct service; its PIDs are usually new, but that is not the test.
+
+**Process identity**, from `sandboxed-agents shell SANDBOX`. It reads the supervisor and the service from the record and walks their tree, so it never counts the inspecting shell or a broad text match. Paste it into the interactive shell, or pipe it to the shell on stdin; do not run it as `sh -c '…'`, whose own command line would contain the patterns. For the tailnet node use `tailscale/service/state.json` and the kind `tailnet`.
 
 ```sh
-for p in /proc/[0-9]*; do
-  printf '%s uid/gid %s | %s\n' "${p#/proc/}" "$(awk '/^(Uid|Gid):/{printf "%s ",$2}' "$p/status" 2>/dev/null)" "$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null)"
-done
+tool=~/.local/share/sandboxed-agents/tools/t3code
+kind=service; state=$tool/service/state.json   # tailnet: kind=tailnet; state=$tool/tailscale/service/state.json
+sup=$(sed -n 's/.*"supervisor_pid": *\([0-9]*\).*/\1/p' "$state")
+pairs=$(for p in /proc/[0-9]*; do awk -v p="${p#/proc/}" '/^PPid:/{print p" "$2}' "$p/status" 2>/dev/null; done)
+tree() { echo "$1"; echo "$pairs" | while read c pp; do [ "$pp" = "$1" ] && tree "$c"; done; }
+echo "supervisors of kind $kind:"
+for p in /proc/[0-9]*; do tr '\0' ' ' < "$p/cmdline" 2>/dev/null | grep -q "[_]_supervise t3code $kind" && echo "  ${p#/proc/}"; done
+echo "recorded supervisor $sup and its tree:"
+for p in $(tree "$sup"); do printf '  %s uid/gid %s | %s\n' "$p" "$(awk '/^(Uid|Gid):/{printf "%s ",$2}' /proc/$p/status)" "$(tr '\0' ' ' < /proc/$p/cmdline)"; done
 ```
 
-Every process whose command line names `t3`, `t3code`, `cloudflared`, `tailscaled`, or `__supervise` must show real UID and GID `1000 1000`, and none `0`. The container's `sshd` and entrypoint are root and are not Tool processes. Cross-check from the host: `podman top CONTAINER user huser pid args`. Count the `t3 serve` processes: exactly one.
+**Exactly one service** means: the first list holds exactly one process and it is the recorded `supervisor_pid` (so no second, independent supervisor and no second service group exists); the tree under it holds the launcher whose PID is the recorded `service_pid` and its descendants, the npm launcher's downloaded runtime among them; and **every process in the tree shows real UID and GID `1000 1000`**, none `0`. Once linked, `cloudflared` is a descendant of the service in this tree; if it is not in the tree, search the whole listing for it by name and record where it ran. The container's `sshd`, its entrypoint, and the inspecting shell are outside the tree and are not Tool processes. Cross-check from the host: `podman top CONTAINER user huser pid args`.
 
 **Podman configuration**, on the host, saved to a host-private file per stage (`PHASE`, for example `after-enable`):
 
@@ -106,7 +118,7 @@ podman volume ls --format '{{.Name}}'
 
 Take it once on the sandbox **before any Tool command** (the baseline), and again after each phase marked below. Compare each file with the baseline. They must be identical: one `127.0.0.1:PORT` binding of `22/tcp` and no other, the same mounts and volume names, no added capability or device, the same network mode, user, and limits. The container ID, the image ID, and, after `update NAME --with …`, the label `io.sandboxed-agents.toolchains` differ and are not compared. If a template field prints `<no value>` or errors on the host's Podman, compare the full `podman container inspect` JSON for that field instead and record that you did.
 
-**A real replacement, not a no-op.** After `restart`, the container's `State.StartedAt` and `state.json`'s two PIDs and `started` change. After `stop` and `start`, the same. `update NAME` replaces the container only when the image or the toolchain set differs; with a current image it prints `already up to date` and replaces nothing ([images](images.md#updating-a-sandbox)). Therefore use `update NAME --with none` (on a sandbox created `--with native`) or `--with native` (on one on the base image), and read the container ID before and after: it must differ. A step whose container ID did not change did not exercise the replacement; record it as `fail` or `not-run`, never `pass`.
+**A real replacement, not a no-op.** After `restart`, and after `stop` and `start`, the container's `State.StartedAt` and the service's `started` in `state.json` change. `update NAME` replaces the container only when the image or the toolchain set differs; with a current image it prints `already up to date` and replaces nothing ([images](images.md#updating-a-sandbox)). Therefore use `update NAME --with none` (on a sandbox created `--with native`) or `--with native` (on one on the base image), and read the container ID before and after: it must differ. A step whose container ID did not change did not exercise the replacement; record it as `fail` or `not-run`, never `pass`.
 
 ## The run
 
@@ -123,7 +135,7 @@ Run these phases in order on each host. Each phase names the checks of the [reco
    sandboxed-agents tools enable t3-a t3code --version 0.1.2+build.1
    ```
 
-2. **An unpublished version** (`enable-unpublished`). Confirm `npm view -- t3@0.0.0-sandboxed-agents-none.1 version` fails with `E404`, then:
+2. **An unpublished version** (`enable-unpublished`). Confirm in `sandboxed-agents shell t3-a` that `npm view -- t3@0.0.0-sandboxed-agents-none.1 version` fails with `E404`, then:
 
    ```text
    sandboxed-agents tools enable t3-a t3code --version 0.0.0-sandboxed-agents-none.1
@@ -149,39 +161,43 @@ Run these phases in order on each host. Each phase names the checks of the [reco
 On `t3-a`:
 
 1. Read `state.json` and the identity listing and keep them (from any terminal). Then **close T1 entirely**, the terminal that ran the first `enable` in phase 1: end the shell, the terminal window, or the SSH session.
-2. In a new terminal T2: `tools status` and the two helpers again (`identity-after-terminal-close`). **Expected:** `service running`, the **same** `supervisor_pid`, `service_pid`, and `started` as before T1 closed, `restarts` `0`, exactly one `t3 serve`, every Tool process at `1000 1000`.
-3. **Repeated enable never leaves two** (`repeat-enable-keeps`): run `tools enable t3-a t3code` and `up t3-a` again. **Expected:** still one `t3 serve`, the same PIDs, `selection.json` unchanged.
-4. **`stop` and `start`** (`identity-stop-start`): `stop t3-a`, then `start t3-a`. **Expected:** `start` prints `t3code service running`; `tools status` `running`; both PIDs and `started` **differ** from step 2; `restarts` `0`; identity at `1000 1000`; `selection.json` unchanged. Compare the Podman configuration (`podman-unchanged`).
-5. **`restart`** (`identity-restart`): `restart t3-a`, same expectations, with `StartedAt` changed.
-6. **`update NAME`** (`identity-update-name`): note the container ID, then `update t3-a --with none`. **Expected:** the container ID differs; the update prints `t3code service running`; PIDs and `started` differ; identity `1000 1000`; version, channel, and the toolchain label (`none`) as recorded; Podman configuration unchanged apart from the image, the container ID, and the label. A `restart` or `update` that exits non-zero because the service did not start, or that prints `already up to date`, is a failure of this check.
-7. **`identity-cloudflared`**: `cloudflared` runs only after `link`. After the manual `t3-connect-link` item has linked a sandbox, list its processes: `cloudflared` must show `1000 1000`. When no sandbox was linked in this run, record `cloudflared` as `not-run (not linked)`; never infer it.
+2. In a new terminal T2: `tools status` and the two helpers again (`identity-after-terminal-close`). **Expected:** `service running`, the **same** `supervisor_pid`, `service_pid`, and `started` as before T1 closed (no restart was expected), `restarts` `0`, exactly one service as defined under Helpers, every process of its tree at `1000 1000`.
+3. **Repeated enable never leaves two** (`repeat-enable-keeps`): run `tools enable t3-a t3code` and `up t3-a` again. **Expected:** still exactly one service, the same PIDs and `started`, `selection.json` unchanged.
+4. **`stop` and `start`** (`identity-stop-start`): `stop t3-a`, then `start t3-a`. **Expected:** `start` prints `t3code service running`; `tools status` `running`; the container's `StartedAt` and the service's `started` **changed** since step 2 (the PIDs may or may not repeat); `restarts` `0`; exactly one service at `1000 1000`; `selection.json` unchanged. Compare the Podman configuration (`podman-unchanged`).
+5. **`restart`** (`identity-restart`): `restart t3-a`, same expectations: `StartedAt` and `started` changed.
+6. **`update NAME`** (`identity-update-name`): note the container ID, then `update t3-a --with none`. **Expected:** the container ID differs; the update prints `t3code service running`; `started` changed; exactly one service at `1000 1000`; version, channel, and the toolchain label (`none`) as recorded; Podman configuration unchanged apart from the image, the container ID, and the label. A `restart` or `update` that exits non-zero because the service did not start, or that prints `already up to date`, is a failure of this check.
+7. **`identity-cloudflared`: link the sandbox for the observation.** The relay client exists only while a sandbox is linked, so this check needs a T3 account login and a link on `t3-a` inside this run. It needs a human with a browser, and **the run pauses** at each approval until that human has approved; a run that cannot pause here stops with this check `blocked`.
+   1. In an interactive terminal, `sandboxed-agents tools connect t3-a t3code login`, then `sandboxed-agents tools connect t3-a t3code link`. Each prints a URL and a code that the human approves in a browser. That output is sensitive: let it appear on the terminal only, do not save, paste, or record it.
+   2. After `link` (the service restarts), wait up to a minute, then run the identity helper. **Expected:** `tools status` shows `linked`; the helper finds one supervisor and one service tree, with `cloudflared` in it at `1000 1000` and every other process at `1000 1000`. If `cloudflared` is missing, read `tools status` (`relay client …`, `relay failure …`) and record `fail` or `blocked` with that reason; never infer the identity.
+   3. `restart t3-a`, then the helper again: `cloudflared` is back, at `1000 1000`.
+   4. Right after the capture, `tools connect t3-a t3code unlink`, then `tools connect t3-a t3code logout`. **Expected:** `tools status` shows `not signed in, not linked`. Remove the sandbox's environment from the T3 account if the app still lists it.
+
+   This is an observation of the relay client's identity only. It is **not** the manual checklist's phone link: `t3-connect-link` still needs a person to open the environment on a phone and is recorded only by `manual-check record add --human-observed` when observed, never by this run. A `not-run` or `blocked` `identity-cloudflared` leaves the UID/GID proof incomplete, so the run does not count (see [the counting rule](#supplementary-record)).
 
 ### 3. Update within a channel
 
 On `t3-a` (channel `latest`):
 
-1. `tools update t3-a t3code` (no selector). **Expected:** exit zero, the same `channel latest; pin none`, and the version equal to the tag's current head. **If the head equals the installed version, this step is a no-op and the record must say so**; it then proves only that an up-to-date channel selection is left alone, with no change to PIDs.
-2. **Movement within a channel** (`update-channel`). Prefer the natural case: a channel whose head moved between the enable and this update, observed by comparing the recorded `tools status` version with the new one. When the head did not move, stage it, and mark the check `staged` in the record: run `tools update t3-a t3code --version PIN` (a real install of an older version), then in `sandboxed-agents shell` edit `~/.local/share/sandboxed-agents/tools/t3code/selection.json` so that it has `"channel": "latest"` and no `pin`, with `version` left at `PIN` (what the file holds for a channel whose head was `PIN` when it was enabled); then run `tools update` with no selector. **Expected:** the version becomes the head, `channel latest` stays recorded, no pin, and the service runs on the new version with new PIDs. The staged file is a state the executable itself writes; the edit is the only artificial step, and the record names it.
+1. `tools update t3-a t3code` (no selector). **Expected:** exit zero, the same `channel latest; pin none`, and the version equal to the tag's current head (`update-channel-head-latest`). **If the head equals the installed version, this step is a no-op and the record must say so**; it then proves only that an up-to-date channel selection is left alone, with the PIDs and `started` unchanged. If the head moved, it is a real movement and the version in `tools status` changes.
+2. **Movement within a channel** (`update-channel`). Prefer the natural case: a channel whose head moved between the enable and this update, observed by comparing the recorded `tools status` version with the new one. When the head did not move, stage it, and mark the check `staged` in the record: run `tools update t3-a t3code --version PIN` (a real install of an older version), then in `sandboxed-agents shell` edit `~/.local/share/sandboxed-agents/tools/t3code/selection.json` so that it has `"channel": "latest"` and no `pin`, with `version` left at `PIN` (what the file holds for a channel whose head was `PIN` when it was enabled); then run `tools update` with no selector. **Expected:** the version becomes the head, `channel latest` stays recorded, no pin, and the service runs on the new version (a new `started`). The staged file is a state the executable itself writes; the edit is the only artificial step, and the record names it.
 3. **Explicit channel** (`update-channel-explicit`): `tools update t3-a t3code --channel nightly`, then `tools update t3-a t3code --channel latest`. **Expected:** each switch installs that channel's head and records the channel with no pin.
-4. `tools update t3-b t3code` (channel `nightly`, no selector): the same as step 1 for nightly.
+4. `tools update t3-b t3code` (channel `nightly`, no selector; `update-channel-head-nightly`): the same as step 1 for nightly.
 
 ### 4. Update within a pin
 
 On `t3-b`:
 
 1. `tools update t3-b t3code --version PIN` (`update-pin-set`). **Expected:** `(pin PIN)`, `channel none; pin PIN`, version `PIN`.
-2. `tools update t3-b t3code` (`update-pin`). **Expected:** exit zero, still `pin PIN`, the version unchanged, **the PIDs unchanged** (nothing is reinstalled or restarted for a healthy pinned installation).
+2. `tools update t3-b t3code` (`update-pin`). **Expected:** exit zero, still `pin PIN`, the version unchanged, **`supervisor_pid`, `service_pid`, and `started` unchanged** (nothing is reinstalled or restarted for a healthy pinned installation).
 3. `tools update t3-b t3code --version PIN2`: the pin and the version become `PIN2`.
 4. `tools update t3-b t3code --channel latest` (`update-channel-from-pin`): back to `channel latest; pin none` and the version `LATEST`.
-
-Optionally, **staged damage** (`update-pin-repair`, mark `staged`): with the pin recorded and the service stopped, remove the pinned launcher prefix under `~/.local/share/sandboxed-agents/tools/t3code/npm/` as `agent`, then run `tools update` with no selector. **Expected:** the same pin and version are installed again and the service runs.
 
 ### Forced failed update, and what it proves
 
 With a Tool enabled and running at version `V` and selection `S` (this is `update-failed-retained`), do it twice: once with a channel recorded, on `t3-a` after step 3 of phase 3, and once with a pin recorded, on `t3-b` after step 1 of phase 4. Record the check for each:
 
 1. Record `selection.json`, `state.json` (the two PIDs and `started`), `tools status`, and the process list.
-2. Confirm the nonexistent version: `npm view -- t3@0.0.0-sandboxed-agents-none.1 version` exits non-zero with `E404`. A published version of that name would invalidate the step.
+2. Confirm the nonexistent version in `sandboxed-agents shell t3-a`: `npm view -- t3@0.0.0-sandboxed-agents-none.1 version` exits non-zero with `E404`. A published version of that name would invalidate the step.
 3. Run it:
 
    ```text
@@ -190,7 +206,7 @@ With a Tool enabled and running at version `V` and selection `S` (this is `updat
 
    with `SANDBOX` the sandbox of this round, `t3-a` or `t3-b`.
 
-4. **Expected:** non-zero; the message names the failing step, that the version is not published; `tools status` shows the **same** version, channel or pin, and `service running`; `selection.json` is byte-identical; `state.json` shows the **same PIDs and `started`**, so the service never restarted; `~/.local/bin/t3` still points into the installed prefix; `npm/` holds the previous prefix only.
+4. **Expected:** non-zero; the message names the failing step, that the version is not published; `tools status` shows the **same** version, channel or pin, and `service running`; `selection.json` is byte-identical; `state.json` shows the **same `supervisor_pid`, `service_pid`, and `started`**, so the service never restarted; `~/.local/bin/t3` still points into the installed prefix; `npm/` holds the previous prefix only.
 
 **What this proves.** The version is well-formed, so the usage check passes, and npm refuses it at the resolution step, before any install, any stop, or any recorded change. It proves that the previous installation, the selection, the version, and the running service stay when a switch fails **at resolution**. It does **not** prove that a later failure, an install, a runtime download, or a service that does not start on the new version, restores the previous service; those branches are covered by offline tests with injected processes only. Do not claim more, and do not record a service rollback from this run.
 
@@ -214,13 +230,13 @@ On `t3-a`, with at least one Git worktree inside T3 Code's home to prove the rel
 
 Both sandboxes run the Tool. These are the Tailscale criteria of task `tailscale-pair`.
 
-1. In an interactive terminal for each sandbox, `tools tailscale t3-a t3code login` and `tools tailscale t3-b t3code login`, approving each device in a browser. **Expected:** each prints `tailnet node signed in as t3-a.TAILNET.ts.net` or `t3-b.TAILNET.ts.net`, and each device is listed in the tailnet admin console. The two origins differ.
+1. **Two origins** (`tailnet-two-origins`, steps 1 to 3). In an interactive terminal for each sandbox, `tools tailscale t3-a t3code login` and `tools tailscale t3-b t3code login`, approving each device in a browser. **Expected:** each prints `tailnet node signed in as t3-a.TAILNET.ts.net` or `t3-b.TAILNET.ts.net`, and each device is listed in the tailnet admin console. The two origins differ.
 2. `tools pair t3-a t3code`, then `tools pair t3-b t3code`. Take the origin, `https://NAME.TAILNET.ts.net/`, from the printed pairing URL, the part before `/pair`, **without the token**. Do not scan; do not record the token or the QR code. Then `tools pair NAME t3code --revoke` for each. **Expected:** `tools status` shows `Serve maps the origin to the service` for each.
 3. **From the tailnet client** (not the host), request each origin, for example `curl --silent --show-error --max-time 20 --output /dev/null --write-out '%{http_code}\n' ORIGIN`. **Expected:** each answers over HTTPS with a response from T3 Code. Record the status code; the page does not fix it. A TLS failure or a timeout is a failure.
 4. **Each origin reaches only its own service** (`tailnet-correct-service`): `stop t3-b`. Request both origins: A answers, B does not. `start t3-b`: both answer. Then the same with `t3-a` stopped. The origins carry the sandbox's name, and only the running sandbox's origin answers.
 5. **After `restart`** (`tailnet-after-restart`): `restart t3-a`. **Expected:** `t3code service running` and `t3code tailnet node running`; `tools status` shows the **same origin** as step 2 and `Serve maps the origin to the service`; no second `tools pair` was run; the tailnet client reaches both origins again. Repeat for `t3-b`.
 6. **After `update NAME`** (`tailnet-after-update-name`): `update t3-a --with native` or `--with none`, whichever differs, with the container ID changing. The same expectations as step 5. Repeat for `t3-b`.
-7. `podman-unchanged` once more on both sandboxes: the node and Serve add no publish, mount, device, capability, or network change.
+7. `podman-unchanged` (the last comparison) once more on both sandboxes: the node and Serve add no publish, mount, device, capability, or network change.
 
 The phone's pairing and its scan are the manual checklist's `t3-qr-pair`; do them there, on the same hosts if you want one set of devices.
 
@@ -228,7 +244,7 @@ The phone's pairing and its scan are the manual checklist's `t3-qr-pair`; do the
 
 Follow the skill's [image cleanup](../.agents/skills/live-validation/SKILL.md#image-cleanup). In short:
 
-1. `tools tailscale t3-a t3code logout` and the same for `t3-b` signs the nodes out; `tools delete` also does. Check the tailnet admin console and remove any device left over by hand.
+1. `tools tailscale t3-a t3code logout` and the same for `t3-b` signs the nodes out; `tools delete` also does. If a T3 Connect login or link of `t3-a` remains, `unlink` and `logout` it and remove the environment from the T3 account. Check the tailnet admin console and remove any device left over by hand.
 2. `sandboxed-agents remove t3-a --volumes` and the same for `t3-b`. Then `sandboxed-agents list` shows no sandbox of the group, and `podman ps --all` and `podman volume ls` show no object of the group.
 3. From the build output you kept, record the **exact full ID** of every image this run's build steps produced, with the step each came from, and resolve any shortened ID to exactly one full ID with `podman images --all --no-trunc`. An image is eligible only when the skill's rules say so: absent from the before inventory, in this run's build record, referenced by no container of any group, and not kept at the user's request. An image seen only in a parent chain, or tied only by a hash or a creation time, stays.
 4. Remove each eligible image one by one by full ID, toolchain images before the base image they depend on: `podman rmi --no-prune ID`, with no `--force`, and on Windows with the selected `--connection`. **Never** run `podman image prune`, `podman system prune`, `podman system reset`, or any removal of the whole host, and never touch a machine, its disk, or WSL.
@@ -236,9 +252,11 @@ Follow the skill's [image cleanup](../.agents/skills/live-validation/SKILL.md#im
 
 ## Supplementary record
 
-Make one record per host and per run. Start it **before** the run, with every outcome `not-run`, so that an interrupted run leaves a record that shows it. Fill in an outcome only from what you observed. Keep command output, logs, process listings, and inspect files **on the host**, privately, and refer to them by file name; never paste them. The record never holds a credential, a login URL, a one-time code, a pairing token, a QR code, an account name, or a tailnet name. Post the completed record as a comment on [issue #97](https://github.com/grauzone-labs/sandboxed-agents/issues/97); no other file or gate reads it.
+Make one record per host and per run. Start it **before** the run, with every outcome `not-run`, so that an interrupted run leaves a record that shows it. Fill in an outcome only from what you observed. Keep command output, logs, process listings, and inspect files **on the host**, privately, and refer to them by file name; never paste them. The record never holds a credential, a login URL, a one-time code, a pairing token, a QR code, an account name, or a tailnet name; it names no operator, because the author of the comment is the operator. Post the completed record as a comment on [issue #97](https://github.com/grauzone-labs/sandboxed-agents/issues/97); no other file or gate reads it, and it changes neither the live-suite records nor the manual-checklist record, and publishes no tag.
 
-Outcomes: `not-run`, `pass`, `fail`, `staged` (passed through a staged state, which the note names), `blocked` (with the reason). A run counts toward #97 only when each check of the list in the issue has `pass`, or `staged` where this page allows it, on both hosts.
+Outcomes: `not-run`, `pass`, `fail`, `staged` (passed through a staged state, which the note names), `blocked` (with the reason).
+
+**Counting rule.** A host's run counts toward #97 only when **every row** of the check table is `pass`, with one allowance: `update-channel` may be `staged`, because only then can a channel update be shown when the tag's head did not move. The rows are the run list of the issue, all required. `identity-cloudflared` is among them: a `not-run` or `blocked` outcome leaves the UID/GID proof incomplete, and the run does not count until a rerun of the check passes. A run must hold on both hosts. The phone checks are never rows of this record.
 
 ```markdown
 ## T3 Code recorded Tool run
@@ -246,7 +264,6 @@ Outcomes: `not-run`, `pass`, `fail`, `staged` (passed through a staged state, wh
 Run result: not-run
 Platform: <linux | windows-11>
 Date range (UTC): <start> to <end>
-Operator: <name or handle>
 
 ### Revision and executable
 - Commit (40 hex): <sha>   Clean checkout: <yes | no>
@@ -278,20 +295,21 @@ Operator: <name or handle>
 | identity-restart | not-run | | |
 | identity-update-name (container ID changed: yes/no) | not-run | | |
 | identity-cloudflared | not-run | | |
+| update-channel-head-latest (head moved: yes/no) | not-run | | |
+| update-channel-head-nightly (head moved: yes/no) | not-run | | |
 | update-channel (natural or staged) | not-run | | |
 | update-channel-explicit | not-run | | |
 | update-pin-set | not-run | | |
 | update-pin | not-run | | |
 | update-channel-from-pin | not-run | | |
-| update-pin-repair (optional) | not-run | | |
 | update-failed-retained (channel) | not-run | | |
 | update-failed-retained (pin) | not-run | | |
 | podman-unchanged (comparisons made: n) | not-run | | |
 | delete | not-run | | |
 | delete-again | not-run | | |
 | re-enable-clean | not-run | | |
-| tailnet-two-origins | not-run | | |
-| tailnet-correct-service | not-run | | |
+| tailnet-two-origins (phase 7, steps 1 to 3) | not-run | | |
+| tailnet-correct-service (step 4) | not-run | | |
 | tailnet-after-restart | not-run | | |
 | tailnet-after-update-name | not-run | | |
 | cleanup | not-run | | |
@@ -302,7 +320,7 @@ Operator: <name or handle>
 - Sandboxes and volumes of the group remaining: <none | …>   Tailnet devices left: <none | …>
 
 ### Not covered by this record
-The phone checks (`t3-connect-link`, `t3-qr-pair`), service rollback after a failure past resolution, and anything not listed above.
+The phone checks (`t3-connect-link`, `t3-qr-pair`), the T3 Connect environment opening on a phone, service rollback after a failure past resolution, and anything not listed above.
 ```
 
 ## What a record may not say

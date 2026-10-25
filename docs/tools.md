@@ -2,14 +2,14 @@
 
 A Tool is a program or managed service that runs beside agents in a sandbox, installed into the sandbox's home data after the sandbox exists ([`CONTEXT.md`](../CONTEXT.md), [ADR 0009](adr/0009-tools-run-as-manager-supervised-services.md)). The first version ships one Tool, **T3 Code**, tool name `t3code`. It runs there as a background service, so that you can follow and steer the sandbox's agents from the T3 mobile app on your phone, without a change to the sandbox's containment. This page tells you how to enable it, how it updates and what a failed update keeps, what runs and what it reaches, how to link your phone, and how to remove it. The commands and their options are in the [command reference](command-reference.md#tool-commands).
 
-Read [Four different sign-ins](#four-different-sign-ins) before you link a phone: T3 Code involves three accounts that have nothing in common but the word "login".
+Read [Logins and pairing](#logins-and-pairing) before you link a phone. The **T3 Connect login is a T3 account login**, **QR pairing is a device pairing**, and **agent provider sign-in stays `agents login NAME AGENT`**; a T3 account, a Tailscale tailnet, and your agents' providers are three unrelated accounts.
 
 ## What is verified and how
 
 This page describes what the executable does, as its offline tests check it against fake Podman and fake SSH. An offline test does not show that a real host behaves that way. Nothing on this page is a claim that a live run or a manual check passed.
 
 - The repository's live suite, `TestLiveSuite`, never enables a Tool ([releases](releases.md#live-suite)). Its records say nothing about T3 Code.
-- Live evidence for the Tool exists only as the **recorded Tool runs** that [T3 Code validation runbook](t3code-validation.md) defines, each with its commit, platform, and T3 Code versions. A run that has no record did not happen.
+- Earlier observations on live hosts, such as those the ADRs 0009 and 0010 cite, informed the design. They are not acceptance evidence. What counts as live evidence for the Tool is a **recorded Tool run** that the [T3 Code validation runbook](t3code-validation.md) defines, with its commit, platform, and T3 Code versions. A run without such a record does not count.
 - The phone checks, the T3 Connect link and the QR scan over Tailscale, are items of the [manual checklist](manual-checklist.md#t3-connect-login-and-link). A person observes them on a real phone, and they have a record of their own.
 
 ## Topology and prerequisites
@@ -50,13 +50,15 @@ While the node is signed in, `tailscaled` forwards a connection that a tailnet p
 - **port 22**, `sshd`, which accepts only the key dedicated to the sandbox;
 - **port 3773**, the T3 Code service over plain HTTP, which T3 Code's own pairing and session tokens protect.
 
-Nothing is reachable from outside your tailnet, and nothing while no node is signed in. The host and the public internet gain nothing. Your tailnet's access policy decides which peers get this reach, and the sandbox cannot see that policy. Do not set `--shields-up` on the node to narrow it: it blocks the HTTPS origin as well, and your phone loses the sandbox until it is unset ([ADR 0010](adr/0010-t3-code-pairs-over-an-in-sandbox-tailnet-node.md#what-this-changes-about-the-sandboxs-reach)).
+Through the node, nothing is reachable from outside your tailnet, and nothing while no node is signed in; the host and the public internet gain nothing through it. The T3 Connect relay and the host's SSH path are separate paths and are not affected by the node. [SECURITY.md](../SECURITY.md#tools-and-their-network-paths) is the canonical statement of the three paths. Your tailnet's access policy decides which peers get this reach, and the sandbox cannot see that policy. Do not set `--shields-up` on the node to narrow it: it blocks the HTTPS origin as well, and your phone loses the sandbox until it is unset ([ADR 0010](adr/0010-t3-code-pairs-over-an-in-sandbox-tailnet-node.md#what-this-changes-about-the-sandboxs-reach)).
 
 ### What does not change
 
 A Tool changes no Podman option. The container and its volumes keep their names and labels, and the publish stays `127.0.0.1:PORT:22/tcp`, the only published port. There is no new mount, device, or capability. The network mode stays `--network=pasta:--no-map-gw`, the user, `--userns`, and `--security-opt=no-new-privileges` are as before, and the resource limits are unchanged. Host state records nothing about a Tool. See the table in [SECURITY.md](../SECURITY.md#default-podman-options) and [Tools and their network paths](../SECURITY.md#tools-and-their-network-paths).
 
-## Four different sign-ins
+## Logins and pairing
+
+Five different things carry a login or a pairing name in T3 Code's setup. Only the first, the fourth, and the fifth are logins, and each to a different account.
 
 | Sign-in | Command | What it is | What it touches |
 |---|---|---|---|
@@ -109,7 +111,7 @@ An explicit selector that differs from the recorded one, on `enable` or `update`
 
 A switch that is interrupted before it reaches either end can leave an extra prefix and runtime directory. The next `tools enable` or `tools update` removes every prefix and runtime the selection does not name before it does anything else; the service keeps running from the named one meanwhile.
 
-Limits of these statements: they are what the code does and what its offline tests prove with injected process functions. A recorded live run exercises the first case only, with a version that npm does not publish ([T3 Code validation runbook](t3code-validation.md#forced-failed-update-and-what-it-proves)); the others have no live evidence.
+Limits of these statements: they are what the code does and what its offline tests prove with injected process functions. The runbook's forced failed update would exercise the first case only, with a version that npm does not publish ([T3 Code validation runbook](t3code-validation.md#forced-failed-update-and-what-it-proves)); no procedure here exercises the others live.
 
 ## The service
 
