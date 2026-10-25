@@ -101,7 +101,9 @@ echo "recorded supervisor $sup and its tree:"
 for p in $(tree "$sup"); do printf '  %s uid/gid %s | %s\n' "$p" "$(awk '/^(Uid|Gid):/{printf "%s ",$2}' /proc/$p/status)" "$(tr '\0' ' ' < /proc/$p/cmdline)"; done
 ```
 
-**Exactly one service** means: the first list holds exactly one process and it is the recorded `supervisor_pid` (so no second, independent supervisor and no second service group exists); the tree under it holds the launcher whose PID is the recorded `service_pid` and its descendants, the npm launcher's downloaded runtime among them; and **every process in the tree shows real UID and GID `1000 1000`**, none `0`. Once linked, `cloudflared` is a descendant of the service in this tree; if it is not in the tree, search the whole listing for it by name and record where it ran. The container's `sshd`, its entrypoint, and the inspecting shell are outside the tree and are not Tool processes. Cross-check from the host: `podman top CONTAINER user huser pid args`.
+**Exactly one service** means: the first list holds exactly one process and it is the recorded `supervisor_pid` (so no second, independent supervisor and no second service group exists); the tree under it holds the launcher whose PID is the recorded `service_pid` and its descendants, the npm launcher's downloaded runtime among them; and **every process in the tree shows real UID and GID `1000 1000`**, none `0`. Once linked, a `cloudflared` process belongs to this Tool; see the `cloudflared` rule below. The container's `sshd`, its entrypoint, and the inspecting shell are outside the tree and are not Tool processes. Cross-check from the host: `podman top CONTAINER user huser pid args`.
+
+**The `cloudflared` rule.** Tree membership alone never decides the UID/GID proof. `cloudflared` passes when its **live PID and real UID and GID `1000 1000` are directly observed** in `/proc/PID/status`, and it is **attributable to this Tool's home**: its executable (`readlink /proc/PID/exe`) lies under this sandbox's `~/.local/share/sandboxed-agents/tools/t3code/home/`, and its parent or ownership is shown (`PPid`, or the supervisor's or runtime's tree, or a process group of this Tool). Inside the service tree that evidence is the tree itself; outside it (upstream may detach the relay) the executable path and the parent evidence must be recorded. Keep the executable, parent, and any command-line arguments in the host-private capture; the arguments may be sensitive and never go into the record. When the identity or the ownership cannot be established, for example the process is another sandbox's, another process, or not found, record `fail` or `blocked` with the reason; never infer it.
 
 **Podman configuration**, on the host, saved to a host-private file per stage (`PHASE`, for example `after-enable`):
 
@@ -168,8 +170,8 @@ On `t3-a`:
 6. **`update NAME`** (`identity-update-name`): note the container ID, then `update t3-a --with none`. **Expected:** the container ID differs; the update prints `t3code service running`; `started` changed; exactly one service at `1000 1000`; version, channel, and the toolchain label (`none`) as recorded; Podman configuration unchanged apart from the image, the container ID, and the label. A `restart` or `update` that exits non-zero because the service did not start, or that prints `already up to date`, is a failure of this check.
 7. **`identity-cloudflared`: link the sandbox for the observation.** The relay client exists only while a sandbox is linked, so this check needs a T3 account login and a link on `t3-a` inside this run. It needs a human with a browser, and **the run pauses** at each approval until that human has approved; a run that cannot pause here stops with this check `blocked`.
    1. In an interactive terminal, `sandboxed-agents tools connect t3-a t3code login`, then `sandboxed-agents tools connect t3-a t3code link`. Each prints a URL and a code that the human approves in a browser. That output is sensitive: let it appear on the terminal only, do not save, paste, or record it.
-   2. After `link` (the service restarts), wait up to a minute, then run the identity helper. **Expected:** `tools status` shows `linked`; the helper finds one supervisor and one service tree, with `cloudflared` in it at `1000 1000` and every other process at `1000 1000`. If `cloudflared` is missing, read `tools status` (`relay client …`, `relay failure …`) and record `fail` or `blocked` with that reason; never infer the identity.
-   3. `restart t3-a`, then the helper again: `cloudflared` is back, at `1000 1000`.
+   2. After `link` (the service restarts), wait up to a minute, then run the identity helper. **Expected:** `tools status` shows `linked`; the helper finds one supervisor and one service tree with every process at `1000 1000`, and a `cloudflared` process meets the `cloudflared` rule under Helpers, in the tree or, if upstream detached it, outside it with its executable path and parent recorded. If no `cloudflared` is found, read `tools status` (`relay client …`, `relay failure …`) and record `fail` or `blocked` with that reason; never infer the identity.
+   3. `restart t3-a`, then the helper again: a `cloudflared` process is back and meets the same `cloudflared` rule, with its new live PID observed.
    4. Right after the capture, `tools connect t3-a t3code unlink`, then `tools connect t3-a t3code logout`. **Expected:** `tools status` shows `not signed in, not linked`. Remove the sandbox's environment from the T3 account if the app still lists it.
 
    This is an observation of the relay client's identity only. It is **not** the manual checklist's phone link: `t3-connect-link` still needs a person to open the environment on a phone and is recorded only by `manual-check record add --human-observed` when observed, never by this run. A `not-run` or `blocked` `identity-cloudflared` leaves the UID/GID proof incomplete, so the run does not count (see [the counting rule](#supplementary-record)).
@@ -189,7 +191,7 @@ On `t3-b`:
 
 1. `tools update t3-b t3code --version PIN` (`update-pin-set`). **Expected:** `(pin PIN)`, `channel none; pin PIN`, version `PIN`.
 2. `tools update t3-b t3code` (`update-pin`). **Expected:** exit zero, still `pin PIN`, the version unchanged, **`supervisor_pid`, `service_pid`, and `started` unchanged** (nothing is reinstalled or restarted for a healthy pinned installation).
-3. `tools update t3-b t3code --version PIN2`: the pin and the version become `PIN2`.
+3. `tools update t3-b t3code --version PIN2` (`update-pin-switch`): the pin and the version become `PIN2`.
 4. `tools update t3-b t3code --channel latest` (`update-channel-from-pin`): back to `channel latest; pin none` and the version `LATEST`.
 
 ### Forced failed update, and what it proves
@@ -256,7 +258,7 @@ Make one record per host and per run. Start it **before** the run, with every ou
 
 Outcomes: `not-run`, `pass`, `fail`, `staged` (passed through a staged state, which the note names), `blocked` (with the reason).
 
-**Counting rule.** A host's run counts toward #97 only when **every row** of the check table is `pass`, with one allowance: `update-channel` may be `staged`, because only then can a channel update be shown when the tag's head did not move. The rows are the run list of the issue, all required. `identity-cloudflared` is among them: a `not-run` or `blocked` outcome leaves the UID/GID proof incomplete, and the run does not count until a rerun of the check passes. A run must hold on both hosts. The phone checks are never rows of this record.
+**Counting rule.** A host's run counts toward #97 only when **every row** of the check table is `pass`, with one allowance: `update-channel` may be `staged`, because only then can a channel update be shown when the tag's head did not move. The rows cover the run list of the issue and the supporting selector and identity checks around it, and this procedure requires all of them to pass; it makes no acceptance claim beyond that. `identity-cloudflared` is among them: a `not-run` or `blocked` outcome leaves the UID/GID proof incomplete, and the run does not count until a rerun of the check passes. A run must hold on both hosts. The phone checks are never rows of this record.
 
 ```markdown
 ## T3 Code recorded Tool run
@@ -301,6 +303,7 @@ Date range (UTC): <start> to <end>
 | update-channel-explicit | not-run | | |
 | update-pin-set | not-run | | |
 | update-pin | not-run | | |
+| update-pin-switch | not-run | | |
 | update-channel-from-pin | not-run | | |
 | update-failed-retained (channel) | not-run | | |
 | update-failed-retained (pin) | not-run | | |

@@ -60,7 +60,7 @@ A Tool changes no Podman option. The container and its volumes keep their names 
 
 Five different things carry a login or a pairing name in T3 Code's setup. Only the first, the fourth, and the fifth are logins, and each to a different account.
 
-| Sign-in | Command | What it is | What it touches |
+| Action | Command | What it is | What it touches |
 |---|---|---|---|
 | **T3 Connect login** | `tools connect NAME t3code login` | A **T3 account** login. T3 Code shows a URL and a code, and you approve them in a browser. It stores the account authorization. It does not link anything yet. | Only the Tool directory in the sandbox. |
 | **T3 Connect link** | `tools connect NAME t3code link` | Authorizes this sandbox's service as an **environment of your T3 account**. On the phone, you sign in to the same account and pick the sandbox. It shows **no QR code**. It restarts the service so the link takes effect. | The account's list of environments. |
