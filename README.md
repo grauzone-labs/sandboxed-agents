@@ -10,6 +10,7 @@ It is one static executable, and the host needs only Podman and OpenSSH; [Host p
 - The agents `copilot`, `claude`, `codex`, and `opencode`, installed into a sandbox on request, with login, one-shot runs, and persistent sessions you can detach from.
 - Optional toolchains in the sandbox image: `dotnet`, `playwright`, `azure`, and `native`.
 - Integrations for Git identity and credentials, GitHub, Azure, and Azure DevOps.
+- The T3 Code Tool, installed on request and kept running in the sandbox, with T3 Connect and phone QR pairing over Tailscale ([Tools](docs/tools.md)).
 - SSH access for editors such as VS Code Remote SSH, as an opt-in setup.
 - `update` to move a sandbox to a newer image with rollback, and `update --all` for every sandbox.
 
@@ -39,6 +40,7 @@ Install methods: the downloaded binary (both quick guides show download, checksu
 | [SSH access](docs/ssh.md) | Opt-in SSH setup, VS Code Remote SSH, fingerprints |
 | [Agents](docs/agents.md) | Enable, pin, update, log in, run, and sessions |
 | [Integrations](docs/integrations.md) | Git, GitHub, Azure, and Azure DevOps |
+| [Tools](docs/tools.md) | T3 Code: enable and update, the service, T3 Connect, phone QR pairing over Tailscale, delete, limits |
 | [Releases](docs/releases.md) | Release files, attestations, previews, gates, install methods |
 | [npm package](docs/npm-package.md) and [NuGet package](docs/nuget-package.md) | Installing from a package |
 | [Manual checklist](docs/manual-checklist.md) | Checks by hand before a stable release |
@@ -53,7 +55,7 @@ Install methods: the downloaded binary (both quick guides show download, checksu
 - **Not a defense against hostile code.** A sandbox shares a kernel with the host (on Windows, with the WSL2 machine). Use a dedicated virtual machine for hostile code.
 - **Outbound networking is open.** An agent can send what it can read to any server it can reach.
 - **Agents in one sandbox share everything:** the user, the home data, the credentials, and the workspace. Use separate sandboxes to separate them.
-- **Only SSH is published**, on host loopback. No port is forwarded. A Tool's service, such as T3 Code's, listens on the sandbox's loopback. Once a Tool's tailnet node is signed in, peers that your tailnet's policy allows can reach the sandbox's `sshd` and that service through the node ([command reference](docs/command-reference.md#the-tailnet-node)).
+- **Only SSH is published**, on host loopback. No port is forwarded. A Tool's service, such as T3 Code's, listens on the sandbox's loopback. Once a Tool's tailnet node is signed in, peers that your tailnet's policy allows can reach the sandbox's `sshd` and that service through the node ([Tools](docs/tools.md#what-a-signed-in-node-exposes), [command reference](docs/command-reference.md#the-tailnet-node)).
 - **No command removes old images.** Remove unused ones yourself, for example with `podman image prune` ([images](docs/images.md#no-image-removal)).
 - **Owner conflicts are reported and not repaired.** You resolve them with Podman ([command reference](docs/command-reference.md#ownership-and-names)).
 - **Linux amd64 and Windows 11 x64 only.** ARM64, a self-update command, and install methods for agents other than npm are not part of the first version.
