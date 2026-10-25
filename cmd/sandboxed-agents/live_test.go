@@ -41,7 +41,7 @@ func livePlatform() string {
 var controllerGroupPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // liveCheckNames are the fixed check identifiers of the record, in run order.
-var liveCheckNames = []string{"preflight", "lifecycle", "update", "agent", "images"}
+var liveCheckNames = []string{"preflight", "lifecycle", "update", "agent", "t3code", "images"}
 
 // liveSuite carries one run's inputs, host, and check results.
 type liveSuite struct {
@@ -67,6 +67,7 @@ func TestLiveSuite(t *testing.T) {
 	suite.run(t, "lifecycle", suite.lifecycle)
 	suite.run(t, "update", suite.update)
 	suite.run(t, "agent", suite.agent)
+	suite.run(t, "t3code", suite.t3code)
 	if suite.imagesSelected {
 		suite.imagesComplete = suite.run(t, "images", suite.images)
 	} else {
@@ -420,7 +421,7 @@ func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 				"platform": `"` + strings.TrimSuffix(strings.TrimPrefix(filename, "live-suite-"), ".json") + `"`,
 				"result":   `"fail"`, "image_part_selected": map[bool]string{false: "false", true: "true"}[selection == "1"],
 				"image_part_ran": "false", "image_coverage_complete": "false",
-				"checks": `[{"name":"preflight","result":"fail"},{"name":"lifecycle","result":"not-run"},{"name":"update","result":"not-run"},{"name":"agent","result":"not-run"},{"name":"images","result":"not-run"}]`,
+				"checks": `[{"name":"preflight","result":"fail"},{"name":"lifecycle","result":"not-run"},{"name":"update","result":"not-run"},{"name":"agent","result":"not-run"},{"name":"t3code","result":"not-run"},{"name":"images","result":"not-run"}]`,
 			}
 			got := map[string]string{}
 			for key, value := range fields {
