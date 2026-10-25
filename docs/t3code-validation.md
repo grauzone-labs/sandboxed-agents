@@ -103,7 +103,17 @@ for p in $(tree "$sup"); do printf '  %s uid/gid %s | %s\n' "$p" "$(awk '/^(Uid|
 
 **Exactly one service** means: the first list holds exactly one process and it is the recorded `supervisor_pid` (so no second, independent supervisor and no second service group exists); the tree under it holds the launcher whose PID is the recorded `service_pid` and its descendants, the npm launcher's downloaded runtime among them; and **every process in the tree shows real UID and GID `1000 1000`**, none `0`. Once linked, a `cloudflared` process belongs to this Tool; see the `cloudflared` rule below. The container's `sshd`, its entrypoint, and the inspecting shell are outside the tree and are not Tool processes. Cross-check from the host: `podman top CONTAINER user huser pid args`.
 
-**The `cloudflared` rule.** Tree membership alone never decides the UID/GID proof. `cloudflared` passes when its **live PID and real UID and GID `1000 1000` are directly observed** in `/proc/PID/status`, and it is **attributable to this Tool's home**: its executable (`readlink /proc/PID/exe`) lies under this sandbox's `~/.local/share/sandboxed-agents/tools/t3code/home/`, and its parent or ownership is shown (`PPid`, or the supervisor's or runtime's tree, or a process group of this Tool). Inside the service tree that evidence is the tree itself; outside it (upstream may detach the relay) the executable path and the parent evidence must be recorded. Keep the executable, parent, and any command-line arguments in the host-private capture; the arguments may be sensitive and never go into the record. When the identity or the ownership cannot be established, for example the process is another sandbox's, another process, or not found, record `fail` or `blocked` with the reason; never infer it.
+**The `cloudflared` rule.** Tree membership alone never decides the UID/GID proof, and it exempts no relay from the executable and identity conditions: **every** `cloudflared` process, in the service tree or outside it, must meet both, and the tree only supplies parent evidence. A `cloudflared` process passes when its **live PID and real UID and GID `1000 1000` are directly observed** in `/proc/PID/status`, and it is **attributable to this Tool's home**: its executable (`readlink /proc/PID/exe`) lies under this sandbox's `~/.local/share/sandboxed-agents/tools/t3code/home/`, and its parent or ownership is shown (`PPid`, or the supervisor's or runtime's tree, or a process group of this Tool). Inside the service tree its place in the tree is the parent evidence; outside it (upstream may detach the relay) the `PPid` and ownership evidence must be recorded. In both cases the executable path is recorded and checked. Keep the executable, parent, and any command-line arguments in the host-private capture; the arguments may be sensitive and never go into the record. When the identity or the ownership cannot be established, for example the process is another sandbox's, another process, or not found, the check does not pass: record `fail` or `blocked` with the reason, and never infer it.
+
+To find every relay, run this as `agent` in `sandboxed-agents shell t3-a`, whether or not the helper's tree lists it. It prints no arguments, and its output stays in the host-private capture:
+
+```sh
+for pid in $(pgrep -x cloudflared); do
+  echo "cloudflared pid $pid"; grep -E '^(PPid|Uid|Gid):' /proc/$pid/status; readlink /proc/$pid/exe
+done
+```
+
+No output means no `cloudflared` was found.
 
 **Podman configuration**, on the host, saved to a host-private file per stage (`PHASE`, for example `after-enable`):
 
@@ -162,7 +172,7 @@ Run these phases in order on each host. Each phase names the checks of the [reco
 
 On `t3-a`:
 
-1. Read `state.json` and the identity listing and keep them (from any terminal). Then **close T1 entirely**, the terminal that ran the first `enable` in phase 1: end the shell, the terminal window, or the SSH session.
+1. Read `state.json` and the identity listing and keep them (from any terminal). Then **close T1 entirely**, the terminal T1 of phase 1 step 3 that ran the successful no-selector `enable`, not a refusal or the unpublished-version attempt: end the shell, the terminal window, or the SSH session.
 2. In a new terminal T2: `tools status` and the two helpers again (`identity-after-terminal-close`). **Expected:** `service running`, the **same** `supervisor_pid`, `service_pid`, and `started` as before T1 closed (no restart was expected), `restarts` `0`, exactly one service as defined under Helpers, every process of its tree at `1000 1000`.
 3. **Repeated enable never leaves two** (`repeat-enable-keeps`): run `tools enable t3-a t3code` and `up t3-a` again. **Expected:** still exactly one service, the same PIDs and `started`, `selection.json` unchanged.
 4. **`stop` and `start`** (`identity-stop-start`): `stop t3-a`, then `start t3-a`. **Expected:** `start` prints `t3code service running`; `tools status` `running`; the container's `StartedAt` and the service's `started` **changed** since step 2 (the PIDs may or may not repeat); `restarts` `0`; exactly one service at `1000 1000`; `selection.json` unchanged. Compare the Podman configuration (`podman-unchanged`).
@@ -256,9 +266,11 @@ Follow the skill's [image cleanup](../.agents/skills/live-validation/SKILL.md#im
 
 Make one record per host and per run. Start it **before** the run, with every outcome `not-run`, so that an interrupted run leaves a record that shows it. Fill in an outcome only from what you observed. Keep command output, logs, process listings, and inspect files **on the host**, privately, and refer to them by file name; never paste them. The record never holds a credential, a login URL, a one-time code, a pairing token, a QR code, an account name, or a tailnet name; it names no operator, because the author of the comment is the operator. Post the completed record as a comment on [issue #97](https://github.com/grauzone-labs/sandboxed-agents/issues/97); no other file or gate reads it, and it changes neither the live-suite records nor the manual-checklist record, and publishes no tag.
 
-Outcomes: `not-run`, `pass`, `fail`, `staged` (passed through a staged state, which the note names), `blocked` (with the reason).
+Outcomes of a check: `not-run`, `pass`, `fail`, `staged` (passed through a staged state, which the note names), `blocked` (with the reason).
 
 **Counting rule.** A host's run counts toward #97 only when **every row** of the check table is `pass`, with one allowance: `update-channel` may be `staged`, because only then can a channel update be shown when the tag's head did not move. The rows cover the run list of the issue and the supporting selector and identity checks around it, and this procedure requires all of them to pass; it makes no acceptance claim beyond that. `identity-cloudflared` is among them: a `not-run` or `blocked` outcome leaves the UID/GID proof incomplete, and the run does not count until a rerun of the check passes. A run must hold on both hosts. The phone checks are never rows of this record.
+
+**Run result** is the record's top-level field and follows the counting rule, with the values `not-run`, `pass`, `fail`, and `blocked`: `pass` only when every required row is `pass` (`update-channel` may be `staged`); `fail` when any required row is `fail`; `blocked` when no row failed but a required proof is `blocked` or `not-run` after the run started; `not-run` before the procedure was started. The field changes no schema and proves nothing beyond its rows.
 
 ```markdown
 ## T3 Code recorded Tool run
