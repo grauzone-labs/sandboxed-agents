@@ -151,7 +151,7 @@ Credentials live in the sandbox's home volume. They survive `update` and are rem
 
 ## Tool commands
 
-A Tool, as [`CONTEXT.md`](../CONTEXT.md) defines it, runs beside agents in a sandbox and is installed into the home data after the sandbox exists ([ADR 0009](adr/0009-tools-run-as-manager-supervised-services.md)). The first Tool is T3 Code, tool name `t3code` ([Story #89](https://github.com/grauzone-labs/sandboxed-agents/issues/89)). T3 Code's phone paths are T3 Connect, the account login with its outbound relay, and QR pairing over the Tool's own tailnet node ([ADR 0010](adr/0010-t3-code-pairs-over-an-in-sandbox-tailnet-node.md)); neither is an agent provider login, which stays `agents login NAME AGENT`.
+A Tool, as [`CONTEXT.md`](../CONTEXT.md) defines it, runs beside agents in a sandbox and is installed into the home data after the sandbox exists ([ADR 0009](adr/0009-tools-run-as-manager-supervised-services.md)). The first Tool is T3 Code, tool name `t3code` ([Story #89](https://github.com/grauzone-labs/sandboxed-agents/issues/89)). T3 Code's phone paths are T3 Connect, the account login with its outbound relay, and QR pairing over the Tool's own tailnet node ([ADR 0010](adr/0010-t3-code-pairs-over-an-in-sandbox-tailnet-node.md)); neither is an agent provider login, which stays `agents login NAME AGENT`. The [Tools page](tools.md) explains the topology, the prerequisites, the network paths, and the limits behind these commands, and the [T3 Code validation runbook](t3code-validation.md) says how their live behavior is recorded.
 
 The [Tools page](tools.md) explains enabling, updating, the service, T3 Connect, QR pairing over Tailscale, delete, and the limits as a user would meet them; this section is the command-by-command reference.
 
@@ -174,19 +174,17 @@ The [Tools page](tools.md) explains enabling, updating, the service, T3 Connect,
 
 No `tools` command takes `--force`: `tools update` and `tools delete`, like `stop`, `restart`, and `update NAME`, stop the T3 Code service without asking, and the session guard for agent sessions applies as before ([ADR 0009, D2](adr/0009-tools-run-as-manager-supervised-services.md#d2-the-service-guard)).
 
-The places of the `tools` commands in the [order of checks](#order-of-checks) are fixed in [ADR 0009, Command surface](adr/0009-tools-run-as-manager-supervised-services.md#command-surface). The `tools` commands take the manager lock inside the sandbox, not the lifecycle lock; `tools status` and `tools pair` take no lock, and `tools connect … login` holds the Tool's connect lock instead. `tools tailscale … login` holds the manager lock while you sign in, because it starts a supervised process; sign in before you start other agent or Tool changes in that sandbox.
+The `tools` commands take these places in the [order of checks](#order-of-checks), fixed in [ADR 0009, Command surface](adr/0009-tools-run-as-manager-supervised-services.md#command-surface), and each failure below is the first one the command reports. Steps 2 and 3 do not apply: no `tools` command runs the preflight or takes the lifecycle lock. Steps 4 to 6 apply as for the `agents` commands.
 
-### Tool commands in the order of checks
+| Step | A `tools` command fails here with |
+|---|---|
+| 1, before Podman is called | An unknown Tool name, an unknown `connect` or `tailscale` action, a `--channel` other than `latest` and `nightly`, a `--version` that is not an exact `MAJOR.MINOR.PATCH` with an optional prerelease, `--channel` together with `--version`, a `--ttl` that is not a number with `ms`, `s`, `m`, `h`, `d`, or `w`, and `--ttl` together with `--revoke`: all usage errors. |
+| 7 | A stopped sandbox; the message names `start NAME`. |
+| 8 | In this order: a manager that does not answer; a Tool that is not enabled, which names `tools enable NAME TOOL` (`status` reports it as not enabled and `delete` finds nothing to remove, both with exit status zero, and `enable` enables it); for `enable` and `update` with `--version`, a well-formed version that npm does not publish, before anything is installed or recorded; for `pair` without `--revoke`, a service that is not running, then a missing Tailscale prerequisite with its own message each (a node that is absent, stopped, failed, or not signed in, a tailnet without MagicDNS or HTTPS certificates, an offline node, and a Serve mapping that fronts another target). |
+| 9 | A missing terminal, for `connect … login`, `connect … link`, `tailscale … login`, and `pair` without `--revoke`; nothing has changed yet. |
+| 10 | None: there is no step 10 for a `tools` command, because the Tool has no service guard. |
 
-The [order of checks](#order-of-checks) below applies to every `tools` command as follows; the first failure is reported, and nothing has changed when a command fails at steps 1 to 9.
-
-1. **Step 1, no Podman call.** An unknown `TOOL`; an unknown `connect` or `tailscale` action; a `--channel` other than `latest` and `nightly`; a `--version` that is not an exact version; `--channel` with `--version`; a `--ttl` that is not a number with `ms`, `s`, `m`, `h`, `d`, or `w`; and `--ttl` with `--revoke`. Each lists the valid names or forms.
-2. **Steps 2 to 7.** No preflight and no lifecycle lock. An unknown sandbox, an owner conflict, an interrupted update, and a stopped sandbox (naming `start NAME`) fail as for the `agents` commands.
-3. **Step 8, in this order.** A manager that does not answer (naming `check NAME` and `restart NAME`); then, for every command but `enable`, `status`, and `delete`, a Tool that is not enabled (naming `tools enable NAME TOOL`; `status` reports it as not enabled and `delete` finds nothing, both with exit status zero); then, for `enable` and `update` with `--version`, a version that npm does not publish; then, for `pair` without `--revoke`, a service that is not running, and a missing Tailscale prerequisite, each with its own message and the fix named.
-4. **Step 9.** `connect … login`, `connect … link`, `tailscale … login`, and `pair` without `--revoke` need an interactive terminal and fail without one before anything changes. `connect … unlink`, `connect … logout`, `tailscale … logout`, `pair --revoke`, `status`, `enable`, `update`, and `delete` need none.
-5. **Step 10.** There is none: no `tools` command has a session guard or `--force`.
-
-A failure during the work is reported by the command with the failing step and a non-zero exit status: a failed `enable` or `update` keeps the previous installation, selection, and running service; a failed `delete` leaves the Tool in place or partly removed, says what remains, and is completed by running it again.
+After step 9 a command can still fail on its own work: an install, a runtime download, or a service start that fails (`enable` and `update` then keep the previous installation, selection, and running service and name the failing step), a login that is denied, expires, or is interrupted, a link or restart that fails, a `delete` that cannot relocate a worktree (it removes nothing), or an interrupted `delete` (it reports what remains). Every one of these exits non-zero. See [Tools](tools.md) for what each keeps. The `tools` commands take the manager lock inside the sandbox, not the lifecycle lock; `tools status` and `tools pair` take no lock, and `tools connect … login` holds the Tool's connect lock instead. `tools tailscale … login` holds the manager lock while you sign in, because it starts a supervised process; sign in before you start other agent or Tool changes in that sandbox.
 
 ### The T3 Code service
 

@@ -1,176 +1,203 @@
 # Tools
 
-This page tells you how to install T3 Code into a sandbox as a Tool, how its version moves, what keeps its service running, how to sign in to T3 Connect, how to pair a phone over a Tailscale tailnet, what `tools delete` removes and keeps, and where the limits are. [Command reference](command-reference.md#tool-commands) lists every option and every failure; the reasons behind the design are in [ADR 0009](adr/0009-tools-run-as-manager-supervised-services.md) and [ADR 0010](adr/0010-t3-code-pairs-over-an-in-sandbox-tailnet-node.md).
+A Tool is a program or managed service that runs beside agents in a sandbox, installed into the sandbox's home data after the sandbox exists ([`CONTEXT.md`](../CONTEXT.md), [ADR 0009](adr/0009-tools-run-as-manager-supervised-services.md)). The first version ships one Tool, **T3 Code**, tool name `t3code`. It runs there as a background service, so that you can follow and steer the sandbox's agents from the T3 mobile app on your phone, without a change to the sandbox's containment. This page tells you how to enable it, how it updates and what a failed update keeps, what runs and what it reaches, how to link your phone, and how to remove it. The commands and their options are in the [command reference](command-reference.md#tool-commands).
 
-A **Tool** is a program or service that runs beside agents in a sandbox. It is installed into the sandbox's home data after the sandbox exists and runs as the user `agent`, UID and GID 1000, like an agent does. The first Tool is [T3 Code](https://github.com/pingdotgg/t3code), tool name `t3code`. It gives you T3 Code's web and mobile interface for the agents in a sandbox. Terms such as Tool directory, Tool selection, channel, and tailnet node are defined in [`CONTEXT.md`](../CONTEXT.md).
+Read [Logins and pairing](#logins-and-pairing) before you link a phone. The **T3 Connect login is a T3 account login**, **QR pairing is a device pairing**, and **agent provider sign-in stays `agents login NAME AGENT`**; a T3 account, a Tailscale tailnet, and your agents' providers are three unrelated accounts.
 
-## Three sign-ins that are not the same
+## What is verified and how
 
-T3 Code involves three different sign-ins. Keep them apart:
+This page describes what the executable does, as its offline tests check it against fake Podman and fake SSH. An offline test does not show that a real host behaves that way. Nothing on this page is a claim that a live run or a manual check passed.
 
-| What | Command | What it is |
+- The repository's live suite, `TestLiveSuite`, has a `t3code` case. It installs the Tool, updates it within a channel and within a pin, restores the service after `stop`, `start`, `restart`, `up`, and a real and a rolled-back `update NAME`, keeps the previous service through a forced failed update, and deletes and re-enables the Tool, observing the service's loopback bind, HTTP answer, and UID and GID 1000 on a real host. It writes a supplemental `t3code-<platform>.json` beside the release record ([releases](releases.md#live-suite)). It signs in nowhere, so it never touches T3 Connect, the tailnet node, or a phone.
+- Earlier observations on live hosts, such as those the ADRs 0009 and 0010 cite, informed the design. They are historical: they are not acceptance evidence. What counts as live evidence for the Tool is a recorded `t3code` suite run with its supplemental record on each host, the recorded supplementary runs that the [T3 Code validation runbook](t3code-validation.md) defines for what the suite does not reach, and the manual-checklist records. A run without such a record does not count.
+- The phone checks, the T3 Connect link and the QR scan over Tailscale, are items of the [manual checklist](manual-checklist.md#t3-connect-login-and-link). A person observes them on a real phone, and they have a record of their own.
+
+## Topology and prerequisites
+
+```text
+phone ── T3 mobile app ──┬── T3 Connect account ── relay ──(outbound, TCP/UDP 7844 and HTTPS)──┐
+                         │                                                                    │
+                         └── tailnet ── Serve origin https://NAME.TAILNET.ts.net/ (443) ──┐   │
+                                         node address, ports 22 and 3773 ──────────────┤   │
+                                                                                       ▼   ▼
+   host ── Podman ── sandbox ── sshd (22) ── T3 Code service 127.0.0.1:3773 ◄── tailnet node, relay client
+            └─ published: 127.0.0.1:PORT → 22/tcp, and nothing else
+```
+
+The T3 Code service listens on `127.0.0.1:3773` inside the sandbox and nowhere else ([ADR 0009](adr/0009-tools-run-as-manager-supervised-services.md#network-boundary)). Three paths lead to it:
+
+| Path | For | Network |
 |---|---|---|
-| **T3 Connect login** | `tools connect NAME t3code login`, then `link` | A login to your **T3 account**. It authenticates no coding agent. After `link`, a phone signed in to the same T3 account sees the sandbox as an environment without any QR code, over an outbound relay. |
-| **QR pairing** | `tools tailscale NAME t3code login`, then `tools pair NAME t3code` | A one-time **device pairing**. A phone in your tailnet scans a QR code and talks to the sandbox's T3 Code directly over the tailnet. It uses no T3 account login, and it needs the sandbox's own Tailscale device. |
-| **Agent provider login** | `agents login NAME AGENT` | The sign-in of a coding agent such as `claude` or `codex` to its provider. T3 Connect and QR pairing neither perform it nor replace it. |
+| **SSH** | A T3 desktop client on the host | The existing SSH path. You start a port forward through the sandbox's `sshd`, as for a browser login ([SSH access](ssh.md)). The executable adds no publish and no forward. |
+| **T3 Connect relay** | The phone, through your T3 account | The service's relay client, `cloudflared`, opens **outbound** connections only: TCP and UDP port 7844, and HTTPS. No inbound port exists. A firewall that blocks outbound port 7844 shows as `relay failure` in `tools status`. |
+| **Tailnet origin** | The phone, by QR pairing | The Tool's own Tailscale device, described below. The phone must be in the same tailnet. |
 
-An agent that T3 Code starts in a sandbox is one of the sandbox's [agents](agents.md) and needs its own provider login there.
+**Tailscale is part of the Tool, not a prerequisite you install.** `tools tailscale NAME t3code login` creates a tailnet node in the sandbox, a `tailscaled` in userspace networking mode that runs as `agent` ([ADR 0010](adr/0010-t3-code-pairs-over-an-in-sandbox-tailnet-node.md)). It needs no `/dev/net/tun`, no capability, no host Tailscale, no published port, and no Funnel. The sandbox's image carries the `tailscale` package and starts no Tailscale process; a sandbox whose Tool never signed in runs none and keeps no Tailscale state. Each sandbox is its own device in your tailnet, named after the sandbox, with its own origin `https://NAME.TAILNET.ts.net/`; two sandboxes on one host get two origins, and each origin reaches only its own service. Tailscale appends a counter to the name when your tailnet already has a device of that name.
+
+What you need:
+
+- A sandbox that runs and has an image with `libatomic1` and the `tailscale` package. A sandbox created from an older image needs `build` and then `update NAME`; the commands say so when they find it missing.
+- Outbound network access from the sandbox: for the npm install, for T3 Code's own runtime download, for the relay (TCP/UDP 7844 and HTTPS), and for the tailnet node.
+- An interactive terminal for `tools connect … login`, `link`, `tools tailscale … login`, and `tools pair`. They fail without one before they change anything.
+- For the QR path: a Tailscale account with **MagicDNS** and **HTTPS certificates** enabled at `https://login.tailscale.com/admin/dns`, and a phone in the same tailnet with the T3 mobile app. A sandbox's node does not need the admin console beyond that; you approve it in a browser on any device.
+- For the T3 Connect path: a T3 account, and the T3 mobile app signed in to it.
+- On Linux, lingering for your user, or systemd stops every running sandbox with its Tool services when your last login session ends ([host prerequisites](host-prerequisites.md#linux-amd64)).
+
+### What a signed-in tailnet node reaches
+
+While the node is signed in, `tailscaled` forwards a connection that a tailnet peer makes to the node's address to the **same port on the sandbox's loopback**. A device of your tailnet that your tailnet's access policy allows can therefore reach, besides the HTTPS origin on port 443:
+
+- **port 22**, `sshd`, which accepts only the key dedicated to the sandbox;
+- **port 3773**, the T3 Code service over plain HTTP, which T3 Code's own pairing and session tokens protect.
+
+Through the node, nothing is reachable from outside your tailnet, and nothing while no node is signed in; the host and the public internet gain nothing through it. The T3 Connect relay and the host's SSH path are separate paths and are not affected by the node. [SECURITY.md](../SECURITY.md#tools-and-their-network-paths) is the canonical statement of the three paths. Your tailnet's access policy decides which peers get this reach, and the sandbox cannot see that policy. Do not set `--shields-up` on the node to narrow it: it blocks the HTTPS origin as well, and your phone loses the sandbox until it is unset ([ADR 0010](adr/0010-t3-code-pairs-over-an-in-sandbox-tailnet-node.md#what-this-changes-about-the-sandboxs-reach)).
+
+### What does not change
+
+A Tool changes no Podman option. The container and its volumes keep their names and labels, and the publish stays `127.0.0.1:PORT:22/tcp`, the only published port. There is no new mount, device, or capability. The network mode stays `--network=pasta:--no-map-gw`, the user, `--userns`, and `--security-opt=no-new-privileges` are as before, and the resource limits are unchanged. Host state records nothing about a Tool. See the table in [SECURITY.md](../SECURITY.md#default-podman-options) and [Tools and their network paths](../SECURITY.md#tools-and-their-network-paths).
+
+## Logins and pairing
+
+Five different things carry a login or a pairing name in T3 Code's setup. Only the first, the fourth, and the fifth are logins, and each to a different account.
+
+| Action | Command | What it is | What it touches |
+|---|---|---|---|
+| **T3 Connect login** | `tools connect NAME t3code login` | A **T3 account** login. T3 Code shows a URL and a code, and you approve them in a browser. It stores the account authorization. It does not link anything yet. | Only the Tool directory in the sandbox. |
+| **T3 Connect link** | `tools connect NAME t3code link` | Authorizes this sandbox's service as an **environment of your T3 account**. On the phone, you sign in to the same account and pick the sandbox. It shows **no QR code**. It restarts the service so the link takes effect. | The account's list of environments. |
+| **QR pairing** | `tools pair NAME t3code` | A **device pairing**: one-time code for one device, shown as a QR code and a URL for the tailnet origin. It is not a login to any account. | A device session on the service. |
+| **Tailscale node login** | `tools tailscale NAME t3code login` | Signs the sandbox's own tailnet node in to **your tailnet**. | Your tailnet's device list. |
+| **Agent provider sign-in** | `agents login NAME AGENT` | Codex, Claude, Copilot, or OpenCode sign-in. | The agent's credentials in the sandbox. |
+
+T3 Connect, QR pairing, and the Tailscale node authenticate **no agent provider**: sign in to an agent with `agents login NAME AGENT` ([agents](agents.md#sign-in-to-an-agent)), whether or not T3 Code is enabled. `tools connect … unlink` and `logout` never touch an agent or integration login.
 
 ## Enable T3 Code
 
 ```text
 sandboxed-agents tools enable agent01 t3code
+sandboxed-agents tools enable agent01 t3code --channel nightly
+sandboxed-agents tools enable agent01 t3code --version 0.1.2
 ```
 
-The sandbox must be running. The command installs the npm package `t3` at an exact version into the Tool directory in the sandbox's home data, makes the launcher download and verify T3 Code's own runtime, starts the T3 Code service, and prints `t3code enabled: version V (channel latest); service running`. The base image carries what T3 Code relies on (Node.js, `libatomic1`, and the `tailscale` package); no toolchain is needed. A sandbox created from an older image needs `build`, then `update NAME` ([images](images.md#base-image)).
+A first `enable` installs T3 Code's npm package `t3`, makes its launcher download and verify its own runtime, records the selection, starts the service, and prints `t3code enabled: version V (channel latest); service running`, or `(pin V)` for a pin.
 
-Choose what the Tool follows:
+- **Without a selector** it records the channel `latest`, upstream's stable line, and installs the version the npm tag `latest` names at that moment.
+- **`--channel latest|nightly`** records a channel. `nightly` is upstream's nightly line. Upstream's `preview` line is no channel, and every other value is a usage error that lists both valid ones.
+- **`--version X`** records a **Tool pin**: an exact `MAJOR.MINOR.PATCH` with an optional prerelease, such as `0.1.2-nightly.20261022.3526`. A tag, a range, or build metadata is a usage error. A well-formed version that npm does not publish fails before anything is installed or recorded.
+- `--channel` together with `--version` is a usage error, on `enable` and on `update`.
 
-| You run | The Tool selection records |
-|---|---|
-| `tools enable NAME t3code` | channel `latest`, upstream's stable line |
-| `tools enable NAME t3code --channel nightly` | channel `nightly` |
-| `tools enable NAME t3code --version 1.2.3` | a **Tool pin**, exactly that version |
+A channel resolves to **one exact version at install time**, and the installation always uses that exact version. The tags move: `latest` and `nightly` name different versions tomorrow. The installed version is whatever the selection resolved to when you ran `enable` or `update`, shown by `tools status`.
 
-A channel is resolved to one exact version when it is installed, and the installation always uses that exact version. `--channel` accepts only `latest` and `nightly`; upstream's `preview` line is no channel. `--version` takes an exact `MAJOR.MINOR.PATCH` with an optional prerelease. A tag, a range, or build metadata is a usage error, and a well-formed version that npm does not publish fails before anything is installed or recorded. `--channel` together with `--version` is a usage error.
+A repeated `enable` without a selector on an enabled Tool keeps the installation and the recorded channel or pin, reports both, and starts the service only when it is not running. A damaged installation, a missing launcher or runtime, is repaired at its recorded version.
 
-The selection is stored in the Tool directory, `~/.local/share/sandboxed-agents/tools/t3code`, inside the sandbox's home data. It survives `stop`, `start`, `restart`, and `update`; host state keeps nothing about a Tool.
+A pin may name an older version than the installed one, because the executable does not compare versions; that is how you go back after a successful update.
 
-Running `tools enable` again without a selector keeps the installation and the selection, reports them, and starts the service only if it is not running. A damaged installation is repaired at the recorded version, without asking npm for a newer one.
+The installation runs as `agent` under the manager lock. A concurrent agent or Tool change is refused at once with "another agent or tool change is in progress; retry", and nothing waits.
 
-## Update, repair, and roll back
+## Update rules and what a failed update keeps
 
-T3 Code never updates itself, and upstream's update command is never called. The installed version changes only through `tools enable` and `tools update`, and only to the exact version the Tool selection names.
+The recorded selection decides the version, and nothing else does. T3 Code's own update command is never called, and T3 Code's CLI and server do not update themselves. The channel or pin lives in the sandbox's home data and survives `stop`, `start`, `restart`, and `update NAME`; the host keeps no copy.
 
-| You run | What happens |
-|---|---|
-| `tools update NAME t3code` on a **channel** | Moves to the newest release of the same channel and never to another line. When the newest release is the installed one and the installation is intact, nothing is reinstalled. |
-| `tools update NAME t3code` on a **pin** | Keeps the pinned version. It reinstalls that version only when the installation is missing or damaged. |
-| `tools update NAME t3code --channel CHANNEL` | Switches to the newest release of that channel. This is the way back from a pin: there is no unpin option. |
-| `tools update NAME t3code --version X` | Switches to that exact version and records it as the pin. The executable does not compare versions, so `X` may be older than the installed one. |
-| `tools enable NAME t3code --channel CHANNEL` or `--version X` on an enabled Tool | The same switch as `update` with that selector. |
+| Recorded | `tools update NAME t3code` | `--channel latest\|nightly` | `--version X` |
+|---|---|---|---|
+| channel | Moves to the newest release of that channel. When that is the installed version, nothing is reinstalled and the service is started only if it is not running. The channel stays recorded. | Records and installs that channel's newest release. | Pins `X`. |
+| pin | Reinstalls the pinned version only when its installation is missing or damaged. It never changes the recorded pin. | Returns to a channel. There is no unpin option. | Pins `X`. |
 
-An update without a selector never changes the selection. A switch installs the new version beside the active one, runs it once so that its runtime is downloaded and verified, and only then stops the service and starts it on the new version. The new selection is recorded only after the service runs on the new version.
+An explicit selector that differs from the recorded one, on `enable` or `update`, installs that release, and the new channel or pin is recorded **only after** the install, the verified runtime download, and the service start on the new version have all succeeded.
 
-**A failed update keeps the old version.** When the install, the runtime download, or the service start on the new version fails, the command removes what it installed, starts the previous version again if it had stopped it, leaves the selection as it was, exits non-zero, and names the failing step. A switch that was interrupted can leave an extra installation behind; the next `tools enable` or `tools update` removes every installation that the selection does not name.
+**A failed switch keeps the previous installation, selection, and running service, and exits non-zero naming the failing step.** In order:
 
-**Rollback** is therefore automatic for a failed update. To go back to an older version after a successful update, pin it: `tools update NAME t3code --version OLDER`.
+1. *Resolution fails* (npm does not publish the version, or cannot resolve the channel): nothing changes. The service is not stopped.
+2. *Install or runtime download fails*, or the runtime reports another version: the staging prefix and the new runtime directory are removed. The previous installation and its service are untouched, because the service is stopped only after the install succeeded.
+3. *The service does not start on the new version*: the new service is stopped, the new prefix and runtime are removed, and the previous version's service is started again. The message says whether the previous version is running again.
+4. *The selection or the command link cannot be written*: the new service is stopped, the new version is removed, and the previous version is started again.
 
-`tools enable`, `tools update`, and `tools delete` take the sandbox's manager lock, which agent installations share. A second change at the same time is refused with "another agent or tool change is in progress; retry".
+A switch that is interrupted before it reaches either end can leave an extra prefix and runtime directory. The next `tools enable` or `tools update` removes every prefix and runtime the selection does not name before it does anything else; the service keeps running from the named one meanwhile.
 
-`tools update`, `tools delete`, `stop`, `restart`, and `update NAME` stop the T3 Code service without asking. No `tools` command takes `--force`. The lifecycle commands `stop`, `restart`, `update NAME`, and `remove` keep their `--force`, whose one meaning is ending running agent sessions; it is not a guard for the T3 Code service, which these commands stop whether or not you pass it. Work that T3 Code is driving at that moment is interrupted ([ADR 0009, D2](adr/0009-tools-run-as-manager-supervised-services.md#d2-the-service-guard)).
+Limits of these statements: they are what the code does and what its offline tests prove with injected process functions. On a real host, the live suite's forced staging failure exercises the install case and keeps the previous service, and the runbook's forced failed update exercises the first case with a version that npm does not publish ([T3 Code validation runbook](t3code-validation.md#forced-failed-update-and-what-it-proves)); no procedure exercises the service-start and selection-write cases live.
 
-## The service, its supervision, and its status
+## The service
 
-While T3 Code is enabled, one T3 Code service (`t3 serve`) runs in the background as `agent` and listens on the sandbox's loopback, `127.0.0.1:3773`. Nothing about the sandbox's Podman options changes for it, and no port is published for it.
+While T3 Code is enabled, exactly one T3 Code service, `t3 serve`, runs in the background as `agent`, on `127.0.0.1:3773`. A **service supervisor** that the manager starts, with no systemd and no init system in the image, keeps it running ([ADR 0009](adr/0009-tools-run-as-manager-supervised-services.md#d1-supervision-without-systemd)):
 
-A **service supervisor** that the manager starts keeps the service running. It is detached from the terminal and from the SSH connection that ran the command, so the service keeps running after the terminal that enabled it closes. It restarts a crashed service after one second, doubling the wait up to thirty seconds, and gives up after five consecutive starts that did not stay up for a minute. The service is then `failed`. Its output goes to `service/service.log` in the Tool directory, with the previous run in `service.log.1`. The supervision needs no systemd, no `t3 service install`, and no change to the image's `ENTRYPOINT` or PID 1.
+- It is detached from the terminal and the SSH connection that ran `tools enable`, so the service keeps running when they close.
+- After a crash it restarts the service after one second, doubling up to thirty seconds, and gives up after five consecutive starts that did not stay up for a minute. The service is then `failed`; the next start request begins again. These values are design values, no live run measured them.
+- A repeated `enable`, `start`, `restart`, or `up` never leaves two services.
+- Every process of the Tool, the launcher, the downloaded runtime, `cloudflared`, and the tailnet node's `tailscaled`, runs as `agent`, UID and GID 1000, never as container root.
+- Upstream may start the relay client `cloudflared` detached from the service's process tree. It still runs as `agent`; the [validation runbook](t3code-validation.md#helpers) says how its identity and ownership are checked when it is outside the tree.
+- The log is `service.log` in the Tool directory's `service/` directory, with the previous run in `service.log.1`.
 
-Lifecycle commands treat the service as follows:
+**The lifecycle restores the service as agent work, not as a guard.** `up`, `start`, `restart`, `update NAME`, and `update --all` start the service again once the sandbox runs, and the tailnet node too when one exists; `update NAME` does so also on the backup container after a rollback. When the service cannot start, the sandbox stays running, the command reports the failure, names `tools status NAME t3code`, and exits non-zero. `stop` does not stop the service separately: Podman ends every process when it ends the container.
 
-- `stop` ends the service together with the container. Once the sandbox is ready, `up`, `start`, `restart`, `update NAME`, and `update --all` start the service of every enabled Tool again, and `update NAME` does so also when it rolls back to the previous sandbox. If a tailnet node exists, it starts again with the service.
-- When a service cannot start, the sandbox stays running, the command reports the failure, names `tools status NAME t3code`, and exits non-zero. `update --all` still counts that sandbox as updated and exits non-zero.
-- `remove NAME` keeps the home volume and with it the Tool directory; a later `up NAME` adopts it and starts the service again. `remove NAME --volumes` removes the Tool with the home data.
-- On Linux, keep lingering enabled for your user, or every sandbox and its Tool services stop when your last login session ends ([host prerequisites](host-prerequisites.md#linux-amd64)).
+**There is no service guard.** `stop`, `restart`, `update NAME`, `tools update`, and `tools delete` stop the T3 Code service **without asking**, and `--force` keeps its one meaning, ending agent sessions. Anything T3 Code is driving at that moment is **interrupted**: T3 Code reports activity only per project, no stable query across projects exists, and T3 Code records an interrupted run itself. Check the phone's runs before you stop, restart, update, or delete a sandbox that T3 Code is steering ([ADR 0009, D2](adr/0009-tools-run-as-manager-supervised-services.md#d2-the-service-guard)). The guard for agent sessions applies as before, also while T3 Code is enabled.
+
+## Status
 
 ```text
 sandboxed-agents tools status agent01 t3code
+sandboxed-agents check agent01
 ```
 
-`tools status` reports whether the Tool is enabled, its installed version, its channel or pin, and the service state (`running`, `stopped`, or `failed`, with the last failure reason and the log location). On a healthy installation it also reports the T3 Connect state, the tailnet node, and the paired devices. It takes no lock and, for the T3 Connect, tailnet, and device parts, runs upstream's status queries as `agent`. Those can take several seconds right after an enable or a start; the command waits up to 30 seconds and then reports that upstream's status queries did not answer, not that the manager is unreachable. `check NAME` lists every enabled Tool and counts a `failed` service or node as a problem.
+`tools status` reports, in one line:
 
-A paired phone appears in the device list under the label upstream's session gives it (observed as `t3 pair`), not the phone's name.
+- whether the Tool is enabled, the installed version, and the channel or pin;
+- the **service**: `running`, `stopped`, or `failed`, with the last failure reason and the log location. A crashed service never shows as `running`;
+- **T3 Connect**: signed in (with the account) or not, linked or not, the relay client, and `relay reachable` or `relay failure` with upstream's reason, for example a blocked outbound port 7844;
+- the **tailnet node**: `absent`, or `running`, `stopped`, or `failed`, and for a running node whether it is signed in, its MagicDNS name and origin, whether Serve maps the origin to the service, whether the tailnet grants HTTPS certificates, and whether the node is online;
+- the **paired devices**, each with its name and whether it is connected now, or `no paired device`. Upstream labels a device by its session, so a phone paired by QR code appears as `t3 pair`, not by the phone's name.
 
-## T3 Connect: log in and link
+The status of a Tool reads its records as one snapshot and takes no lock. The T3 Connect, tailnet, and device parts run upstream's and Tailscale's own queries as `agent`, and each part reports its **own** failure: a part that cannot be read prints its reason (for example `T3 Connect status unavailable: …`, `tailnet status unavailable: …`, or `paired devices unavailable: …`) while the other parts still print, and the command exits zero. A damaged installation says so and names `tools enable`. Those queries can take several seconds right after an enable or a start; the command waits up to 30 seconds for them and then reports that upstream's status queries did not answer, which does not mean the manager is unreachable (`check NAME` tells). `check NAME` lists every enabled Tool with its service and node state, counts a `failed` one as a problem, and starts no upstream program.
 
-T3 Connect is T3 Code's account and managed-connection service. It runs over an outbound relay and needs a T3 account and the T3 mobile app signed in to the same account.
+## Link the T3 mobile app
+
+### Through your T3 account
 
 ```text
 sandboxed-agents tools connect agent01 t3code login
 sandboxed-agents tools connect agent01 t3code link
 ```
 
-- `login` shows upstream's URL, device code, and expiry and waits while you approve in a browser on any device. It needs an interactive terminal. Denial, expiry, a request failure, and `Ctrl+C` each exit non-zero. A failed or interrupted login stores no partial new credential, and a login that existed before stays as it was, so a later `login` starts clean.
-- `link` authorizes the sandbox's T3 Code service as an environment of your account and restarts the service so that the link takes effect. It needs an interactive terminal. On the phone, signed in to the same account, the environment appears without a QR code.
-- `unlink` removes the environment and keeps the login. `logout` clears the login. Neither touches any agent provider login.
+`login` prints upstream's URL, code, and expiry; open the URL in a browser on your computer or phone and approve. Denial, expiry, a request failure, and `Ctrl+C` each exit non-zero with their own message. A failed or interrupted login stores no partial new credential, and a login that existed before stays as it was, so a later `login` starts clean. `link` restarts the service. Then sign in to **the same T3 account** in the T3 mobile app, pick the sandbox's environment, and open it. `unlink` unlinks the environment and keeps the login; `logout` clears the login and disables T3 Connect. The credentials live only in the sandbox's home data, readable by `agent`.
 
-The credentials and the link state live only in the Tool directory inside the sandbox, readable by `agent`. The relay needs **outbound** connections only: to TCP and UDP port 7844 and over HTTPS. Block 7844 and `tools status` shows `relay failure`. No port is published.
-
-**What the account reaches.** A device signed in to the linked T3 account can open the sandbox's T3 Code through the relay, and T3 Code runs agents as `agent`. Treat the account as having the reach of an agent in that sandbox: the workspace, the home data, and the credentials stored there ([SECURITY.md](../SECURITY.md#t3-code-network-paths)). `unlink` ends that reach.
-
-## Reach T3 Code over Tailscale and pair a phone
-
-QR pairing needs an address a phone can reach, and the sandbox has none of its own. The Tool therefore runs its own Tailscale device per sandbox, a **tailnet node**. This is the topology ([ADR 0010](adr/0010-t3-code-pairs-over-an-in-sandbox-tailnet-node.md)):
-
-- Inside the sandbox, a `tailscaled` in userspace networking mode runs as `agent` under its own service supervisor, with its state in the Tool directory. It needs no TUN device, no capability, no host Tailscale, and no published port; the executable installs nothing on the host.
-- Each sandbox signs in as a device of its own, named after the sandbox, so two sandboxes have two origins: `https://NAME.<your tailnet>.ts.net/`.
-- Tailscale Serve maps that origin's HTTPS port 443 to the service on `http://127.0.0.1:3773`. Tailscale Funnel is never used, so nothing is reachable from the public internet.
-
-### Prerequisites
-
-- A Tailscale account and a phone with the Tailscale app and the T3 mobile app, both in the **same tailnet** as the nodes.
-- **MagicDNS** and **HTTPS certificates** enabled for the tailnet at `https://login.tailscale.com/admin/dns`. `tools pair` names whichever is missing.
-- Your tailnet's access policy must allow the phone to reach the node on port 443.
-- A browser on any device to approve the node, and an interactive terminal for `login` and for `pair`. The login accepts no auth key.
-- A running T3 Code service. The sandbox needs outbound access to Tailscale's control plane.
-
-### Sign the node in and pair
+### By QR code over Tailscale
 
 ```text
 sandboxed-agents tools tailscale agent01 t3code login
 sandboxed-agents tools pair agent01 t3code
 ```
 
-`tools tailscale … login` creates the node, prints a Tailscale login URL that carries a one-time code (keep it to yourself), and waits until you approve the device. The node's hostname is the sandbox's name as a DNS label; Tailscale appends a counter if the name is taken in your tailnet. A login that fails or that you interrupt on a node it just created removes that node again. On a node that already existed, the failure keeps the node as it was, and `tools tailscale … logout` is what removes it. A node that is already signed in is reported and left unchanged.
+`tools tailscale … login` creates the node, prints Tailscale's login URL (it carries a one-time code; treat it as sensitive), and waits until you approve the device in a browser on any device. It accepts no auth key. A login that fails or that you interrupt on a node it just created removes that node again; on a node that already existed it keeps the node as it was, and `logout` is what removes it. A node that is already signed in is reported and left unchanged. `tools pair` then prints a QR code, a copyable URL, a token, and the expiry. Scan it with the T3 mobile app on a phone in the same tailnet.
 
-`tools pair` creates the Serve mapping on the first pairing, then prints upstream's terminal QR code, a copyable URL, a token, and the expiry (five minutes by default; `--ttl 1m`, `--ttl 2h`, and so on change it). Scan it with the T3 mobile app within that time. The command exits without learning whether the code was scanned. A code works once; an expired or used code fails on the phone, and `tools pair` issues a new one. Upstream may note that the endpoint has not answered yet; that is expected, because the sandbox itself has no route to the tailnet.
+- The code is **single use** and valid until the printed expiry, five minutes by default (`--ttl`). The command does **not** confirm the scan. A used or expired code fails on the phone; run `tools pair` again. `tools pair NAME t3code --revoke` revokes every unused code.
+- It issues a code only for the tailnet HTTPS origin, never for a loopback or container address.
+- It refuses before it changes anything, with its own message, when the service is not running, the node is absent, stopped, failed, or not signed in, the tailnet lacks MagicDNS or HTTPS certificates, the node is offline, or Serve on port 443 already fronts something else.
+- The origin works again after `stop`/`start`, `restart`, and `update NAME` without a second pairing; `tools status` says `Serve maps the origin to the service`, or names `tools pair` when no mapping exists.
 
-`tools pair NAME t3code --revoke` revokes every unused code and works with the service stopped. It does not revoke a device that is already paired.
+`tools tailscale … logout` signs the node out as a best effort and removes it. A failed sign-out is a warning; the device then stays in your tailnet admin console until it expires or you remove it there.
 
-The mapping is kept in the node's state. After `restart` and `update NAME`, `tools status` shows the same origin and `Serve maps the origin to the service`, and the phone reaches the sandbox again without a second pairing.
-
-`tools tailscale … logout` signs the node out as a best effort, stops it, and removes its state. If the sign-out fails the command warns, and the device stays in your tailnet admin console until it expires or you remove it there.
-
-Pairing refuses before anything changes, with one message each, when the service is not running, the node is absent, stopped, failed, or not signed in, the tailnet has no MagicDNS or no HTTPS certificates, the node is offline, or the node's port 443 already fronts something else.
-
-### What a signed-in node exposes
-
-While the node is signed in, a device of your tailnet that your tailnet's access policy allows reaches more than the HTTPS origin on port 443. Through the node's tailnet address it also reaches the sandbox's **loopback listeners**:
-
-- `sshd` on **port 22**, which accepts only the key dedicated to the sandbox ([SSH access](ssh.md)); and
-- the T3 Code service on **port 3773** over plain HTTP, which T3 Code's own pairing and session tokens protect.
-
-The host and the public internet gain nothing, and nothing is reachable while no node is signed in. The reach is governed by your tailnet's access policy, which you administer; restrict it there. Do not set `tailscale set --shields-up` on the node to narrow it: it blocks the HTTPS origin as well, and the phone loses the sandbox until it is unset.
-
-## Delete T3 Code
+## Delete
 
 ```text
 sandboxed-agents tools delete agent01 t3code
 ```
 
-`tools delete` removes the Tool completely: it stops the service and its supervision, signs out of T3 Connect and signs the tailnet node out of your tailnet (both as a best effort; a failure is a warning), then removes the command link `~/.local/bin/t3` and the whole Tool directory. That includes the installed launchers, the downloaded runtimes and relay client, T3 Code's database, settings, secrets, logs, caches, pairing codes and device sessions, the node's state and Serve mapping, and the Tool selection.
+`tools delete` stops the service and its supervision record, signs out of T3 Connect and signs the tailnet node out (each a best effort, a failure is a warning), and removes the **Tool directory** `~/.local/share/sandboxed-agents/tools/t3code` entirely: the launchers, runtimes, `cloudflared`, T3 Code's user data, settings, credentials, `service.env`, logs, caches, pairing codes and device sessions, the node's state and its Serve mapping, and the recorded channel or pin. It also removes the command link `~/.local/bin/t3`.
 
-**Your project files are kept.** T3 Code creates Git repositories and worktrees inside the Tool directory (`home/projects/` and `home/worktrees/`). Before it removes anything, the delete moves each one to `/home/agent/t3code-files/` with Git's own commands (`git worktree move`, `git worktree repair`), keeps the relative path, and prints every moved path. They stay usable with Git, and the delete never deletes or damages a worktree. A worktree whose location you set outside the Tool directory is not touched.
+**User worktrees are kept.** T3 Code may create Git worktrees and repositories inside its own home. Before it stops anything, the delete finds every Git repository and linked worktree inside the Tool directory and **moves** it to `/home/agent/t3code-files/`, keeping its path relative to T3 Code's home, with `git worktree move` and `git worktree repair`. It names each moved path. The projects stay usable with Git, and no worktree is deleted or damaged. There is no option to skip the relocation. The checks the delete makes before it stops the service refuse it **before anything changes**: a T3 Connect login in progress, a target path that exists, a worktree whose repository cannot be found, a `.git` entry among the Tool's own files, or a command link that is not the Tool's. After those checks it begins to change things: it stops the service, signs out, takes the inventory again, and moves the projects. A failure then, such as a service or node that does not stop, a failed move, or a Tool directory that cannot be removed, exits non-zero with the service possibly stopped and the Tool partly intact, and names what remains. Run the delete again to complete it; it removes the Tool directory only once every project file has moved.
 
-The delete **refuses before changing anything** when its checks, made before it stops the service, find a problem: a T3 Connect login in progress, a target path that already exists, a worktree whose repository cannot be found, a Git repository among the Tool's own files, or a command link that the Tool does not own. After those checks it begins to change things: it stops the service, signs out of T3 Connect and the tailnet, takes the inventory of project files again, and moves them. A failure at that point, such as a service or node that does not stop, a failed move, or a Tool directory that cannot be removed, exits non-zero with the service possibly stopped and the Tool partly intact, and names what remains. Run the delete again to complete it; it never removes the Tool directory while a project file has not been moved. A second delete finds nothing and exits zero. A later `tools enable` starts from scratch: channel `latest`, no pin, no login, no paired device.
+**Kept:** the workspace, every agent with its installation, pin, and credentials, every integration, the shared runtimes of the image such as Node.js, **the shared npm cache** `~/.npm`, and the moved projects. T3 Code's own `uninstall` is not used, because it keeps user data. `remove NAME --volumes` also removes the Tool with the rest of the home data, but it makes no sign-out call: run `tools delete` first, or remove the sandbox's device from your tailnet admin console and revoke the T3 Connect link by hand.
 
-It keeps the workspace, every agent and integration with their installations and credentials, the shared npm cache `~/.npm`, and `/home/agent/t3code-files/`. To remove the moved files too, delete that directory yourself in `shell`.
-
-`remove NAME --volumes` also removes the Tool, together with everything else in the home data, but it makes no sign-out call: run `tools delete` first, or remove the sandbox's device from your tailnet admin console and revoke the T3 Connect link by hand.
+A second `tools delete` finds nothing, says so, and exits zero. An interrupted delete reports what remains and exits non-zero; a rerun completes it. A later `tools enable` starts from scratch: channel `latest`, no pin, no T3 Connect login, no paired device. A worktree that T3 Code had moved outside the Tool directory is never touched.
 
 ## Limits
 
-- **One Tool.** T3 Code is the only Tool. The service port is fixed at 3773 on the sandbox's loopback; every sandbox has its own network namespace, so two sandboxes do not collide.
-- **No guard on the service.** Stopping, restarting, updating, or deleting interrupts what T3 Code is driving. What a phone shows for a run cut off that way has not been observed.
-- **Only what you run changes the version.** There is no automatic update, no unpin option (`--channel` is the way back), and no `--force` for `tools` commands.
-- **T3 Connect needs outbound TCP and UDP 7844.** It also needs a T3 account and the T3 mobile app.
-- **QR pairing needs your tailnet.** It needs MagicDNS, HTTPS certificates, a signed-in node per sandbox, and an access policy that lets the phone reach it. Each sandbox is a device in your tailnet. The sandbox cannot check from inside whether the phone reaches the origin; `tools pair` does not confirm a scan.
-- **A signed-in node widens the sandbox's inbound reach** to `sshd` on port 22 and the service on port 3773 for allowed tailnet devices ([above](#what-a-signed-in-node-exposes)).
-- **The supervisor gives up after five failed starts.** The service is then `failed` until `tools enable`, `restart`, or another start request begins again.
-- **A stopped sandbox runs no Tool.** On Linux, a host without lingering stops every sandbox when your last login session ends ([host prerequisites](host-prerequisites.md#linux-amd64)).
-- **Linux amd64 sandbox image only.** Both host platforms run the Linux amd64 sandbox.
-- **Moved project files stay.** `tools delete` leaves `/home/agent/t3code-files/` for you to keep or remove.
+- T3 Code is the only Tool. Other Tools, a plugin mechanism, and upstream's `preview` line are not part of this version.
+- The sandbox is Linux amd64; the host is Linux amd64 or Windows 11 x64.
+- There is no unpin option and no `--force` on any `tools` command. The lifecycle commands keep their `--force`, whose one meaning is ending running agent sessions; it is no guard for the service (see [The service](#the-service)).
+- The installed version never moves by itself. A channel moves only when you run `tools update`.
+- T3 Code's runtime and `cloudflared` come from upstream's releases, which T3 Code downloads and checks against upstream's checksums. A checksum proves the file, not the author. The executable adds no download of its own beyond the npm package.
+- Anyone who can sign in to the linked T3 account, or holds a paired device, steers the agents in the sandbox, and agents reach everything the sandbox holds. This project has not audited T3 Connect's relay or account service.
+- Reach through a signed-in tailnet node is described under [What a signed-in tailnet node reaches](#what-a-signed-in-tailnet-node-reaches). Whether your tailnet's access policy lets a phone reach the origin is outside what the sandbox can see.
+- The sandbox itself has no route to its own tailnet address (userspace networking), so upstream's note that the endpoint has not answered yet is expected during `tools pair`.
+- `tools tailscale … login` holds the manager lock while you approve the device; sign in before you start other agent or Tool changes in that sandbox.
 
-## What has been verified
-
-This page describes the behaviour the offline tests cover and the commands implement; it claims no live verification. Earlier manual observations (the Tailscale topology and phone QR pairing on a Linux and a Windows 11 host, and a passed `t3-qr-pair` checklist item on a Linux preview) are historical: they informed the design but do not satisfy the live criterion of issue #97. Only recorded runs of the live suite's `t3code` case on both hosts, with their supplemental version records, and the manual-checklist records for the T3 Connect link and the QR scan count, and none of those is on record yet. The T3 Connect phone link has not been run. The observations, their sources, and the gaps are in the [maintainer notes](maintainers.md#t3-code-tool-evidence-and-gaps); the steps are in the [manual checklist](manual-checklist.md#t3-connect-login-and-link).
+See [T3 Code validation runbook](t3code-validation.md) for how the live behavior is recorded, and [SECURITY.md](../SECURITY.md#tools-and-their-network-paths) for the security statement.
