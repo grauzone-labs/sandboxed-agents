@@ -502,7 +502,7 @@ go build -overlay "$image_build_context/overlay.json" -o sandboxed-agents ./cmd/
 
 ## Running the live suite
 
-The live suite runs on the project's Linux and Windows hosts over their SSH connections, following the `live-validation` skill, which opens with the project's start checkpoint and owns the [image cleanup](../.agents/skills/live-validation/SKILL.md#image-cleanup) after a run. The command, its variables, and the record it writes are described under [Live suite](releases.md#live-suite); the image coverage and its opt-in under [Live image tests](images.md#live-image-tests). Run it from a clean checkout at the commit under test, because the record names that commit.
+The live suite runs on the project's Linux and Windows hosts over their SSH connections, following the `live-validation` skill, which opens with the project's start checkpoint and owns the [image cleanup](../.agents/skills/live-validation/SKILL.md#image-cleanup) after a run. The command, its variables, and the record it writes are described under [Live suite](releases.md#live-suite); the image coverage and its opt-in under [Live image tests](images.md#live-image-tests). Run it from a clean checkout at the commit under test, because the record names that commit. The live suite never enables a Tool. The live behavior of the T3 Code Tool is recorded by hand on both hosts under the [T3 Code validation runbook](t3code-validation.md), which leaves the suite and its records unchanged.
 
 ## Offline tests behind the pages and the image
 

@@ -8,6 +8,7 @@ An item counts as passed only when a record of a run on the commit under test sa
 
 - A **manual check** is what a person observed on a real machine while following an item below. The offline suite replaces Podman, SSH, and the agents with fakes, so an offline result is never a manual check, and it does not show that the user namespace, the `no-new-privileges` option, the network, the mounts, or the limits isolate a sandbox. Only runs against real Podman can show that.
 - The **live suite** is a separate gate with its own records. This checklist does not repeat what the live suite covers for agents: installing an agent through npm, the installed version in `agents status`, a session that keeps running after detaching, `--stop`, and disabling. The live suite signs in nowhere, so the logins are here.
+- The **recorded Tool runs** of the [T3 Code validation runbook](t3code-validation.md) are a fourth, separate kind of evidence, for the T3 Code Tool on the two hosts. They never replace the two items `t3-connect-link` and `t3-qr-pair` below, which need a person with a real phone, and these items never replace them.
 - **Release evidence** is the record described under [The record](#the-record): one file for one run on one preview commit, uploaded to that preview's GitHub prerelease. A run that has not happened produces no record, and a record is never edited to show a pass that was not observed.
 - The **runner** `manual-check` ([below](#the-runner)) performs the mechanical steps of the items, records what each command printed and how it exited, and stops at every step only a person can perform. Its output is an observation, never an entry of the record: a pass is recorded only by a person, with `manual-check record add --human-observed`.
 
@@ -210,7 +211,7 @@ The token stays until [Final cleanup](#final-cleanup).
 
 ### T3 Connect login and link
 
-Identifier `t3-connect-link`. One T3 account login for the T3 Code Tool, ending in the sandbox's environment visible in the T3 mobile app, then unlinked and signed out again. This is a T3 account, not an agent provider login; the agent logins above stay as they are. You need a T3 account signed in on a phone with the T3 mobile app, and the sandbox needs outbound access to port 7844.
+Identifier `t3-connect-link`. One T3 account login for the T3 Code Tool, ending in the sandbox's environment visible in the T3 mobile app, then unlinked and signed out again. This is a T3 account, not an agent provider login; the agent logins above stay as they are. The [Tools page](tools.md#four-different-sign-ins) explains why the account login, the QR pairing, and an agent provider login differ. You need a T3 account signed in on a phone with the T3 mobile app, and the sandbox needs outbound access to TCP and UDP port 7844.
 
 1. `sandboxed-agents tools enable chk-persist t3code`. **Expected:** `t3code enabled: version V (channel latest); service running`, and `sandboxed-agents tools status chk-persist t3code` shows `service running` and `T3 Connect not signed in, not linked`.
 2. Start `sandboxed-agents tools connect chk-persist t3code login` in an interactive terminal, wait for the URL and the code, and press `Ctrl+C`. **Expected:** non-zero status, `t3code connect login was interrupted`, and `tools status` still shows `not signed in`.
@@ -235,11 +236,11 @@ Identifier `t3-qr-pair`. A phone in your tailnet scans the QR code of `chk-persi
 6. Scan the QR code with the T3 mobile app on the phone within five minutes. **Expected:** the phone pairs and opens the sandbox's T3 Code; send a short prompt to an agent in `chk-persist` and get an answer. `tools status chk-persist t3code` shows `Serve maps the origin to the service` and the phone under `paired devices`.
 7. Scan the same code again, or open its URL again on the phone. **Expected:** the phone reports the code as invalid; `tools pair chk-persist t3code --ttl 1m` issues a new one, which you leave unscanned.
 8. `sandboxed-agents tools pair chk-persist t3code --revoke`. **Expected:** `revoked 1 unused pairing code`; the paired phone stays connected.
-9. `sandboxed-agents restart chk-persist`. **Expected:** `t3code service running` and `t3code tailnet node running`; on the phone the sandbox's T3 Code is reachable again without a new pairing.
-10. `sandboxed-agents update chk-persist`. **Expected:** the same two lines, `tools status chk-persist t3code` shows the same origin and `Serve maps the origin to the service`, and the phone reaches the sandbox's T3 Code again without a new pairing.
+9. Note the origin that `tools status chk-persist t3code` shows (do not write it into a file), then `sandboxed-agents restart chk-persist`. **Expected:** `t3code service running` and `t3code tailnet node running`; `tools status` shows the **same origin** and `Serve maps the origin to the service`; on the phone the sandbox's T3 Code is reachable again without a new pairing.
+10. The `update NAME` observation is made in [Persistence and update](#persistence-and-update), after its `persistence update`, and not here. A plain `sandboxed-agents update chk-persist` at this point prints `already up to date` and replaces nothing, because the image is current, so it would restore no service and prove nothing. Do not run it here, and do not record `t3-qr-pair` before that observation.
 11. `sandboxed-agents up chk-pair2 --with none`, `tools enable chk-pair2 t3code`, `tools tailscale chk-pair2 t3code login` with approval, and `tools pair chk-pair2 t3code`. **Expected:** the origin is `https://chk-pair2.<your tailnet>.ts.net/`, distinct from the first; the phone scans it and sees `chk-pair2`'s T3 Code, not `chk-persist`'s. Then `remove chk-pair2 --volumes`, and remove the device `chk-pair2` from the tailnet admin console if it is still listed.
 
-Record `t3-qr-pair`. The node of `chk-persist` stays signed in for the later items.
+Record `t3-qr-pair` only after the [observation after the update](#persistence-and-update) has passed too. The node of `chk-persist` stays signed in for the later items.
 
 ### Persistence and update
 
@@ -284,7 +285,15 @@ manual-check persistence observe --run ID --round N
 
 **Expected after the update (`update-complete`):** the update ends with exit status zero; the image ID differs from the one recorded and equals the image the tag names after the `build`; the volumes (the mount names), the port, the memory, CPU, process, and shared-memory limits, the workspace, and the toolchain set (`azure`) are the same as recorded; the agent selection and the credentials are the same, as round 2 shows; and `ssh chk-persist.manual-check true` connects without a host key prompt.
 
-**Identifiers:** `selection-pins-persist` passes on steps 1 and 2 of all three rounds; `git-identity-persist` on step 5 of all three; `credentials-persist` on steps 1, 3, 4, and 6 of all three; and, for the removal half of `credentials-persist`, on [Final cleanup](#final-cleanup); `update-complete` on the expected observations after the update.
+**T3 Code after the update (the last part of `t3-qr-pair`).** The update replaced the container, because the `build` made the image outdated, so it is the one real `update NAME` of this checklist. With the T3 Code Tool enabled and the tailnet node of `chk-persist` signed in, read the output of `persistence update` and then check, before round 2 starts:
+
+1. The output of the update contains `t3code service running` and `t3code tailnet node running`, and the update exits with status zero. A line that says the service could not start fails the item.
+2. `sandboxed-agents tools status chk-persist t3code` shows `service running`, the same installed version and channel or pin as before the update, and `Serve maps the origin to the service`, with the **same origin** as in `t3-qr-pair` step 9.
+3. The phone, which paired earlier, opens the sandbox's T3 Code again **without a new pairing**, and a short prompt to an agent in `chk-persist` is answered.
+
+The same observation, after `stop` and `start` of round 1, needs only step 2 and step 3.
+
+**Identifiers:** `selection-pins-persist` passes on steps 1 and 2 of all three rounds; `git-identity-persist` on step 5 of all three; `credentials-persist` on steps 1, 3, 4, and 6 of all three; and, for the removal half of `credentials-persist`, on [Final cleanup](#final-cleanup); `update-complete` on the expected observations after the update. The T3 Code observation after the update belongs to `t3-qr-pair`, not to these identifiers.
 
 ### Toolchain requirement and no-terminal refusals
 
