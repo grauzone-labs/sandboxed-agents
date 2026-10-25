@@ -57,36 +57,56 @@ func tracerContainer(set string, generation int) string {
 }
 
 // tracerToolContainer supplies the ADR-0009 containment fields the Tool case observes on live Podman.
-func tracerToolContainer(set string) string {
+func tracerToolContainer(t *testing.T, set string) string {
+	t.Helper()
 	var records []map[string]any
-	json.Unmarshal([]byte(tracerContainer(set, 1)), &records)
+	if err := json.Unmarshal([]byte(tracerContainer(set, 1)), &records); err != nil {
+		t.Fatal(err)
+	}
 	record := records[0]
 	record["Config"].(map[string]any)["CreateCommand"] = []string{"podman", "create", "--userns=keep-id:uid=1000,gid=1000", "--user=0:0", "--security-opt=no-new-privileges", "--network=pasta:--no-map-gw"}
 	record["HostConfig"].(map[string]any)["NetworkMode"] = "pasta"
 	names := cli.DerivedNames(tracerGroup, "live-t3code")
 	var mounts []map[string]string
 	for destination, name := range map[string]string{"/workspace": names.Workspace, "/home/agent": names.Home, "/etc/ssh": names.SSH} {
-		mounts = append(mounts, map[string]string{"Type": "volume", "Name": name, "Destination": destination})
+		mounts = append(mounts, map[string]string{"Type": "volume", "Name": name, "Source": "/home/test/.local/share/containers/storage/volumes/" + name + "/_data", "Destination": destination})
 	}
 	slices.SortFunc(mounts, func(a, b map[string]string) int { return strings.Compare(a["Destination"], b["Destination"]) })
+	options := "rw,rprivate,nosuid,nodev,rbind"
+	if set == "native" {
+		// Podman's named-volume iteration can reorder equivalent mounts and options on replacement.
+		slices.Reverse(mounts)
+		options = "rbind,nodev,nosuid,rprivate,rw"
+	}
 	record["Mounts"] = mounts
-	data, _ := json.Marshal(records)
+	var binds []string
+	for _, mount := range mounts {
+		binds = append(binds, mount["Name"]+":"+mount["Destination"]+":"+options)
+	}
+	record["HostConfig"].(map[string]any)["Binds"] = binds
+	data, err := json.Marshal(records)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return string(data)
 }
+
+// tracerToolSelection is one scripted installed version and its channel or pin.
+type tracerToolSelection struct{ version, channel, pin string }
 
 // tracerToolResponses scripts distinct channel versions, a pinned version, and the deterministic failed staging.
 func tracerToolResponses(t *testing.T, executableResponses, podmanResponses map[string]lifecycleResponse, failIdentity bool) {
 	t.Helper()
 	const name = "live-t3code"
 	var statuses, probes []scriptedAnswer
-	selections := []struct{ version, channel, pin string }{
+	selections := []tracerToolSelection{
 		{"0.17.0", "latest", ""}, {"0.17.1", "latest", ""},
 		{"0.18.0-nightly.1", "nightly", ""}, {"0.18.0-nightly.2", "nightly", ""},
 	}
 	for range 8 {
-		selections = append(selections, struct{ version, channel, pin string }{"0.17.1", "", "0.17.1"})
+		selections = append(selections, tracerToolSelection{"0.17.1", "", "0.17.1"})
 	}
-	selections = append(selections, struct{ version, channel, pin string }{"0.17.2", "latest", ""})
+	selections = append(selections, tracerToolSelection{"0.17.2", "latest", ""})
 	for index, selection := range selections {
 		channel, pin := selection.channel, selection.pin
 		if channel == "" {
@@ -114,14 +134,15 @@ func tracerToolResponses(t *testing.T, executableResponses, podmanResponses map[
 	for _, command := range []string{"up " + name, "stop " + name, "start " + name, "restart " + name, "check " + name, "tools enable " + name + " t3code", "tools enable " + name + " t3code --channel nightly", "tools enable " + name + " t3code --version 0.17.1", "tools delete " + name + " t3code"} {
 		executableResponses[command] = lifecycleResponse{}
 	}
+	executableResponses["tools delete "+name+" t3code"] = lifecycleResponse{Sequence: []scriptedAnswer{{Output: "t3code deleted\n"}, {Output: "t3code not enabled; nothing to delete\n"}}}
 	executableResponses["update "+name+" --with native"] = lifecycleResponse{Output: "sandbox live-t3code updated\n"}
 	executableResponses["update "+name+" --with none --force"] = lifecycleResponse{Exit: 1, Output: "readiness wait failed: restored sandbox live-t3code to its previous state\n"}
 	var containers []scriptedAnswer
 	for range 11 {
-		containers = append(containers, scriptedAnswer{Output: tracerToolContainer("none")})
+		containers = append(containers, scriptedAnswer{Output: tracerToolContainer(t, "none")})
 	}
 	for range 5 {
-		containers = append(containers, scriptedAnswer{Output: tracerToolContainer("native")})
+		containers = append(containers, scriptedAnswer{Output: tracerToolContainer(t, "native")})
 	}
 	podmanResponses["container inspect "+cli.DerivedNames(tracerGroup, name).Container] = lifecycleResponse{Sequence: containers}
 	probePrefix := "exec --user=1000:1000 --env HOME=/home/agent * node -e * "
@@ -129,6 +150,33 @@ func tracerToolResponses(t *testing.T, executableResponses, podmanResponses map[
 	podmanResponses[probePrefix+"break-install"] = lifecycleResponse{}
 	podmanResponses[probePrefix+"repair-install"] = lifecycleResponse{}
 	podmanResponses[probePrefix+"deleted *"] = lifecycleResponse{Output: `{"deleted":true}`}
+}
+
+// tracerToolBindFailure renders an inspect response with one forbidden bind while leaving the independent Mounts observation valid.
+func tracerToolBindFailure(t *testing.T, kind string) string {
+	t.Helper()
+	var records []map[string]any
+	if err := json.Unmarshal([]byte(tracerToolContainer(t, "none")), &records); err != nil {
+		t.Fatal(err)
+	}
+	hostConfig := records[0]["HostConfig"].(map[string]any)
+	binds := hostConfig["Binds"].([]any)
+	switch kind {
+	case "extra-volume":
+		binds = append(binds, "unexpected-volume:/extra:rw,rprivate")
+	case "host-bind":
+		binds[0] = "/host/private:/etc/ssh:rw,rprivate"
+	case "unsafe-options":
+		binds[0] = binds[0].(string) + ",rshared"
+	default:
+		t.Fatalf("unknown bind failure %q", kind)
+	}
+	hostConfig["Binds"] = binds
+	data, err := json.Marshal(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 // tracerImage renders Podman's image inspect answer with the suite's labels and shared base layers.
@@ -169,7 +217,7 @@ func tracerListing(rows ...string) string {
 	return "NAME\tSTATE\tSSH PORT\tWORKSPACE\tTOOLCHAINS\tAGENTS\tVOLUMES\tPROBLEM\n" + strings.Join(rows, "")
 }
 
-// TestLiveSuiteTracesEveryCaseAgainstFakes proves the whole live suite runs its preflight, lifecycle, update, agent, t3code, and selected image cases against a scripted executable, fake Podman, and fake ssh, records each outcome, and removes every sandbox it created through the nested test process on a Linux pseudo-terminal.
+// TestLiveSuiteTracesEveryCaseAgainstFakes proves the whole live suite runs every case through the nested test process on a Linux pseudo-terminal, records identity and bind failures, builds exactly once only when images are selected, and removes every created sandbox using a scripted executable, fake Podman, and fake ssh.
 func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the tracer's detach keys need the Linux raw pseudo-terminal; Windows runs the terminal check alone")
@@ -178,9 +226,17 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 		t.Skip("nested offline guard; the outer suite runs the tracer")
 	}
 	sets := []string{"none", "dotnet", "playwright", "azure", "native"}
-	for _, scenario := range []struct{ images, failIdentity bool }{{false, false}, {true, false}, {false, true}} {
+	for _, scenario := range []struct {
+		images, failIdentity bool
+		bindFailure          string
+	}{{false, false, ""}, {true, false, ""}, {false, true, ""}, {false, false, "extra-volume"}, {false, false, "host-bind"}, {false, false, "unsafe-options"}} {
 		selected := scenario.images
-		t.Run("images-selected-"+strconv.FormatBool(selected)+"-tool-identity-failure-"+strconv.FormatBool(scenario.failIdentity), func(t *testing.T) {
+		failed := scenario.failIdentity || scenario.bindFailure != ""
+		label := "images-selected-" + strconv.FormatBool(selected) + "-tool-identity-failure-" + strconv.FormatBool(scenario.failIdentity)
+		if scenario.bindFailure != "" {
+			label += "-" + scenario.bindFailure
+		}
+		t.Run(label, func(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
 			data, err := os.ReadFile(fakeExecutable)
 			if err != nil {
@@ -243,6 +299,9 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				"image save --format docker-archive " + tracerTag("none"): {Output: tracerArchive(t)},
 			}
 			tracerToolResponses(t, executableResponses, podmanResponses, scenario.failIdentity)
+			if scenario.bindFailure != "" {
+				podmanResponses["container inspect "+cli.DerivedNames(tracerGroup, "live-t3code").Container] = lifecycleResponse{Output: tracerToolBindFailure(t, scenario.bindFailure)}
+			}
 			for _, name := range []string{"live-lifecycle", "live-update", "live-agent", "live-t3code"} {
 				executableResponses["remove "+name+" --volumes"] = lifecycleResponse{}
 				executableResponses["remove "+name+" --volumes --force"] = lifecycleResponse{}
@@ -273,7 +332,11 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				"TEST_SSH_OUTPUT":       "debug1: SSH2_MSG_NEWKEYS received\n", "TEST_SSH_EXIT": "255",
 				"TEST_SSH_KNOWN_HOSTS": "[127.0.0.1]:" + tracerPort + " " + tracerHostKey + "\n",
 			})
-			if (!scenario.failIdentity && (err != nil || !strings.Contains(output, "--- PASS: TestLiveSuite"))) || (scenario.failIdentity && (err == nil || !strings.Contains(output, "--- FAIL: TestLiveSuite/t3code") || !strings.Contains(output, "disagrees with CLI status or containment"))) {
+			failure := "disagrees with CLI status or containment"
+			if scenario.bindFailure != "" {
+				failure = "unexpected HostConfig.Binds"
+			}
+			if (!failed && (err != nil || !strings.Contains(output, "--- PASS: TestLiveSuite"))) || (failed && (err == nil || !strings.Contains(output, "--- FAIL: TestLiveSuite/t3code") || !strings.Contains(output, failure))) {
 				t.Fatalf("traced suite: %v\n%s", err, output)
 			}
 			data, err = os.ReadFile(filepath.Join(records, liveRecordFilename(t)))
@@ -291,12 +354,12 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				t.Fatal(err)
 			}
 			images := map[bool]string{false: "not-run", true: "pass"}[selected]
-			result := map[bool]string{false: "pass", true: "fail"}[scenario.failIdentity]
+			result := map[bool]string{false: "pass", true: "fail"}[failed]
 			wantChecks := []struct{ Name, Result string }{{"preflight", "pass"}, {"lifecycle", "pass"}, {"update", "pass"}, {"agent", "pass"}, {"t3code", result}, {"images", images}}
 			if record.Result != result || record.ImagePartSelected != selected || record.ImagePartRan != selected || record.ImageCoverageComplete != selected || !slices.Equal(record.Checks, wantChecks) {
 				t.Fatalf("record=%s; want %s with image fields %v and checks %v", data, result, selected, wantChecks)
 			}
-			assertTracedToolEvidence(t, records, result, scenario.failIdentity)
+			assertTracedToolEvidence(t, records, result, failed)
 			builds, created := 0, map[string]bool{}
 			commands := map[string]int{}
 			for _, call := range testutil.Invocations(t, executableLog) {
@@ -314,7 +377,7 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 			if builds != map[bool]int{false: 0, true: 1}[selected] || len(created) != 0 {
 				t.Fatalf("builds=%d sandboxes without a remove=%v; want %d builds and none left", builds, created, map[bool]int{false: 0, true: 1}[selected])
 			}
-			if !scenario.failIdentity {
+			if !failed {
 				for command, want := range map[string]int{
 					"up live-t3code": 2, "stop live-t3code": 2, "start live-t3code": 1, "restart live-t3code": 1,
 					"tools enable live-t3code t3code": 2, "tools enable live-t3code t3code --channel nightly": 1,
@@ -339,6 +402,9 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 			wantProbes := map[string]int{"running": 13, "break-install": 1, "repair-install": 1, "deleted": 2}
 			if scenario.failIdentity {
 				wantProbes = map[string]int{"running": 1}
+			}
+			if scenario.bindFailure != "" {
+				wantProbes = map[string]int{}
 			}
 			if !reflect.DeepEqual(probes, wantProbes) {
 				t.Fatalf("Tool probes=%v; want %v", probes, wantProbes)
@@ -369,7 +435,7 @@ func assertTracedToolEvidence(t *testing.T, directory, result string, failed boo
 	}
 	if failed {
 		if len(evidence.Observations) != 0 {
-			t.Fatalf("failed identity observation counted as passing evidence: %s", data)
+			t.Fatalf("failed containment or identity check counted as passing evidence: %s", data)
 		}
 		return
 	}

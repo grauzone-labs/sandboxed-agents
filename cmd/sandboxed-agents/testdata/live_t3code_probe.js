@@ -50,20 +50,37 @@ if (mode === 'break-install') {
         if (pids.has(parent) && !pids.has(pid)) { pids.add(pid); changed = true; }
       }
     }
+    const identities = new Map();
     for (const pid of pids) {
       assert(Number.isInteger(pid) && pid > 1, 'missing service pid');
       const status = processes.get(pid);
       assert(status && !/^State:\s+Z/m.test(status), 'service process is absent or a zombie');
-      assert(/^Uid:\s+1000\s+1000\s+1000\s+1000$/m.test(status), 'Tool uid differs from 1000');
-      assert(/^Gid:\s+1000\s+1000\s+1000\s+1000$/m.test(status), 'Tool gid differs from 1000');
+      const identity = {};
+      for (const field of ['Uid', 'Gid']) {
+        const line = status.match(new RegExp('^' + field + ':[ \\t]+([^\\r\\n]+)$', 'm'));
+        const values = line ? line[1].trim().split(/\s+/).map(Number) : [];
+        assert(values.length === 4 && values.every(value => value === 1000), 'Tool ' + field.toLowerCase() + ' differs from 1000');
+        identity[field.toLowerCase()] = values;
+      }
+      identities.set(pid, identity);
       assert(/^NoNewPrivs:\s+1$/m.test(status), 'Tool can gain privileges');
     }
-    const listeners = fs.readFileSync('/proc/net/tcp', 'utf8').trim().split('\n').slice(1)
-      .map(line => line.trim().split(/\s+/)).filter(fields => fields[3] === '0A' && fields[1].endsWith(':0EBD'));
-    assert.equal(listeners.length, 1, 'expected one IPv4 listener on port 3773');
-    assert.equal(listeners[0][1], '0100007F:0EBD', 'service is not bound to loopback');
+    const listeners = path => {
+      let table;
+      try { table = fs.readFileSync(path, 'utf8'); }
+      catch (error) { if (path === '/proc/net/tcp6' && error.code === 'ENOENT') return []; throw error; }
+      return table.trim().split('\n').slice(1).map(line => line.trim().split(/\s+/))
+        .filter(fields => fields[3] === '0A' && fields[1].endsWith(':0EBD'));
+    };
+    const ipv4 = listeners('/proc/net/tcp');
+    assert.equal(ipv4.length, 1, 'expected one IPv4 listener on port 3773');
+    assert.equal(ipv4[0][1], '0100007F:0EBD', 'service is not bound to loopback');
+    for (const listener of listeners('/proc/net/tcp6')) {
+      assert.equal(listener[1], '00000000000000000000000001000000:0EBD', 'IPv6 service is not bound to loopback');
+    }
+    const serviceIdentity = identities.get(state.service_pid);
     return {version: selection.version, channel: selection.channel || '', pin: selection.pin || '',
-      supervisor_pid: state.supervisor_pid, service_pid: state.service_pid, pids: [...pids], uid: 1000, gid: 1000,
+      supervisor_pid: state.supervisor_pid, service_pid: state.service_pid, pids: [...pids], uid: serviceIdentity.uid[0], gid: serviceIdentity.gid[0],
       origin: 'http://127.0.0.1:3773', http_status: httpStatus};
   };
   const deadline = Date.now() + 15000;

@@ -66,7 +66,7 @@ func (suite *liveSuite) t3code(t *testing.T) {
 		evidence.Observations = append(evidence.Observations, liveToolCheckpoint{Step: step, Version: status.Version, Channel: status.Channel, Pin: status.Pin, UID: status.UID, GID: status.GID})
 		current := host.inspectContainer(t, name)
 		host.assertToolContainment(t, name, current)
-		if !reflect.DeepEqual(current.HostConfig, baseline.HostConfig) || !reflect.DeepEqual(current.Mounts, baseline.Mounts) {
+		if !sameToolContainment(current, baseline) {
 			t.Fatal("Tool or lifecycle operation changed the sandbox's networking, hardening, resources, or mounts")
 		}
 		return status
@@ -125,8 +125,11 @@ func (suite *liveSuite) t3code(t *testing.T) {
 	}
 	previous := observe("sandbox-rollback-restored", "", latest)
 	host.mustCLI(t, "", "check", name)
-	for range 2 {
-		host.mustCLI(t, "", "tools", "delete", name, "t3code")
+	for attempt := range 2 {
+		output := host.mustCLI(t, "", "tools", "delete", name, "t3code")
+		if attempt == 1 && strings.TrimSpace(output) != "t3code not enabled; nothing to delete" {
+			t.Fatalf("second Tool delete did not report its idempotent result: %s", output)
+		}
 		if output := host.mustCLI(t, "", "tools", "status", name, "t3code"); strings.TrimSpace(output) != "t3code: not enabled" {
 			t.Fatalf("deleted Tool still enabled: %s", output)
 		}
@@ -142,6 +145,28 @@ func (suite *liveSuite) t3code(t *testing.T) {
 	observe("reenable-default", "latest", "")
 	host.mustCLI(t, "", "remove", name, "--volumes")
 	host.assertNoSandboxObjects(t, name)
+}
+
+// sameToolContainment compares the observed configuration without treating mount or option ordering as a change.
+func sameToolContainment(left, right liveContainer) bool {
+	for _, container := range []*liveContainer{&left, &right} {
+		container.HostConfig.Binds = slices.Clone(container.HostConfig.Binds)
+		for index, bind := range container.HostConfig.Binds {
+			fields := strings.Split(bind, ":")
+			if len(fields) == 3 {
+				options := strings.Split(fields[2], ",")
+				slices.Sort(options)
+				fields[2] = strings.Join(options, ",")
+				container.HostConfig.Binds[index] = strings.Join(fields, ":")
+			}
+		}
+		slices.Sort(container.HostConfig.Binds)
+		container.Mounts = slices.Clone(container.Mounts)
+		slices.SortFunc(container.Mounts, func(a, b struct{ Type, Name, Source, Destination string }) int {
+			return strings.Compare(a.Destination, b.Destination)
+		})
+	}
+	return reflect.DeepEqual(left.HostConfig, right.HostConfig) && reflect.DeepEqual(left.Mounts, right.Mounts)
 }
 
 // writeToolEvidence replaces the sanitized supplemental file without adding fields to release records.
@@ -227,11 +252,35 @@ func (host liveHost) assertToolContainment(t *testing.T, name string, container 
 		}
 	}
 	network, _, _ := strings.Cut(container.HostConfig.NetworkMode, ":")
-	if network != "pasta" || container.HostConfig.Privileged || len(container.HostConfig.CapAdd) != 0 || len(container.HostConfig.Devices) != 0 || len(container.HostConfig.Binds) != 0 || len(container.Mounts) != 3 {
+	if network != "pasta" || container.HostConfig.Privileged || len(container.HostConfig.CapAdd) != 0 || len(container.HostConfig.Devices) != 0 || len(container.Mounts) != 3 {
 		t.Fatal("sandbox has unexpected networking, privilege, devices, capabilities, or mounts")
 	}
 	names := cli.DerivedNames(host.group, name)
 	want := map[string]string{"/workspace": names.Workspace, "/home/agent": names.Home, "/etc/ssh": names.SSH}
+	// Podman includes named volumes in HostConfig.Binds as name:destination[:options].
+	// Mounts independently proves their type, and no host path is accepted as a name here.
+	if len(container.HostConfig.Binds) != 0 {
+		remaining := map[string]string{"/workspace": names.Workspace, "/home/agent": names.Home, "/etc/ssh": names.SSH}
+		for _, bind := range container.HostConfig.Binds {
+			fields := strings.Split(bind, ":")
+			if len(fields) < 2 || len(fields) > 3 || remaining[fields[1]] == "" || remaining[fields[1]] != fields[0] {
+				t.Fatal("sandbox has an unexpected HostConfig.Binds source or destination")
+			}
+			if len(fields) == 3 {
+				for _, option := range strings.Split(fields[2], ",") {
+					switch option {
+					case "rw", "ro", "private", "rprivate", "bind", "rbind", "nosuid", "nodev", "exec", "noexec":
+					default:
+						t.Fatalf("sandbox has an unexpected HostConfig.Binds option %q", option)
+					}
+				}
+			}
+			delete(remaining, fields[1])
+		}
+		if len(remaining) != 0 {
+			t.Fatal("sandbox HostConfig.Binds omitted an expected named volume")
+		}
+	}
 	for _, mount := range container.Mounts {
 		if mount.Type != "volume" || want[mount.Destination] == "" || want[mount.Destination] != mount.Name {
 			t.Fatal("sandbox has an unexpected mount")
