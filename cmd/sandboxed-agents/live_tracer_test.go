@@ -131,7 +131,7 @@ func tracerToolResponses(t *testing.T, executableResponses, podmanResponses map[
 	statuses = append(statuses[:len(statuses)-1], scriptedAnswer{Output: "t3code: not enabled\n"}, scriptedAnswer{Output: "t3code: not enabled\n"}, last)
 	executableResponses["tools status "+name+" t3code"] = lifecycleResponse{Sequence: statuses}
 	executableResponses["tools update "+name+" t3code"] = lifecycleResponse{Sequence: []scriptedAnswer{{}, {}, {}, {Exit: 1, Output: "tools update t3code: mkdir npm/.next-0.17.1: permission denied\n"}}}
-	for _, command := range []string{"up " + name, "stop " + name, "start " + name, "restart " + name, "check " + name, "tools enable " + name + " t3code", "tools enable " + name + " t3code --channel nightly", "tools enable " + name + " t3code --version 0.17.1", "tools delete " + name + " t3code"} {
+	for _, command := range []string{"up " + name, "stop " + name, "start " + name, "restart " + name, "check " + name, "tools enable " + name + " t3code", "tools enable " + name + " t3code --channel nightly", "tools enable " + name + " t3code --version 0.17.1"} {
 		executableResponses[command] = lifecycleResponse{}
 	}
 	executableResponses["tools delete "+name+" t3code"] = lifecycleResponse{Sequence: []scriptedAnswer{{Output: "t3code deleted\n"}, {Output: "t3code not enabled; nothing to delete\n"}}}
