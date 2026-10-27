@@ -46,6 +46,9 @@ _Avoid_: Install lock, session lock
 A connection between a sandbox and an external account or service, such as Git, GitHub, Azure, or Azure DevOps. An integration offers login and config workflows and has no installable program of its own.
 _Avoid_: Tool, built-in workflow target, plugin
 
+**SSH integration**:
+The `ssh` integration, planned until #108 is delivered, that configures outbound SSH access from a sandbox to a remote machine using a dedicated key and an alias in the `agent` user's home data. It is distinct from the SSH setup, which connects the host to the sandbox.
+
 **Workflow**:
 A named login or config operation that an agent or integration exposes. A login workflow authenticates or links an account; a config workflow changes a setting that is not authentication.
 
