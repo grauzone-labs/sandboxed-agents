@@ -250,6 +250,7 @@ cat "$directory/devops.help"
 for group in project team user; do
   grep -Eq "^[[:space:]]+$group[[:space:]]+:" "$directory/devops.help"
 done
+env -i PATH="$PATH" check-azure-credentials
 `
 	case "native":
 		return `gcc --version

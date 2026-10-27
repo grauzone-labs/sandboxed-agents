@@ -1,0 +1,9 @@
+# Approved #113 exception: build-time PyPI wheels, checked 2026-10-27.
+# Linux amd64 / Microsoft CLI Python 3.14. No source builds or unpinned dependencies.
+cffi==2.0.0 --hash=sha256:afb8db5439b81cf9c9d0c80404b60c3cc9c3add93e114dcae767f1477cb53775
+cryptography==48.0.1 --hash=sha256:0ee6ea481db1ab889cba043ec1eda17bb9c1ea79db6722f779c3667f9f70322f
+entrypoints==0.4.2 --hash=sha256:238a642cf1d295e1921347fc462d7b10110cb47f370ba22f6e1391776c3cec25
+jeepney==0.9.0 --hash=sha256:97e5714520c16fc0a45695e5365a2e11b81ea79bba796e26f9f1d178cb182683
+keyring==17.1.1 --hash=sha256:d71368b9a10dc096c8a1b69a46fc23f0a551f709b9a55b4d4deb7d2fbd809b68
+pycparser==3.0 --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
+SecretStorage==3.5.0 --hash=sha256:0ce65888c0725fcb2c5bc0fdb8e5438eece02c523557ea40ce0703c266248137

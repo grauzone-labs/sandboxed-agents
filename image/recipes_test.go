@@ -108,6 +108,9 @@ func TestAzureRecipeVerifiesMicrosoftDistribution(t *testing.T) {
 		"https://azcliprod.blob.core.windows.net/cli-extensions/azure_devops-1.0.10-py2.py3-none-any.whl",
 		"sha256sum -c", "PIP_NO_DEPS=1 PIP_NO_INDEX=1 az extension add --system --source",
 		"az extension show --name azure-devops --query path --output tsv",
+		"toolchains/azure-devops-requirements.txt", "--require-hashes --only-binary=:all:",
+		"--index-url https://pypi.org/simple", "--target \"$extension_path\"",
+		"USER 1000:1000\nRUN check-azure-credentials\nUSER root",
 		"chmod -R a+rX \"$extension_path\"", "az devops --help", "/root/.azure",
 	}, []string{"AZURE_EXTENSION_SYS_DIR", "python3-azext-devops", "/home/agent", "trusted=yes", "--allow-unauthenticated"})
 	last := -1
