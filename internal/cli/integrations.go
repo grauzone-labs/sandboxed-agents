@@ -40,7 +40,14 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 	}
 	args := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent"}
 	var stdin io.Reader
-	if azdoLogin {
+	if request.Command == "integrations config" && request.ConfigSelection.Integration == catalog.SSHIntegration {
+		if !p.host.IsInputTerminal(p.host.Stdin) || !p.host.IsOutputTerminal(stdout) {
+			return fmt.Errorf("ssh config needs an interactive terminal")
+		}
+		args = append(args, "-it", names.Container, managerPath, "integrations", "config", catalog.SSHIntegration,
+			"--"+catalog.SSHHostOption, request.Options[catalog.SSHHostOption], "--"+catalog.SSHUserOption, request.Options[catalog.SSHUserOption])
+		stdin = p.host.Stdin
+	} else if azdoLogin {
 		token, err := readAzureDevOpsToken(p.host, stderr)
 		if err != nil {
 			return err

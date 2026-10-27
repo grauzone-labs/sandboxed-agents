@@ -37,6 +37,8 @@ const (
 	AzureDevOpsEnvironment
 	// AzureEnvironment selects the environment for Azure authentication.
 	AzureEnvironment
+	// SSHKeyEnvironment isolates local SSH key generation from ambient authentication and askpass settings.
+	SSHKeyEnvironment
 )
 
 // Process is a program start requested at the operating-system seam.
@@ -142,6 +144,9 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 	}
 	if len(args) == 2 && args[0] == "__worker" && args[1] == "sessions" {
 		return sessions(stdout, stderr, effects)
+	}
+	if len(args) >= 3 && args[0] == "integrations" && args[1] == "config" && args[2] == catalog.SSHIntegration {
+		return configureSSH(args[3:], stdout, stderr, effects)
 	}
 	if len(args) >= 3 && args[0] == "integrations" && args[1] == "config" && args[2] == catalog.GitIntegration {
 		return configureGit(args[3:], stdout, stderr, effects)

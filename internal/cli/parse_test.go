@@ -45,7 +45,7 @@ func TestAgentLoginRejectsUnknownWorkflowForKnownAgent(t *testing.T) {
 func TestParsedConfigOptionsFollowSharedCatalog(t *testing.T) {
 	original := catalog.Default.Integrations["git"]
 	catalog.Default.Integrations["git"] = catalog.Integration{ConfigWorkflows: map[string]catalog.ConfigWorkflow{
-		"identity": {Options: []string{"commit-name", "email"}},
+		"identity": {Delivered: true, Options: []string{"commit-name", "email"}},
 	}}
 	t.Cleanup(func() { catalog.Default.Integrations["git"] = original })
 	request, err := cli.Parse([]string{"integrations", "config", "agent01", "git", "identity", "--commit-name", "A Person", "--email", "a@example.com"}, "default")

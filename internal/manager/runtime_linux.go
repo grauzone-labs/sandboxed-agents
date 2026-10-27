@@ -74,6 +74,9 @@ func newEffects(calls systemCalls) Effects {
 			}
 		}
 		command.Env = append(command.Env, process.Environment...)
+		if process.EnvironmentPolicy == SSHKeyEnvironment {
+			command.Env = []string{"PATH=/usr/bin:/bin", "HOME=/home/agent", "USER=agent", "LOGNAME=agent", "LC_ALL=C", "SSH_ASKPASS_REQUIRE=never"}
+		}
 		return command, nil
 	}
 	run := func(process Process) error {
