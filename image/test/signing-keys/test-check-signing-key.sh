@@ -84,6 +84,22 @@ expect_refusal 'NodeSource key against the Tailscale fingerprint is refused' \
     "$fixture" "$tailscale_expected_file" \
     "expected $tailscale_fingerprint, found $expected_fingerprint"
 
+# The Azure toolchain uses the same fail-closed checker with Microsoft's key.
+microsoft_expected_file="$test_dir/../../context/toolchains/microsoft-signing-key.fingerprint"
+microsoft_fixture="$test_dir/microsoft.asc"
+microsoft_fingerprint=$(< "$microsoft_expected_file")
+run_check "$microsoft_fixture" "$microsoft_expected_file" Microsoft
+passed=false
+if [[ "$check_status" -eq 0 && ! -s "$scratch/stdout" ]]; then passed=true; fi
+report 'Microsoft key with expected fingerprint is accepted silently' "$passed"
+SOURCE_NAME=Microsoft expect_refusal 'Microsoft key against another fingerprint is refused' \
+    "$microsoft_fixture" "$expected_file" \
+    "Microsoft signing key fingerprint mismatch: expected $expected_fingerprint, found $microsoft_fingerprint"
+cat "$microsoft_fixture" "$fixture" > "$scratch/microsoft-two-keys.asc"
+SOURCE_NAME=Microsoft expect_refusal 'Microsoft bundle with two primary keys is refused' \
+    "$scratch/microsoft-two-keys.asc" "$microsoft_expected_file" \
+    'found 2' "expected fingerprint $microsoft_fingerprint"
+
 passed=false
 if "$checker" "$fixture" "$expected_file" > "$scratch/stdout" 2> "$scratch/stderr"; then
     :
@@ -128,7 +144,7 @@ expect_refusal 'empty key file is refused with count 0 and the expected fingerpr
     "expected exactly one primary key in $scratch/empty.key, found 0" \
     "expected fingerprint $expected_fingerprint, found none"
 
-for fingerprint_file in "$expected_file" "$tailscale_expected_file"; do
+for fingerprint_file in "$expected_file" "$tailscale_expected_file" "$microsoft_expected_file"; do
     passed=false
     if [[ $(wc -c < "$fingerprint_file") -eq 41 ]] &&
         LC_ALL=C grep -Eq '^[0-9A-F]{40}$' "$fingerprint_file"; then

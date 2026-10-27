@@ -9,6 +9,10 @@ manifest=/usr/local/share/sandboxed-agents/versions.txt
     /usr/local/bin/sandboxed-agents-manager version
     if command -v dotnet >/dev/null; then dotnet --list-sdks; fi
     if command -v playwright >/dev/null; then playwright --version; fi
-    if command -v az >/dev/null; then az version; fi
+    if command -v az >/dev/null; then
+        az version
+        az extension list
+        rm -rf /root/.azure
+    fi
     if command -v cc >/dev/null; then cc --version; fi
 } > "$manifest"
