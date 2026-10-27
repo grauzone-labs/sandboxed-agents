@@ -26,8 +26,7 @@ func TestLiveAzureSmokeRejectsBrokenCommands(t *testing.T) {
 	for _, failure := range []string{"", "version-exit", "module-error", "empty-version", "monitor", "postgres", "mysql", "extension", "devops"} {
 		t.Run("failure="+failure, func(t *testing.T) {
 			directory := t.TempDir()
-			stub := `#!/bin/bash
-set -eu
+			stub := "#!/bin/bash\nFAILURE=" + failure + "\n" + `set -eu
 case "$*" in
   version)
     if [ "$FAILURE" = version-exit ]; then exit 7; fi
@@ -46,7 +45,7 @@ esac
 				t.Fatal(err)
 			}
 			command := exec.Command("bash", "-c", "set -euo pipefail\n"+liveImageSmoke("azure"))
-			command.Env = append(os.Environ(), "PATH="+directory+string(os.PathListSeparator)+os.Getenv("PATH"), "FAILURE="+failure, "TMPDIR="+directory)
+			command.Env = append(os.Environ(), "PATH="+directory+string(os.PathListSeparator)+os.Getenv("PATH"), "TMPDIR="+directory)
 			output, err := command.CombinedOutput()
 			if (err != nil) != (failure != "") {
 				t.Fatalf("smoke failure=%q: error=%v\n%s", failure, err, output)
