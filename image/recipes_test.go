@@ -18,22 +18,13 @@ func TestBaseRecipeSuppliesRuntimeContents(t *testing.T) {
 		t.Fatal(err)
 	}
 	recipe := string(data)
-	for _, required := range []string{
+	assertRecipeFragments(t, recipe, []string{
 		"FROM debian:trixie-slim", "openssh-server", "openssh-client", "git", "gh", "tmux", "curl", "jq", "ripgrep", "less", "unzip", "ca-certificates",
 		"groupadd --gid 1000 agent", "useradd --uid 1000 --gid 1000", "rm -f /etc/ssh/ssh_host_*",
 		"COPY --chmod=0755 manager.bin /usr/local/bin/sandboxed-agents-manager",
 		"/usr/local/share/sandboxed-agents/versions.txt", "dpkg-query", "node --version", "npm --version",
 		"libatomic1", "pkgs.tailscale.com/stable/debian trixie main", "apt-get install -y --no-install-recommends tailscale", "tailscale-signing-key.fingerprint Tailscale",
-	} {
-		if !strings.Contains(recipe, required) {
-			t.Errorf("base recipe is missing %q", required)
-		}
-	}
-	for _, toolchain := range []string{"dotnet-sdk", "azure-cli", "playwright install", "build-essential", "npm install -g"} {
-		if strings.Contains(recipe, toolchain) {
-			t.Errorf("base recipe unexpectedly installs %q", toolchain)
-		}
-	}
+	}, []string{"dotnet-sdk", "azure-cli", "playwright install", "build-essential", "npm install -g"})
 	// The manager changes with every executable; the package layers above it stay cached across those changes.
 	manager, node, tailscale := strings.Index(recipe, "COPY --chmod=0755 manager.bin"), strings.Index(recipe, "deb.nodesource.com/node_24.x"), strings.Index(recipe, "pkgs.tailscale.com/stable/debian")
 	if manager < 0 || node < 0 || tailscale < 0 {
@@ -108,7 +99,7 @@ func TestAzureRecipeVerifiesMicrosoftDistribution(t *testing.T) {
 		t.Fatal(err)
 	}
 	recipe := string(data)
-	for _, required := range []string{
+	assertRecipeFragments(t, recipe, []string{
 		"https://packages.microsoft.com/keys/microsoft.asc",
 		"microsoft-signing-key.fingerprint Microsoft",
 		"signed-by=/etc/apt/keyrings/azure-cli-microsoft.gpg",
@@ -116,18 +107,9 @@ func TestAzureRecipeVerifiesMicrosoftDistribution(t *testing.T) {
 		"apt-get install -y --no-install-recommends azure-cli/bookworm",
 		"https://azcliprod.blob.core.windows.net/cli-extensions/azure_devops-1.0.10-py2.py3-none-any.whl",
 		"sha256sum -c", "PIP_NO_DEPS=1 PIP_NO_INDEX=1 az extension add --system --source",
-		"AZURE_EXTENSION_SYS_DIR=/opt/azure-cli-extensions",
-		"chmod -R a+rX /opt/azure-cli-extensions", "az devops --help", "/root/.azure",
-	} {
-		if !strings.Contains(recipe, required) {
-			t.Errorf("azure recipe is missing %q", required)
-		}
-	}
-	for _, forbidden := range []string{"python3-azext-devops", "/home/agent", "trusted=yes", "--allow-unauthenticated"} {
-		if strings.Contains(recipe, forbidden) {
-			t.Errorf("azure recipe contains %q", forbidden)
-		}
-	}
+		"az extension show --name azure-devops --query path --output tsv",
+		"chmod -R a+rX \"$extension_path\"", "az devops --help", "/root/.azure",
+	}, []string{"AZURE_EXTENSION_SYS_DIR", "python3-azext-devops", "/home/agent", "trusted=yes", "--allow-unauthenticated"})
 	last := -1
 	for _, step := range []string{"microsoft-signing-key.fingerprint Microsoft", "gpg --batch --yes --dearmor", "sources.list.d/azure-cli.list", "apt-get install", "sha256sum -c", "az extension add"} {
 		next := strings.Index(recipe, step)
@@ -135,5 +117,20 @@ func TestAzureRecipeVerifiesMicrosoftDistribution(t *testing.T) {
 			t.Fatalf("installation step %q missing or out of order", step)
 		}
 		last = next
+	}
+}
+
+// assertRecipeFragments checks the required and forbidden contents of an embedded image recipe.
+func assertRecipeFragments(t *testing.T, recipe string, required, forbidden []string) {
+	t.Helper()
+	for _, fragment := range required {
+		if !strings.Contains(recipe, fragment) {
+			t.Errorf("recipe is missing %q", fragment)
+		}
+	}
+	for _, fragment := range forbidden {
+		if strings.Contains(recipe, fragment) {
+			t.Errorf("recipe contains forbidden fragment %q", fragment)
+		}
 	}
 }

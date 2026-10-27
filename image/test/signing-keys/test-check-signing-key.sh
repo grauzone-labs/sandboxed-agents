@@ -43,6 +43,15 @@ report() {
     fi
 }
 
+# expect_acceptance NAME KEY_FILE EXPECTED_FILE SOURCE_NAME
+# The checker must accept the key without writing to stdout.
+expect_acceptance() {
+    local name=$1 passed=false
+    run_check "$2" "$3" "$4"
+    if [[ "$check_status" -eq 0 && ! -s "$scratch/stdout" ]]; then passed=true; fi
+    report "$name" "$passed"
+}
+
 # expect_refusal NAME KEY_FILE EXPECTED_FILE TEXT...
 # The checker must fail, and its stderr must contain every TEXT.
 expect_refusal() {
@@ -58,23 +67,15 @@ expect_refusal() {
     report "$name" "$passed"
 }
 
-run_check "$fixture" "$expected_file"
-passed=false
-if [[ "$check_status" -eq 0 && ! -s "$scratch/stdout" ]]; then
-    passed=true
-fi
-report 'fixture with expected fingerprint is accepted silently' "$passed"
+expect_acceptance 'fixture with expected fingerprint is accepted silently' \
+    "$fixture" "$expected_file" NodeSource
 
 expect_refusal 'different fingerprint is refused with expected and found fingerprints' \
     "$fixture" "$scratch/wrong.fingerprint" \
     "NodeSource signing key fingerprint mismatch: expected $wrong_fingerprint, found $expected_fingerprint"
 
-run_check "$tailscale_fixture" "$tailscale_expected_file" Tailscale
-passed=false
-if [[ "$check_status" -eq 0 && ! -s "$scratch/stdout" ]]; then
-    passed=true
-fi
-report 'Tailscale binary keyring with expected fingerprint is accepted silently' "$passed"
+expect_acceptance 'Tailscale binary keyring with expected fingerprint is accepted silently' \
+    "$tailscale_fixture" "$tailscale_expected_file" Tailscale
 
 SOURCE_NAME=Tailscale expect_refusal 'Tailscale keyring against the NodeSource fingerprint is refused naming Tailscale' \
     "$tailscale_fixture" "$expected_file" \
@@ -88,10 +89,8 @@ expect_refusal 'NodeSource key against the Tailscale fingerprint is refused' \
 microsoft_expected_file="$test_dir/../../context/toolchains/microsoft-signing-key.fingerprint"
 microsoft_fixture="$test_dir/microsoft.asc"
 microsoft_fingerprint=$(< "$microsoft_expected_file")
-run_check "$microsoft_fixture" "$microsoft_expected_file" Microsoft
-passed=false
-if [[ "$check_status" -eq 0 && ! -s "$scratch/stdout" ]]; then passed=true; fi
-report 'Microsoft key with expected fingerprint is accepted silently' "$passed"
+expect_acceptance 'Microsoft key with expected fingerprint is accepted silently' \
+    "$microsoft_fixture" "$microsoft_expected_file" Microsoft
 SOURCE_NAME=Microsoft expect_refusal 'Microsoft key against another fingerprint is refused' \
     "$microsoft_fixture" "$expected_file" \
     "Microsoft signing key fingerprint mismatch: expected $expected_fingerprint, found $microsoft_fingerprint"

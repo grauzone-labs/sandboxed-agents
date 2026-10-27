@@ -244,7 +244,8 @@ az mysql --help
 az extension list >"$directory/extensions.json"
 cat "$directory/extensions.json"
 jq -e 'any(.[]; .name == "azure-devops" and (.version | type == "string" and length > 0))' "$directory/extensions.json"
-az devops --help >"$directory/devops.help"
+# Login strips ambient AZURE_* variables; discovery must use the CLI's default system directory.
+env -i HOME="$HOME" PATH="$PATH" AZURE_CONFIG_DIR="$HOME/.azure" AZURE_CORE_COLLECT_TELEMETRY=0 az devops --help >"$directory/devops.help"
 cat "$directory/devops.help"
 for group in project team user; do
   grep -Eq "^[[:space:]]+$group[[:space:]]+:" "$directory/devops.help"
