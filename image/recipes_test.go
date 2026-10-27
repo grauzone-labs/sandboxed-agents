@@ -68,7 +68,7 @@ func TestSelectedToolchainsLayerOnBase(t *testing.T) {
 				if filepath.Base(args[5]) == "base" {
 					t.Fatal("toolchain context must include the selected fragments")
 				}
-				for name, install := range map[string]string{"dotnet": "dotnet-sdk-10.0", "playwright": "playwright install --with-deps chromium firefox webkit", "azure": "azure-cli python3-azext-devops", "native": "build-essential cmake ninja-build pkg-config gdb"} {
+				for name, install := range map[string]string{"dotnet": "dotnet-sdk-10.0", "playwright": "playwright install --with-deps chromium firefox webkit", "azure": "azure-cli/bookworm", "native": "build-essential cmake ninja-build pkg-config gdb"} {
 					selected := false
 					for _, entry := range set {
 						selected = selected || name == entry
@@ -89,5 +89,51 @@ func TestSelectedToolchainsLayerOnBase(t *testing.T) {
 				t.Fatalf("tag = %q", tag)
 			}
 		})
+	}
+}
+
+// TestAzureRecipeVerifiesMicrosoftDistribution proves the embedded azure recipe verifies Microsoft's key and extension checksum before installation and keeps the extension outside home data.
+func TestAzureRecipeVerifiesMicrosoftDistribution(t *testing.T) {
+	for name, expected := range map[string]string{
+		"toolchains/microsoft-signing-key.fingerprint": "BC528686B50D79E339D3721CEB3E94ADBE1229CF\n",
+		"toolchains/azure-devops.sha256":               "cb38021f76cf93905f759c9d1b4b441bdeecfc98d4141ce26dd7b299af1aa56e  azure_devops-1.0.10-py2.py3-none-any.whl\n",
+	} {
+		data, err := fs.ReadFile(image.Context(), name)
+		if err != nil || string(data) != expected {
+			t.Fatalf("embedded %s = %q, error = %v; want %q", name, data, err, expected)
+		}
+	}
+	data, err := fs.ReadFile(image.Context(), "toolchains/azure.Containerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipe := string(data)
+	for _, required := range []string{
+		"https://packages.microsoft.com/keys/microsoft.asc",
+		"microsoft-signing-key.fingerprint Microsoft",
+		"signed-by=/etc/apt/keyrings/azure-cli-microsoft.gpg",
+		"https://packages.microsoft.com/repos/azure-cli/ bookworm main",
+		"apt-get install -y --no-install-recommends azure-cli/bookworm",
+		"https://azcliprod.blob.core.windows.net/cli-extensions/azure_devops-1.0.10-py2.py3-none-any.whl",
+		"sha256sum -c", "PIP_NO_DEPS=1 PIP_NO_INDEX=1 az extension add --system --source",
+		"AZURE_EXTENSION_SYS_DIR=/opt/azure-cli-extensions",
+		"chmod -R a+rX /opt/azure-cli-extensions", "az devops --help", "/root/.azure",
+	} {
+		if !strings.Contains(recipe, required) {
+			t.Errorf("azure recipe is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"python3-azext-devops", "/home/agent", "trusted=yes", "--allow-unauthenticated"} {
+		if strings.Contains(recipe, forbidden) {
+			t.Errorf("azure recipe contains %q", forbidden)
+		}
+	}
+	last := -1
+	for _, step := range []string{"microsoft-signing-key.fingerprint Microsoft", "gpg --batch --yes --dearmor", "sources.list.d/azure-cli.list", "apt-get install", "sha256sum -c", "az extension add"} {
+		next := strings.Index(recipe, step)
+		if next <= last {
+			t.Fatalf("installation step %q missing or out of order", step)
+		}
+		last = next
 	}
 }

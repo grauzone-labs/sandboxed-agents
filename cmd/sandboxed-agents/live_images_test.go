@@ -232,7 +232,24 @@ const { chromium, firefox, webkit } = require('playwright');
 JS
 `
 	case "azure":
-		return "az version | tee /tmp/live-azure-version | jq -e '.\"azure-cli\" | length > 0'\naz devops --help\n"
+		return `directory=$(mktemp -d)
+trap 'rm -rf "$directory"' EXIT
+az version >"$directory/version.json" 2>"$directory/version.stderr"
+cat "$directory/version.json" "$directory/version.stderr"
+if grep -Fq 'Error loading command module' "$directory/version.stderr" "$directory/version.json"; then exit 1; fi
+jq -e '."azure-cli" | type == "string" and length > 0' "$directory/version.json"
+az monitor --help
+az postgres --help
+az mysql --help
+az extension list >"$directory/extensions.json"
+cat "$directory/extensions.json"
+jq -e 'any(.[]; .name == "azure-devops" and (.version | type == "string" and length > 0))' "$directory/extensions.json"
+az devops --help >"$directory/devops.help"
+cat "$directory/devops.help"
+for group in project team user; do
+  grep -Eq "^[[:space:]]+$group[[:space:]]+:" "$directory/devops.help"
+done
+`
 	case "native":
 		return `gcc --version
 g++ --version
