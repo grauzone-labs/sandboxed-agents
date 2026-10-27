@@ -47,7 +47,8 @@ A connection between a sandbox and an external account or service, such as Git, 
 _Avoid_: Tool, built-in workflow target, plugin
 
 **SSH integration**:
-The `ssh` integration, planned until #108 is delivered, that configures outbound SSH access from a sandbox to a remote machine using a dedicated key and an alias in the `agent` user's home data. It is distinct from the SSH setup, which connects the host to the sandbox.
+The `ssh` integration for configuring outbound SSH access from a sandbox to a remote machine using a dedicated key and an alias in the `agent` user's home data.
+_Avoid_: SSH setup (the host-to-sandbox connection)
 
 **Workflow**:
 A named login or config operation that an agent or integration exposes. A login workflow authenticates or links an account; a config workflow changes a setting that is not authentication.
