@@ -12,6 +12,7 @@ manifest=/usr/local/share/sandboxed-agents/versions.txt
     if command -v az >/dev/null; then
         az version
         az extension list
+        cat /usr/local/share/sandboxed-agents/azure-devops-requirements.txt
         rm -rf /root/.azure
     fi
     if command -v cc >/dev/null; then cc --version; fi

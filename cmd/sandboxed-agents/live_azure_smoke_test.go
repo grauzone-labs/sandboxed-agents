@@ -23,7 +23,7 @@ func TestLiveAzureSmokeRejectsBrokenCommands(t *testing.T) {
 			t.Fatalf("offline smoke harness requires %s: %v", program, err)
 		}
 	}
-	for _, failure := range []string{"", "version-exit", "module-error", "empty-version", "monitor", "postgres", "mysql", "extension", "devops"} {
+	for _, failure := range []string{"", "version-exit", "module-error", "empty-version", "monitor", "postgres", "mysql", "extension", "devops", "credentials"} {
 		t.Run("failure="+failure, func(t *testing.T) {
 			directory := t.TempDir()
 			stub := "#!/bin/bash\nFAILURE=" + failure + "\n" + `set -eu
@@ -42,6 +42,13 @@ case "$*" in
 esac
 `
 			if err := os.WriteFile(filepath.Join(directory, "az"), []byte(stub), 0700); err != nil {
+				t.Fatal(err)
+			}
+			credentialCheck := "#!/bin/bash\nexit 0\n"
+			if failure == "credentials" {
+				credentialCheck = "#!/bin/bash\nexit 10\n"
+			}
+			if err := os.WriteFile(filepath.Join(directory, "check-azure-credentials"), []byte(credentialCheck), 0700); err != nil {
 				t.Fatal(err)
 			}
 			command := exec.Command("bash", "-c", "set -euo pipefail\n"+liveImageSmoke("azure"))

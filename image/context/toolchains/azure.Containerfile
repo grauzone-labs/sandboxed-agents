@@ -1,6 +1,7 @@
 # Microsoft's documented fallback for newer Debian releases without their own suite.
 # CLI follows bookworm's current release; DevOps is pinned with its published SHA-256.
-COPY base/check-signing-key.sh toolchains/microsoft-signing-key.fingerprint toolchains/azure-devops.sha256 /tmp/azure-install/
+COPY base/check-signing-key.sh toolchains/microsoft-signing-key.fingerprint toolchains/azure-devops.sha256 toolchains/azure-devops-requirements.txt /tmp/azure-install/
+COPY --chmod=0755 toolchains/check-azure-credentials.py /usr/local/bin/check-azure-credentials
 ENV AZURE_EXTENSION_USE_DYNAMIC_INSTALL=no \
     AZURE_CORE_COLLECT_TELEMETRY=no
 RUN set -eu; \
@@ -19,7 +20,14 @@ RUN set -eu; \
     PIP_NO_DEPS=1 PIP_NO_INDEX=1 az extension add --system --source /tmp/azure-install/azure_devops-1.0.10-py2.py3-none-any.whl; \
     extension_path=$(az extension show --name azure-devops --query path --output tsv); \
     test -n "$extension_path"; \
+    /opt/az/bin/python3 -I -m pip --isolated install --disable-pip-version-check --no-cache-dir \
+        --index-url https://pypi.org/simple --require-hashes --only-binary=:all: \
+        --target "$extension_path" -r /tmp/azure-install/azure-devops-requirements.txt; \
+    cp /tmp/azure-install/azure-devops-requirements.txt /usr/local/share/sandboxed-agents/azure-devops-requirements.txt; \
     chmod -R a+rX "$extension_path"; \
     az devops --help >/dev/null; \
     cd /; \
     rm -rf /tmp/azure-install /var/lib/apt/lists/* /root/.azure
+USER 1000:1000
+RUN check-azure-credentials
+USER root
