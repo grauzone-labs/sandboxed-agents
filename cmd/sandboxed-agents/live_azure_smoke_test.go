@@ -5,12 +5,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 // TestLiveAzureSmokeRejectsBrokenCommands proves the live image smoke script rejects Azure CLI failures and missing DevOps groups at its shell/process seam without a live host.
 func TestLiveAzureSmokeRejectsBrokenCommands(t *testing.T) {
+	if os.Getenv(nestedGuardEnv) == strconv.Itoa(os.Getppid()) {
+		t.Skip("the outer run covers the smoke shell; the nested guard deliberately excludes shell utilities from PATH")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("the image smoke script runs in a Linux sandbox")
 	}
