@@ -17,7 +17,7 @@ RUN set -eu; \
     cd /tmp/azure-install; \
     curl -fsSL https://azcliprod.blob.core.windows.net/cli-extensions/azure_devops-1.0.10-py2.py3-none-any.whl -o azure_devops-1.0.10-py2.py3-none-any.whl; \
     sha256sum -c azure-devops.sha256; \
-    PIP_NO_DEPS=1 PIP_NO_INDEX=1 az extension add --system --source /tmp/azure-install/azure_devops-1.0.10-py2.py3-none-any.whl; \
+    PIP_NO_DEPS=1 PIP_NO_INDEX=1 az extension add --system --yes --source /tmp/azure-install/azure_devops-1.0.10-py2.py3-none-any.whl; \
     extension_path=$(az extension show --name azure-devops --query path --output tsv); \
     test -n "$extension_path"; \
     /opt/az/bin/python3 -I -m pip --isolated install --disable-pip-version-check --no-cache-dir \

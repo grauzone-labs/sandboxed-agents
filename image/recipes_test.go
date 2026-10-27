@@ -83,7 +83,7 @@ func TestSelectedToolchainsLayerOnBase(t *testing.T) {
 	}
 }
 
-// TestAzureRecipeVerifiesMicrosoftDistribution proves the embedded azure recipe verifies Microsoft's key and extension checksum before installation and keeps the extension outside home data.
+// TestAzureRecipeVerifiesMicrosoftDistribution proves the embedded azure recipe verifies Microsoft's key and extension checksum before noninteractive installation and keeps the extension outside home data.
 func TestAzureRecipeVerifiesMicrosoftDistribution(t *testing.T) {
 	for name, expected := range map[string]string{
 		"toolchains/microsoft-signing-key.fingerprint": "BC528686B50D79E339D3721CEB3E94ADBE1229CF\n",
@@ -106,7 +106,7 @@ func TestAzureRecipeVerifiesMicrosoftDistribution(t *testing.T) {
 		"https://packages.microsoft.com/repos/azure-cli/ bookworm main",
 		"apt-get install -y --no-install-recommends azure-cli/bookworm",
 		"https://azcliprod.blob.core.windows.net/cli-extensions/azure_devops-1.0.10-py2.py3-none-any.whl",
-		"sha256sum -c", "PIP_NO_DEPS=1 PIP_NO_INDEX=1 az extension add --system --source",
+		"sha256sum -c", "PIP_NO_DEPS=1 PIP_NO_INDEX=1 az extension add --system --yes --source",
 		"az extension show --name azure-devops --query path --output tsv",
 		"toolchains/azure-devops-requirements.txt", "--require-hashes --only-binary=:all:",
 		"--index-url https://pypi.org/simple", "--target \"$extension_path\"",
