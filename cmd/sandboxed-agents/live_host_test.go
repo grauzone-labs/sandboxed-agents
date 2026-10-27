@@ -228,12 +228,19 @@ type liveContainer struct {
 	Image  string
 	State  struct{ Running bool }
 	Config struct {
-		Image, User string
-		Labels      map[string]string
+		Image, User   string
+		Labels        map[string]string
+		CreateCommand []string
 	}
+	Mounts     []struct{ Type, Name, Source, Destination string }
 	HostConfig struct {
-		Memory, MemorySwap int64
-		PortBindings       map[string][]struct{ HostIP, HostPort string }
+		Memory, MemorySwap                      int64
+		CPUQuota, CPUPeriod, PidsLimit, ShmSize int64
+		PortBindings                            map[string][]struct{ HostIP, HostPort string }
+		NetworkMode, UsernsMode                 string
+		Privileged                              bool
+		CapAdd, SecurityOpt, Binds              []string
+		Devices                                 []json.RawMessage
 	}
 }
 

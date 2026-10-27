@@ -134,6 +134,8 @@ The image coverage is the `images` case of the live suite ([releases](releases.m
 
 The live suite also checks the swap limit: a new sandbox's `podman inspect` shows `MemorySwap` equal to `Memory`, and its cgroup `memory.swap.max` is `0`. The lifecycle case checks this, the `images` case checks it for each image, and the `update` case checks it at the initial sandbox, after replacement, and after rollback. Legacy swap allowances are covered by the offline CLI tests.
 
+The suite's `t3code` case also checks service restore on a real successful replacement from the base image to `native` and on a forced readiness rollback to that replacement. It verifies the Tool's pin, live HTTP service, and UID/GID 1000 after both, and compares the sandbox's publish, network, hardening, resource limits, and three volumes with their pre-enable values. This adds no Tailscale login or phone reachability coverage; those remain manually recorded ([live suite](releases.md#live-suite)).
+
 Because `build` renews every image of the current executable on the Podman host, the coverage has its own opt-in beside the suite's variables, `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1`:
 
 ```sh
