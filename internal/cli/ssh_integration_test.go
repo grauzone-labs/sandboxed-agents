@@ -72,6 +72,21 @@ func TestSSHConfigValidatesDestination(t *testing.T) {
 	}
 }
 
+// TestSSHConfigRejectsForeignOptions proves a foreign config option receives an accurate SSH diagnostic before Podman through cli.Parse and the host CLI boundary.
+func TestSSHConfigRejectsForeignOptions(t *testing.T) {
+	enableSSHConfig(t)
+	args := []string{"integrations", "config", "agent01", "ssh", "--host", "worker", "--user", "alice", "--name", "A"}
+	want := `ssh config does not support option "--name"`
+	if _, err := cli.Parse(args, "default"); err == nil || err.Error() != want {
+		t.Errorf("parse error=%v; want %s", err, want)
+	}
+	f := sandboxStateFixture(t)
+	status, output, calls := f.run(t, args...)
+	if status == 0 || len(calls) != 0 || !strings.Contains(output, "step 1: "+want+"\n") {
+		t.Fatalf("status=%d calls=%q output=%s; want %s", status, calls, output, want)
+	}
+}
+
 // TestSSHConfigRequiresTerminalAndRunsAsAgent proves the staged key workflow needs both terminal streams and forwards only explicit values as agent through the host CLI/fake-Podman seam.
 func TestSSHConfigRequiresTerminalAndRunsAsAgent(t *testing.T) {
 	enableSSHConfig(t)

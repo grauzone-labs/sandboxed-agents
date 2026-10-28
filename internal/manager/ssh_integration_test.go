@@ -77,11 +77,11 @@ func TestSSHIntegrationGeneratesPrivateKeyAndPrintsPublic(t *testing.T) {
 			private = p
 		}
 	}
-	if filepath.Base(private) != "id_ed25519_remote_5afd19e856d1c18d17d600dfd2b5f534992333985e126c2a951047102c1ed536" {
-		t.Fatalf("unexpected normalized target filename %q", private)
-	}
 	if private == "" {
 		t.Fatal("missing private key")
+	}
+	if filepath.Base(private) != "id_ed25519_remote_5afd19e856d1c18d17d600dfd2b5f534992333985e126c2a951047102c1ed536" {
+		t.Fatalf("unexpected normalized target filename %q", private)
 	}
 	for path, mode := range map[string]os.FileMode{filepath.Dir(private): 0700, private: 0600} {
 		info, err := os.Stat(path)
