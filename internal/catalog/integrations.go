@@ -89,26 +89,32 @@ func (c Catalog) ResolveConfig(integrationName, workflowName string) (ConfigSele
 	return selection, nil
 }
 
-// ConfigOptionNames returns options belonging to delivered config workflows for documentation and usage.
-func (c Catalog) ConfigOptionNames() []string { return c.configOptionNames("") }
-
-// ConfigParseOptionNames includes staged options only for the named integration so
-// its commands reach ResolveConfig's delivery gate without changing other integrations' diagnostics.
-func (c Catalog) ConfigParseOptionNames(integrationName string) []string {
-	return c.configOptionNames(integrationName)
-}
-
-// configOptionNames collects delivered options plus staged options for the named integration, if any.
-func (c Catalog) configOptionNames(includeUndelivered string) []string {
+// ConfigOptionNames returns distinct delivered config options for parsing, documentation, and usage.
+func (c Catalog) ConfigOptionNames() []string {
 	names := make(map[string]struct{})
-	for name, integration := range c.Integrations {
+	for _, integration := range c.Integrations {
 		for _, workflow := range integration.ConfigWorkflows {
-			if !workflow.Delivered && (includeUndelivered == "" || name != includeUndelivered) {
+			if !workflow.Delivered {
 				continue
 			}
 			for _, option := range workflow.Options {
 				names[option] = struct{}{}
 			}
+		}
+	}
+	return slices.Sorted(maps.Keys(names))
+}
+
+// StagedConfigOptionNames returns distinct options of only the named integration's
+// undelivered config workflows so parsing can reach ResolveConfig's delivery gate.
+func (c Catalog) StagedConfigOptionNames(integrationName string) []string {
+	names := make(map[string]struct{})
+	for _, workflow := range c.Integrations[integrationName].ConfigWorkflows {
+		if workflow.Delivered {
+			continue
+		}
+		for _, option := range workflow.Options {
+			names[option] = struct{}{}
 		}
 	}
 	return slices.Sorted(maps.Keys(names))

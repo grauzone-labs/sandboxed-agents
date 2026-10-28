@@ -131,8 +131,9 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 					return request, fmt.Errorf("empty argument")
 				}
 				request.Args = append(request.Args, arg)
+				// Config positionals begin with NAME followed by INTEGRATION.
 				if request.Command == "integrations config" && len(request.Args) == 2 {
-					for _, option := range catalog.Default.ConfigParseOptionNames(arg) {
+					for _, option := range catalog.Default.StagedConfigOptionNames(arg) {
 						definition.options[option] = true
 					}
 				}
@@ -271,6 +272,9 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 		}
 		for option := range request.Options {
 			if !slices.Contains(selection.Definition.Options, option) {
+				if selection.Integration == catalog.SSHIntegration {
+					return request, fmt.Errorf("%s config does not support option %q", selection.Integration, "--"+option)
+				}
 				return request, fmt.Errorf("%s %s takes no options", selection.Integration, selection.Workflow)
 			}
 		}
