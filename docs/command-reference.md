@@ -149,6 +149,20 @@ The options belong to their workflow. `--name` and `--email` are options of the 
 
 Credentials live in the sandbox's home volume. They survive `update` and are removed by `remove NAME --volumes`.
 
+### Planned SSH integration
+
+Planned grammar: `sandboxed-agents integrations config NAME ssh --host HOST --user USER`.
+
+The SSH integration is **not available yet**: `ssh` remains an unknown integration in the delivered catalog until the complete flow of [#108](https://github.com/grauzone-labs/sandboxed-agents/issues/108) is implemented. The dedicated-key stage of [#110](https://github.com/grauzone-labs/sandboxed-agents/issues/110) is present for integration with the remaining steps; it does not connect to the remote machine or write an alias or `known_hosts` entry.
+
+The staged command requires both options. `HOST` is a bare IPv4 or IPv6 address (including a scoped IPv6 address) or an ASCII DNS-style machine name, including a single-label name; URLs, embedded usernames, and ports are rejected. `USER` is a literal account name using letters, digits, `_`, `.`, `@`, backslash, and `-`, starting with a letter, digit, or `_`. The target is normalized without DNS: IPv6 spellings and machine-name letter case share a key, while a DNS root dot and IPv6 zone remain significant. Different usernames do not change the key identity.
+
+The manager will create `/home/agent/.ssh/` with mode `0700` and generate an Ed25519 key named `id_ed25519_remote_<target-hash>`, where the hash is the lowercase hexadecimal SHA-256 of the normalized target. Its `.pub` sibling holds the public key. The private key is owned by `agent` with mode `0600`; a valid existing pair is reused without modification, including a private key made read-only (`0400`). Damaged, incomplete, mismatched, redirected, or insecure files are refused rather than repaired or overwritten. An existing `.ssh` directory must be owned by `agent` with mode `0700`. Key generation uses a temporary per-target lock inside that directory; an interrupted process may leave a lock that needs manual removal after checking no generator is running.
+
+The key stage prints exactly one public-key line on standard output and reports its file location on standard error. Subprocess diagnostics are suppressed. Generated key material remains after a failure; every agent in the sandbox shares access to it. No host SSH files or host-state files are read or written.
+
+Its places in the [order of checks](#order-of-checks) are usage and input validation (1), sandbox existence (4), ownership (5), interrupted update (6), running state (7), manager availability (8), and terminal availability (9), in that order. Windows target selection follows existing integrations before sandbox lookup. It runs no full preflight, takes no host lifecycle lock, and has no session guard. The manager availability query runs as container root; the workflow runs as `agent` through an interactive `podman exec` only after the terminal check.
+
 ## Tool commands
 
 A Tool, as [`CONTEXT.md`](../CONTEXT.md) defines it, runs beside agents in a sandbox and is installed into the home data after the sandbox exists ([ADR 0009](adr/0009-tools-run-as-manager-supervised-services.md)). The first Tool is T3 Code, tool name `t3code` ([Story #89](https://github.com/grauzone-labs/sandboxed-agents/issues/89)). T3 Code's phone paths are T3 Connect, the account login with its outbound relay, and QR pairing over the Tool's own tailnet node ([ADR 0010](adr/0010-t3-code-pairs-over-an-in-sandbox-tailnet-node.md)); neither is an agent provider login, which stays `agents login NAME AGENT`. The [Tools page](tools.md) explains the topology, the prerequisites, the network paths, and the limits behind these commands, and the [T3 Code validation runbook](t3code-validation.md) says how their live behavior is recorded.

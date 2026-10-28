@@ -45,14 +45,21 @@ type ConfigSelection struct {
 
 // ConfigWorkflowNames returns the delivered config workflows in display order.
 func (i Integration) ConfigWorkflowNames() []string {
-	return slices.Sorted(maps.Keys(i.ConfigWorkflows))
+	var names []string
+	for name, workflow := range i.ConfigWorkflows {
+		if workflow.Delivered {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
 }
 
 // ConfigIntegrationNames returns integrations that have delivered config workflows.
 func (c Catalog) ConfigIntegrationNames() []string {
 	var names []string
 	for name, integration := range c.Integrations {
-		if len(integration.ConfigWorkflows) > 0 {
+		if len(integration.ConfigWorkflowNames()) > 0 {
 			names = append(names, name)
 		}
 	}
@@ -64,7 +71,7 @@ func (c Catalog) ConfigIntegrationNames() []string {
 func (c Catalog) ResolveConfig(integrationName, workflowName string) (ConfigSelection, error) {
 	selection := ConfigSelection{Integration: integrationName, Workflow: workflowName}
 	integration, known := c.Integrations[integrationName]
-	if !known || len(integration.ConfigWorkflows) == 0 {
+	if !known || len(integration.ConfigWorkflowNames()) == 0 {
 		return selection, fmt.Errorf("unknown integration %q: %s", integrationName, ValidNames(c.ConfigIntegrationNames()))
 	}
 	if workflowName == "" {
@@ -75,21 +82,39 @@ func (c Catalog) ResolveConfig(integrationName, workflowName string) (ConfigSele
 		selection.Workflow = names[0]
 	}
 	definition, known := integration.ConfigWorkflows[selection.Workflow]
-	if !known {
+	if !known || !definition.Delivered {
 		return selection, fmt.Errorf("unknown %s config workflow %q: %s", integrationName, selection.Workflow, ValidNames(integration.ConfigWorkflowNames()))
 	}
 	selection.Definition = definition
 	return selection, nil
 }
 
-// ConfigOptionNames returns the union of delivered config option names for parsing.
+// ConfigOptionNames returns distinct delivered config options for parsing, documentation, and usage.
 func (c Catalog) ConfigOptionNames() []string {
 	names := make(map[string]struct{})
 	for _, integration := range c.Integrations {
 		for _, workflow := range integration.ConfigWorkflows {
+			if !workflow.Delivered {
+				continue
+			}
 			for _, option := range workflow.Options {
 				names[option] = struct{}{}
 			}
+		}
+	}
+	return slices.Sorted(maps.Keys(names))
+}
+
+// StagedConfigOptionNames returns distinct options of only the named integration's
+// undelivered config workflows so parsing can reach ResolveConfig's delivery gate.
+func (c Catalog) StagedConfigOptionNames(integrationName string) []string {
+	names := make(map[string]struct{})
+	for _, workflow := range c.Integrations[integrationName].ConfigWorkflows {
+		if workflow.Delivered {
+			continue
+		}
+		for _, option := range workflow.Options {
+			names[option] = struct{}{}
 		}
 	}
 	return slices.Sorted(maps.Keys(names))
@@ -101,7 +126,10 @@ func (c Catalog) ConfigUsage() []string {
 	for _, name := range c.ConfigIntegrationNames() {
 		integration := c.Integrations[name]
 		for _, workflow := range integration.ConfigWorkflowNames() {
-			form := "integrations config " + name + " " + workflow
+			form := "integrations config " + name
+			if workflow != "" {
+				form += " " + workflow
+			}
 			for _, option := range integration.ConfigWorkflows[workflow].Options {
 				form += " --" + option + " " + strings.ToUpper(option)
 			}
@@ -135,7 +163,7 @@ func (c Catalog) LoginIntegrationNames() []string {
 func (c Catalog) ResolveLogin(name, workflow string) (string, error) {
 	integration, known := c.Integrations[name]
 	if !known || integration.Login == nil || !integration.Login.Delivered {
-		if known && len(integration.ConfigWorkflows) > 0 {
+		if known && len(integration.ConfigWorkflowNames()) > 0 {
 			return "", fmt.Errorf("%s has no login workflow; use integrations config NAME %s; config workflows: %s", name, name, ValidNames(integration.ConfigWorkflowNames()))
 		}
 		return "", fmt.Errorf("unknown integration %q: %s", name, ValidNames(c.LoginIntegrationNames()))

@@ -174,7 +174,9 @@ func withoutGitCredentials(t *testing.T) {
 
 // TestIntegrationWorkflowsRejectUnsafeIdentity proves integration workflows reject root, wrong IDs, missing identity reads, and unsafe groups before any process through manager.RunWithEffects.
 func TestIntegrationWorkflowsRejectUnsafeIdentity(t *testing.T) {
+	enableSSHIntegration(t)
 	for _, args := range [][]string{
+		{"integrations", "config", "ssh", "--host", "worker", "--user", "alice"},
 		{"integrations", "login", "github", "device-code"},
 		{"integrations", "login", "azdo", "--organization", "https://dev.azure.com/contoso"},
 		{"integrations", "login", "azure", "device-code"},

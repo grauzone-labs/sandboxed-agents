@@ -37,6 +37,8 @@ const (
 	AzureDevOpsEnvironment
 	// AzureEnvironment selects the environment for Azure authentication.
 	AzureEnvironment
+	// SSHKeyEnvironment fixes the local key process environment, ignoring ambient variables and Process.Environment overrides.
+	SSHKeyEnvironment
 )
 
 // Process is a program start requested at the operating-system seam.
@@ -51,6 +53,7 @@ type Process struct {
 	// AzureSSHHost supplies the validated SSH alias to Azure's browser callback.
 	AzureSSHHost string
 	// Environment holds variables appended after the policy environment, such as a Tool's home variable.
+	// SSHKeyEnvironment deliberately ignores these overrides to preserve its fixed key process environment.
 	Environment []string
 	// ProcessGroup starts the process as the leader of its own process group, so a supervisor can end every descendant.
 	ProcessGroup bool
@@ -142,6 +145,9 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 	}
 	if len(args) == 2 && args[0] == "__worker" && args[1] == "sessions" {
 		return sessions(stdout, stderr, effects)
+	}
+	if len(args) >= 3 && args[0] == "integrations" && args[1] == "config" && args[2] == catalog.SSHIntegration {
+		return configureSSH(args[3:], stdout, stderr, effects)
 	}
 	if len(args) >= 3 && args[0] == "integrations" && args[1] == "config" && args[2] == catalog.GitIntegration {
 		return configureGit(args[3:], stdout, stderr, effects)

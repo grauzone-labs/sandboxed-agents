@@ -44,6 +44,11 @@ func newEffects(calls systemCalls) Effects {
 			// unprivileged worker cannot call setgroups when spawning its peers.
 			NoSetGroups: calls.Identity().UID != 0,
 		}, Setpgid: process.ProcessGroup}
+		if process.EnvironmentPolicy == SSHKeyEnvironment {
+			// Key operations accept neither ambient variables nor Process.Environment overrides.
+			command.Env = sshKeyEnvironment()
+			return command, nil
+		}
 		command.Env = agentEnvironment(calls.Environment())
 		if process.EnvironmentPolicy == GitConfigEnvironment {
 			command.Env = gitEnvironment(command.Env)
@@ -176,6 +181,12 @@ func (c startedChild) Signal(sig os.Signal) error {
 		pid = -pid
 	}
 	return syscall.Kill(pid, signal)
+}
+
+// sshKeyEnvironment fixes the local key process environment without accepting ambient
+// variables or Process.Environment overrides that could enable authentication or preload hooks.
+func sshKeyEnvironment() []string {
+	return []string{"PATH=/usr/bin:/bin", "HOME=/home/agent", "USER=agent", "LOGNAME=agent", "LC_ALL=C", "SSH_ASKPASS_REQUIRE=never"}
 }
 
 // azureEnvironment keeps the token cache in home and removes ambient browsers.

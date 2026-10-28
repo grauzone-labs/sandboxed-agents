@@ -25,8 +25,9 @@ type LoginWorkflow struct {
 	InvalidArgumentsMessage string
 }
 
-// ConfigWorkflow declares accepted options and the global Git settings to write.
+// ConfigWorkflow declares delivery status, accepted options, and optional global Git settings.
 type ConfigWorkflow struct {
+	Delivered   bool
 	Options     []string
 	GitSettings []GitSetting
 }
@@ -61,6 +62,9 @@ var Default = Catalog{
 	},
 	Toolchains: []string{"dotnet", "playwright", "azure", "native"},
 	Integrations: map[string]Integration{
+		SSHIntegration: {ConfigWorkflows: map[string]ConfigWorkflow{
+			"": {Delivered: false, Options: []string{SSHHostOption, SSHUserOption}},
+		}},
 		GitHubIntegration: {LoginWorkflows: []string{DeviceCodeWorkflow}, Login: &LoginWorkflow{
 			Delivered:             true,
 			InvalidOptionsMessage: "--organization is only valid for azdo",
@@ -76,10 +80,11 @@ var Default = Catalog{
 		}},
 		GitIntegration: {ConfigWorkflows: map[string]ConfigWorkflow{
 			GitIdentityWorkflow: {
+				Delivered:   true,
 				Options:     []string{GitNameOption, GitEmailOption},
 				GitSettings: []GitSetting{{Key: "user.name", Option: GitNameOption}, {Key: "user.email", Option: GitEmailOption}},
 			},
-			GitCredentialsWorkflow: {GitSettings: []GitSetting{{Key: "credential.helper", Value: GitCredentialStoreHelper}}},
+			GitCredentialsWorkflow: {Delivered: true, GitSettings: []GitSetting{{Key: "credential.helper", Value: GitCredentialStoreHelper}}},
 		}},
 	},
 	Tools: map[string]Tool{

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 	"golang.org/x/sys/unix"
 )
 
@@ -464,5 +465,64 @@ func TestProductionAzureBrowserRejectsUnusableExecutable(t *testing.T) {
 		if status := RunWithEffects([]string{"integrations", "login", "azure", "browser", "--ssh-host", "agent01"}, &out, &out, effects); status != 1 {
 			t.Fatalf("path=%q status=%d output=%s", tc.path, status, &out)
 		}
+	}
+}
+
+// TestProductionSSHKeysIgnoreAmbientAuthentication proves the SSH key policy strips askpass, agent sockets, preload, and debug settings through RunWithEffects and the production exec.Cmd seam.
+func TestProductionSSHKeysIgnoreAmbientAuthentication(t *testing.T) {
+	old := catalog.Default.Integrations["ssh"]
+	integration := old
+	workflow := integration.ConfigWorkflows[""]
+	workflow.Delivered = true
+	integration.ConfigWorkflows = map[string]catalog.ConfigWorkflow{"": workflow}
+	catalog.Default.Integrations["ssh"] = integration
+	t.Cleanup(func() { catalog.Default.Integrations["ssh"] = old })
+	starts := 0
+	e := newEffects(systemCalls{
+		Identity: func() Identity { return agentIdentity },
+		Environment: func() []string {
+			return []string{"HOME=/caller", "PATH=/caller/bin", "SSH_ASKPASS=/caller/askpass", "SSH_ASKPASS_REQUIRE=force", "SSH_AUTH_SOCK=/caller/socket", "DISPLAY=:1", "LD_PRELOAD=/caller/lib", "SSH_DEBUG=1", "SECRET=sentinel"}
+		},
+		Start: func(c *exec.Cmd) error {
+			starts++
+			assertAgentCredentials(t, c, true)
+			want := []string{"PATH=/usr/bin:/bin", "HOME=/home/agent", "USER=agent", "LOGNAME=agent", "LC_ALL=C", "SSH_ASKPASS_REQUIRE=never"}
+			if c.Path != "/usr/bin/ssh-keygen" || !reflect.DeepEqual(c.Env, want) {
+				t.Errorf("program=%s environment=%q; want %q", c.Path, c.Env, want)
+			}
+			return errors.New("subprocess diagnostic sentinel")
+		},
+	})
+	stubPassingAgentIDReads(&e)
+	home := t.TempDir()
+	e.HomeDirectory = func() (string, error) { return home, nil }
+	var out, diag bytes.Buffer
+	status := RunWithEffects([]string{"integrations", "config", "ssh", "--host", "worker", "--user", "alice"}, &out, &diag, e)
+	if status != 1 || starts != 1 || out.Len() != 0 || strings.Contains(diag.String(), "subprocess diagnostic sentinel") {
+		t.Fatalf("status=%d starts=%d output=%s diagnostics=%s", status, starts, &out, &diag)
+	}
+}
+
+// TestProductionSSHKeysIgnoreExplicitEnvironment proves caller-supplied process variables cannot override the fixed key environment through Effects.Start and the production exec.Cmd seam.
+func TestProductionSSHKeysIgnoreExplicitEnvironment(t *testing.T) {
+	starts := 0
+	e := newEffects(systemCalls{
+		Identity:    func() Identity { return agentIdentity },
+		Environment: func() []string { return []string{"SECRET=ambient"} },
+		Start: func(c *exec.Cmd) error {
+			starts++
+			want := []string{"PATH=/usr/bin:/bin", "HOME=/home/agent", "USER=agent", "LOGNAME=agent", "LC_ALL=C", "SSH_ASKPASS_REQUIRE=never"}
+			if !reflect.DeepEqual(c.Env, want) {
+				t.Errorf("environment=%q; want %q", c.Env, want)
+			}
+			return nil
+		},
+	})
+	err := e.Start(Process{
+		Program: "/usr/bin/ssh-keygen", Identity: agentIdentity, EnvironmentPolicy: SSHKeyEnvironment,
+		Environment: []string{"PATH=/caller/bin", "HOME=/caller", "SSH_ASKPASS_REQUIRE=force", "SSH_AUTH_SOCK=/caller/socket", "LD_PRELOAD=/caller/lib", "SECRET=explicit"},
+	})
+	if err != nil || starts != 1 {
+		t.Fatalf("error=%v starts=%d", err, starts)
 	}
 }
