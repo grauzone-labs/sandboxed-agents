@@ -90,18 +90,20 @@ func (c Catalog) ResolveConfig(integrationName, workflowName string) (ConfigSele
 }
 
 // ConfigOptionNames returns options belonging to delivered config workflows for documentation and usage.
-func (c Catalog) ConfigOptionNames() []string { return c.configOptionNames(false) }
+func (c Catalog) ConfigOptionNames() []string { return c.configOptionNames("") }
 
-// ConfigParseOptionNames includes staged options so their commands fail with an unknown-integration diagnostic.
-// Recognizing an option token does not bypass ResolveConfig's delivery gate.
-func (c Catalog) ConfigParseOptionNames() []string { return c.configOptionNames(true) }
+// ConfigParseOptionNames includes staged options only for the named integration so
+// its commands reach ResolveConfig's delivery gate without changing other integrations' diagnostics.
+func (c Catalog) ConfigParseOptionNames(integrationName string) []string {
+	return c.configOptionNames(integrationName)
+}
 
-// configOptionNames collects distinct options while optionally including undelivered definitions.
-func (c Catalog) configOptionNames(includeUndelivered bool) []string {
+// configOptionNames collects delivered options plus staged options for the named integration, if any.
+func (c Catalog) configOptionNames(includeUndelivered string) []string {
 	names := make(map[string]struct{})
-	for _, integration := range c.Integrations {
+	for name, integration := range c.Integrations {
 		for _, workflow := range integration.ConfigWorkflows {
-			if !includeUndelivered && !workflow.Delivered {
+			if !workflow.Delivered && (includeUndelivered == "" || name != includeUndelivered) {
 				continue
 			}
 			for _, option := range workflow.Options {

@@ -151,6 +151,32 @@ func TestSSHConfigRefusalsPrecedeTerminal(t *testing.T) {
 	}
 }
 
+// TestGitConfigRejectsStagedSSHOptions proves staged SSH options remain unknown for delivered Git workflows without Podman calls through cli.Parse and the host CLI boundary.
+func TestGitConfigRejectsStagedSSHOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"identity-host", []string{"git", "identity", "--name", "A", "--email", "B", "--host", "x"}, `unknown option "--host"`},
+		{"credentials-user", []string{"git", "credentials", "--user", "x"}, `unknown option "--user"`},
+		{"host-before-workflow", []string{"git", "--host=x", "identity", "--name", "A", "--email", "B"}, `unknown option "--host=x"`},
+		{"user-before-integration", []string{"--user", "x", "git", "credentials"}, `unknown option "--user"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"integrations", "config", "agent01"}, tc.args...)
+			if _, err := cli.Parse(args, "default"); err == nil || err.Error() != tc.want {
+				t.Errorf("parse error=%v; want %s", err, tc.want)
+			}
+			f := sandboxStateFixture(t)
+			status, output, calls := f.run(t, args...)
+			if status == 0 || len(calls) != 0 || !strings.Contains(output, tc.want) {
+				t.Fatalf("status=%d calls=%q output=%s; want %s", status, calls, output, tc.want)
+			}
+		})
+	}
+}
+
 // TestSSHConfigStepOneAndDeliveryGateCallNoPodman proves invalid inputs and the undelivered default refuse before external calls through the host CLI boundary.
 func TestSSHConfigStepOneAndDeliveryGateCallNoPodman(t *testing.T) {
 	f := sandboxStateFixture(t)

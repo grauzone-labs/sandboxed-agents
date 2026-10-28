@@ -14,6 +14,15 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/sshkey"
 )
 
+// SSH key operations use a trusted executable and bound both stored and derived public material.
+const (
+	sshKeygenProgram = "/usr/bin/ssh-keygen"
+	sshPublicLimit   = 4096
+)
+
+// errUnsafeSSHKey refuses incomplete or unsafe key pairs without replacing either file.
+var errUnsafeSSHKey = errors.New("SSH key files are incomplete or unsafe; no key overwritten")
+
 // configureSSH prepares only the dedicated-key stage of the undelivered outbound SSH workflow.
 // It validates direct manager requests and verifies agent identity before accessing home data.
 func configureSSH(args []string, stdout, stderr io.Writer, effects Effects) int {
@@ -38,12 +47,12 @@ func configureSSH(args []string, stdout, stderr io.Writer, effects Effects) int 
 		return 1
 	}
 	if effects.HomeDirectory == nil {
-		fmt.Fprintln(stderr, "SSH home storage is unavailable")
+		fmt.Fprintln(stderr, "SSH home data is unavailable")
 		return 1
 	}
 	home, err := effects.HomeDirectory()
 	if err != nil || !filepath.IsAbs(home) {
-		fmt.Fprintln(stderr, "SSH home storage is unavailable")
+		fmt.Fprintln(stderr, "SSH home data is unavailable")
 		return 1
 	}
 	name := fmt.Sprintf("id_ed25519_remote_%x", sha256.Sum256([]byte(target)))
@@ -62,11 +71,12 @@ func configureSSH(args []string, stdout, stderr io.Writer, effects Effects) int 
 	return 0
 }
 
-// prepareSSHKey creates a private directory and serializes generation without touching SSH configuration or trust.
+// prepareSSHKey creates a private directory, serializes key generation or reuse,
+// and validates the pair before returning public material without changing SSH configuration or trust.
 func prepareSSHKey(home, name string, effects Effects) (string, error) {
 	root, err := os.OpenRoot(home)
 	if err != nil {
-		return "", fmt.Errorf("cannot open SSH home storage")
+		return "", fmt.Errorf("cannot open SSH home data")
 	}
 	defer root.Close()
 	if err := root.Mkdir(".ssh", 0700); err != nil && !errors.Is(err, os.ErrExist) {
@@ -88,10 +98,10 @@ func prepareSSHKey(home, name string, effects Effects) (string, error) {
 		return validateSSHKey(root, home, relative, effects)
 	}
 	if !errors.Is(privateErr, os.ErrNotExist) || !errors.Is(publicErr, os.ErrNotExist) {
-		return "", fmt.Errorf("SSH key files are incomplete or unsafe; no key overwritten")
+		return "", errUnsafeSSHKey
 	}
 	path := filepath.Join(home, relative)
-	if err := effects.Start(Process{Program: "/usr/bin/ssh-keygen", Args: []string{"-q", "-t", "ed25519", "-N", "", "-C", "", "-f", path}, Identity: agentIdentity, EnvironmentPolicy: SSHKeyEnvironment, Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: io.Discard}); err != nil {
+	if err := effects.Start(Process{Program: sshKeygenProgram, Args: []string{"-q", "-t", "ed25519", "-N", "", "-C", "", "-f", path}, Identity: agentIdentity, EnvironmentPolicy: SSHKeyEnvironment, Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: io.Discard}); err != nil {
 		return "", fmt.Errorf("SSH key generation failed; any generated key material is retained")
 	}
 	return validateSSHKey(root, home, relative, effects)
@@ -102,7 +112,7 @@ func readSSHPublic(root *os.Root, relative string) (string, error) {
 	for _, suffix := range []string{"", ".pub"} {
 		info, err := root.Lstat(relative + suffix)
 		if err != nil || !info.Mode().IsRegular() || !sshFileOwned(info) || info.Mode().Perm()&0022 != 0 || (suffix == "" && info.Mode().Perm() != 0600 && info.Mode().Perm() != 0400) {
-			return "", fmt.Errorf("SSH key files are incomplete or unsafe; no key overwritten")
+			return "", errUnsafeSSHKey
 		}
 	}
 	file, err := root.Open(relative + ".pub")
@@ -110,8 +120,8 @@ func readSSHPublic(root *os.Root, relative string) (string, error) {
 		return "", fmt.Errorf("cannot read SSH public key")
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, 4097))
-	if err != nil || len(data) > 4096 {
+	data, err := io.ReadAll(io.LimitReader(file, sshPublicLimit+1))
+	if err != nil || len(data) > sshPublicLimit {
 		return "", fmt.Errorf("invalid SSH public key; no key overwritten")
 	}
 	public, err := sshkey.Ed25519(string(data))
@@ -130,8 +140,8 @@ type sshPublicBuffer struct {
 // Write captures at most one small public-key response while draining all subprocess output.
 func (b *sshPublicBuffer) Write(data []byte) (int, error) {
 	n := len(data)
-	if len(data) > 4096-len(b.data) {
-		data = data[:4096-len(b.data)]
+	if len(data) > sshPublicLimit-len(b.data) {
+		data = data[:sshPublicLimit-len(b.data)]
 		b.overflow = true
 	}
 	b.data = append(b.data, data...)
@@ -145,7 +155,7 @@ func validateSSHKey(root *os.Root, home, relative string, effects Effects) (stri
 		return "", err
 	}
 	var derived sshPublicBuffer
-	err = effects.Start(Process{Program: "/usr/bin/ssh-keygen", Args: []string{"-y", "-P", "", "-f", filepath.Join(home, relative)}, Identity: agentIdentity, EnvironmentPolicy: SSHKeyEnvironment, Stdin: strings.NewReader(""), Stdout: &derived, Stderr: io.Discard})
+	err = effects.Start(Process{Program: sshKeygenProgram, Args: []string{"-y", "-P", "", "-f", filepath.Join(home, relative)}, Identity: agentIdentity, EnvironmentPolicy: SSHKeyEnvironment, Stdin: strings.NewReader(""), Stdout: &derived, Stderr: io.Discard})
 	if err != nil || derived.overflow {
 		return "", fmt.Errorf("SSH private key is invalid or unavailable; no key overwritten")
 	}
