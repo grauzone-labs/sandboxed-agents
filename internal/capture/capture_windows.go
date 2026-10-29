@@ -5,13 +5,10 @@ package capture
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"sync"
-	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -24,92 +21,17 @@ import (
 // command.WaitDelay when a descendant keeps a pipe open; a failure of the process itself is
 // reported first, otherwise exec.ErrWaitDelay reports the cut.
 func Start(command *exec.Cmd, stdout, stderr io.Writer) (func() error, error) {
-	if stdout == nil {
-		stdout = io.Discard
-	}
-	if stderr == nil {
-		stderr = io.Discard
-	}
-	outPipe, err := newOverlappedPipe()
+	wait, err := startPiped(command, stdout, stderr)
 	if err != nil {
-		return nil, fmt.Errorf("capture standard output: %w", err)
-	}
-	errPipe, err := newOverlappedPipe()
-	if err != nil {
-		outPipe.close()
-		return nil, fmt.Errorf("capture standard error: %w", err)
-	}
-	command.Stdout, command.Stderr = outPipe.child, errPipe.child
-	if err := command.Start(); err != nil {
-		outPipe.close()
-		errPipe.close()
 		return nil, err
 	}
-	// The child holds inheritable duplicates; closing the originals lets the reads end with the
-	// last writer.
-	outPipe.child.Close()
-	errPipe.child.Close()
-	var copyErrs [2]error
-	copied := make(chan struct{})
-	go func() {
-		var group sync.WaitGroup
-		group.Add(2)
-		go copyStream(stdout, outPipe.parent, &copyErrs[0], &group)
-		go copyStream(stderr, errPipe.parent, &copyErrs[1], &group)
-		group.Wait()
-		close(copied)
-	}()
-	return func() error {
-		waitErr := command.Wait()
-		cut := false
-		if command.WaitDelay > 0 {
-			timer := time.NewTimer(command.WaitDelay)
-			select {
-			case <-copied:
-			case <-timer.C:
-				// A descendant still holds a pipe: cancel the pending reads.
-				cut = true
-				outPipe.parent.Close()
-				errPipe.parent.Close()
-			}
-			timer.Stop()
-		}
-		<-copied
-		outPipe.parent.Close()
-		errPipe.parent.Close()
-		switch {
-		case waitErr != nil:
-			return waitErr
-		case cut:
-			return exec.ErrWaitDelay
-		case copyErrs[0] != nil:
-			return copyErrs[0]
-		default:
-			return copyErrs[1]
-		}
-	}, nil
+	return func() error { result, _ := wait(); return result }, nil
 }
 
-// copyStream copies a pipe into its writer and records the copy's error; a read cut by the wait
-// delay is not an error of the copy, the caller reports it.
-func copyStream(dst io.Writer, src *os.File, result *error, group *sync.WaitGroup) {
-	defer group.Done()
-	_, err := io.Copy(dst, src)
-	if err != nil && !errors.Is(err, os.ErrClosed) {
-		*result = err
-	}
-}
-
-// overlappedPipe is a one-instance named pipe whose both ends are opened for overlapped I/O: the
-// parent reads, the child writes.
-type overlappedPipe struct {
-	parent, child *os.File
-}
-
-// newOverlappedPipe creates the pipe under a random name with a single instance that no other
+// newCapturePipe creates the pipe under a random name with a single instance that no other
 // server can take over (FILE_FLAG_FIRST_PIPE_INSTANCE) and connects the child end to it, so a
 // connected child end proves the parent end is this process's own.
-func newOverlappedPipe() (*overlappedPipe, error) {
+func newCapturePipe() (*outputPipe, error) {
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return nil, err
@@ -130,11 +52,5 @@ func newOverlappedPipe() (*overlappedPipe, error) {
 		windows.CloseHandle(server)
 		return nil, fmt.Errorf("open named pipe: %w", err)
 	}
-	return &overlappedPipe{parent: os.NewFile(uintptr(server), name), child: os.NewFile(uintptr(client), name)}, nil
-}
-
-// close releases both ends.
-func (p *overlappedPipe) close() {
-	p.child.Close()
-	p.parent.Close()
+	return &outputPipe{parent: os.NewFile(uintptr(server), name), child: os.NewFile(uintptr(client), name)}, nil
 }
