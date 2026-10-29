@@ -1093,9 +1093,16 @@ func TestSSHAdministrativeWritesNeverRetry(t *testing.T) {
 				start := time.Now()
 				status, _, diagnostic := sshSetupRun(t, "ssh-config", "demo", option)
 				calls := testutil.Invocations(t, fakes.PodmanLog)
+				want := []string{"exec", "--user=0:0", "sandboxed-agents.default.demo", "/usr/local/bin/sandboxed-agents-manager", action}
+				if action == "ssh-authorize" {
+					want = append(want, setupPublicKey)
+				}
+				if runtime.GOOS == "windows" {
+					want = append([]string{"--connection", "chosen"}, want...)
+				}
 				count := 0
 				for _, call := range calls {
-					if strings.Join(call, " ") == key {
+					if reflect.DeepEqual(call, want) {
 						count++
 					}
 				}
@@ -1104,5 +1111,30 @@ func TestSSHAdministrativeWritesNeverRetry(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestSSHAdministrativeWritesWithDriveEnvironment proves the built-CLI fixture handles inherited
+// Windows drive-directory entries and unrelated ambient settings while checking one failed mutation.
+func TestSSHAdministrativeWritesWithDriveEnvironment(t *testing.T) {
+	const drive = `=C:=C:\fixture directory`
+	if os.Getenv("TEST_SSH_DRIVE_ENV_CHILD") == "1" {
+		sshSetupHarness(t, installResponses())
+		if os.Getenv("TEST_SSH_FIXTURE_AMBIENT") != "inherited sentinel" {
+			t.Fatal("fixture changed an unrelated inherited setting")
+		}
+		for _, entry := range os.Environ() {
+			if entry == drive {
+				return
+			}
+		}
+		t.Fatal("fixture changed the inherited drive-directory entry")
+	}
+	command := exec.Command(os.Args[0], "-test.run=^(TestSSHAdministrativeWritesWithDriveEnvironment|TestSSHAdministrativeWritesNeverRetry)$/^ssh-(authorize|deauthorize)$/^transport$")
+	command.Env = append(testutil.Env(testutil.Env(os.Environ(), nestedExecutables()), map[string]string{
+		"TEST_SSH_DRIVE_ENV_CHILD": "1", "TEST_SSH_FIXTURE_AMBIENT": "inherited sentinel",
+	}), drive)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("SSH fixture with inherited drive entry: %v\n%s", err, output)
 	}
 }
