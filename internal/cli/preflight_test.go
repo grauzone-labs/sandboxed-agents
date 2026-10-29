@@ -37,14 +37,16 @@ func TestMain(m *testing.M) {
 }
 
 type response struct {
-	FailOnce      bool
-	Output        string
-	Stderr        string
-	Exit          int
-	ExpectedStdin string
-	EchoStdin     bool
-	ReadyFile     string
-	WaitFor       string
+	Sequence           []response
+	DelayAfterOutputMS int
+	FailOnce           bool
+	Output             string
+	Stderr             string
+	Exit               int
+	ExpectedStdin      string
+	EchoStdin          bool
+	ReadyFile          string
+	WaitFor            string
 }
 type fixture struct {
 	host      cli.Host

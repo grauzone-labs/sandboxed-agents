@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,7 +75,8 @@ func TestLiveUpdateFailurePreservesMachineSSH(t *testing.T) {
 				}
 			}
 			out, err = failing.cli("stdin with spaces\n", "forward", "--fixture-streams", "literal $() & arg")
-			if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 23 || !strings.Contains(out, "stdin with spaces\n") || !strings.Contains(out, "transport-stderr") {
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 23 || !strings.Contains(out, "stdin with spaces\n") || !strings.Contains(out, "transport-stderr") {
 				t.Fatalf("forwarded streams/status changed: %v %q", err, out)
 			}
 		})

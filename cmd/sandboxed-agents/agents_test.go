@@ -221,7 +221,11 @@ func TestUpEnablesAgentsAfterCreation(t *testing.T) {
 					wantCalls = 4
 				}
 				if failure == "manager" {
-					wantCalls = 1
+					wantCalls = 2 // The read-only version query retries once; no install runs.
+					want := [][]string{strings.Fields(agentManagerPrefix + "version"), strings.Fields(agentManagerPrefix + "version")}
+					if !reflect.DeepEqual(calls, want) {
+						t.Fatalf("failed manager check attempted other work: %v", calls)
+					}
 				}
 				if failure == "manager during install" {
 					wantCalls = 3
@@ -362,7 +366,11 @@ func TestAgentStatusDistinguishesOperationFailures(t *testing.T) {
 			if failure.unavailable && (!strings.Contains(output, "check demo") || !strings.Contains(output, "restart demo")) {
 				t.Fatalf("missing manager recovery commands: %s", output)
 			}
-			if calls := agentManagerCalls(t, f); len(calls) != 2 {
+			want := [][]string{strings.Fields(agentManagerPrefix + "version"), strings.Fields(agentManagerPrefix + "agents status codex")}
+			if failure.response.Exit >= 125 && failure.response.Exit <= 127 {
+				want = append(want, strings.Fields(agentManagerPrefix+"agents status codex"))
+			}
+			if calls := agentManagerCalls(t, f); !reflect.DeepEqual(calls, want) {
 				t.Fatalf("work attempted after failed status: %v", calls)
 			}
 		}
@@ -377,10 +385,11 @@ func TestAgentStatusTimeoutReportsUnavailableManager(t *testing.T) {
 	f := agentExecutableHarness(t, responses)
 	started := time.Now()
 	status, output := runAgentExecutable(t, "agents", "status", "demo", "codex")
-	if status != 1 || !strings.Contains(output, "manager does not answer") || !strings.Contains(output, "check demo") || !strings.Contains(output, "restart demo") || time.Since(started) > 5*time.Second {
+	if status != 1 || !strings.Contains(output, "manager does not answer") || !strings.Contains(output, "check demo") || !strings.Contains(output, "restart demo") || time.Since(started) > 17*time.Second || !strings.Contains(output, "total budget 15s") {
 		t.Fatalf("status=%d output=%s", status, output)
 	}
-	if calls := agentManagerCalls(t, f); len(calls) != 2 {
+	want := [][]string{strings.Fields(agentManagerPrefix + "version"), strings.Fields(agentManagerPrefix + "agents status codex"), strings.Fields(agentManagerPrefix + "agents status codex")}
+	if calls := agentManagerCalls(t, f); !reflect.DeepEqual(calls, want) {
 		t.Fatalf("work attempted after status timeout: %v", calls)
 	}
 }

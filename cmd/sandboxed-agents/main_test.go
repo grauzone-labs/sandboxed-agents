@@ -598,6 +598,7 @@ func diagnosticNamesPath(output []byte, path string) bool {
 
 // lifecycleResponse scripts only the external Podman boundary.
 type lifecycleResponse struct {
+	DelayAfterOutputMS int
 	Output             string
 	Stderr             string
 	Exit               int
@@ -1166,10 +1167,13 @@ func TestLifecycleUnavailableManagerRefusesOrReportsUnknownEndedSessions(t *test
 				queries := 0
 				for _, call := range calls {
 					if call[0] == "exec" && call[1] == "--user=0:0" {
+						if !reflect.DeepEqual(call, strings.Fields("exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager sessions")) {
+							t.Fatalf("unexpected administrative mutation: %v", call)
+						}
 						queries++
 					}
 				}
-				if queries != 1 {
+				if queries != 2 {
 					t.Fatalf("manager queries=%d calls=%v", queries, calls)
 				}
 			})
@@ -1184,7 +1188,7 @@ func TestLifecycleUnresponsiveManagerCannotHoldCommandIndefinitely(t *testing.T)
 	fakes := lifecycleHarness(t, responses)
 	start := time.Now()
 	status, output := lifecycleRun("stop", "demo")
-	if status == 0 || !strings.Contains(output, "cannot rule out running sessions") || !strings.Contains(output, "--force") || time.Since(start) > 5*time.Second {
+	if status == 0 || !strings.Contains(output, "cannot rule out running sessions") || !strings.Contains(output, "--force") || time.Since(start) > 17*time.Second || !strings.Contains(output, "2 attempt(s)") || !strings.Contains(output, "total budget 15s") {
 		t.Fatalf("elapsed=%s status=%d output=%s", time.Since(start), status, output)
 	}
 	if calls := testutil.Invocations(t, fakes.PodmanLog); len(lifecycleMutations(calls)) != 0 {

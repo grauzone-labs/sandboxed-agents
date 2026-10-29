@@ -1,8 +1,10 @@
 package main_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,9 +13,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/capture"
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
 )
 
@@ -147,11 +151,26 @@ func buildLiveExecutable(t *testing.T, directory string) string {
 func (host liveHost) cli(input string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer cancel()
-	command := exec.CommandContext(ctx, host.binary, args...)
+	return host.cliContext(ctx, input, args...)
+}
+
+// cliContext supervises only the live invocation's host process tree. A deadline does not prove
+// a remote engine operation stopped; report that ambiguity for the suite's existing reconciliation.
+func (host liveHost) cliContext(ctx context.Context, input string, args ...string) (string, error) {
+	started := time.Now()
+	command := exec.Command(host.binary, args...)
 	command.Env = host.environment
 	command.Stdin = strings.NewReader(input)
-	output, err := command.CombinedOutput()
-	return string(output), err
+	command.WaitDelay = time.Second
+	var output liveOutput
+	err := capture.RunOwned(ctx, command, &output, &output)
+	if err != nil {
+		err = fmt.Errorf("live CLI failed after %s: %w", time.Since(started).Round(time.Millisecond), err)
+		if ctx.Err() != nil {
+			err = fmt.Errorf("%w; host invocation cancelled; engine operations may still be running: reconcile recorded objects before cleanup", err)
+		}
+	}
+	return output.String(), err
 }
 
 // mustCLI runs and logs a live CLI command, failing the test when the executable fails.
@@ -391,3 +410,19 @@ func (host liveHost) removeGroupStateOnCleanup(t *testing.T) {
 		}
 	})
 }
+
+// liveOutput serializes the two capture streams while retaining their observed interleaving.
+type liveOutput struct {
+	sync.Mutex
+	buffer bytes.Buffer
+}
+
+// Write appends one captured write atomically with respect to the other stream.
+func (b *liveOutput) Write(data []byte) (int, error) {
+	b.Lock()
+	defer b.Unlock()
+	return b.buffer.Write(data)
+}
+
+// String returns the completed combined trace without racing a stream writer.
+func (b *liveOutput) String() string { b.Lock(); defer b.Unlock(); return b.buffer.String() }

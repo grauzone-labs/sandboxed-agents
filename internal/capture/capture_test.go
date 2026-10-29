@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,14 +24,46 @@ const helperRelease = "CAPTURE_TEST_HELPER_RELEASE"
 
 // TestHelperProcess is the child fixture of this package's tests: it writes to both streams and
 // exits 3 (`streams`), starts a grandchild that keeps the inherited output open until a release
-// file appears (`hold`), waits for the release file itself (`wait`), or reports whether its output
-// handles complete writes asynchronously (`handle-modes`). It returns at once in a normal test run.
+// file appears (`hold`), waits for the release file itself (`wait`), reports asynchronous handle
+// modes, or supplies normal/heartbeat process trees for ownership tests. It returns at once in
+// a normal test run.
 func TestHelperProcess(t *testing.T) {
 	mode := os.Getenv(helperMode)
 	if mode == "" {
 		return
 	}
 	switch mode {
+	case "success":
+		fmt.Fprint(os.Stdout, "normal stdout")
+		fmt.Fprint(os.Stderr, "normal stderr")
+		os.Exit(0)
+	case "detached", "tree":
+		child := exec.Command(os.Args[0], "-test.run=^TestHelperProcess$")
+		child.Env = append(os.Environ(), helperMode+"=heartbeat")
+		if mode == "tree" {
+			child.Stdout, child.Stderr = os.Stdout, os.Stderr
+		}
+		if err := child.Start(); err != nil {
+			os.Exit(125)
+		}
+		fmt.Fprintln(os.Stdout, "owned tree ready")
+		if mode == "detached" {
+			os.Exit(0)
+		}
+		waitForRelease()
+		_ = child.Wait()
+		os.Exit(0)
+	case "heartbeat":
+		_ = os.WriteFile(os.Getenv(helperRelease)+".pid", []byte(strconv.Itoa(os.Getpid())), 0600)
+		deadline := time.Now().Add(10 * time.Second)
+		for i := 0; time.Now().Before(deadline); i++ {
+			if _, err := os.Stat(os.Getenv(helperRelease)); err == nil {
+				os.Exit(0)
+			}
+			_ = os.WriteFile(os.Getenv(helperRelease)+".heartbeat", []byte(fmt.Sprint(i)), 0600)
+			time.Sleep(20 * time.Millisecond)
+		}
+		os.Exit(0)
 	case "streams":
 		fmt.Fprint(os.Stdout, "answer on stdout")
 		fmt.Fprint(os.Stderr, "warning on stderr")
@@ -149,5 +182,117 @@ func TestRunReturnsWhenContextEndsChild(t *testing.T) {
 	err := capture.Run(command, nil, nil)
 	if err == nil || time.Since(start) > 5*time.Second {
 		t.Fatalf("err = %v after %v; want a prompt failure", err, time.Since(start))
+	}
+}
+
+// TestRunOwnedCancellationStopsGrandchild proves cancelling the owned-process capture seam
+// stops an actual grandchild and returns boundedly while preserving the parent's earlier output.
+func TestRunOwnedCancellationStopsGrandchild(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	command := helper(context.Background(), t, "tree")
+	command.Cancel = nil
+	command.WaitDelay = 100 * time.Millisecond
+	var release string
+	for _, entry := range command.Env {
+		if v, ok := strings.CutPrefix(entry, helperRelease+"="); ok {
+			release = v
+		}
+	}
+	var output bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- capture.RunOwned(ctx, command, &output, nil) }()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(release + ".heartbeat"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("grandchild never started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("cancelled invocation succeeded")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("owned invocation did not return")
+	}
+	time.Sleep(100 * time.Millisecond)
+	first, err := os.ReadFile(release + ".heartbeat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	last, err := os.ReadFile(release + ".heartbeat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(last) {
+		t.Fatalf("grandchild survived cancellation: heartbeat %s -> %s", first, last)
+	}
+	data, _ := os.ReadFile(release + ".pid")
+	pid, _ := strconv.Atoi(string(data))
+	assertOwnedProcessExited(t, pid)
+	if !strings.Contains(output.String(), "owned tree ready") {
+		t.Fatalf("lost stdout: %q", output.String())
+	}
+}
+
+// TestRunOwnedPreservesNormalCompletion proves exit status and both streams survive supervision
+// through actual child processes, without needing cancellation or a live host.
+func TestRunOwnedPreservesNormalCompletion(t *testing.T) {
+	for _, mode := range []string{"success", "streams"} {
+		t.Run(mode, func(t *testing.T) {
+			command := helper(context.Background(), t, mode)
+			command.Cancel = nil
+			var stdout, stderr bytes.Buffer
+			err := capture.RunOwned(context.Background(), command, &stdout, &stderr)
+			if mode == "success" {
+				if err != nil || stdout.String() != "normal stdout" || stderr.String() != "normal stderr" {
+					t.Fatalf("%v %q %q", err, stdout.String(), stderr.String())
+				}
+			} else {
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) || exit.ExitCode() != 3 || stdout.String() != "answer on stdout" || stderr.String() != "warning on stderr" {
+					t.Fatalf("%v %q %q", err, stdout.String(), stderr.String())
+				}
+			}
+		})
+	}
+}
+
+// TestRunOwnedNormalExitLeavesDetachedWork proves successful completion does not kill a child
+// that deliberately detached its output, through the public owned-process capture seam.
+func TestRunOwnedNormalExitLeavesDetachedWork(t *testing.T) {
+	command := helper(context.Background(), t, "detached")
+	command.Cancel = nil
+	var release string
+	for _, entry := range command.Env {
+		if v, ok := strings.CutPrefix(entry, helperRelease+"="); ok {
+			release = v
+		}
+	}
+	if err := capture.RunOwned(context.Background(), command, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(release + ".heartbeat"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("detached child never started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	first, _ := os.ReadFile(release + ".heartbeat")
+	time.Sleep(150 * time.Millisecond)
+	last, _ := os.ReadFile(release + ".heartbeat")
+	if string(first) == string(last) {
+		t.Fatal("normal completion killed detached work")
 	}
 }

@@ -97,6 +97,9 @@ func TestGitConfigExecutableWithoutTerminal(t *testing.T) {
 			responses[prefix+strings.Join(probe, " ")] = lifecycleResponse{Exit: tc.probeExit}
 			if tc.running {
 				addCall(probe)
+				if tc.probeExit == 125 {
+					addCall(probe) // Only the failed read retries; no integration mutation follows.
+				}
 			}
 			workflow := append([]string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent", container, managerPath, "integrations", "config", "git", tc.workflow}, tc.options...)
 			responses[prefix+strings.Join(workflow, " ")] = lifecycleResponse{}

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
@@ -1066,5 +1067,42 @@ func TestRemoveVolumesDeletesOwnedVolumesAndKeepsForeignVolumes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSSHAdministrativeWritesNeverRetry proves authorization and deauthorization are attempted
+// only once after either a transport failure or a deadline, through the built CLI and Podman seam.
+func TestSSHAdministrativeWritesNeverRetry(t *testing.T) {
+	for _, action := range []string{"ssh-authorize", "ssh-deauthorize"} {
+		for _, failure := range []string{"transport", "deadline"} {
+			t.Run(action+"/"+failure, func(t *testing.T) {
+				responses := installResponses()
+				suffix := action
+				option := "--remove"
+				if action == "ssh-authorize" {
+					suffix += " " + setupPublicKey
+					option = "--install"
+				}
+				key := "exec --user=0:0 sandboxed-agents.default.demo /usr/local/bin/sandboxed-agents-manager " + suffix
+				r := lifecycleResponse{Exit: 125}
+				if failure == "deadline" {
+					r = lifecycleResponse{DelayAfterOutputMS: 30000}
+				}
+				responses[key] = r
+				fakes := sshSetupHarness(t, responses)
+				start := time.Now()
+				status, _, diagnostic := sshSetupRun(t, "ssh-config", "demo", option)
+				calls := testutil.Invocations(t, fakes.PodmanLog)
+				count := 0
+				for _, call := range calls {
+					if strings.Join(call, " ") == key {
+						count++
+					}
+				}
+				if status == 0 || count != 1 || time.Since(start) > 17*time.Second || !strings.Contains(diagnostic, "1 attempt(s)") {
+					t.Fatalf("status=%d elapsed=%v stderr=%s calls=%v", status, time.Since(start), diagnostic, calls)
+				}
+			})
+		}
 	}
 }

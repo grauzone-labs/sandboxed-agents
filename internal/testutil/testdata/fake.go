@@ -18,6 +18,7 @@ import (
 
 // scriptedResponse is one scripted answer of the fake for an argv key.
 type scriptedResponse struct {
+	DelayAfterOutputMS int
 	FailOnce           bool
 	Output             string
 	Stderr             string
@@ -213,6 +214,7 @@ func main() {
 		}
 		fmt.Fprint(os.Stdout, response.Output)
 		fmt.Fprint(os.Stderr, response.Stderr)
+		time.Sleep(time.Duration(response.DelayAfterOutputMS) * time.Millisecond)
 		if response.ExpectedStdin != "" {
 			data, err := io.ReadAll(os.Stdin)
 			if err != nil || string(data) != response.ExpectedStdin {
