@@ -139,11 +139,11 @@ jobs:
           if ($unformatted.Count -ne 0) { throw "Go sources need formatting: $($unformatted -join ', ')" }
           git tag "v$env:RELEASE_VERSION" HEAD
           if ($LASTEXITCODE -ne 0) { throw 'Local CI tag failed' }
-      - name: Run CLI and stable gate tests
+      - name: Run CLI, capture, and stable gate tests
         shell: pwsh
         run: |
-          go test ./cmd/sandboxed-agents ./internal/cli ./internal/release/cmd/stable-gate -count=1
-          if ($LASTEXITCODE -ne 0) { throw 'Windows command, CLI, or stable gate tests failed' }
+          go test ./cmd/sandboxed-agents ./internal/cli ./internal/capture ./internal/release/cmd/stable-gate -count=1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows command, CLI, capture, or stable gate tests failed' }
           go vet ./internal/manualcheck/...
           if ($LASTEXITCODE -ne 0) { throw 'Windows compile check of the manual-checklist runner failed' }
       - uses: actions/setup-python@v7
