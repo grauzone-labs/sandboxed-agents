@@ -637,7 +637,9 @@ func lifecycleHarness(t *testing.T, responses map[string]lifecycleResponse) test
 	if err != nil {
 		t.Fatal(err)
 	}
-	environment := testutil.Env(fakes.Env(os.Environ()), map[string]string{
+	// Only fixture-owned overrides need Setenv. Replaying ambient Windows drive entries
+	// such as =C:=C:\work would split at the first '=' and try to set an empty key.
+	environment := testutil.Env(fakes.Env(nil), map[string]string{
 		"XDG_STATE_HOME": state, "LOCALAPPDATA": state, "TEST_PODMAN_RESPONSES": string(data),
 	})
 	for _, entry := range environment {
