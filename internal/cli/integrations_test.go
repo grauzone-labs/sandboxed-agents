@@ -42,7 +42,7 @@ func TestGitConfigRefusesUnavailableManager(t *testing.T) {
 					t.Errorf("output=%s missing=%s", output, message)
 				}
 			}
-			want := append(sandboxQueryCalls(), strings.Fields(integrationProbe))
+			want := append(sandboxQueryCalls(), strings.Fields(integrationProbe), strings.Fields(integrationProbe))
 			if !reflect.DeepEqual(calls, want) {
 				t.Fatalf("calls=%v want=%v", calls, want)
 			}
@@ -241,7 +241,7 @@ func TestGitHubLoginChecksStateBeforeTerminal(t *testing.T) {
 		{"stopped", "start agent01", func(f *fixture) {
 			f.responses[shellInspect] = response{Output: containerInspectAnswer(`{"io.sandboxed-agents.owner":"default"}`, "false")}
 		}, sandboxQueryCalls()},
-		{"manager", "manager does not answer", func(f *fixture) { f.responses[integrationProbe] = response{Exit: 125} }, append(sandboxQueryCalls(), strings.Fields(integrationProbe))},
+		{"manager", "manager does not answer", func(f *fixture) { f.responses[integrationProbe] = response{Exit: 125} }, append(sandboxQueryCalls(), strings.Fields(integrationProbe), strings.Fields(integrationProbe))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := sandboxStateFixture(t)
