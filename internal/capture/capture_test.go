@@ -22,11 +22,10 @@ const helperMode = "CAPTURE_TEST_HELPER_MODE"
 // helperRelease names the environment variable with the file whose creation ends a holding grandchild.
 const helperRelease = "CAPTURE_TEST_HELPER_RELEASE"
 
-// TestHelperProcess is the child fixture of this package's tests: it writes to both streams and
-// exits 3 (`streams`), starts a grandchild that keeps the inherited output open until a release
-// file appears (`hold`), waits for the release file itself (`wait`), reports asynchronous handle
-// modes, or supplies normal/heartbeat process trees for ownership tests. It returns at once in
-// a normal test run.
+// TestHelperProcess supplies child/grandchild modes at the capture.Run and capture.RunOwned
+// subprocess seams so parent tests prove stream and exit-status preservation, bounded pipe draining,
+// asynchronous output handles, cancellation, and survival of detached work after normal completion.
+// It returns immediately when unconfigured; the parent tests make the behaviour assertions.
 func TestHelperProcess(t *testing.T) {
 	mode := os.Getenv(helperMode)
 	if mode == "" {

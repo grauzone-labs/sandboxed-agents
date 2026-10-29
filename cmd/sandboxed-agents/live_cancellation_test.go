@@ -12,7 +12,9 @@ import (
 	"time"
 )
 
-// TestLiveCLIProcessFixture supplies bounded host child/grandchild processes for offline live-harness tests.
+// TestLiveCLIProcessFixture supplies bounded child/grandchild processes at the liveHost.cliContext
+// subprocess seam so parent tests prove owned-descendant cancellation and combined-stream ordering.
+// It returns immediately when unconfigured; the parent tests make the behaviour assertions.
 func TestLiveCLIProcessFixture(t *testing.T) {
 	mode := os.Getenv("TEST_LIVE_OWNED_FIXTURE")
 	if mode == "" {
