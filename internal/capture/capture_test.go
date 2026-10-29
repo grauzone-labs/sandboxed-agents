@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,20 +34,47 @@ func TestHelperProcess(t *testing.T) {
 		return
 	}
 	switch mode {
+	case "parallel-streams":
+		var writes sync.WaitGroup
+		writes.Add(2)
+		go func() { defer writes.Done(); fmt.Fprint(os.Stdout, strings.Repeat("o", 128*1024)) }()
+		go func() { defer writes.Done(); fmt.Fprint(os.Stderr, strings.Repeat("e", 128*1024)) }()
+		writes.Wait()
+		os.Exit(0)
 	case "success":
 		fmt.Fprint(os.Stdout, "normal stdout")
 		fmt.Fprint(os.Stderr, "normal stderr")
 		os.Exit(0)
-	case "detached", "tree":
+	case "detached", "tree", "failed-stdout", "failed-stderr":
 		child := exec.Command(os.Args[0], "-test.run=^TestHelperProcess$")
 		child.Env = append(os.Environ(), helperMode+"=heartbeat")
 		if mode == "tree" {
 			child.Stdout, child.Stderr = os.Stdout, os.Stderr
 		}
+		if mode == "failed-stdout" {
+			child.Stdout = os.Stdout
+		}
+		if mode == "failed-stderr" {
+			child.Stderr = os.Stderr
+		}
 		if err := child.Start(); err != nil {
 			os.Exit(125)
 		}
 		fmt.Fprintln(os.Stdout, "owned tree ready")
+		if strings.HasPrefix(mode, "failed-") {
+			deadline := time.Now().Add(3 * time.Second)
+			for {
+				if _, err := os.Stat(os.Getenv(helperRelease) + ".heartbeat"); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					os.Exit(125)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			fmt.Fprintln(os.Stderr, "parent failure")
+			os.Exit(3)
+		}
 		if mode == "detached" {
 			os.Exit(0)
 		}
@@ -95,6 +124,121 @@ func TestHelperProcess(t *testing.T) {
 	}
 	fmt.Fprintln(os.Stderr, "unknown helper mode", mode)
 	os.Exit(125)
+}
+
+// TestRunOwnedFailedExitStillStopsPipeHolder proves an inherited stdout or stderr timeout kills
+// the descendant while preserving the parent's output and exit status at the RunOwned process seam.
+func TestRunOwnedFailedExitStillStopsPipeHolder(t *testing.T) {
+	for _, stream := range []string{"stdout", "stderr"} {
+		t.Run(stream, func(t *testing.T) {
+			command := helper(context.Background(), t, "failed-"+stream)
+			command.Cancel = nil
+			command.WaitDelay = 100 * time.Millisecond
+			var release string
+			for _, entry := range command.Env {
+				if value, ok := strings.CutPrefix(entry, helperRelease+"="); ok {
+					release = value
+				}
+			}
+			var stdout, stderr bytes.Buffer
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			started := time.Now()
+			err := capture.RunOwned(ctx, command, &stdout, &stderr)
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 3 || time.Since(started) > 2*time.Second {
+				t.Fatalf("error=%v elapsed=%v", err, time.Since(started))
+			}
+			if stdout.String() != "owned tree ready\n" || stderr.String() != "parent failure\n" {
+				t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+			}
+			data, readErr := os.ReadFile(release + ".pid")
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			pid, parseErr := strconv.Atoi(string(data))
+			if parseErr != nil {
+				t.Fatal(parseErr)
+			}
+			time.Sleep(100 * time.Millisecond)
+			assertOwnedProcessExited(t, pid)
+			if !errors.Is(err, exec.ErrWaitDelay) {
+				t.Fatalf("lost output-drain timeout: %v", err)
+			}
+		})
+	}
+}
+
+// TestRunFailedExitKeepsErrorPrecedence proves ordinary Run still reports the parent exit error
+// without exposing the suppressed drain timeout through its real inherited-pipe subprocess seam.
+func TestRunFailedExitKeepsErrorPrecedence(t *testing.T) {
+	for _, stream := range []string{"stdout", "stderr"} {
+		t.Run(stream, func(t *testing.T) {
+			command := helper(context.Background(), t, "failed-"+stream)
+			command.WaitDelay = 100 * time.Millisecond
+			var stdout, stderr bytes.Buffer
+			started := time.Now()
+			err := capture.Run(command, &stdout, &stderr)
+			var release string
+			for _, entry := range command.Env {
+				if value, ok := strings.CutPrefix(entry, helperRelease+"="); ok {
+					release = value
+				}
+			}
+			data, readErr := os.ReadFile(release + ".pid")
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			pid, parseErr := strconv.Atoi(string(data))
+			if parseErr != nil {
+				t.Fatal(parseErr)
+			}
+			t.Cleanup(func() {
+				if err := os.WriteFile(release, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+				assertOwnedProcessExited(t, pid)
+			})
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 3 || errors.Is(err, exec.ErrWaitDelay) || time.Since(started) > 2*time.Second {
+				t.Fatalf("error=%v elapsed=%v", err, time.Since(started))
+			}
+			if stdout.String() != "owned tree ready\n" || stderr.String() != "parent failure\n" {
+				t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
+// overlapWriter records overlapping writes and byte totals without itself racing.
+type overlapWriter struct {
+	active, overlap atomic.Bool
+	bytes           atomic.Int64
+}
+
+// Write detects concurrent use while slowing copying enough to exercise both stream readers.
+func (w *overlapWriter) Write(data []byte) (int, error) {
+	if w.active.Swap(true) {
+		w.overlap.Store(true)
+	}
+	time.Sleep(5 * time.Millisecond)
+	w.bytes.Add(int64(len(data)))
+	w.active.Store(false)
+	return len(data), nil
+}
+
+// TestRunOwnedSerializesSharedWriter proves a single comparable writer receives both streams
+// without overlapping Write calls through RunOwned's concurrent-output subprocess seam.
+func TestRunOwnedSerializesSharedWriter(t *testing.T) {
+	command := helper(context.Background(), t, "parallel-streams")
+	command.Cancel = nil
+	var output overlapWriter
+	if err := capture.RunOwned(context.Background(), command, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.overlap.Load() || output.bytes.Load() != 256*1024 {
+		t.Fatalf("overlapping writes=%t bytes=%d", output.overlap.Load(), output.bytes.Load())
+	}
 }
 
 // waitForRelease blocks until the release file exists or ten seconds passed.
@@ -256,7 +400,7 @@ func TestRunOwnedPreservesNormalCompletion(t *testing.T) {
 				}
 			} else {
 				var exit *exec.ExitError
-				if !errors.As(err, &exit) || exit.ExitCode() != 3 || stdout.String() != "answer on stdout" || stderr.String() != "warning on stderr" {
+				if !errors.As(err, &exit) || exit.ExitCode() != 3 || errors.Is(err, exec.ErrWaitDelay) || stdout.String() != "answer on stdout" || stderr.String() != "warning on stderr" {
 					t.Fatalf("%v %q %q", err, stdout.String(), stderr.String())
 				}
 			}

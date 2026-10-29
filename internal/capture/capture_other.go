@@ -4,6 +4,7 @@ package capture
 
 import (
 	"io"
+	"os"
 	"os/exec"
 )
 
@@ -18,4 +19,13 @@ func Start(command *exec.Cmd, stdout, stderr io.Writer) (func() error, error) {
 		return nil, err
 	}
 	return command.Wait, nil
+}
+
+// newCapturePipe creates a pollable output pipe for independently bounded owned-process capture.
+func newCapturePipe() (*outputPipe, error) {
+	parent, child, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	return &outputPipe{parent: parent, child: child}, nil
 }
