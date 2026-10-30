@@ -825,6 +825,50 @@ func TestSSHSetupRepeatRecognisesIndentedInclude(t *testing.T) {
 	}
 }
 
+// TestSSHSetupBusyGroupLockRefusesWithoutWriting proves an install, a repeat
+// install, and a removal each refuse with the retry error while another
+// command holds the controller group's SSH configuration lock, leaving the
+// managed configuration, the user's SSH configuration, and the sandbox's
+// authorization untouched, through the built CLI, a held host lock file, and
+// fake Podman and SSH seams.
+func TestSSHSetupBusyGroupLockRefusesWithoutWriting(t *testing.T) {
+	for _, kind := range []string{"install", "repeat", "remove"} {
+		t.Run(kind, func(t *testing.T) {
+			fakes := sshSetupHarness(t, installResponses())
+			args := []string{"ssh-config", "demo", "--install"}
+			if kind != "install" {
+				if status, stdout, stderr := sshSetupRun(t, args...); status != 0 {
+					t.Fatalf("install=%d %q %q", status, stdout, stderr)
+				}
+			}
+			if kind == "repeat" {
+				if err := os.Remove(filepath.Join(os.Getenv("HOME"), ".ssh", "config")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if kind == "remove" {
+				args = []string{"ssh-config", "demo", "--remove"}
+			}
+			holdSSHConfigLock(t, os.Getenv("XDG_STATE_HOME"), "default")
+			before := setupFiles(t)
+			beforeCalls := len(testutil.Invocations(t, fakes.PodmanLog))
+			status, stdout, stderr := sshSetupRun(t, args...)
+			if status == 0 || stdout != "" || !strings.Contains(stderr, `controller group "default": another SSH setup command is in progress; retry`) {
+				t.Fatalf("busy %s=%d %q %q", kind, status, stdout, stderr)
+			}
+			if after := setupFiles(t); !reflect.DeepEqual(before, after) {
+				t.Fatalf("busy %s changed files before=%v after=%v", kind, before, after)
+			}
+			for _, call := range testutil.Invocations(t, fakes.PodmanLog)[beforeCalls:] {
+				joined := strings.Join(call, " ")
+				if strings.Contains(joined, "ssh-authorize") || strings.Contains(joined, "ssh-deauthorize") {
+					t.Fatalf("busy %s changed authorization=%v", kind, call)
+				}
+			}
+		})
+	}
+}
+
 // TestSSHSetupConflictsAndQueryFailuresWriteNothing proves resolved-host conflicts, query errors, and manager failures refuse before SSH file writes through the built CLI and fake SSH seam.
 func TestSSHSetupConflictsAndQueryFailuresWriteNothing(t *testing.T) {
 	for _, kind := range []string{"configured-host", "query-failure", "manager-unavailable"} {
