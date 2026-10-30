@@ -83,6 +83,10 @@ func configureSSH(args []string, stdout, stderr io.Writer, effects Effects) int 
 		fmt.Fprintf(stderr, "SSH connection test declined; no connection made, no host entry written, dedicated key retained at %s\n", path)
 		return 1
 	}
+	if err := testSSHConnection(home, target, *user, stderr, effects); err != nil {
+		fmt.Fprintf(stderr, "%v; no host entry written, SSH configuration unchanged, dedicated key retained at %s\n", err, path)
+		return 1
+	}
 	return 0
 }
 
