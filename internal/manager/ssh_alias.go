@@ -36,9 +36,11 @@ type sshOption struct{ key, value string }
 // username, the dedicated key keyName in ~/.ssh, IdentitiesOnly, and the agent's ~/.ssh/known_hosts, to ~/.ssh/config.
 // A machine name is its own alias; an address asks for one on stderr and reads the answer line from Effects.Stdin
 // without consuming later input. An alias that a Host pattern other than * or a Match host or originalhost block
-// already claims, by changing one of the entry's options, is reported and asked again; end of input cancels. When an
-// earlier global setting would override one of the entry's values, no alias can help, so it fails without asking
-// again. It verifies the agent identity before reading home data and queries ssh -G as agent. It writes no host entry
+// already claims, by changing one of the entry's options, is reported and asked again; end of input cancels. When the
+// candidate configuration would resolve one of the entry's values differently for the alias, because an earlier
+// matching option such as one under Host * takes precedence, it fails without asking again and names that option;
+// whether the earlier setting also matches other aliases depends on its own rule. It verifies the agent identity
+// before reading home data and queries ssh -G as agent. It writes no host entry
 // and leaves existing configuration content unchanged unless it returns the chosen alias. A missing .ssh directory is
 // created, mode 0700, only after an alias is chosen and its ssh -G check succeeds, so a cancelled question or a failing
 // query creates nothing. A held configuration lock refuses the change. Callers run it only after the connection test
