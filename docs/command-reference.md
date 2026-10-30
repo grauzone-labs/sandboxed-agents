@@ -88,6 +88,10 @@ A usage error keeps its message and exits with status 2. The message is followed
 
 **The lock coordinates, it does not protect.** It covers only these commands, run by the same host user with the same host state root. It does not cover commands of other host users, which have their own Podman and host state. It does not cover commands that resolve a different host state root (for example another `XDG_STATE_HOME` on Linux or another `LOCALAPPDATA` on Windows), because they lock a different file. It does not cover writers that use Podman directly, such as your own `podman` calls or scripts, which hold the same authority over Podman as the executable and are not held back by the lock. Image builds and loopback port allocation are shared across sandboxes and controller groups and are not serialized by it either.
 
+Every change to the SSH setup also takes a second, nonblocking lock for the controller group, `group-GROUP/locks/ssh-config` in host state, because all sandboxes of the group share its managed SSH configuration and `Include` line. The commands that take it are `ssh-config NAME --install`, including a repeat install, `ssh-config NAME --remove`, the SSH setup of `up` and `start` with `--ssh-config`, and the SSH cleanup of `remove`. Each takes the sandbox's own lock first and the group lock second, never in the reverse order. A command that finds the group lock taken exits non-zero, changes no SSH file, and says `controller group "GROUP": another SSH setup command is in progress; retry`; run it again once the other command has finished. When the SSH setup of `up` or `start` is refused this way, the sandbox keeps running and the message names `ssh-config NAME --install` to retry.
+
+`remove NAME` removes the container before its SSH cleanup. If the group lock is taken at that point, `remove` reports the retry message above and leaves the sandbox's SSH files in place. Run `remove NAME` again to finish the SSH cleanup; this works while the sandbox's volumes remain, and `remove NAME --volumes` removes them in the same run.
+
 | Command | What it does |
 |---|---|
 | `up NAME [WORKSPACE]` | Creates and starts a sandbox, or starts an existing one. Without `WORKSPACE`, the workspace is a volume of the sandbox. With one, exactly that host directory is bound at `/workspace`. A directory that contains or lies inside a protected host path is refused. |
@@ -134,6 +138,8 @@ A command that would end an agent session, or replace the installation of an age
 | `ssh-config NAME --install` | Creates a key dedicated to the sandbox, authorizes it, pins the host key, writes the host entry, and adds the controller group's `Include` line to your SSH configuration. |
 | `ssh-config NAME --remove` | Removes the host side of the SSH setup and, on a running sandbox, the authorization in the sandbox. |
 | `fingerprint NAME` | Prints the SSH host key fingerprints of the sandbox, one line per key type, for comparison in a desktop UI. |
+
+Running `ssh-config NAME --install` again with a matching host key changes nothing, except that it restores a missing `Include` of the controller group in your SSH configuration and reports `SSH setup for NAME is unchanged; restored its Include in the SSH configuration`.
 
 `--install` and `--remove` together are a usage error. See [SSH access](ssh.md) for VS Code Remote SSH, host entry names, and recovery.
 
