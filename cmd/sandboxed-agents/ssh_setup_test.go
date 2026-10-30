@@ -693,7 +693,7 @@ func TestSSHSetupRepeatIsUnchangedAndHostKeyChangeRefusesRepin(t *testing.T) {
 	sshCalls := testutil.Invocations(t, fakes.SSHLog)
 	keyCalls := testutil.Invocations(t, filepath.Join(fakes.Dir, "keygen.jsonl"))
 	status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo", "--install")
-	if status != 0 || !strings.Contains(stdout, "unchanged") {
+	if status != 0 || stdout != "SSH setup for demo is unchanged\n" {
 		t.Fatalf("repeat=%d %q %q", status, stdout, stderr)
 	}
 	if after := setupFiles(t); !reflect.DeepEqual(before, after) {
@@ -714,6 +714,78 @@ func TestSSHSetupRepeatIsUnchangedAndHostKeyChangeRefusesRepin(t *testing.T) {
 	}
 	if after := setupFiles(t); !reflect.DeepEqual(before, after) {
 		t.Fatal("changed host key modified host files")
+	}
+}
+
+// TestSSHSetupRepeatRestoresDeletedInclude proves a repeated install restores
+// the managed Include after the user deleted their SSH configuration, reports
+// the repair, and leaves the managed entry, pin, and key untouched through the
+// built CLI and fake process seams.
+func TestSSHSetupRepeatRestoresDeletedInclude(t *testing.T) {
+	fakes := sshSetupHarness(t, installResponses())
+	if status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo", "--install"); status != 0 {
+		t.Fatalf("install=%d %q %q", status, stdout, stderr)
+	}
+	before := setupFiles(t)
+	keyCalls := testutil.Invocations(t, filepath.Join(fakes.Dir, "keygen.jsonl"))
+	userConfig := filepath.Join(os.Getenv("HOME"), ".ssh", "config")
+	if err := os.Remove(userConfig); err != nil {
+		t.Fatal(err)
+	}
+	status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo", "--install")
+	if status != 0 || stdout != "SSH setup for demo is unchanged; restored its Include in the SSH configuration\n" {
+		t.Fatalf("repeat=%d %q %q", status, stdout, stderr)
+	}
+	after := setupFiles(t)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("files differ from the installed setup before=%v after=%v", before, after)
+	}
+	include := strings.TrimSpace(after[userConfig])
+	managed, err := strconv.Unquote(strings.TrimPrefix(include, "Include "))
+	if err != nil || !strings.HasPrefix(include, "Include ") || !strings.Contains(after[filepath.FromSlash(managed)], "Host demo\n") {
+		t.Fatalf("restored Include=%q does not reach the demo alias: %v", include, err)
+	}
+	if calls := testutil.Invocations(t, filepath.Join(fakes.Dir, "keygen.jsonl")); !reflect.DeepEqual(calls, keyCalls) {
+		t.Fatalf("repeat generated key=%v", calls)
+	}
+}
+
+// TestSSHSetupRepeatRestoresIncludeKeepingUserConfiguration proves a repeated
+// install puts the managed Include back into an existing user SSH configuration
+// that lost it while keeping the user's lines and file mode, through the built
+// CLI and isolated filesystem seam.
+func TestSSHSetupRepeatRestoresIncludeKeepingUserConfiguration(t *testing.T) {
+	sshSetupHarness(t, installResponses())
+	if status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo", "--install"); status != 0 {
+		t.Fatalf("install=%d %q %q", status, stdout, stderr)
+	}
+	userConfig := filepath.Join(os.Getenv("HOME"), ".ssh", "config")
+	include, err := os.ReadFile(userConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("# user bytes stay\nHost personal\n  HostName example.com\n")
+	if err := os.WriteFile(userConfig, original, 0640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(userConfig, 0640); err != nil {
+		t.Fatal(err)
+	}
+	status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo", "--install")
+	if status != 0 || stdout != "SSH setup for demo is unchanged; restored its Include in the SSH configuration\n" {
+		t.Fatalf("repeat=%d %q %q", status, stdout, stderr)
+	}
+	data, err := os.ReadFile(userConfig)
+	if err != nil || string(data) != string(include)+string(original) {
+		t.Fatalf("config=%q error=%v want=%q", data, err, string(include)+string(original))
+	}
+	// Windows keeps the existing file's ACL, which these tests cannot inspect;
+	// the content assertion above covers the restore there.
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(userConfig)
+		if err != nil || info.Mode().Perm() != 0640 {
+			t.Fatalf("config mode=%v %v", info, err)
+		}
 	}
 }
 

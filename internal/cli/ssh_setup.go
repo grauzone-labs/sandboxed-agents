@@ -165,7 +165,8 @@ func (s sshSetup) removeHostSetup() error {
 	if err := os.RemoveAll(s.dir); err != nil {
 		return err
 	}
-	return s.updateConfiguration("")
+	_, err := s.updateConfiguration("")
+	return err
 }
 
 // requireSSHManager requires a manager version query to succeed before SSH administration.
@@ -177,7 +178,8 @@ func requireSSHManager(request Request, p podmanTarget) error {
 }
 
 // installSSHSetup authorizes a dedicated key, pins the sandbox's host key, and
-// publishes the opt-in host configuration after checking for conflicts.
+// publishes the opt-in host configuration after checking for conflicts. A
+// repeat with a matching pin keeps the setup and only restores a missing Include.
 func installSSHSetup(request Request, p podmanTarget, objects sandboxObjects, s sshSetup, stdout io.Writer) error {
 	if err := requireSSHManager(request, p); err != nil {
 		return err
@@ -202,6 +204,18 @@ func installSSHSetup(request Request, p podmanTarget, objects sandboxObjects, s 
 		}
 		if string(previous) != pin {
 			return fmt.Errorf("sandbox %s: SSH host key changed; run ssh-config %s --remove followed by ssh-config %s --install", request.Name, request.Name, request.Name)
+		}
+		includeLine, err := s.clientIncludeLine()
+		if err != nil {
+			return err
+		}
+		restored, err := s.updateConfiguration(includeLine)
+		if err != nil {
+			return err
+		}
+		if restored {
+			fmt.Fprintf(stdout, "SSH setup for %s is unchanged; restored its Include in the SSH configuration\n", request.Name)
+			return nil
 		}
 		fmt.Fprintf(stdout, "SSH setup for %s is unchanged\n", request.Name)
 		return nil
@@ -261,7 +275,7 @@ func installSSHSetup(request Request, p podmanTarget, objects sandboxObjects, s 
 	if err := os.Rename(stage, s.dir); err != nil {
 		return err
 	}
-	if err := s.updateConfiguration(includeLine); err != nil {
+	if _, err := s.updateConfiguration(includeLine); err != nil {
 		os.RemoveAll(s.dir)
 		return err
 	}
