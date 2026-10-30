@@ -16,21 +16,27 @@ func watchInterrupts(effects Effects) (<-chan os.Signal, func()) {
 	return effects.NotifyInterrupt()
 }
 
+// interruptArrived reports, without waiting, whether Ctrl+C has arrived on the channel watchInterrupts returned; a nil
+// channel never reports one.
+func interruptArrived(interrupts <-chan os.Signal) bool {
+	if interrupts == nil {
+		return false
+	}
+	select {
+	case <-interrupts:
+		return true
+	default:
+		return false
+	}
+}
+
 // interactiveFailure names the failure of an interactive child: interrupted when Ctrl+C arrived or the
 // child died of a signal, otherwise failed with its exit status, otherwise unable to run; upstream's own message precedes it.
 func interactiveFailure(label string, err error, interrupts <-chan os.Signal) error {
-	interrupted := false
-	if interrupts != nil {
-		select {
-		case <-interrupts:
-			interrupted = true
-		default:
-		}
-	}
 	var exit interface{ ExitCode() int }
 	hasExit := errors.As(err, &exit)
 	switch {
-	case interrupted || (hasExit && exit.ExitCode() < 0):
+	case interruptArrived(interrupts) || (hasExit && exit.ExitCode() < 0):
 		return fmt.Errorf("%s was interrupted", label)
 	case hasExit:
 		return fmt.Errorf("%s failed with exit status %d", label, exit.ExitCode())

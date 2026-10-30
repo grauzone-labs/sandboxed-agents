@@ -109,18 +109,10 @@ func testSSHConnection(home, target, user string, stderr io.Writer, effects Effe
 // cause: a rejected or changed remote host key, failed authentication, a remote machine name that cannot be resolved,
 // or a remote machine that is unreachable or timed out; otherwise the exit status.
 func sshTestFailure(target, user string, err error, diagnostics string, interrupts <-chan os.Signal) error {
-	interrupted := false
-	if interrupts != nil {
-		select {
-		case <-interrupts:
-			interrupted = true
-		default:
-		}
-	}
 	var exit interface{ ExitCode() int }
 	hasExit := errors.As(err, &exit)
 	switch {
-	case interrupted || (hasExit && exit.ExitCode() < 0):
+	case interruptArrived(interrupts) || (hasExit && exit.ExitCode() < 0):
 		return errSSHTestCancelled
 	case !hasExit:
 		return fmt.Errorf("SSH connection test could not run ssh")
