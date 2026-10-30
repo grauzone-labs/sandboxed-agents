@@ -37,7 +37,8 @@ const (
 	AzureDevOpsEnvironment
 	// AzureEnvironment selects the environment for Azure authentication.
 	AzureEnvironment
-	// SSHEnvironment fixes the environment of local ssh-keygen and ssh -G processes, ignoring ambient variables and Process.Environment overrides.
+	// SSHEnvironment fixes the environment of the local ssh-keygen and ssh -G processes and of the outbound ssh connection
+	// test, ignoring ambient variables and Process.Environment overrides.
 	SSHEnvironment
 )
 

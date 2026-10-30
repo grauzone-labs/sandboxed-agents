@@ -45,7 +45,8 @@ func newEffects(calls systemCalls) Effects {
 			NoSetGroups: calls.Identity().UID != 0,
 		}, Setpgid: process.ProcessGroup}
 		if process.EnvironmentPolicy == SSHEnvironment {
-			// Local SSH key and configuration processes accept neither ambient variables nor Process.Environment overrides.
+			// Local SSH key and configuration processes and the outbound connection test accept neither ambient variables
+			// nor Process.Environment overrides.
 			command.Env = sshEnvironment()
 			return command, nil
 		}
@@ -183,8 +184,8 @@ func (c startedChild) Signal(sig os.Signal) error {
 	return syscall.Kill(pid, signal)
 }
 
-// sshEnvironment fixes the environment of local ssh-keygen and ssh -G processes without accepting
-// ambient variables or Process.Environment overrides that could enable authentication or preload hooks.
+// sshEnvironment fixes the environment of local ssh-keygen and ssh -G processes and the outbound ssh connection test
+// without accepting ambient variables or Process.Environment overrides that could enable authentication or preload hooks.
 func sshEnvironment() []string {
 	return []string{"PATH=/usr/bin:/bin", "HOME=/home/agent", "USER=agent", "LOGNAME=agent", "LC_ALL=C", "SSH_ASKPASS_REQUIRE=never"}
 }
