@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ import (
 // TestAgentSessionLifetimeWithLocalTmux proves a detached session survives its caller and vanishes with the agent through RunWithEffects and a real local tmux process adapter.
 func TestAgentSessionLifetimeWithLocalTmux(t *testing.T) {
 	home, version, installs := t.TempDir(), "1.2.3", 0
-	tmuxPath, localArgs := localTmux(t, home)
+	tmux := localTmux(t, home)
 	e := agentEffects(t, home, &version, &installs)
 	runAgents(t, e, 0, "enable", "codex")
 	// The managed agent is a tiny process that exits when its input file appears.
@@ -34,10 +35,7 @@ func TestAgentSessionLifetimeWithLocalTmux(t *testing.T) {
 			attaches++
 			return nil
 		} // Model terminal detach at the process seam.
-		cmd := exec.Command(tmuxPath, localArgs(p.Args)...)
-		cmd.Env = append(os.Environ(), "TMUX=", "TMUX_TMPDIR=")
-		cmd.Stdout, cmd.Stderr = p.Stdout, p.Stderr
-		return cmd.Run()
+		return tmux.run(p, "", append(os.Environ(), "TMUX=", "TMUX_TMPDIR="))
 	}
 	runAgents(t, e, 0, "session", "codex")
 	runAgents(t, e, 0, "session", "codex")
@@ -79,9 +77,16 @@ func TestAgentSessionLifetimeWithLocalTmux(t *testing.T) {
 	}
 }
 
-// localTmux returns the local tmux executable and a rewrite of manager tmux arguments onto a private socket that the
+// privateTmux is a local tmux executable together with the rewrite of manager tmux arguments onto the private socket
+// of that executable's test server, so the path and the rewrite travel together.
+type privateTmux struct {
+	path    string
+	rewrite func(managerArgs []string) []string
+}
+
+// localTmux returns the local tmux executable with a rewrite of manager tmux arguments onto a private socket that the
 // test's cleanup kills, with the sandbox's /workspace replaced by the given home. Without a local tmux the test skips.
-func localTmux(t *testing.T, home string) (string, func(managerArgs []string) []string) {
+func localTmux(t *testing.T, home string) privateTmux {
 	t.Helper()
 	tmuxPath, err := exec.LookPath("tmux")
 	if err != nil {
@@ -97,14 +102,34 @@ func localTmux(t *testing.T, home string) (string, func(managerArgs []string) []
 		exec.Command(tmuxPath, "-S", socket, "kill-server").Run()
 		os.RemoveAll(socketDir)
 	})
-	return tmuxPath, func(managerArgs []string) []string {
+	return privateTmux{path: tmuxPath, rewrite: func(managerArgs []string) []string {
 		args := append([]string{}, managerArgs...)
-		args[0], args[1] = "-S", socket
+		// Replace the manager's named socket among the server arguments with the private socket path.
+		socketFlag := slices.Index(args[:tmuxServerArgCount], "-L")
+		if socketFlag < 0 {
+			t.Fatalf("tmux server arguments name no socket: %q", managerArgs)
+		}
+		args[socketFlag], args[socketFlag+1] = "-S", socket
 		for i, arg := range args {
 			if arg == "/workspace" {
 				args[i] = home
 			}
 		}
 		return args
-	}
+	}}
+}
+
+// command returns an unstarted command that runs the manager's tmux arguments against the private socket.
+func (x privateTmux) command(managerArgs []string) *exec.Cmd {
+	return exec.Command(x.path, x.rewrite(managerArgs)...)
+}
+
+// run runs the manager's tmux process against the private socket in the given directory, the current one when empty,
+// with the given environment and the process's output streams, and returns the error of the finished command.
+func (x privateTmux) run(p manager.Process, dir string, env []string) error {
+	cmd := x.command(p.Args)
+	cmd.Dir = dir
+	cmd.Env = env
+	cmd.Stdout, cmd.Stderr = p.Stdout, p.Stderr
+	return cmd.Run()
 }
