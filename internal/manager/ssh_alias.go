@@ -95,8 +95,7 @@ func sshEntryValues(values map[string]string) map[string]string {
 // before reading home data and queries ssh -G as agent. It writes no host entry and leaves existing configuration
 // content unchanged unless it returns the chosen alias; a missing .ssh directory is created, mode 0700, only after an
 // alias is chosen and its ssh -G check succeeds, so a cancelled question or a failing query creates nothing, and a held
-// configuration lock refuses the change. It runs only after the successful password test (ADR-0011); #112 supplies that
-// caller, which does not exist yet.
+// configuration lock refuses the change. It runs only after the successful password test (ADR-0011); connectSSH is its caller.
 func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects Effects) (string, error) {
 	if !verifyAgent(effects, stderr) {
 		return "", fmt.Errorf("SSH alias requires the agent identity; SSH configuration unchanged")

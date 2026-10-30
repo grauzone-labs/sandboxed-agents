@@ -23,8 +23,9 @@ const (
 // errUnsafeSSHKey refuses incomplete or unsafe key pairs without replacing either file.
 var errUnsafeSSHKey = errors.New("SSH key files are incomplete or unsafe; no key overwritten")
 
-// configureSSH prepares only the dedicated-key stage of the undelivered outbound SSH workflow.
-// It validates direct manager requests and verifies agent identity before accessing home data.
+// configureSSH runs the outbound SSH workflow: it prepares the dedicated key and prints its public key, then hands over to
+// connectSSH for the approved password connection test and the alias host entry. It validates direct manager requests and
+// verifies agent identity before accessing home data.
 func configureSSH(args []string, stdout, stderr io.Writer, effects Effects) int {
 	if _, err := catalog.Default.ResolveConfig(catalog.SSHIntegration, ""); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -68,7 +69,7 @@ func configureSSH(args []string, stdout, stderr io.Writer, effects Effects) int 
 		fmt.Fprintln(stderr, "cannot print SSH public key; dedicated key retained")
 		return 1
 	}
-	return 0
+	return connectSSH(target, *user, name, path, home, stderr, effects)
 }
 
 // prepareSSHKey creates a private directory, serializes key generation or reuse,

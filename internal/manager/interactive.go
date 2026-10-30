@@ -19,14 +19,7 @@ func watchInterrupts(effects Effects) (<-chan os.Signal, func()) {
 // interactiveFailure names the failure of an interactive child: interrupted when Ctrl+C arrived or the
 // child died of a signal, otherwise failed with its exit status, otherwise unable to run; upstream's own message precedes it.
 func interactiveFailure(label string, err error, interrupts <-chan os.Signal) error {
-	interrupted := false
-	if interrupts != nil {
-		select {
-		case <-interrupts:
-			interrupted = true
-		default:
-		}
-	}
+	interrupted := interruptArrived(interrupts)
 	var exit interface{ ExitCode() int }
 	hasExit := errors.As(err, &exit)
 	switch {
@@ -36,6 +29,19 @@ func interactiveFailure(label string, err error, interrupts <-chan os.Signal) er
 		return fmt.Errorf("%s failed with exit status %d", label, exit.ExitCode())
 	}
 	return fmt.Errorf("%s could not run: %w", label, err)
+}
+
+// interruptArrived reports, without waiting, whether a Ctrl+C is pending on interrupts; a nil channel never has one.
+func interruptArrived(interrupts <-chan os.Signal) bool {
+	if interrupts == nil {
+		return false
+	}
+	select {
+	case <-interrupts:
+		return true
+	default:
+		return false
+	}
 }
 
 // processOutput runs a process with captured streams and returns its standard output, or an error that carries the first line of its diagnostic.

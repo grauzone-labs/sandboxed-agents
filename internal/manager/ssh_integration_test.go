@@ -51,11 +51,18 @@ func sshKeyEffects(t *testing.T, home string, calls *[]manager.Process) manager.
 	return e
 }
 
-// runSSHKey invokes the staged manager command with separate public-output and diagnostic streams.
+// runSSHKey invokes the SSH workflow with separate public-output and diagnostic streams; without terminal input, the workflow
+// ends at the approval question that follows the key stage.
 func runSSHKey(e manager.Effects, host, user string) (int, string, string) {
 	var out, err bytes.Buffer
 	status := manager.RunWithEffects([]string{"integrations", "config", "ssh", "--host", host, "--user", user}, &out, &err, e)
 	return status, out.String(), err.String()
+}
+
+// keyStageDone reports whether a runSSHKey run completed the key stage: it reached the approval question, which end of input
+// cancels with status 1 before any connection.
+func keyStageDone(status int, diag string) bool {
+	return status == 1 && strings.Contains(diag, "SSH connection test cancelled; no connection made")
 }
 
 // TestSSHIntegrationGeneratesPrivateKeyAndPrintsPublic proves agent-only local key generation, protected files, and exactly one public line through RunWithEffects and real temporary-home storage.
@@ -64,7 +71,7 @@ func TestSSHIntegrationGeneratesPrivateKeyAndPrintsPublic(t *testing.T) {
 	home := t.TempDir()
 	var calls []manager.Process
 	status, out, diag := runSSHKey(sshKeyEffects(t, home, &calls), "2001:db8::1", "alice")
-	if status != 0 {
+	if !keyStageDone(status, diag) {
 		t.Fatalf("status=%d diagnostics=%s", status, diag)
 	}
 	keys, err := filepath.Glob(filepath.Join(home, ".ssh", "id_ed25519_remote_*"))
@@ -134,7 +141,7 @@ func TestSSHIntegrationReusesNormalizedMachineKey(t *testing.T) {
 			var calls []manager.Process
 			e := sshKeyEffects(t, home, &calls)
 			status, first, diag := runSSHKey(e, hosts[0], "alice")
-			if status != 0 {
+			if !keyStageDone(status, diag) {
 				t.Fatalf("first status=%d %s", status, diag)
 			}
 			paths, _ := filepath.Glob(filepath.Join(home, ".ssh", "id_ed25519_remote_*"))
@@ -147,7 +154,7 @@ func TestSSHIntegrationReusesNormalizedMachineKey(t *testing.T) {
 				before[p] = data
 			}
 			status, second, diag := runSSHKey(e, hosts[1], "bob")
-			if status != 0 || second != first {
+			if !keyStageDone(status, diag) || second != first {
 				t.Fatalf("retry status=%d output=%q want=%q diagnostics=%s", status, second, first, diag)
 			}
 			generations := 0
@@ -178,7 +185,7 @@ func TestSSHIntegrationRefusesDamagedOrIncompleteKeys(t *testing.T) {
 			var calls []manager.Process
 			e := sshKeyEffects(t, home, &calls)
 			status, _, diag := runSSHKey(e, "worker", "alice")
-			if status != 0 {
+			if !keyStageDone(status, diag) {
 				t.Fatalf("setup status=%d %s", status, diag)
 			}
 			matches, _ := filepath.Glob(filepath.Join(home, ".ssh", "id_ed25519_remote_*"))
@@ -194,7 +201,7 @@ func TestSSHIntegrationRefusesDamagedOrIncompleteKeys(t *testing.T) {
 				}
 			case "public-mismatch":
 				status, other, diag := runSSHKey(e, "other", "alice")
-				if status != 0 {
+				if !keyStageDone(status, diag) {
 					t.Fatalf("other key status=%d %s", status, diag)
 				}
 				if err := os.WriteFile(key+".pub", []byte(other), 0600); err != nil {
@@ -232,7 +239,7 @@ func TestSSHIntegrationRefusesDamagedOrIncompleteKeys(t *testing.T) {
 			}
 			calls = nil
 			status, out, diag := runSSHKey(e, "worker", "bob")
-			if status == 0 || out != "" || strings.Contains(diag, "PRIVATE KEY sentinel") {
+			if status != 1 || out != "" || strings.Contains(diag, "PRIVATE KEY sentinel") || strings.Contains(diag, "SSH connection test") {
 				t.Fatalf("status=%d output=%q diagnostics=%q", status, out, diag)
 			}
 			for _, p := range calls {
@@ -286,7 +293,7 @@ func TestSSHIntegrationSuppressesUntrustedDiagnosticsAndRetainsKeys(t *testing.T
 				return nil
 			}
 			status, out, diag := runSSHKey(e, "worker", "alice")
-			if status != 1 || out != "" || strings.Contains(diag, "PRIVATE KEY") || strings.Contains(diag, "private sentinel") || !strings.Contains(diag, "Dedicated SSH key location:") {
+			if status != 1 || out != "" || strings.Contains(diag, "PRIVATE KEY") || strings.Contains(diag, "private sentinel") || !strings.Contains(diag, "Dedicated SSH key location:") || strings.Contains(diag, "SSH connection test") {
 				t.Fatalf("status=%d output=%q diagnostics=%q", status, out, diag)
 			}
 			paths, _ := filepath.Glob(filepath.Join(home, ".ssh", "id_ed25519_remote_*"))
@@ -296,7 +303,7 @@ func TestSSHIntegrationSuppressesUntrustedDiagnosticsAndRetainsKeys(t *testing.T
 			e.Start = start
 			calls = nil
 			status, out, diag = runSSHKey(e, "worker", "alice")
-			if status != 0 || !strings.HasPrefix(out, "ssh-ed25519 ") {
+			if !keyStageDone(status, diag) || !strings.HasPrefix(out, "ssh-ed25519 ") {
 				t.Fatalf("retry status=%d diagnostics=%s", status, diag)
 			}
 			for _, p := range calls {
