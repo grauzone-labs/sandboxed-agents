@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -17,9 +16,9 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
-// execTerminalEnvironment returns a modelled environment for the manager under podman exec -t inside the sandbox:
-// TERM=xterm, whose terminfo entry declares eight colours, and no locale variable, so the C locale applies. It is an
-// assumed worst case for the attach flags, not an environment recorded from a real sandbox or from the #114 report.
+// execTerminalEnvironment returns a modelled client environment for the manager under podman exec -t in the sandbox:
+// TERM=xterm, whose terminfo entry declares eight colours, and no locale variable, so the C locale applies. It is the
+// worst case the attach flags -u and -2 guard against.
 func execTerminalEnvironment(home string) []string {
 	return []string{"PATH=/usr/bin:/bin", "HOME=" + home, "TERM=xterm"}
 }
@@ -32,7 +31,7 @@ func execTerminalEnvironment(home string) []string {
 // image.
 func TestAgentSessionDrawsFullScreenThroughLocalTmux(t *testing.T) {
 	home, version, installs := t.TempDir(), "1.2.3", 0
-	tmuxPath, localArgs := localTmux(t, home)
+	tmux := localTmux(t, home)
 	e := agentEffects(t, home, &version, &installs)
 	runAgents(t, e, 0, "enable", "codex")
 	// The agent clears its screen and draws a logo of block glyphs in a grey 24-bit colour, as full-screen agents do,
@@ -54,17 +53,12 @@ done
 		if p.Program != "tmux" || p.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
 			t.Fatalf("process=%+v", p)
 		}
-		args := localArgs(p.Args)
-		if tmuxCommand(args) == "attach-session" {
+		if tmuxCommand(p.Args) == "attach-session" {
 			attaches++
-			attachThroughTerminal(t, tmuxPath, args, home)
+			attachThroughTerminal(t, tmux, p.Args, home)
 			return nil
 		}
-		cmd := exec.Command(tmuxPath, args...)
-		cmd.Dir = home
-		cmd.Env = execTerminalEnvironment(home)
-		cmd.Stdout, cmd.Stderr = p.Stdout, p.Stderr
-		return cmd.Run()
+		return tmux.run(p, home, execTerminalEnvironment(home))
 	}
 	runAgents(t, e, 0, "session", "codex")
 	if attaches != 1 {
@@ -72,14 +66,14 @@ done
 	}
 }
 
-// attachThroughTerminal runs the attach command under a 120 by 40 pseudo-terminal, checks the drawn screen, types a line
-// and checks the agent's redraw of it, resizes the terminal to 100 by 30, checks the agent's new size and the redraw, and
-// detaches with the default prefix key.
-func attachThroughTerminal(t *testing.T, tmuxPath string, args []string, home string) {
+// attachThroughTerminal runs the manager's attach arguments against the private tmux under a 120 by 40 pseudo-terminal,
+// checks the drawn screen, types a line and checks the agent's redraw of it, resizes the terminal to 100 by 30, checks
+// the agent's new size and the redraw, and detaches with the default prefix key.
+func attachThroughTerminal(t *testing.T, tmux privateTmux, managerArgs []string, home string) {
 	t.Helper()
 	master, slave := openTerminal(t, 40, 120)
 	defer master.Close()
-	cmd := exec.Command(tmuxPath, args...)
+	cmd := tmux.command(managerArgs)
 	cmd.Env = execTerminalEnvironment(home)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
@@ -162,29 +156,27 @@ func waitForTerminal(t *testing.T, condition func() bool, drawn func() string, w
 	}
 }
 
-// openTerminal returns the master and slave ends of a fresh pseudo-terminal of the given rows and columns.
+// openTerminal returns the master and slave ends of a fresh pseudo-terminal of the given rows and columns; the test's
+// cleanup closes the master.
 func openTerminal(t *testing.T, rows, columns uint16) (*os.File, *os.File) {
 	t.Helper()
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { master.Close() })
 	if err := unix.IoctlSetPointerInt(int(master.Fd()), unix.TIOCSPTLCK, 0); err != nil {
-		master.Close()
 		t.Fatal(err)
 	}
 	number, err := unix.IoctlGetInt(int(master.Fd()), unix.TIOCGPTN)
 	if err != nil {
-		master.Close()
 		t.Fatal(err)
 	}
 	if err := unix.IoctlSetWinsize(int(master.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: rows, Col: columns}); err != nil {
-		master.Close()
 		t.Fatal(err)
 	}
 	slave, err := os.OpenFile(fmt.Sprintf("/dev/pts/%d", number), os.O_RDWR|unix.O_NOCTTY, 0)
 	if err != nil {
-		master.Close()
 		t.Fatal(err)
 	}
 	return master, slave
