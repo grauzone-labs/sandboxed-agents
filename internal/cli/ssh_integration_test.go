@@ -72,7 +72,7 @@ func TestSSHConfigRejectsForeignOptions(t *testing.T) {
 	}
 }
 
-// TestSSHConfigRequiresTerminalAndRunsAsAgent proves the staged key workflow needs both terminal streams and forwards only explicit values as agent through the host CLI/fake-Podman seam.
+// TestSSHConfigRequiresTerminalAndRunsAsAgent proves the SSH workflow needs both terminal streams and forwards only explicit values as agent through the host CLI/fake-Podman seam.
 func TestSSHConfigRequiresTerminalAndRunsAsAgent(t *testing.T) {
 	for _, terminals := range [][2]bool{{false, false}, {true, false}, {false, true}, {true, true}} {
 		t.Run(fmt.Sprint(terminals), func(t *testing.T) {
@@ -187,7 +187,7 @@ func TestSSHConfigStepOneCallsNoPodman(t *testing.T) {
 	}
 }
 
-// TestSSHConfigSelectsOneWindowsTarget proves the staged workflow binds every sandbox query and both manager identities to one machine through the host CLI seam.
+// TestSSHConfigSelectsOneWindowsTarget proves the SSH workflow binds every sandbox query and both manager identities to one machine through the host CLI seam.
 func TestSSHConfigSelectsOneWindowsTarget(t *testing.T) {
 	f := windowsHost(t)
 	configureSandboxQueries(f, "default", "--connection chosen ")

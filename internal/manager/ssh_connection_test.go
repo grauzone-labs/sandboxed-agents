@@ -16,10 +16,16 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
+// sshClient is the trusted OpenSSH client the manager runs for configuration queries and the connection test.
+const sshClient = "/usr/bin/ssh"
+
+// sshAgent is the agent identity, UID and GID 1000, that every SSH process of the workflow runs as.
+var sshAgent = manager.Identity{UID: 1000, GID: 1000}
+
 // sshConnectionSkip skips a connection flow test where the local OpenSSH client that answers the alias unit's ssh -G queries is missing.
 func sshConnectionSkip(t *testing.T) {
 	t.Helper()
-	if _, err := os.Stat("/usr/bin/ssh"); err != nil {
+	if _, err := os.Stat(sshClient); err != nil {
 		t.Skip("the local OpenSSH client is not installed")
 	}
 }
@@ -34,11 +40,11 @@ func sshFlowEffects(t *testing.T, home string, input io.Reader, connect func(man
 	e.Stdin = input
 	keygen := e.Start
 	e.Start = func(p manager.Process) error {
-		if p.Program != "/usr/bin/ssh" {
+		if p.Program != sshClient {
 			return keygen(p)
 		}
 		*calls = append(*calls, p)
-		if p.Identity != (manager.Identity{UID: 1000, GID: 1000}) || p.EnvironmentPolicy != manager.SSHEnvironment || len(p.Environment) != 0 {
+		if p.Identity != sshAgent || p.EnvironmentPolicy != manager.SSHEnvironment || len(p.Environment) != 0 {
 			t.Fatalf("ssh not run as agent with the fixed SSH environment: %+v", p)
 		}
 		if !slices.Contains(p.Args, "-G") {
@@ -56,7 +62,7 @@ func sshFlowEffects(t *testing.T, home string, input io.Reader, connect func(man
 func connectionTests(calls []manager.Process) []manager.Process {
 	var tests []manager.Process
 	for _, p := range calls {
-		if p.Program == "/usr/bin/ssh" && !slices.Contains(p.Args, "-G") {
+		if p.Program == sshClient && !slices.Contains(p.Args, "-G") {
 			tests = append(tests, p)
 		}
 	}
@@ -267,7 +273,7 @@ func TestSSHConnectionFailuresNameTheirCause(t *testing.T) {
 				t.Fatalf("config changed: %q %v", got, err)
 			}
 			for _, p := range calls {
-				if p.Program == "/usr/bin/ssh" && slices.Contains(p.Args, "-G") {
+				if p.Program == sshClient && slices.Contains(p.Args, "-G") {
 					t.Fatalf("alias unit ran after a failed test: %q", p.Args)
 				}
 			}
@@ -367,7 +373,7 @@ func TestSSHConnectionOptionsResolveThroughRealOpenSSH(t *testing.T) {
 	if status, _, diag := runSSHFlow(e, "worker", "alice"); status != 0 {
 		t.Fatalf("status=%d diagnostics=%s", status, diag)
 	}
-	resolve := exec.Command("/usr/bin/ssh", append([]string{"-G"}, connectionTests(calls)[0].Args...)...)
+	resolve := exec.Command(sshClient, append([]string{"-G"}, connectionTests(calls)[0].Args...)...)
 	resolve.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + home, "LC_ALL=C", "SSH_ASKPASS_REQUIRE=never"}
 	output, err := resolve.Output()
 	if err != nil {

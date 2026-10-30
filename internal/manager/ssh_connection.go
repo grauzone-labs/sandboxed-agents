@@ -19,8 +19,9 @@ const (
 	sshFailureStatus = 255
 )
 
-// errSSHApprovalCancelled reports a connection test approval that ended without an answer, by end of input or Ctrl+C.
-var errSSHApprovalCancelled = errors.New("SSH connection test cancelled")
+// errSSHCancelled reports a connection test the user cancelled: the approval question ended without an answer, by end of input
+// or Ctrl+C, or Ctrl+C arrived while ssh ran.
+var errSSHCancelled = errors.New("SSH connection test cancelled")
 
 // connectSSH asks the user to approve the password connection test of user at target, runs it, and on success adds the alias host
 // entry through configureSSHAlias with the dedicated key keyName; keyPath is the key's location, which every other outcome names as
@@ -60,7 +61,7 @@ func connectSSH(target, user, keyName, keyPath, home string, stderr io.Writer, e
 
 // askSSHApproval asks on stderr whether to test the connection and reads one answer line from stdin; yes or y in any letter case
 // approves and every other answer declines. End of input, or Ctrl+C on interrupts while the question waits, cancels with
-// errSSHApprovalCancelled, without waiting for an answer that never comes.
+// errSSHCancelled, without waiting for an answer that never comes.
 func askSSHApproval(stdin io.Reader, interrupts <-chan os.Signal, target, user string, stderr io.Writer) (bool, error) {
 	fmt.Fprintf(stderr, "Test the SSH connection to %s@%s with password authentication now? ssh asks for the password; nothing connects before you answer yes. [yes/no]: ", user, target)
 	type answer struct {
@@ -75,11 +76,11 @@ func askSSHApproval(stdin io.Reader, interrupts <-chan os.Signal, target, user s
 	select {
 	case <-interrupts:
 		fmt.Fprintln(stderr)
-		return false, errSSHApprovalCancelled
+		return false, errSSHCancelled
 	case got := <-answers:
 		if got.err != nil {
 			fmt.Fprintln(stderr)
-			return false, errSSHApprovalCancelled
+			return false, errSSHCancelled
 		}
 		switch strings.ToLower(strings.TrimSpace(got.line)) {
 		case "yes", "y":
@@ -131,7 +132,7 @@ func testSSHConnection(target, user, home string, interrupts <-chan os.Signal, s
 	var exit interface{ ExitCode() int }
 	switch {
 	case interruptArrived(interrupts):
-		return errors.New("SSH connection test cancelled")
+		return errSSHCancelled
 	case err == nil:
 		return nil
 	case !errors.As(err, &exit):

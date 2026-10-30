@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	// SSHIntegration names the outbound SSH integration, staged until the complete connection workflow is delivered.
+	// SSHIntegration names the outbound SSH integration, which connects a sandbox to a remote machine with a dedicated key and an alias.
 	SSHIntegration = "ssh"
 	// SSHHostOption names the remote machine supplied to the SSH integration.
 	SSHHostOption = "host"
