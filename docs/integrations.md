@@ -298,7 +298,7 @@ The key, the confirmed host keys, and the alias entry live in `/home/agent/.ssh/
 
 ### Manual SSH connection check
 
-The offline tests use fake processes and a local test-only SSH peer on loopback, and they contact no remote machine, so a real password test is proven only by this check. Run it with a remote machine you control, an account on it that accepts password authentication, and a throwaway sandbox; the [manual checklist](manual-checklist.md#ssh-connection) lists it. Never use a machine you do not control.
+The offline tests replace the connection test's `ssh` with a fake process that reports a recorded exit status and diagnostics. They prove the approval order, the `ssh` arguments, the failure messages, and that the alias is written only after a successful test, but they contact no remote machine and run no real `ssh` login, so a real password test, host-key prompt, and hidden password entry are proven only by this check. Run it with a remote machine you control, an account on it that accepts password authentication, and a throwaway sandbox; the [manual checklist](manual-checklist.md#ssh-connection) lists it. Never use a machine you do not control.
 
 1. Run `sandboxed-agents integrations config agent01 ssh --host HOST --user USER </dev/null`. Confirm it fails with the terminal error and a non-zero status, and that `/home/agent/.ssh/` in `shell agent01` holds no `id_ed25519_remote_*` file.
 2. Run the command with a terminal. Confirm it prints one public-key line and the key location, and then the approval question, and that the remote machine's log shows no connection yet.
