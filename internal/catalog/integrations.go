@@ -83,6 +83,9 @@ func (c Catalog) ResolveConfig(integrationName, workflowName string) (ConfigSele
 	}
 	definition, known := integration.ConfigWorkflows[selection.Workflow]
 	if !known || !definition.Delivered {
+		if slices.Equal(integration.ConfigWorkflowNames(), []string{""}) {
+			return selection, fmt.Errorf("%s config takes no workflow name: %q", integrationName, selection.Workflow)
+		}
 		return selection, fmt.Errorf("unknown %s config workflow %q: %s", integrationName, selection.Workflow, ValidNames(integration.ConfigWorkflowNames()))
 	}
 	selection.Definition = definition
@@ -163,8 +166,12 @@ func (c Catalog) LoginIntegrationNames() []string {
 func (c Catalog) ResolveLogin(name, workflow string) (string, error) {
 	integration, known := c.Integrations[name]
 	if !known || integration.Login == nil || !integration.Login.Delivered {
-		if known && len(integration.ConfigWorkflowNames()) > 0 {
-			return "", fmt.Errorf("%s has no login workflow; use integrations config NAME %s; config workflows: %s", name, name, ValidNames(integration.ConfigWorkflowNames()))
+		if workflows := integration.ConfigWorkflowNames(); known && len(workflows) > 0 {
+			// A single unnamed config workflow, such as ssh's, has no workflow name to list.
+			if slices.Equal(workflows, []string{""}) {
+				return "", fmt.Errorf("%s has no login workflow; use integrations config NAME %s", name, name)
+			}
+			return "", fmt.Errorf("%s has no login workflow; use integrations config NAME %s; config workflows: %s", name, name, ValidNames(workflows))
 		}
 		return "", fmt.Errorf("unknown integration %q: %s", name, ValidNames(c.LoginIntegrationNames()))
 	}

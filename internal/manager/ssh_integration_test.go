@@ -12,21 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
-
-// enableSSHIntegration exposes the staged SSH workflow only for manager boundary tests.
-func enableSSHIntegration(t *testing.T) {
-	t.Helper()
-	old := catalog.Default.Integrations["ssh"]
-	integration := old
-	workflow := integration.ConfigWorkflows[""]
-	workflow.Delivered = true
-	integration.ConfigWorkflows = map[string]catalog.ConfigWorkflow{"": workflow}
-	catalog.Default.Integrations["ssh"] = integration
-	t.Cleanup(func() { catalog.Default.Integrations["ssh"] = old })
-}
 
 // sshKeyEffects supplies real temporary-home storage and local key generation at the manager process seam without SSH or network access.
 func sshKeyEffects(t *testing.T, home string, calls *[]manager.Process) manager.Effects {
@@ -67,7 +54,6 @@ func keyStageDone(status int, diag string) bool {
 
 // TestSSHIntegrationGeneratesPrivateKeyAndPrintsPublic proves agent-only local key generation, protected files, and exactly one public line through RunWithEffects and real temporary-home storage.
 func TestSSHIntegrationGeneratesPrivateKeyAndPrintsPublic(t *testing.T) {
-	enableSSHIntegration(t)
 	home := t.TempDir()
 	var calls []manager.Process
 	status, out, diag := runSSHKey(sshKeyEffects(t, home, &calls), "2001:db8::1", "alice")
@@ -134,7 +120,6 @@ func TestSSHIntegrationGeneratesPrivateKeyAndPrintsPublic(t *testing.T) {
 
 // TestSSHIntegrationReusesNormalizedMachineKey proves equivalent IPv6 spellings, hostname case, and different usernames reuse the same valid identity through RunWithEffects and local keygen.
 func TestSSHIntegrationReusesNormalizedMachineKey(t *testing.T) {
-	enableSSHIntegration(t)
 	for _, hosts := range [][2]string{{"2001:0DB8:0:0:0:0:0:1", "2001:db8::1"}, {"Build.Example", "build.example"}} {
 		t.Run(hosts[0], func(t *testing.T) {
 			home := t.TempDir()
@@ -178,7 +163,6 @@ func TestSSHIntegrationReusesNormalizedMachineKey(t *testing.T) {
 
 // TestSSHIntegrationRefusesDamagedOrIncompleteKeys proves malformed private material, mismatched pairs, unsafe paths, and incomplete pairs are preserved and refused through RunWithEffects.
 func TestSSHIntegrationRefusesDamagedOrIncompleteKeys(t *testing.T) {
-	enableSSHIntegration(t)
 	for _, kind := range []string{"private-corrupt", "public-corrupt", "public-mismatch", "private-missing", "public-missing", "private-readable", "private-symlink", "public-symlink"} {
 		t.Run(kind, func(t *testing.T) {
 			home := t.TempDir()
@@ -259,7 +243,6 @@ func TestSSHIntegrationRefusesDamagedOrIncompleteKeys(t *testing.T) {
 
 // TestSSHIntegrationSuppressesUntrustedDiagnosticsAndRetainsKeys proves process errors and output cannot disclose key material and failure retains reusable keys through RunWithEffects.
 func TestSSHIntegrationSuppressesUntrustedDiagnosticsAndRetainsKeys(t *testing.T) {
-	enableSSHIntegration(t)
 	for _, phase := range []string{"generation", "validation", "invalid-public-output", "oversized-public-output"} {
 		t.Run(phase, func(t *testing.T) {
 			home := t.TempDir()
@@ -315,15 +298,10 @@ func TestSSHIntegrationSuppressesUntrustedDiagnosticsAndRetainsKeys(t *testing.T
 	}
 }
 
-// TestSSHIntegrationUndeliveredAndMalformedRequestsHaveNoEffects proves the default gate and direct manager input validation precede all home and process access through RunWithEffects.
-func TestSSHIntegrationUndeliveredAndMalformedRequestsHaveNoEffects(t *testing.T) {
+// TestSSHIntegrationMalformedRequestsHaveNoEffects proves direct manager input validation precedes all home and process access through RunWithEffects.
+func TestSSHIntegrationMalformedRequestsHaveNoEffects(t *testing.T) {
 	e := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
 	e.HomeDirectory = func() (string, error) { t.Fatal("accessed home for rejected command"); return "", nil }
-	status, out, diag := runSSHKey(e, "worker", "alice")
-	if status != 2 || out != "" || !strings.Contains(diag, `unknown integration "ssh"`) {
-		t.Fatalf("status=%d out=%q diagnostics=%s", status, out, diag)
-	}
-	enableSSHIntegration(t)
 	for _, args := range [][]string{{"--host", "worker"}, {"--user", "alice"}, {"--host", "bad\nhost", "--user", "alice"}, {"--host", "worker", "--user", "bad\nuser"}, {"connect", "--host", "worker", "--user", "alice"}, {"--secret", "PRIVATE KEY sentinel"}} {
 		var out, diag bytes.Buffer
 		status := manager.RunWithEffects(append([]string{"integrations", "config", "ssh"}, args...), &out, &diag, e)
@@ -335,7 +313,6 @@ func TestSSHIntegrationUndeliveredAndMalformedRequestsHaveNoEffects(t *testing.T
 
 // TestSSHIntegrationRefusesUnsafeDirectory proves the manager never follows a redirected SSH directory or changes its existing permissions through RunWithEffects and real temporary storage.
 func TestSSHIntegrationRefusesUnsafeDirectory(t *testing.T) {
-	enableSSHIntegration(t)
 	for _, kind := range []string{"symlink", "file", "permissive"} {
 		t.Run(kind, func(t *testing.T) {
 			if runtime.GOOS != "linux" {

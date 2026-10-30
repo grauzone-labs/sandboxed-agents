@@ -272,8 +272,12 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 		}
 		for option := range request.Options {
 			if !slices.Contains(selection.Definition.Options, option) {
-				if selection.Integration == catalog.SSHIntegration {
+				// A workflow with options names the foreign one; the SSH workflow has no workflow name to show.
+				switch {
+				case selection.Integration == catalog.SSHIntegration:
 					return request, fmt.Errorf("%s config does not support option %q", selection.Integration, "--"+option)
+				case len(selection.Definition.Options) > 0:
+					return request, fmt.Errorf("%s %s does not support option %q", selection.Integration, selection.Workflow, "--"+option)
 				}
 				return request, fmt.Errorf("%s %s takes no options", selection.Integration, selection.Workflow)
 			}

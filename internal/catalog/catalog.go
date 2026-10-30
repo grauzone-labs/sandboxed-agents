@@ -63,7 +63,7 @@ var Default = Catalog{
 	Toolchains: []string{"dotnet", "playwright", "azure", "native"},
 	Integrations: map[string]Integration{
 		SSHIntegration: {ConfigWorkflows: map[string]ConfigWorkflow{
-			"": {Delivered: false, Options: []string{SSHHostOption, SSHUserOption}},
+			"": {Delivered: true, Options: []string{SSHHostOption, SSHUserOption}},
 		}},
 		GitHubIntegration: {LoginWorkflows: []string{DeviceCodeWorkflow}, Login: &LoginWorkflow{
 			Delivered:             true,

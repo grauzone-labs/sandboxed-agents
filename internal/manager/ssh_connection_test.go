@@ -91,7 +91,6 @@ func runSSHFlow(e manager.Effects, host, user string) (int, string, string) {
 // TestSSHConnectionAsksApprovalBeforeConnecting proves through RunWithEffects that the approval question follows the printed public
 // key and precedes the connection test, so no ssh connection starts before the user approves.
 func TestSSHConnectionAsksApprovalBeforeConnecting(t *testing.T) {
-	enableSSHIntegration(t)
 	home := t.TempDir()
 	var calls []manager.Process
 	var out, diag bytes.Buffer
@@ -115,7 +114,6 @@ func TestSSHConnectionAsksApprovalBeforeConnecting(t *testing.T) {
 // Ctrl+C at the approval question starts no connection test, writes no SSH configuration, names the outcome and the retained
 // dedicated key, and exits non-zero.
 func TestSSHConnectionDeclineOrCancelConnectsNothing(t *testing.T) {
-	enableSSHIntegration(t)
 	for _, test := range []struct {
 		name, input, want string
 		interrupt         bool
@@ -172,7 +170,6 @@ func TestSSHConnectionDeclineOrCancelConnectsNothing(t *testing.T) {
 // login is attempted and no key is offered, makes ssh ask for confirmation of an unknown host key and store only confirmed keys in
 // the agent's known_hosts, and carries no password in its arguments, environment, or standard input: ssh reads it from the terminal.
 func TestSSHConnectionTestUsesPasswordAuthenticationOnly(t *testing.T) {
-	enableSSHIntegration(t)
 	home := t.TempDir()
 	var calls []manager.Process
 	e := sshFlowEffects(t, home, strings.NewReader("yes\n"), connectWith("", nil), &calls)
@@ -225,7 +222,6 @@ func TestSSHConnectionTestUsesPasswordAuthenticationOnly(t *testing.T) {
 // unreachable or silent machine, a host key the user rejected or one that changed, and a refused password, produces a message naming
 // its cause, as does an ssh that cannot start, exits non-zero, leaves an existing ~/.ssh/config byte for byte unchanged, writes no host entry, and names the retained key.
 func TestSSHConnectionFailuresNameTheirCause(t *testing.T) {
-	enableSSHIntegration(t)
 	for _, test := range []struct {
 		name, diagnostics, want string
 		status                  int
@@ -282,7 +278,6 @@ func TestSSHConnectionFailuresNameTheirCause(t *testing.T) {
 // TestSSHConnectionInterruptedTestWritesNothing proves through RunWithEffects that Ctrl+C during the connection test, at ssh's host
 // key or password prompt, ends the workflow as cancelled, non-zero, with no host entry.
 func TestSSHConnectionInterruptedTestWritesNothing(t *testing.T) {
-	enableSSHIntegration(t)
 	home := t.TempDir()
 	var calls []manager.Process
 	interrupts := make(chan os.Signal, 1)
@@ -303,7 +298,6 @@ func TestSSHConnectionInterruptedTestWritesNothing(t *testing.T) {
 // TestSSHConnectionKeepsConfirmedHostKeyAfterFailedPassword proves through RunWithEffects that a host key ssh stored after the user
 // confirmed it stays in the agent's known_hosts when the password is then refused, as ADR-0011 decides.
 func TestSSHConnectionKeepsConfirmedHostKeyAfterFailedPassword(t *testing.T) {
-	enableSSHIntegration(t)
 	home := t.TempDir()
 	var calls []manager.Process
 	trusted := "worker ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n"
@@ -327,7 +321,6 @@ func TestSSHConnectionKeepsConfirmedHostKeyAfterFailedPassword(t *testing.T) {
 // command reports its own non-zero status after authentication, runs the alias unit, which for an address asks for the alias and
 // writes its host entry, and exits zero with a message that the password test does not prove the dedicated key is authorized.
 func TestSSHConnectionSuccessAddsAliasEntry(t *testing.T) {
-	enableSSHIntegration(t)
 	for _, remote := range []int{0, 1} {
 		t.Run("remote status "+strconv.Itoa(remote), func(t *testing.T) {
 			home := t.TempDir()
@@ -351,7 +344,6 @@ func TestSSHConnectionSuccessAddsAliasEntry(t *testing.T) {
 // TestSSHConnectionAliasFailureAfterSuccessExitsNonZero proves through RunWithEffects that when the alias question is cancelled after
 // a successful connection test, the workflow writes no entry, names the retained key, and exits non-zero.
 func TestSSHConnectionAliasFailureAfterSuccessExitsNonZero(t *testing.T) {
-	enableSSHIntegration(t)
 	home := t.TempDir()
 	var calls []manager.Process
 	e := sshFlowEffects(t, home, strings.NewReader("yes\n"), connectWith("", nil), &calls)
@@ -369,7 +361,6 @@ func TestSSHConnectionAliasFailureAfterSuccessExitsNonZero(t *testing.T) {
 // key confirmation prompt, the agent's known_hosts as the only trust store, and no silent host key updates. It replays the arguments
 // that RunWithEffects passed to the connection test with ssh -G prepended, which only resolves configuration and connects nowhere.
 func TestSSHConnectionOptionsResolveThroughRealOpenSSH(t *testing.T) {
-	enableSSHIntegration(t)
 	home := t.TempDir()
 	var calls []manager.Process
 	e := sshFlowEffects(t, home, strings.NewReader("yes\n"), connectWith("", nil), &calls)

@@ -10,25 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
 )
 
-// enableSSHConfig exposes the staged workflow only within a test of the public CLI boundary.
-func enableSSHConfig(t *testing.T) {
-	t.Helper()
-	old := catalog.Default.Integrations["ssh"]
-	integration := old
-	workflow := integration.ConfigWorkflows[""]
-	workflow.Delivered = true
-	integration.ConfigWorkflows = map[string]catalog.ConfigWorkflow{"": workflow}
-	catalog.Default.Integrations["ssh"] = integration
-	t.Cleanup(func() { catalog.Default.Integrations["ssh"] = old })
-}
-
 // TestSSHConfigValidatesDestination proves required literal destinations and usernames are validated and normalized through cli.Parse before any effects.
 func TestSSHConfigValidatesDestination(t *testing.T) {
-	enableSSHConfig(t)
 	for _, tc := range []struct{ host, user, want string }{
 		{"192.0.2.7", "alice", "192.0.2.7"},
 		{"2001:0DB8:0:0:0:0:0:1", "alice", "2001:db8::1"},
@@ -74,7 +60,6 @@ func TestSSHConfigValidatesDestination(t *testing.T) {
 
 // TestSSHConfigRejectsForeignOptions proves a foreign config option receives an accurate SSH diagnostic before Podman through cli.Parse and the host CLI boundary.
 func TestSSHConfigRejectsForeignOptions(t *testing.T) {
-	enableSSHConfig(t)
 	args := []string{"integrations", "config", "agent01", "ssh", "--host", "worker", "--user", "alice", "--name", "A"}
 	want := `ssh config does not support option "--name"`
 	if _, err := cli.Parse(args, "default"); err == nil || err.Error() != want {
@@ -89,7 +74,6 @@ func TestSSHConfigRejectsForeignOptions(t *testing.T) {
 
 // TestSSHConfigRequiresTerminalAndRunsAsAgent proves the staged key workflow needs both terminal streams and forwards only explicit values as agent through the host CLI/fake-Podman seam.
 func TestSSHConfigRequiresTerminalAndRunsAsAgent(t *testing.T) {
-	enableSSHConfig(t)
 	for _, terminals := range [][2]bool{{false, false}, {true, false}, {false, true}, {true, true}} {
 		t.Run(fmt.Sprint(terminals), func(t *testing.T) {
 			f := sandboxStateFixture(t)
@@ -125,7 +109,6 @@ func TestSSHConfigRequiresTerminalAndRunsAsAgent(t *testing.T) {
 
 // TestSSHConfigRefusalsPrecedeTerminal proves existing sandbox and manager refusals keep their order and messages through the host CLI/fake-Podman seam.
 func TestSSHConfigRefusalsPrecedeTerminal(t *testing.T) {
-	enableSSHConfig(t)
 	for _, tc := range []struct {
 		name      string
 		configure func(*fixture)
@@ -166,17 +149,18 @@ func TestSSHConfigRefusalsPrecedeTerminal(t *testing.T) {
 	}
 }
 
-// TestGitConfigRejectsStagedSSHOptions proves staged SSH options remain unknown for delivered Git workflows without Podman calls through cli.Parse and the host CLI boundary.
-func TestGitConfigRejectsStagedSSHOptions(t *testing.T) {
+// TestGitConfigRejectsSSHOptions proves the SSH workflow's options get an accurate Git diagnostic without Podman calls through
+// cli.Parse and the host CLI boundary: the option is named for git identity, which takes other options, and git credentials takes none.
+func TestGitConfigRejectsSSHOptions(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args []string
 		want string
 	}{
-		{"identity-host", []string{"git", "identity", "--name", "A", "--email", "B", "--host", "x"}, `unknown option "--host"`},
-		{"credentials-user", []string{"git", "credentials", "--user", "x"}, `unknown option "--user"`},
-		{"host-before-workflow", []string{"git", "--host=x", "identity", "--name", "A", "--email", "B"}, `unknown option "--host=x"`},
-		{"user-before-integration", []string{"--user", "x", "git", "credentials"}, `unknown option "--user"`},
+		{"identity-host", []string{"git", "identity", "--name", "A", "--email", "B", "--host", "x"}, `git identity does not support option "--host"`},
+		{"credentials-user", []string{"git", "credentials", "--user", "x"}, `git credentials takes no options`},
+		{"host-before-workflow", []string{"git", "--host=x", "identity", "--name", "A", "--email", "B"}, `git identity does not support option "--host"`},
+		{"user-before-integration", []string{"--user", "x", "git", "credentials"}, `git credentials takes no options`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append([]string{"integrations", "config", "agent01"}, tc.args...)
@@ -192,14 +176,8 @@ func TestGitConfigRejectsStagedSSHOptions(t *testing.T) {
 	}
 }
 
-// TestSSHConfigStepOneAndDeliveryGateCallNoPodman proves invalid inputs and the undelivered default refuse before external calls through the host CLI boundary.
-func TestSSHConfigStepOneAndDeliveryGateCallNoPodman(t *testing.T) {
-	f := sandboxStateFixture(t)
-	status, output, calls := f.run(t, "integrations", "config", "agent01", "ssh", "--host", "worker", "--user", "alice")
-	if status == 0 || len(calls) != 0 || !strings.Contains(output, `unknown integration "ssh"`) {
-		t.Fatalf("status=%d calls=%q output=%s", status, calls, output)
-	}
-	enableSSHConfig(t)
+// TestSSHConfigStepOneCallsNoPodman proves missing or malformed SSH inputs refuse before external calls through the host CLI boundary.
+func TestSSHConfigStepOneCallsNoPodman(t *testing.T) {
 	for _, tail := range [][]string{{"--host", "worker"}, {"--user", "alice"}, {"--host", "bad host", "--user", "alice"}, {"--host", "worker", "--user", "bad\nuser"}} {
 		f := sandboxStateFixture(t)
 		status, output, calls := f.run(t, append([]string{"integrations", "config", "agent01", "ssh"}, tail...)...)
@@ -211,7 +189,6 @@ func TestSSHConfigStepOneAndDeliveryGateCallNoPodman(t *testing.T) {
 
 // TestSSHConfigSelectsOneWindowsTarget proves the staged workflow binds every sandbox query and both manager identities to one machine through the host CLI seam.
 func TestSSHConfigSelectsOneWindowsTarget(t *testing.T) {
-	enableSSHConfig(t)
 	f := windowsHost(t)
 	configureSandboxQueries(f, "default", "--connection chosen ")
 	f.responses["--connection chosen container exists "+shellContainer] = response{}

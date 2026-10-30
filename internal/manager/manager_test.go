@@ -268,7 +268,7 @@ func TestMalformedManagerRequestsNeverStartPrograms(t *testing.T) {
 		for _, identity := range []manager.Identity{{UID: 0, GID: 0}, {UID: 1000, GID: 1000}} {
 			var stdout, stderr bytes.Buffer
 			status := manager.RunWithEffects(args, &stdout, &stderr, noProcesses(t, identity))
-			if status != 2 || stdout.Len() != 0 || stderr.String() != "usage: sandboxed-agents-manager version | sessions | ssh-host-key | ssh-authorize KEY | ssh-deauthorize | integrations config git credentials | integrations config git identity --name NAME --email EMAIL | integrations login azdo --organization URL | integrations login azure device-code | integrations login azure browser | integrations login github device-code\n" {
+			if status != 2 || stdout.Len() != 0 || stderr.String() != "usage: sandboxed-agents-manager version | sessions | ssh-host-key | ssh-authorize KEY | ssh-deauthorize | integrations config git credentials | integrations config git identity --name NAME --email EMAIL | integrations config ssh --host HOST --user USER | integrations login azdo --organization URL | integrations login azure device-code | integrations login azure browser | integrations login github device-code\n" {
 				t.Errorf("args=%q identity=%+v status=%d stdout=%q stderr=%q; want usage error", args, identity, status, stdout.String(), stderr.String())
 			}
 		}
