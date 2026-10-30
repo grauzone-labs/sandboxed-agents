@@ -789,6 +789,42 @@ func TestSSHSetupRepeatRestoresIncludeKeepingUserConfiguration(t *testing.T) {
 	}
 }
 
+// TestSSHSetupRepeatRecognisesIndentedInclude proves a repeated install treats
+// an indented managed Include, which OpenSSH accepts, as present: it reports the
+// setup unchanged without writing a duplicate, and removal still deletes the
+// indented line, through the built CLI and fake Podman and SSH seams.
+func TestSSHSetupRepeatRecognisesIndentedInclude(t *testing.T) {
+	sshSetupHarness(t, installResponses())
+	if status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo", "--install"); status != 0 {
+		t.Fatalf("install=%d %q %q", status, stdout, stderr)
+	}
+	userConfig := filepath.Join(os.Getenv("HOME"), ".ssh", "config")
+	include, err := os.ReadFile(userConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("# user bytes stay\nHost personal\n  HostName example.com\n")
+	indented := append([]byte(" \t"+strings.TrimSuffix(string(include), "\n")+"  \n"), original...)
+	if err := os.WriteFile(userConfig, indented, 0600); err != nil {
+		t.Fatal(err)
+	}
+	before := setupFiles(t)
+	status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo", "--install")
+	if status != 0 || stdout != "SSH setup for demo is unchanged\n" {
+		t.Fatalf("repeat=%d %q %q", status, stdout, stderr)
+	}
+	if after := setupFiles(t); !reflect.DeepEqual(before, after) {
+		t.Fatalf("repeat changed files before=%v after=%v", before, after)
+	}
+	if status, stdout, stderr := sshSetupRun(t, "ssh-config", "demo", "--remove"); status != 0 {
+		t.Fatalf("remove=%d %q %q", status, stdout, stderr)
+	}
+	data, err := os.ReadFile(userConfig)
+	if err != nil || string(data) != string(original) {
+		t.Fatalf("config after removal=%q error=%v want=%q", data, err, original)
+	}
+}
+
 // TestSSHSetupConflictsAndQueryFailuresWriteNothing proves resolved-host conflicts, query errors, and manager failures refuse before SSH file writes through the built CLI and fake SSH seam.
 func TestSSHSetupConflictsAndQueryFailuresWriteNothing(t *testing.T) {
 	for _, kind := range []string{"configured-host", "query-failure", "manager-unavailable"} {

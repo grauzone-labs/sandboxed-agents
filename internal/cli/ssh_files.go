@@ -86,8 +86,10 @@ func (s sshSetup) includeLine(expandTokens bool) string {
 
 // updateConfiguration rewrites the group's managed configuration from its host
 // entries and adds includeLine to the user's SSH configuration when it is
-// missing, reporting whether it added the line. An empty line requests removal
-// cleanup, preserving any Include the user deleted themselves.
+// missing, reporting whether it added the line. A user line counts as the
+// managed Include when it matches either spelling after surrounding whitespace
+// is trimmed, as OpenSSH accepts an indented Include. An empty line requests
+// removal cleanup, preserving any Include the user deleted themselves.
 func (s sshSetup) updateConfiguration(includeLine string) (bool, error) {
 	entries, err := os.ReadDir(s.groupDir)
 	if err != nil && !os.IsNotExist(err) {
@@ -114,7 +116,7 @@ func (s sshSetup) updateConfiguration(includeLine string) (bool, error) {
 	var withoutInclude bytes.Buffer
 	hasInclude := false
 	for _, existing := range bytes.SplitAfter(user, []byte("\n")) {
-		text := strings.TrimSuffix(strings.TrimSuffix(string(existing), "\n"), "\r")
+		text := strings.TrimSpace(string(existing))
 		if text == strings.TrimSuffix(s.includeLine(false), "\n") || text == strings.TrimSuffix(s.includeLine(true), "\n") {
 			hasInclude = true
 			continue
