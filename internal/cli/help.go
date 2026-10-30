@@ -55,7 +55,7 @@ var sandboxArgument = helpRow{"NAME", "The sandbox name."}
 var forceSessions = helpOption{name: "force", text: "Proceed although agent sessions are running, and end them."}
 
 // forceAgentSession describes --force of the agent commands that end the agent's own session.
-var forceAgentSession = helpOption{name: "force", text: "Proceed although the agent's session runs, and end it."}
+var forceAgentSession = helpOption{name: "force", text: "Repair or remove an interrupted or mismatched installation, or proceed although the agent's session runs, and end it."}
 
 // sshConfigOption describes --ssh-config of the commands that start a sandbox.
 var sshConfigOption = helpOption{name: "ssh-config", text: "Install the opt-in SSH setup once the sandbox runs."}
