@@ -242,9 +242,7 @@ The SSH integration connects the sandbox to a remote machine you control. It pre
 sandboxed-agents integrations config agent01 ssh --host build.example --user alice
 ```
 
-`--host HOST` is an IPv4 address, an IPv6 address, or a machine name, and `--user USER` is the remote username. Both are required. The [command reference](command-reference.md#planned-ssh-integration) gives the exact forms the options accept and the checks that run before the workflow starts.
-
-The command is staged: until the delivered catalog lists it, the executable still answers `ssh` as an unknown integration. The [command reference](command-reference.md#planned-ssh-integration) says when that changes.
+`--host HOST` is an IPv4 address, an IPv6 address, or a machine name, and `--user USER` is the remote username. Both are required. The [command reference](command-reference.md#ssh-integration) gives the exact forms the options accept and the checks that run before the workflow starts.
 
 This is the sandbox's outbound connection to a machine you name. It is not the [SSH setup](ssh.md), which lets an editor on the host connect to the sandbox ([ADR 0002](adr/0002-ssh-access-with-opt-in-host-setup.md)); the two share nothing. The SSH integration reads and writes only `/home/agent/.ssh/` in the sandbox's home volume. It never reads, writes, or changes your host's SSH files, `known_hosts`, or agent, and it does not connect the host to the sandbox.
 
