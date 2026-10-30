@@ -267,8 +267,8 @@ func TestSSHAliasPreservesExistingConfiguration(t *testing.T) {
 
 // TestSSHAliasConflictWritesNothingAndAsksAgain proves an alias that a Host pattern other than *, a Host glob, or a Match host or originalhost
 // block claims by explicitly setting hostname, user, identityfile, identitiesonly, or userknownhostsfile, even to the intended value or the
-// client default, writes nothing, is reported, and asks for another alias name, at the configureSSHAlias seam with scripted ssh -vv -G
-// diagnostics and placeholder probes.
+// client default, writes nothing, is reported with that option, and asks for another alias name, at the configureSSHAlias seam with
+// scripted ssh -vvv -G diagnostics that name a block absent from the hand-written file, so the placeholder probes name the option.
 func TestSSHAliasConflictWritesNothingAndAsksAgain(t *testing.T) {
 	for _, test := range []struct {
 		name, target, answers, claimed, diagnostics, changed, alias string
@@ -307,26 +307,67 @@ func TestSSHAliasConflictWritesNothingAndAsksAgain(t *testing.T) {
 	}
 }
 
-// TestSSHAliasAcceptsSpecificStanzaWithUnrelatedOptions proves a Host ALIAS, Host glob, or Match host block that matches the alias but changes
-// none of hostname, user, identityfile, identitiesonly, or userknownhostsfile, such as one setting only Port, does not claim the alias, at the
-// configureSSHAlias seam with scripted ssh -vv -G diagnostics and placeholder probes that resolve to their own values.
+// TestSSHAliasAcceptsSpecificStanzaWithUnrelatedOptions proves a narrower Host glob or a Match host block that matches the alias but sets none
+// of hostname, user, identityfile, identitiesonly, or userknownhostsfile, such as one setting only Port, does not claim the alias, at the
+// configureSSHAlias seam with scripted ssh -vvv -G diagnostics that locate the block in the configuration file.
 func TestSSHAliasAcceptsSpecificStanzaWithUnrelatedOptions(t *testing.T) {
-	for name, diagnostics := range map[string]string{
-		"Port-only Host ALIAS": "debug1: CONFIG line 1: Applying options for build.example\n",
-		"Port-only Host glob":  "debug1: CONFIG line 1: Applying options for build.*\n",
-		"Port-only Match host": "debug2: checking match for 'host build.example' host build.example originally build.example\ndebug2: match found\n",
+	for name, test := range map[string]struct{ existing, diagnostics string }{
+		"Port-only Host glob":  {"Host build.*\n    Port 2222\n", "debug1: CONFIG line 1: Applying options for build.*\n"},
+		"Port-only Match host": {"Match host build.example\n    Port 2222\n", "debug2: checking match for 'host build.example' host build.example originally build.example\ndebug3: CONFIG line 1: matched 'host \"build.example\"'\ndebug2: match found\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
-			existing := "Host build.example\n    Port 2222\n"
+			existing := test.existing
 			config := writeSSHConfig(t, home, existing, 0600)
-			resolve := claimAlias(acceptEntry("build.example", "alice", home), "build.example", strings.ReplaceAll(diagnostics, "CONFIG", config), "port 2222")
+			resolve := claimAlias(acceptEntry("build.example", "alice", home), "build.example", strings.ReplaceAll(test.diagnostics, "CONFIG", config), "port 2222")
 			var stderr bytes.Buffer
 			alias, err := configureSSHAlias("build.example", "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, strings.NewReader(""), resolve, nil))
 			if err != nil || alias != "build.example" || strings.Contains(stderr.String(), claimedText) {
 				t.Fatalf("alias=%q error=%v diagnostics=%q", alias, err, stderr.String())
 			}
 			if got := readConfig(t, config); got != existing+"\n"+aliasEntry("build.example", "build.example", "alice", home) {
+				t.Fatalf("config=%q", got)
+			}
+		})
+	}
+}
+
+// TestSSHAliasClaimsLiteralHostBlockWithAnyOption proves a hand-written Host block whose matching pattern is the alias itself claims the
+// alias when it sets any option, even only Port, so nothing is written and another alias name is asked for, also for a machine name and
+// when the block's source cannot be read, while an empty Host ALIAS block claims nothing, at the configureSSHAlias seam with scripted
+// ssh -vvv -G diagnostics that locate the block.
+func TestSSHAliasClaimsLiteralHostBlockWithAnyOption(t *testing.T) {
+	for _, test := range []struct {
+		name, target, existing, location, answers, claimed, keywords, alias string
+	}{
+		{"Port-only Host ALIAS", "192.0.2.10", "Host lab\n    Port 2222\n    ServerAliveInterval 30\n", "CONFIG line 1", "lab\nlab2\n", "lab", "Port, ServerAliveInterval", "lab2"},
+		{"Port-only machine name", "build.example", "# hand-written\nHost build.example\n    Port 2222\n", "CONFIG line 2", "build2\n", "build.example", "Port", "build2"},
+		{"literal pattern beside a glob", "192.0.2.10", "Host lab-* lab\n    Port 2222\n", "CONFIG line 1", "lab\nlab2\n", "lab", "Port", "lab2"},
+		{"unreadable Host ALIAS source", "192.0.2.10", "# hand-written\n", "/outside/home/config line 4", "lab\nlab2\n", "lab", "options at /outside/home/config line 4", "lab2"},
+		{"empty Host ALIAS", "192.0.2.10", "Host lab\n", "CONFIG line 1", "lab\n", "", "", "lab"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			config := writeSSHConfig(t, home, test.existing, 0600)
+			pattern := test.claimed
+			if pattern == "" {
+				pattern = test.alias
+			}
+			diagnostics := "debug1: " + strings.ReplaceAll(test.location, "CONFIG", config) + ": Applying options for " + pattern + "\n"
+			resolve := claimAlias(acceptEntry(test.target, "alice", home), pattern, diagnostics, "")
+			var stderr bytes.Buffer
+			alias, err := configureSSHAlias(test.target, "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, strings.NewReader(test.answers), resolve, nil))
+			if err != nil || alias != test.alias {
+				t.Fatalf("alias=%q error=%v diagnostics=%q", alias, err, stderr.String())
+			}
+			if test.claimed == "" {
+				if strings.Contains(stderr.String(), claimedText) {
+					t.Fatalf("empty block claimed the alias: %q", stderr.String())
+				}
+			} else if !strings.Contains(stderr.String(), claimMessage(test.claimed, test.keywords)) || !strings.Contains(stderr.String(), "SSH alias name for "+test.target) {
+				t.Fatalf("conflict not reported or no new question: %q", stderr.String())
+			}
+			if got := readConfig(t, config); got != test.existing+"\n"+aliasEntry(test.alias, test.target, "alice", home) {
 				t.Fatalf("config=%q", got)
 			}
 		})
@@ -720,8 +761,9 @@ func realSSHEffects(t *testing.T, home string, stdin io.Reader) Effects {
 // Match Host or Match OriginalHost and also after a quoted Match exec command, explicitly setting one of those options, even to the
 // intended value or to the value ssh -G -F none reports, asks for another alias with the neutral claim message, also when an earlier
 // Host * block masks that setting, and that a negated Host * !foo block setting one of them claims every alias it matches, so only foo
-// is accepted; that such a block setting only Port, or Match all, does not, also beside a Host * block that sets one of those options to
-// the intended value, so a machine name is used directly without a question; that universal Host ?*, quoted Host "*", and Match host *
+// is accepted; that a literal Host ALIAS block setting only Port and ServerAliveInterval also asks for another alias, while an empty
+// Host ALIAS block does not; that a Host glob or Match host block setting only Port, or Match all, does not claim the alias, also beside a
+// Host * block that sets one of those options to the intended value, so a machine name is used directly without a question; that universal Host ?*, quoted Host "*", and Match host *
 // blocks setting the intended value claim nothing; and that a valid 254-character machine name with its trailing DNS root dot is used
 // directly as its own alias without a question. It exercises the configureSSHAlias seam with Effects.Start running the real
 // /usr/bin/ssh -G as the process seam; the Match exec fixture runs only the shell builtin true.
@@ -737,7 +779,8 @@ func TestSSHAliasResolvesThroughRealOpenSSH(t *testing.T) {
 		{"Host star other user", "192.0.2.10", "alice", "Host *\n    User bob\n", "lab\nlab2\n", "", "user", false},
 		{"Host star IdentitiesOnly no", "192.0.2.10", "alice", "Host *\n    IdentitiesOnly no\n", "lab\nlab2\n", "", "identitiesonly", false},
 		{"rerun with the same entry", "192.0.2.10", "alice", "ENTRY", "lab\nlab2\n", "lab2", "", true},
-		{"Port-only Host ALIAS", "192.0.2.10", "alice", "Host lab\n    Port 2222\n    ServerAliveInterval 30\n", "lab\n", "lab", "", false},
+		{"Port-only Host ALIAS", "192.0.2.10", "alice", "Host lab\n    Port 2222\n    ServerAliveInterval 30\n", "lab\nlab2\n", "lab2", "", true},
+		{"empty Host ALIAS", "192.0.2.10", "alice", "Host lab\n", "lab\n", "lab", "", false},
 		{"Host ALIAS with the intended user", "192.0.2.10", "alice", "Host lab\n    User alice\n", "lab\nlab2\n", "lab2", "", true},
 		{"Port-only Host glob", "192.0.2.10", "alice", "Host lab-*\n    Port 2\n", "lab-1\n", "lab-1", "", false},
 		{"Host glob with IdentitiesOnly", "192.0.2.10", "alice", "Host lab-*\n    IdentitiesOnly yes\n", "lab-1\nlab2\n", "lab2", "", true},
@@ -813,21 +856,24 @@ func TestSSHAliasResolvesThroughRealOpenSSH(t *testing.T) {
 	}
 }
 
-// TestSSHAliasReadsIncludedStanzasThroughRealOpenSSH proves with the local OpenSSH client, where installed, that a Host lab block from an
-// included file inside the agent's home claims lab when it sets User and not when it sets only Port, and that a Host lab block included from
-// outside the home, or a Host lab block whose body includes its options, still claims lab, also when an earlier Host * User alice masks the
-// User carol of a Host lab block included from outside the home, so lab2 is chosen. It exercises the configureSSHAlias seam with
+// TestSSHAliasReadsIncludedStanzasThroughRealOpenSSH proves with the local OpenSSH client, where installed, that a literal Host lab block
+// from an included file inside the agent's home claims lab when it sets User or only Port, while a Port-only Host la? glob there does not;
+// that a Host lab block included from outside the home claims lab, also when an earlier Host * User alice masks its User carol; and that
+// a Host lab block whose body includes its options claims lab by its Include, while a Host la? glob whose body includes User claims lab
+// by that User, so lab2 is chosen after each claim with the claiming keywords reported. It exercises the configureSSHAlias seam with
 // Effects.Start running the real /usr/bin/ssh -G as the process seam.
 func TestSSHAliasReadsIncludedStanzasThroughRealOpenSSH(t *testing.T) {
 	for _, test := range []struct {
-		name, config, included, answers, alias string
-		outside, claimed                       bool
+		name, config, included, answers, alias, keywords string
+		outside                                          bool
 	}{
-		{"home include setting User", "Include INCLUDED\n", "Host lab\n    User carol\n", "lab\nlab2\n", "lab2", false, true},
-		{"home include setting only Port", "Include INCLUDED\n", "Host lab\n    Port 2222\n", "lab\n", "lab", false, false},
-		{"include outside the home setting User", "Include INCLUDED\n", "Host lab\n    User carol\n", "lab\nlab2\n", "lab2", true, true},
-		{"Include inside a Host lab block", "Host lab\n    Include INCLUDED\n", "User carol\n", "lab\nlab2\n", "lab2", false, true},
-		{"Host star masking an outside-home Host lab", "Host *\n    User alice\nInclude INCLUDED\n", "Host lab\n    User carol\n", "lab\nlab2\n", "lab2", true, true},
+		{"home include setting User", "Include INCLUDED\n", "Host lab\n    User carol\n", "lab\nlab2\n", "lab2", "User", false},
+		{"home include setting only Port", "Include INCLUDED\n", "Host lab\n    Port 2222\n", "lab\nlab2\n", "lab2", "Port", false},
+		{"home include with a Port-only glob", "Include INCLUDED\n", "Host la?\n    Port 2222\n", "lab\n", "lab", "", false},
+		{"include outside the home setting User", "Include INCLUDED\n", "Host lab\n    User carol\n", "lab\nlab2\n", "lab2", "User", true},
+		{"Include inside a Host lab block", "Host lab\n    Include INCLUDED\n", "User carol\n", "lab\nlab2\n", "lab2", "Include", false},
+		{"Include inside a Host lab glob", "Host la?\n    Include INCLUDED\n", "User carol\n", "lab\nlab2\n", "lab2", "User", false},
+		{"Host star masking an outside-home Host lab", "Host *\n    User alice\nInclude INCLUDED\n", "Host lab\n    User carol\n", "lab\nlab2\n", "lab2", "User", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -845,7 +891,7 @@ func TestSSHAliasReadsIncludedStanzasThroughRealOpenSSH(t *testing.T) {
 			config := writeSSHConfig(t, home, existing, 0600)
 			var stderr bytes.Buffer
 			alias, err := configureSSHAlias("192.0.2.10", "alice", "id_ed25519_remote_test", &stderr, realSSHEffects(t, home, strings.NewReader(test.answers)))
-			if err != nil || alias != test.alias || test.claimed != strings.Contains(stderr.String(), claimMessage("lab", "User")) {
+			if err != nil || alias != test.alias || (test.keywords == "") == strings.Contains(stderr.String(), claimedText) || (test.keywords != "" && !strings.Contains(stderr.String(), claimMessage("lab", test.keywords))) {
 				t.Fatalf("alias=%q error=%v diagnostics=%q", alias, err, stderr.String())
 			}
 			if got := readConfig(t, config); got != existing+"\n"+aliasEntry(test.alias, "192.0.2.10", "alice", home) {
