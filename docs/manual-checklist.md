@@ -209,6 +209,21 @@ Identifier `azdo-token`. Follow [Manual Azure DevOps login check](integrations.m
 
 The token stays until [Final cleanup](#final-cleanup).
 
+### SSH connection
+
+This item has no identifier and is not part of [the record](#the-record): the record's identifiers are fixed, and the connection flow is not yet one of them. Run it as a person for every change to the [SSH integration](integrations.md#ssh), and note the result in the run's notes. Follow [Manual SSH connection check](integrations.md#manual-ssh-connection-check) in a short-lived sandbox of its own, once the command is available (see [Planned SSH integration](command-reference.md#planned-ssh-integration)). You need a remote machine that you control, with an account that accepts password authentication, and you may use no other machine: the check sends a password and adds a key to a login.
+
+1. Create the sandbox with `sandboxed-agents up chk-ssh`. In `shell chk-ssh`, note the contents of `/home/agent/.ssh/`. Run `sandboxed-agents integrations config chk-ssh ssh --host HOST --user USER </dev/null`. **Expected:** it fails with `ssh config needs an interactive terminal` and a non-zero status, and the directory has not changed.
+2. Run the command with a terminal. **Expected:** one `ssh-ed25519` line, the key location on `Dedicated SSH key location: ...`, and the question `Test the connection to USER@HOST with password authentication now? ssh asks for the password. [y/N]:`. The remote machine's authentication log shows no connection from the sandbox.
+3. Answer `n`. **Expected:** `SSH connection test declined; no connection made, no host entry written, dedicated key retained at ...`, a non-zero status, no new connection in the remote log, no `Host` entry in `/home/agent/.ssh/config`, and the key files still present.
+4. Run the command again and answer `y`. **Expected:** `ssh` shows the host key's fingerprint and asks for confirmation before it asks for a password; it equals the fingerprint of the remote machine's host key. Confirm it, enter a wrong password until `ssh` gives up. **Expected:** `SSH connection test failed: authentication as USER failed; no host entry written, SSH configuration unchanged, dedicated key retained at ...`, a non-zero status, and no `Host` entry. The remote host key is in `/home/agent/.ssh/known_hosts`.
+5. Run the command a third time, answer `y`, and enter the right password. **Expected:** nothing is echoed while you type; for an IP address `HOST` the command asks for an alias name, and you give one; the command exits zero and prints the `SSH alias ... configured` report that says `key-based login is not verified`; `ssh -G ALIAS` in the shell shows the remote host, user, and dedicated key. The password appears nowhere in the output.
+6. Run `ssh ALIAS` in the shell. **Expected:** it does not log in with the key. Add the printed public key to the remote account's `~/.ssh/authorized_keys`, and run it again. **Expected:** it logs in without a password.
+7. Compare your host's `~/.ssh` with its state before step 1. **Expected:** unchanged.
+8. Remove the test key from the remote account's `authorized_keys`, then run `sandboxed-agents remove chk-ssh --volumes`.
+
+Never record a password or the private key.
+
 ### T3 Connect login and link
 
 Identifier `t3-connect-link`. One T3 account login for the T3 Code Tool, ending in the sandbox's environment visible in the T3 mobile app, then unlinked and signed out again. This is a T3 account, not an agent provider login; the agent logins above stay as they are. The [Tools page](tools.md#logins-and-pairing) explains why the account login, the QR pairing, and an agent provider login differ. You need a T3 account signed in on a phone with the T3 mobile app, and the sandbox needs outbound access to TCP and UDP port 7844.
