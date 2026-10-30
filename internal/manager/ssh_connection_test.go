@@ -190,6 +190,85 @@ func TestSSHIntegrationCancelsOnInterruptAtApproval(t *testing.T) {
 	}
 }
 
+// TestSSHIntegrationCancelsOnInterruptDuringTest proves Ctrl+C during the connection test cancels the flow even when ssh
+// then exits with a status other than 255, which would otherwise count as a login: the flow says the test was cancelled
+// with the after-attempt consequences, queries no alias, writes no SSH configuration, exits non-zero, and catches the
+// interrupt only around the question and the test, through RunWithEffects with the fake NotifyInterrupt seam and a fake
+// Start whose connection test delivers the interrupt and returns exit status 1.
+func TestSSHIntegrationCancelsOnInterruptDuringTest(t *testing.T) {
+	home := t.TempDir()
+	var calls []manager.Process
+	e := sshKeyEffects(t, home, &calls)
+	keygen := e.Start
+	interrupts := make(chan os.Signal, 1)
+	tests := 0
+	e.Start = func(p manager.Process) error {
+		switch {
+		case p.Program == "/usr/bin/ssh-keygen":
+			return keygen(p)
+		case slices.Contains(p.Args, "-G"):
+			t.Fatalf("alias queried after an interrupted connection test: %q", p.Args)
+		}
+		tests++
+		interrupts <- os.Interrupt
+		return sshExit(1)
+	}
+	watches, restores := 0, 0
+	e.NotifyInterrupt = func() (<-chan os.Signal, func()) {
+		watches++
+		return interrupts, func() { restores++ }
+	}
+	e.Stdin = strings.NewReader("yes\n")
+	var out, diag bytes.Buffer
+	status := manager.RunWithEffects([]string{"integrations", "config", "ssh", "--host", "build.example", "--user", "alice"}, &out, &diag, e)
+	if status != 1 || tests != 1 {
+		t.Fatalf("status=%d tests=%d diagnostics=%s", status, tests, diag.String())
+	}
+	if watches != 2 || restores != 2 {
+		t.Fatalf("interrupt watches=%d restores=%d, want one each around the question and the test", watches, restores)
+	}
+	keys, _ := filepath.Glob(filepath.Join(home, ".ssh", "id_ed25519_remote_*"))
+	if len(keys) != 2 {
+		t.Fatalf("dedicated key not retained: %q", keys)
+	}
+	want := "SSH connection test cancelled; no host entry written, SSH configuration unchanged, dedicated key retained at " + strings.TrimSuffix(keys[0], ".pub") + "\n"
+	if !strings.HasSuffix(diag.String(), want) {
+		t.Fatalf("diagnostics do not end with %q: %s", want, diag.String())
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".ssh", "config")); !os.IsNotExist(err) {
+		t.Fatalf("config written after an interrupted connection test: %v", err)
+	}
+}
+
+// TestSSHIntegrationReportsSSHThatCannotStart proves a connection test whose ssh cannot be started, an error without an
+// exit status, says the test could not run ssh, queries no alias, writes no SSH configuration, keeps the dedicated key,
+// and exits non-zero, through RunWithEffects with a fake Start that fails the connection test before ssh runs.
+func TestSSHIntegrationReportsSSHThatCannotStart(t *testing.T) {
+	home := t.TempDir()
+	tests := 0
+	status, _, diag, _ := runSSHFlow(t, home, "build.example", "alice", "yes\n", func(p manager.Process) error {
+		if slices.Contains(p.Args, "-G") {
+			t.Fatalf("alias queried after ssh could not start: %q", p.Args)
+		}
+		tests++
+		return &os.PathError{Op: "fork/exec", Path: p.Program, Err: os.ErrNotExist}
+	})
+	if status != 1 || tests != 1 {
+		t.Fatalf("status=%d tests=%d diagnostics=%s", status, tests, diag)
+	}
+	keys, _ := filepath.Glob(filepath.Join(home, ".ssh", "id_ed25519_remote_*"))
+	if len(keys) != 2 {
+		t.Fatalf("dedicated key not retained: %q", keys)
+	}
+	want := "SSH connection test could not run ssh; no host entry written, SSH configuration unchanged, dedicated key retained at " + strings.TrimSuffix(keys[0], ".pub") + "\n"
+	if !strings.HasSuffix(diag, want) {
+		t.Fatalf("diagnostics do not end with %q: %s", want, diag)
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".ssh", "config")); !os.IsNotExist(err) {
+		t.Fatalf("config written after ssh could not start: %v", err)
+	}
+}
+
 // sshExit is a recorded ssh exit status at the process seam, as exec reports one.
 type sshExit int
 
