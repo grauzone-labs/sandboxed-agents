@@ -50,7 +50,7 @@ func TestAgentSessionStartsOnceAndAttachesWithoutLock(t *testing.T) {
 		if p.Program != "tmux" || p.Identity != (manager.Identity{UID: 1000, GID: 1000}) || !reflect.DeepEqual(p.Args[:4], []string{"-L", "sandboxed-agents", "-f", "/dev/null"}) {
 			t.Fatalf("process=%+v", p)
 		}
-		switch p.Args[4] {
+		switch tmuxCommand(p.Args) {
 		case "list-sessions":
 			if running {
 				io.WriteString(p.Stdout, "codex\n")
@@ -62,7 +62,7 @@ func TestAgentSessionStartsOnceAndAttachesWithoutLock(t *testing.T) {
 			}
 			starts++
 			running = true
-		case "-u":
+		case "attach-session":
 			// The attaching client assumes a UTF-8 terminal with 256 colours whatever TERM and locale reach it in the sandbox.
 			if !reflect.DeepEqual(p.Args[4:], []string{"-u", "-2", "attach-session", "-t", "=codex"}) {
 				t.Fatal(p.Args)
@@ -98,7 +98,7 @@ func TestAgentInstallationGuardsItsOwnSession(t *testing.T) {
 					}
 					return npm(p)
 				}
-				switch p.Args[4] {
+				switch tmuxCommand(p.Args) {
 				case "list-sessions":
 					io.WriteString(p.Stdout, "claude\n")
 					if running {
@@ -187,7 +187,7 @@ func TestAgentSessionStopIsIdempotent(t *testing.T) {
 		if p.Program != "tmux" {
 			t.Fatalf("process=%+v", p)
 		}
-		switch p.Args[4] {
+		switch tmuxCommand(p.Args) {
 		case "list-sessions":
 			io.WriteString(p.Stdout, "claude\n")
 			if running {
@@ -235,7 +235,7 @@ func TestAgentSameVersionAndUnrelatedSessionsDoNotBlock(t *testing.T) {
 	npm := e.Start
 	e.Start = func(p manager.Process) error {
 		if p.Program == "tmux" {
-			if p.Args[4] != "list-sessions" {
+			if tmuxCommand(p.Args) != "list-sessions" {
 				t.Fatalf("changed session: %q", p.Args)
 			}
 			io.WriteString(p.Stdout, "codex\nclaude\n")
@@ -260,7 +260,7 @@ func TestAgentSessionQueryFailurePreventsChanges(t *testing.T) {
 		e := agentEffects(t, home, &version, &installs)
 		runAgents(t, e, 0, "enable", "codex")
 		e.Start = func(p manager.Process) error {
-			if p.Program != "tmux" || p.Args[4] != "list-sessions" {
+			if p.Program != "tmux" || tmuxCommand(p.Args) != "list-sessions" {
 				t.Fatalf("changed before query: %+v", p)
 			}
 			io.WriteString(p.Stderr, "permission denied")
@@ -270,4 +270,15 @@ func TestAgentSessionQueryFailurePreventsChanges(t *testing.T) {
 			t.Fatal(output)
 		}
 	}
+}
+
+// tmuxCommand returns the tmux command among the arguments the manager passes to tmux: the first argument after the
+// four server arguments that is not a client flag such as -u or -2.
+func tmuxCommand(args []string) string {
+	for _, arg := range args[4:] {
+		if !strings.HasPrefix(arg, "-") {
+			return arg
+		}
+	}
+	return ""
 }

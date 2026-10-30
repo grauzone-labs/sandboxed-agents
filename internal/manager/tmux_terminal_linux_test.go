@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -26,20 +25,27 @@ func execTerminalEnvironment(home string) []string {
 }
 
 // TestAgentSessionDrawsFullScreenThroughLocalTmux proves an attached agent session draws the agent's Unicode glyphs and
-// colours and redraws at the new size after a resize, through RunWithEffects, the tmux arguments the manager passes, a
-// real local tmux, and a pseudo-terminal of 120 columns and 40 rows with the environment podman exec -t provides.
+// colours, passes typed input to the agent and shows its redraw, and redraws at the new size after a resize, through
+// RunWithEffects, the tmux arguments the manager passes, a real local tmux, and a pseudo-terminal of 120 columns and 40
+// rows with the modelled podman exec -t environment of execTerminalEnvironment. The agent is a stand-in script and the
+// tmux is the host's, so the test reproduces the symptoms of that environment, not the reporter's agent, terminal, or
+// image.
 func TestAgentSessionDrawsFullScreenThroughLocalTmux(t *testing.T) {
-	tmuxPath, localArgs := localTmux(t)
 	home, version, installs := t.TempDir(), "1.2.3", 0
+	tmuxPath, localArgs := localTmux(t, home)
 	e := agentEffects(t, home, &version, &installs)
 	runAgents(t, e, 0, "enable", "codex")
-	// The agent draws a logo of block glyphs in a grey 24-bit colour, as full-screen agents do, and records each size
-	// its terminal reports.
-	script := "#!/bin/sh\n" +
-		"trap 'stty size > size' WINCH\n" +
-		"printf '\\033[38;2;128;128;128m\\342\\226\\210\\342\\226\\200 logo\\033[0m\\n'\n" +
-		"stty size > size\n" +
-		"while :; do sleep 0.02; done\n"
+	// The agent clears its screen and draws a logo of block glyphs in a grey 24-bit colour, as full-screen agents do,
+	// redraws it with each line of input it reads, and records each size its terminal reports.
+	script := `#!/bin/sh
+trap 'stty size > size' WINCH
+draw() { printf '\033[H\033[2J\033[38;2;128;128;128m\342\226\210\342\226\200 logo\033[0m\n%s\n' "$1"; }
+draw ready
+stty size > size
+while :; do
+	if IFS= read -r line; then draw "input $line"; fi
+done
+`
 	if err := os.WriteFile(filepath.Join(home, ".local", "bin", "codex"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -48,8 +54,8 @@ func TestAgentSessionDrawsFullScreenThroughLocalTmux(t *testing.T) {
 		if p.Program != "tmux" || p.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
 			t.Fatalf("process=%+v", p)
 		}
-		args := localArgs(p.Args, home)
-		if slices.Contains(args, "attach-session") {
+		args := localArgs(p.Args)
+		if tmuxCommand(args) == "attach-session" {
 			attaches++
 			attachThroughTerminal(t, tmuxPath, args, home)
 			return nil
@@ -66,8 +72,9 @@ func TestAgentSessionDrawsFullScreenThroughLocalTmux(t *testing.T) {
 	}
 }
 
-// attachThroughTerminal runs the attach command under a 120 by 40 pseudo-terminal, checks the drawn screen, resizes the
-// terminal to 100 by 30, checks the agent's new size and the redraw, and detaches with the default prefix key.
+// attachThroughTerminal runs the attach command under a 120 by 40 pseudo-terminal, checks the drawn screen, types a line
+// and checks the agent's redraw of it, resizes the terminal to 100 by 30, checks the agent's new size and the redraw, and
+// detaches with the default prefix key.
 func attachThroughTerminal(t *testing.T, tmuxPath string, args []string, home string) {
 	t.Helper()
 	master, slave := openTerminal(t, 40, 120)
@@ -114,6 +121,14 @@ func attachThroughTerminal(t *testing.T, tmuxPath string, args []string, home st
 	waitForTerminal(t, func() bool { return strings.Contains(drawn(), "logo") && agentSize(home) == "39 120" }, drawn, "first screen at 120 by 40")
 	if first := drawn(); !strings.Contains(first, logo) || !strings.Contains(first, grey) {
 		t.Fatalf("first screen lacks the logo glyphs %q in grey %q: %q", logo, grey, first)
+	}
+	beforeInput := len(drawn())
+	if _, err := master.Write([]byte("hello\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitForTerminal(t, func() bool { return strings.Contains(drawn()[beforeInput:], "input hello") }, drawn, "redraw after input")
+	if redrawn := drawn()[beforeInput:]; !strings.Contains(redrawn, logo) || !strings.Contains(redrawn, grey) {
+		t.Fatalf("redraw after input lacks the logo glyphs %q in grey %q: %q", logo, grey, redrawn)
 	}
 	beforeResize := len(drawn())
 	if err := unix.IoctlSetWinsize(int(master.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: 30, Col: 100}); err != nil {
