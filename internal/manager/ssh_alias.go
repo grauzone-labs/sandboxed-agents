@@ -141,7 +141,7 @@ func addSSHAlias(root *os.Root, alias, entry string, want []sshOption, effects E
 		return false, err
 	}
 	if current.exists {
-		claimed, err := sshAliasClaimed(filepath.Join(root.Name(), ".ssh", "config"), alias, effects)
+		claimed, err := sshAliasClaimed(filepath.Join(root.Name(), ".ssh", "config"), current.content, alias, effects)
 		if err != nil || claimed {
 			return false, err
 		}
@@ -277,24 +277,43 @@ func replaceSSHConfig(root *os.Root, mode os.FileMode, content []byte) error {
 	return nil
 }
 
-// sshEntryOptions are the ssh -G options the host entry sets; only a change to one of them claims an alias.
-var sshEntryOptions = []string{"hostname", "user", "identityfile", "identitiesonly", "userknownhostsfile"}
+// sshProbeKeywords names, for each ssh -G option the host entry sets, the ssh_config keyword a placeholder probe sets.
+var sshProbeKeywords = []sshOption{{"hostname", "HostName"}, {"user", "User"}, {"identityfile", "IdentityFile"}, {"identitiesonly", "IdentitiesOnly"}, {"userknownhostsfile", "UserKnownHostsFile"}}
 
-// sshAliasClaimed reports whether the configuration file already claims the alias. OpenSSH's -vv diagnostics name each
-// applied Host pattern and each matched Match block; a Host pattern other than *, or a Match block with a host or
-// originalhost criterion, is specific to the alias. Such a block claims the alias only when OpenSSH then resolves one of
-// the entry's options differently from ssh -G -F none, even to the intended value, so a rerun finds its own entry while a
-// block that sets only Port or ServerAliveInterval claims nothing. Global blocks are left to checkSSHEntry.
-func sshAliasClaimed(config, alias string, effects Effects) (bool, error) {
-	configured, diagnostics, err := runSSHQuery([]string{"-vv", "-G", "-F", config, alias}, nil, alias, effects)
+// sshAliasClaimed reports whether the configuration already claims the alias. OpenSSH's -vv diagnostics name each applied
+// Host pattern and each matched Match block; a Host pattern other than *, or a Match block with a host or originalhost
+// criterion, is specific to the alias. Such a block claims the alias only when an earlier rule explicitly sets one of the
+// entry's options, even to the intended value or to OpenSSH's default, so a rerun finds its own entry while a block that
+// sets only Port or ServerAliveInterval claims nothing. The diagnostics do not say which options a block sets, so
+// sshOptionsSetEarlier asks OpenSSH. Global blocks are left to checkSSHEntry.
+func sshAliasClaimed(config string, content []byte, alias string, effects Effects) (bool, error) {
+	_, diagnostics, err := runSSHQuery([]string{"-vv", "-G", "-F", config, alias}, nil, alias, effects)
 	if err != nil || !sshSpecificStanza(diagnostics) {
 		return false, err
 	}
-	defaults, _, err := runSSHQuery([]string{"-G", "-F", "none", alias}, nil, alias, effects)
-	if err != nil {
-		return false, err
+	return sshOptionsSetEarlier(content, alias, effects)
+}
+
+// sshOptionsSetEarlier reports whether the configuration explicitly sets one of the entry's options for the alias. It has
+// ssh -G resolve the configuration followed by a trailing Host * block of placeholder values, twice with opposite
+// IdentitiesOnly values; because OpenSSH keeps the first value it reads, an option that does not resolve to exactly its
+// placeholder in both probes was set by an earlier rule, and an earlier IdentityFile stays ahead of the placeholder.
+func sshOptionsSetEarlier(content []byte, alias string, effects Effects) (bool, error) {
+	for _, probe := range []struct{ name, identitiesOnly string }{{"a", "yes"}, {"b", "no"}} {
+		placeholder := "sandboxed-agents-probe-" + probe.name
+		values := map[string]string{"hostname": placeholder + ".invalid", "user": placeholder, "identityfile": "/nonexistent/" + placeholder, "identitiesonly": probe.identitiesOnly, "userknownhostsfile": "/nonexistent/" + placeholder}
+		block := "Host *\n"
+		var want []sshOption
+		for _, option := range sshProbeKeywords {
+			block += "    " + option.value + " " + values[option.key] + "\n"
+			want = append(want, sshOption{option.key, values[option.key]})
+		}
+		differing, err := sshCandidateDifferences(appendSSHEntry(content, block), alias, want, effects)
+		if err != nil || len(differing) > 0 {
+			return len(differing) > 0, err
+		}
 	}
-	return sshEntryValues(configured) != sshEntryValues(defaults), nil
+	return false, nil
 }
 
 // sshSpecificStanza reports whether ssh -vv diagnostics show an applied Host pattern other than * or a matched Match
@@ -316,17 +335,6 @@ func sshSpecificStanza(diagnostics string) bool {
 	return false
 }
 
-// sshEntryValues keeps the ssh -G lines of the options the host entry sets, in output order, and drops every other line.
-func sshEntryValues(output string) string {
-	var kept strings.Builder
-	for _, line := range strings.Split(output, "\n") {
-		if key, _, _ := strings.Cut(line, " "); slices.Contains(sshEntryOptions, key) {
-			kept.WriteString(line + "\n")
-		}
-	}
-	return kept.String()
-}
-
 // checkSSHEntry has ssh -G resolve the alias from the exact configuration bytes about to be written, read from the query's
 // standard input, and refuses them when an earlier option in that candidate configuration that matches the alias, such as
 // one under Host * or a Match block without host criteria, takes precedence because OpenSSH keeps the first value it reads,
@@ -334,9 +342,22 @@ func sshEntryValues(output string) string {
 // for the earlier setting to be changed instead of offering another question; whether that setting also matches other
 // aliases depends on its own rule.
 func checkSSHEntry(content []byte, alias string, want []sshOption, effects Effects) error {
-	output, _, err := runSSHQuery([]string{"-G", "-F", sshCandidateConfig, alias}, bytes.NewReader(content), alias, effects)
+	overridden, err := sshCandidateDifferences(content, alias, want, effects)
 	if err != nil {
 		return err
+	}
+	if len(overridden) > 0 {
+		return fmt.Errorf("an earlier setting in the agent's SSH configuration would still apply for alias %s, which OpenSSH would resolve with %s because it keeps the first value it reads; change that setting and retry; SSH configuration unchanged", alias, strings.Join(overridden, "; "))
+	}
+	return nil
+}
+
+// sshCandidateDifferences has ssh -G resolve the alias from configuration bytes read from the query's standard input and
+// describes each wanted option that does not resolve to exactly its one wanted value.
+func sshCandidateDifferences(content []byte, alias string, want []sshOption, effects Effects) ([]string, error) {
+	output, _, err := runSSHQuery([]string{"-G", "-F", sshCandidateConfig, alias}, bytes.NewReader(content), alias, effects)
+	if err != nil {
+		return nil, err
 	}
 	resolved := map[string][]string{}
 	for _, line := range strings.Split(output, "\n") {
@@ -344,16 +365,13 @@ func checkSSHEntry(content []byte, alias string, want []sshOption, effects Effec
 			resolved[key] = append(resolved[key], value)
 		}
 	}
-	var overridden []string
+	var differing []string
 	for _, option := range want {
 		if got := resolved[option.key]; len(got) != 1 || got[0] != option.value {
-			overridden = append(overridden, fmt.Sprintf("%s %q instead of %q", option.key, strings.Join(got, ", "), option.value))
+			differing = append(differing, fmt.Sprintf("%s %q instead of %q", option.key, strings.Join(got, ", "), option.value))
 		}
 	}
-	if len(overridden) > 0 {
-		return fmt.Errorf("an earlier setting in the agent's SSH configuration would still apply for alias %s, which OpenSSH would resolve with %s because it keeps the first value it reads; change that setting and retry; SSH configuration unchanged", alias, strings.Join(overridden, "; "))
-	}
-	return nil
+	return differing, nil
 }
 
 // runSSHQuery runs one bounded ssh query as agent with the fixed SSH environment and returns its output and diagnostics.
