@@ -70,8 +70,9 @@ func runSSHFlow(t *testing.T, home, host, user, answers string, connect func(man
 }
 
 // TestSSHIntegrationAsksApprovalBeforeAnyConnection proves the flow prints the public key, then asks for approval of the
-// connection test, and that declining, an empty answer, and end of input make no connection, write no host entry, retain
-// the dedicated key, say so, and exit non-zero, through RunWithEffects with scripted answers and recorded process starts.
+// connection test, that an unrecognised answer is asked again, and that declining, an empty answer, and end of input make
+// no connection, write no host entry, retain the dedicated key, say so, and exit non-zero, through RunWithEffects with
+// scripted answers and recorded process starts.
 func TestSSHIntegrationAsksApprovalBeforeAnyConnection(t *testing.T) {
 	for _, c := range []struct{ name, answers, says string }{
 		{"no", "no\n", "SSH connection test declined"},
