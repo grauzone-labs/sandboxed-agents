@@ -549,12 +549,6 @@ func helpCommandTopic(words []string) (string, bool, error) {
 	return topic, true, fmt.Errorf("unknown command %q", strings.Join(words, " "))
 }
 
-// usageTopic returns the deepest help topic a parsed command path reached, the root being "".
-func usageTopic(command string) string {
-	topic, _ := commandPath(strings.Fields(command))
-	return topic
-}
-
 // writeHelp writes the full help of a topic: description, usage, sections, options, and examples.
 func writeHelp(w io.Writer, topic string) {
 	entry := helpTopics()[topic]
