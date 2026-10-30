@@ -53,7 +53,9 @@ func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects E
 	hostName, hostErr := sshConfigValue(target, true)
 	userName, userErr := sshConfigValue(user, false)
 	identity, identityErr := sshConfigValue(filepath.Join(home, ".ssh", keyName), true)
-	if hostErr != nil || userErr != nil || identityErr != nil {
+	// #109 keeps confirmed host keys in the agent's usual known_hosts; the entry names it so the alias never depends on another default.
+	knownHosts, knownHostsErr := sshConfigValue(filepath.Join(home, ".ssh", "known_hosts"), true)
+	if hostErr != nil || userErr != nil || identityErr != nil || knownHostsErr != nil {
 		return "", fmt.Errorf("SSH host entry values cannot be written safely; SSH configuration unchanged")
 	}
 	root, err := os.OpenRoot(home)
@@ -92,7 +94,7 @@ func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects E
 			alias = ""
 			continue
 		}
-		entry := fmt.Sprintf("Host %s\n    HostName %s\n    User %s\n    IdentityFile %s\n    IdentitiesOnly yes\n", alias, hostName, userName, identity)
+		entry := fmt.Sprintf("Host %s\n    HostName %s\n    User %s\n    IdentityFile %s\n    IdentitiesOnly yes\n    UserKnownHostsFile %s\n", alias, hostName, userName, identity, knownHosts)
 		written, err := writeSSHAlias(root, home, alias, entry, effects)
 		if err != nil {
 			return "", err
