@@ -155,7 +155,7 @@ func TestSSHIntegrationTestsConnectionWithPasswordOnly(t *testing.T) {
 		"-o", "HostbasedAuthentication=no",
 		"-o", "GSSAPIAuthentication=no",
 		"-o", "IdentityAgent=none",
-		"-l", "alice", "--", "build.example", "true"}
+		"-l", "alice", "--", "build.example", "exit"}
 	if p.Program != "/usr/bin/ssh" || p.Identity != (manager.Identity{UID: 1000, GID: 1000}) || p.EnvironmentPolicy != manager.SSHEnvironment || len(p.Environment) != 0 || !slices.Equal(p.Args, want) {
 		t.Fatalf("connection test process %+v\nwant args %q", p, want)
 	}
@@ -170,8 +170,8 @@ func TestSSHIntegrationTestsConnectionWithPasswordOnly(t *testing.T) {
 	}
 }
 
-// TestSSHIntegrationNamesEachConnectionFailure proves each recorded ssh exit status and diagnostic maps to a recognizable
-// cause, shows ssh's own diagnostic, exits non-zero, queries no alias, keeps the dedicated key, and leaves an existing
+// TestSSHIntegrationNamesEachConnectionFailure proves each recorded ssh failure, exit status 255 with its diagnostic or
+// death by a signal, maps to a recognizable cause, shows ssh's own diagnostic, exits non-zero, queries no alias, keeps the dedicated key, and leaves an existing
 // ~/.ssh/config byte for byte unchanged, through RunWithEffects and a scripted ssh connection test.
 func TestSSHIntegrationNamesEachConnectionFailure(t *testing.T) {
 	for _, c := range []struct {
@@ -188,7 +188,7 @@ func TestSSHIntegrationNamesEachConnectionFailure(t *testing.T) {
 		{"authentication failed", "build.example", "alice@build.example: Permission denied (publickey,password).\r\n", 255, []string{"authentication as alice failed"}},
 		{"no password method", "build.example", "alice@build.example: Permission denied (publickey).\r\n", 255, []string{"authentication as alice failed", "does not offer password authentication"}},
 		{"interrupted", "build.example", "", -1, []string{"SSH connection test cancelled"}},
-		{"other", "build.example", "", 3, []string{"SSH connection test failed with exit status 3"}},
+		{"other", "build.example", "ssh: unexpected failure\r\n", 255, []string{"SSH connection test failed with exit status 255"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -274,6 +274,33 @@ func TestSSHIntegrationWritesAliasOnlyAfterSuccessfulTest(t *testing.T) {
 			}
 			if !strings.Contains(diag, "SSH alias "+c.alias+" configured") || !strings.Contains(diag, "key-based login is not verified") || strings.Contains(strings.ToLower(diag), "key-based login verified") {
 				t.Fatalf("success report: %s", diag)
+			}
+		})
+	}
+}
+
+// TestSSHIntegrationCountsRemoteExitStatusAsLogin proves an exit status other than ssh's own 255, as a restricted remote
+// shell or a forced command returns after the password was accepted, counts as a successful login even when the remote
+// output reads like an ssh failure: the flow runs the alias host entry unit and exits zero, through RunWithEffects with a
+// scripted connection test and the local OpenSSH client answering the alias unit's ssh -G queries.
+func TestSSHIntegrationCountsRemoteExitStatusAsLogin(t *testing.T) {
+	for _, exit := range []int{1, 127} {
+		t.Run(strconv.Itoa(exit), func(t *testing.T) {
+			home := t.TempDir()
+			tested := false
+			status, _, diag, _ := runSSHFlow(t, home, "build.example", "alice", "yes\n", func(p manager.Process) error {
+				if slices.Contains(p.Args, "-G") {
+					return localSSHQuery(home, p)
+				}
+				tested = true
+				fmt.Fprint(p.Stderr, "'exit' is not recognized: Permission denied; connection refused\r\n")
+				return sshExit(exit)
+			})
+			if status != 0 || !tested || !strings.Contains(diag, "SSH alias build.example configured") {
+				t.Fatalf("status=%d tested=%v diagnostics=%s", status, tested, diag)
+			}
+			if config, err := os.ReadFile(filepath.Join(home, ".ssh", "config")); err != nil || !strings.Contains(string(config), "Host build.example") {
+				t.Fatalf("alias host entry not written: %q %v", config, err)
 			}
 		})
 	}
