@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
@@ -114,6 +115,77 @@ func TestSSHIntegrationAsksApprovalBeforeAnyConnection(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// sshInterruptingInput is standard input at the approval question that delivers Ctrl+C on the fake interrupt channel
+// when the question first reads and then blocks until released, as a terminal does while the user has not answered; a
+// bounded wait keeps a flow that ignores the interrupt from hanging the test.
+type sshInterruptingInput struct {
+	interrupts chan<- os.Signal
+	released   <-chan struct{}
+	reads      *int
+}
+
+// Read sends one interrupt on the first read, then waits until the test releases the input or ten seconds pass and
+// reports end of input.
+func (r sshInterruptingInput) Read([]byte) (int, error) {
+	*r.reads++
+	if *r.reads == 1 {
+		r.interrupts <- os.Interrupt
+	}
+	select {
+	case <-r.released:
+	case <-time.After(10 * time.Second):
+	}
+	return 0, io.EOF
+}
+
+// TestSSHIntegrationCancelsOnInterruptAtApproval proves Ctrl+C while the approval question waits for an answer makes no
+// connection, writes no host entry, says so with the retained key's location, and exits non-zero, and that the manager
+// catches the interrupt only around the question, through RunWithEffects with the fake NotifyInterrupt seam and standard
+// input that interrupts while the question reads.
+func TestSSHIntegrationCancelsOnInterruptAtApproval(t *testing.T) {
+	home := t.TempDir()
+	var calls []manager.Process
+	e := sshKeyEffects(t, home, &calls)
+	keygen := e.Start
+	e.Start = func(p manager.Process) error {
+		if p.Program != "/usr/bin/ssh-keygen" {
+			t.Fatalf("process started after an interrupt at the approval question: %+v", p)
+		}
+		return keygen(p)
+	}
+	interrupts := make(chan os.Signal, 1)
+	watches, restores := 0, 0
+	e.NotifyInterrupt = func() (<-chan os.Signal, func()) {
+		watches++
+		return interrupts, func() { restores++ }
+	}
+	released := make(chan struct{})
+	defer close(released)
+	reads := 0
+	e.Stdin = sshInterruptingInput{interrupts: interrupts, released: released, reads: &reads}
+	var out, diag bytes.Buffer
+	status := manager.RunWithEffects([]string{"integrations", "config", "ssh", "--host", "build.example", "--user", "alice"}, &out, &diag, e)
+	if status != 1 || !strings.HasPrefix(out.String(), "ssh-ed25519 ") || reads != 1 {
+		t.Fatalf("status=%d reads=%d out=%q diagnostics=%s", status, reads, out.String(), diag.String())
+	}
+	if watches != 1 || restores != 1 {
+		t.Fatalf("interrupt watches=%d restores=%d, want one each around the question", watches, restores)
+	}
+	keys, _ := filepath.Glob(filepath.Join(home, ".ssh", "id_ed25519_remote_*"))
+	if len(keys) != 2 {
+		t.Fatalf("dedicated key not retained: %q", keys)
+	}
+	want := "SSH connection test cancelled; no connection made, no host entry written, dedicated key retained at " + strings.TrimSuffix(keys[0], ".pub") + "\n"
+	if !strings.Contains(diag.String(), "alice@build.example with password authentication") || !strings.HasSuffix(diag.String(), want) {
+		t.Fatalf("diagnostics do not end with %q: %s", want, diag.String())
+	}
+	for _, name := range []string{"config", "known_hosts"} {
+		if _, err := os.Lstat(filepath.Join(home, ".ssh", name)); !os.IsNotExist(err) {
+			t.Fatalf("%s written after an interrupt: %v", name, err)
+		}
 	}
 }
 
