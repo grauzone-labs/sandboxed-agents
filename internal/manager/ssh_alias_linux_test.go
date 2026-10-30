@@ -438,7 +438,7 @@ func TestSSHAliasTellsGlobalSettingsFromSpecificClaims(t *testing.T) {
 	}{
 		{"readable Port-only glob beside a global setting", "CONFIG line 3", "", false, false},
 		{"unreadable glob with a global setting", "/outside/home/config line 1", "", true, false},
-		{"unreadable glob with the control alias matching a specific block", "/outside/home/config line 1", "debug1: /dev/stdin line 3: Applying options for _sandboxed-agents-*\n", true, true},
+		{"unreadable glob with the control alias matching a specific block", "/outside/home/config line 1", fmt.Sprintf("debug1: %s line 3: Applying options for %s*\n", sshCandidateConfig, strings.TrimSuffix(sshControlAlias, "control")), true, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -918,7 +918,9 @@ func TestSSHAliasResolvesThroughRealOpenSSH(t *testing.T) {
 			if test.claimed != strings.Contains(stderr.String(), claimedText) {
 				t.Fatalf("claimed=%v diagnostics=%q", test.claimed, stderr.String())
 			}
-			output, err := exec.Command(sshProgram, "-G", "-F", config, alias).Output()
+			query := exec.Command(sshProgram, "-G", "-F", config, alias)
+			query.Env = realSSHEnvironment(home)
+			output, err := query.Output()
 			if err != nil {
 				t.Fatalf("ssh -G %s: %v", alias, err)
 			}
