@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,8 +16,8 @@ import (
 
 // TestAgentSessionLifetimeWithLocalTmux proves a detached session survives its caller and vanishes with the agent through RunWithEffects and a real local tmux process adapter.
 func TestAgentSessionLifetimeWithLocalTmux(t *testing.T) {
-	tmuxPath, localArgs := localTmux(t)
 	home, version, installs := t.TempDir(), "1.2.3", 0
+	tmuxPath, localArgs := localTmux(t, home)
 	e := agentEffects(t, home, &version, &installs)
 	runAgents(t, e, 0, "enable", "codex")
 	// The managed agent is a tiny process that exits when its input file appears.
@@ -31,11 +30,11 @@ func TestAgentSessionLifetimeWithLocalTmux(t *testing.T) {
 		if p.Program != "tmux" || p.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
 			t.Fatalf("process=%+v", p)
 		}
-		if slices.Contains(p.Args, "attach-session") {
+		if tmuxCommand(p.Args) == "attach-session" {
 			attaches++
 			return nil
 		} // Model terminal detach at the process seam.
-		cmd := exec.Command(tmuxPath, localArgs(p.Args, home)...)
+		cmd := exec.Command(tmuxPath, localArgs(p.Args)...)
 		cmd.Env = append(os.Environ(), "TMUX=", "TMUX_TMPDIR=")
 		cmd.Stdout, cmd.Stderr = p.Stdout, p.Stderr
 		return cmd.Run()
@@ -82,7 +81,7 @@ func TestAgentSessionLifetimeWithLocalTmux(t *testing.T) {
 
 // localTmux returns the local tmux executable and a rewrite of manager tmux arguments onto a private socket that the
 // test's cleanup kills, with the sandbox's /workspace replaced by the given home. Without a local tmux the test skips.
-func localTmux(t *testing.T) (string, func(args []string, home string) []string) {
+func localTmux(t *testing.T, home string) (string, func(managerArgs []string) []string) {
 	t.Helper()
 	tmuxPath, err := exec.LookPath("tmux")
 	if err != nil {
@@ -98,7 +97,7 @@ func localTmux(t *testing.T) (string, func(args []string, home string) []string)
 		exec.Command(tmuxPath, "-S", socket, "kill-server").Run()
 		os.RemoveAll(socketDir)
 	})
-	return tmuxPath, func(managerArgs []string, home string) []string {
+	return tmuxPath, func(managerArgs []string) []string {
 		args := append([]string{}, managerArgs...)
 		args[0], args[1] = "-S", socket
 		for i, arg := range args {
