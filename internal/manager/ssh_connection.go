@@ -12,6 +12,10 @@ import (
 // sshConnectTimeout bounds, in seconds, how long the connection test waits for the remote machine to answer.
 const sshConnectTimeout = "15"
 
+// sshFailureStatus is the exit status ssh reserves for its own failures, such as an unreachable machine, a rejected host
+// key, or failed authentication; the remote command's status passes through as any other value.
+const sshFailureStatus = 255
+
 // errSSHTestCancelled reports end of input at the approval question or an interrupted connection test.
 var errSSHTestCancelled = errors.New("SSH connection test cancelled")
 
@@ -37,9 +41,11 @@ func approveSSHTest(stdin io.Reader, user, target string, stderr io.Writer) (boo
 }
 
 // testSSHConnection logs in to target as user once with the image's ssh, run as agent in the fixed SSH environment, and
-// returns nil only when the remote test command succeeds. It reads no configuration file and allows only password and
-// keyboard-interactive authentication, so no key, agent, host-based, or GSSAPI login is attempted and the dedicated key
-// is neither offered nor installed. ssh itself reads the password from the terminal without echo; the password never
+// returns nil when the login succeeds. The remote command is exit, which ends a POSIX shell, cmd, and PowerShell alike;
+// its exit status is not the test, so any status other than ssh's own 255 counts as a successful login, even from a
+// restricted remote shell or a forced command. It reads no configuration file and allows only password and
+// keyboard-interactive authentication, so no key, ssh-agent, host-based, or GSSAPI login is attempted and the dedicated
+// key is neither offered nor installed. ssh itself reads the password from the terminal without echo; the password never
 // passes through the manager, ssh's arguments, its environment, or its standard input, which is empty. ssh shows an
 // unknown host key with its fingerprint and asks before it sends the password; a confirmed key is recorded in the
 // agent's ~/.ssh/known_hosts, a refused or changed one ends the test. ssh's diagnostics reach stderr and are kept,
@@ -62,7 +68,7 @@ func testSSHConnection(home, target, user string, stderr io.Writer, effects Effe
 		"-o", "HostbasedAuthentication=no",
 		"-o", "GSSAPIAuthentication=no",
 		"-o", "IdentityAgent=none",
-		"-l", user, "--", target, "true"}
+		"-l", user, "--", target, "exit"}
 	diagnostics := sshOutputBuffer{limit: sshDiagnosticLimit}
 	interrupts, stop := watchInterrupts(effects)
 	defer stop()
@@ -73,9 +79,11 @@ func testSSHConnection(home, target, user string, stderr io.Writer, effects Effe
 	return sshTestFailure(target, user, err, string(diagnostics.data), interrupts)
 }
 
-// sshTestFailure names the cause of a failed connection test from ssh's exit status and diagnostics: cancelled when
-// Ctrl+C arrived or ssh died of a signal, a rejected or changed remote host key, failed authentication, a remote machine
-// name that cannot be resolved, or a remote machine that is unreachable or timed out; otherwise the exit status.
+// sshTestFailure names the outcome of a connection test that did not exit zero: cancelled when Ctrl+C arrived or ssh died
+// of a signal, and nil for any exit status other than 255, because ssh reports its own failures with 255 and any other
+// status comes from the remote command after the login succeeded. Only for status 255 do ssh's diagnostics name the
+// cause: a rejected or changed remote host key, failed authentication, a remote machine name that cannot be resolved,
+// or a remote machine that is unreachable or timed out; otherwise the exit status.
 func sshTestFailure(target, user string, err error, diagnostics string, interrupts <-chan os.Signal) error {
 	interrupted := false
 	if interrupts != nil {
@@ -87,6 +95,14 @@ func sshTestFailure(target, user string, err error, diagnostics string, interrup
 	}
 	var exit interface{ ExitCode() int }
 	hasExit := errors.As(err, &exit)
+	switch {
+	case interrupted || (hasExit && exit.ExitCode() < 0):
+		return errSSHTestCancelled
+	case !hasExit:
+		return fmt.Errorf("SSH connection test could not run ssh")
+	case exit.ExitCode() != sshFailureStatus:
+		return nil
+	}
 	text := strings.ToLower(diagnostics)
 	contains := func(phrases ...string) bool {
 		for _, phrase := range phrases {
@@ -97,10 +113,6 @@ func sshTestFailure(target, user string, err error, diagnostics string, interrup
 		return false
 	}
 	switch {
-	case interrupted || (hasExit && exit.ExitCode() < 0):
-		return errSSHTestCancelled
-	case !hasExit:
-		return fmt.Errorf("SSH connection test could not run ssh")
 	case contains("remote host identification has changed", "has changed and you have requested strict checking"):
 		return fmt.Errorf("SSH connection test failed: remote host key rejected; the host key of %s changed since it was trusted in ~/.ssh/known_hosts and is refused", target)
 	case contains("host key verification failed"):
