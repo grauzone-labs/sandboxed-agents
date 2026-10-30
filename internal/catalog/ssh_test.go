@@ -2,33 +2,34 @@ package catalog_test
 
 import (
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
-// TestSSHConfigStaysUndelivered proves the staged SSH definition is not selectable or advertised through the shared catalog's public interface.
-func TestSSHConfigStaysUndelivered(t *testing.T) {
+// TestSSHConfigIsDelivered proves the single SSH config definition resolves without a workflow name and advertises its integration, options, and usage form through the shared catalog's public interface, while SSH still has no login.
+func TestSSHConfigIsDelivered(t *testing.T) {
 	integration, exists := catalog.Default.Integrations["ssh"]
 	if !exists || len(integration.ConfigWorkflows) != 1 {
-		t.Fatal("missing staged single SSH config definition")
+		t.Fatal("missing single SSH config definition")
 	}
-	if _, err := catalog.Default.ResolveConfig("ssh", ""); err == nil || !strings.Contains(err.Error(), `unknown integration "ssh"`) {
-		t.Fatalf("resolve error=%v", err)
+	selection, err := catalog.Default.ResolveConfig("ssh", "")
+	if err != nil || selection.Workflow != "" || !slices.Equal(selection.Definition.Options, []string{"host", "user"}) {
+		t.Fatalf("selection=%+v error=%v", selection, err)
 	}
-	if slices.Contains(catalog.Default.ConfigIntegrationNames(), "ssh") {
-		t.Fatal("advertised staged SSH integration")
+	if !slices.Contains(catalog.Default.ConfigIntegrationNames(), "ssh") {
+		t.Fatal("SSH integration not advertised")
 	}
-	if slices.Contains(catalog.Default.ConfigOptionNames(), "host") || slices.Contains(catalog.Default.ConfigOptionNames(), "user") {
-		t.Fatal("advertised staged SSH options")
+	if !slices.Contains(catalog.Default.ConfigOptionNames(), "host") || !slices.Contains(catalog.Default.ConfigOptionNames(), "user") {
+		t.Fatal("SSH options not advertised")
 	}
-	for _, form := range catalog.Default.ConfigUsage() {
-		if strings.Contains(form, "config ssh") {
-			t.Fatalf("advertised %q", form)
-		}
+	if !slices.Contains(catalog.Default.ConfigUsage(), "integrations config ssh --host HOST --user USER") {
+		t.Fatalf("usage=%q; want the SSH form", catalog.Default.ConfigUsage())
 	}
-	if _, err := catalog.Default.ResolveLogin("ssh", ""); err == nil || !strings.Contains(err.Error(), `unknown integration "ssh"`) {
+	if len(catalog.Default.StagedConfigOptionNames("ssh")) != 0 {
+		t.Fatal("delivered SSH options still reported as staged")
+	}
+	if _, err := catalog.Default.ResolveLogin("ssh", ""); err == nil || err.Error() != "ssh has no login workflow; use integrations config NAME ssh" {
 		t.Fatalf("login error=%v", err)
 	}
 }

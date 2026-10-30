@@ -275,6 +275,9 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 				if selection.Integration == catalog.SSHIntegration {
 					return request, fmt.Errorf("%s config does not support option %q", selection.Integration, "--"+option)
 				}
+				if len(selection.Definition.Options) > 0 {
+					return request, fmt.Errorf("%s %s does not support option %q", selection.Integration, selection.Workflow, "--"+option)
+				}
 				return request, fmt.Errorf("%s %s takes no options", selection.Integration, selection.Workflow)
 			}
 		}

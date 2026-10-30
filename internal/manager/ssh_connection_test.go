@@ -71,7 +71,6 @@ func runSSHFlow(t *testing.T, home, host, user, answers string, connect func(man
 // connection test, and that declining, an empty answer, and end of input make no connection, write no host entry, retain
 // the dedicated key, say so, and exit non-zero, through RunWithEffects with scripted answers and recorded process starts.
 func TestSSHIntegrationAsksApprovalBeforeAnyConnection(t *testing.T) {
-	enableSSHIntegration(t)
 	for _, c := range []struct{ name, answers, says string }{
 		{"no", "no\n", "SSH connection test declined"},
 		{"n", "N\n", "SSH connection test declined"},
@@ -132,7 +131,6 @@ func (e sshExit) ExitCode() int { return int(e) }
 // configuration file, an interactive confirmation of an unknown host key that is recorded in the agent's known_hosts, and
 // no password or key path in its arguments, environment, or input, through RunWithEffects and a recorded ssh start.
 func TestSSHIntegrationTestsConnectionWithPasswordOnly(t *testing.T) {
-	enableSSHIntegration(t)
 	home := t.TempDir()
 	var tests []manager.Process
 	status, _, diag, _ := runSSHFlow(t, home, "Build.Example", "alice", "yes\n", func(p manager.Process) error {
@@ -176,7 +174,6 @@ func TestSSHIntegrationTestsConnectionWithPasswordOnly(t *testing.T) {
 // cause, shows ssh's own diagnostic, exits non-zero, queries no alias, keeps the dedicated key, and leaves an existing
 // ~/.ssh/config byte for byte unchanged, through RunWithEffects and a scripted ssh connection test.
 func TestSSHIntegrationNamesEachConnectionFailure(t *testing.T) {
-	enableSSHIntegration(t)
 	for _, c := range []struct {
 		name, host, diagnostic string
 		exit                   int
@@ -239,7 +236,6 @@ func TestSSHIntegrationNamesEachConnectionFailure(t *testing.T) {
 // report does not claim key-based login was verified, through RunWithEffects with a scripted connection test and the
 // local OpenSSH client answering the alias unit's ssh -G queries without any connection.
 func TestSSHIntegrationWritesAliasOnlyAfterSuccessfulTest(t *testing.T) {
-	enableSSHIntegration(t)
 	for _, c := range []struct{ host, answers, alias, hostName string }{
 		{"Build.Example", "yes\n", "build.example", "build.example"},
 		{"192.0.2.10", "yes\nbuild01\n", "build01", "192.0.2.10"},
