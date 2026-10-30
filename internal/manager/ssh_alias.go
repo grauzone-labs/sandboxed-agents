@@ -11,13 +11,21 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
-// SSH alias changes query the trusted OpenSSH client, bound what they keep of its output and of each answer, and serialize on a lock directory.
+// SSH alias changes query the trusted OpenSSH client, bound what they keep of its output, its diagnostics, the configuration
+// sources they read, and each answer, and serialize on a lock directory.
 const (
-	sshProgram    = "/usr/bin/ssh"
+	sshProgram = "/usr/bin/ssh"
+	// sshQueryLimit bounds the ssh -G option listing a query keeps from standard output.
 	sshQueryLimit = 64 << 10
+	// sshDiagnosticLimit bounds the diagnostics a query keeps from standard error; -vvv reports several lines for every
+	// Host and Match block, so a long configuration needs far more room than its option listing.
+	sshDiagnosticLimit = 1 << 20
+	// sshSourceLimit bounds each configuration source file read to inspect an applied block.
+	sshSourceLimit = 1 << 20
 	// sshAnswerLimit exceeds any valid alias, so a longer answer is refused as invalid.
 	sshAnswerLimit = 1024
 	// sshCandidateConfig makes ssh -G read the configuration it would see after the write from the query's standard input.
@@ -29,8 +37,9 @@ const (
 	sshControlAlias = "_sandboxed-agents-control"
 )
 
-// sshAliasName admits one literal Host pattern: no spaces, wildcards, negation, tokens, or leading dash.
-var sshAliasName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$`)
+// sshAliasName admits one literal Host pattern: no spaces, wildcards, negation, tokens, or leading dash. It allows up to
+// 253 characters, or 254 when the last one is the DNS root dot of a fully qualified machine name.
+var sshAliasName = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,252}|[A-Za-z0-9._-]{252}\.)$`)
 
 // sshEntryOption is one option the host entry sets: its ssh -G key, its ssh_config keyword, and whether the keyword
 // expands % tokens, so its value needs %% escapes.
@@ -51,19 +60,16 @@ var sshEntryOptions = []sshEntryOption{
 
 // configureSSHAlias chooses the alias for a normalized outbound SSH target and adds its host entry, with the remote
 // username, the dedicated key keyName in ~/.ssh, IdentitiesOnly, and the agent's ~/.ssh/known_hosts, to ~/.ssh/config.
-// A machine name is its own alias; an address asks for one on stderr and reads the answer line from Effects.Stdin
-// without consuming later input. A Host pattern other than *, a Host glob, or a Match host or originalhost block that
-// matches the alias claims it only by explicitly setting one of the entry's options, even to the intended value or to
-// OpenSSH's default; such a claim is reported with the options it sets and the user is asked again, and end of input
-// cancels. A block that matches the alias but sets only other options, such as Port, claims nothing, also beside a
-// Host * setting, so a machine name is then used directly. When the candidate configuration would resolve one of the
-// entry's values differently for the alias, because an earlier matching option such as one under Host * or Host * lab
-// takes precedence, it fails without asking again and names that option; whether the earlier setting also matches
-// other aliases depends on its own rule. It verifies the agent identity before reading home data and queries ssh -G as
-// agent. It writes no host entry and leaves existing configuration content unchanged unless it returns the chosen
-// alias. A missing .ssh directory is created, mode 0700, only after an alias is chosen and its ssh -G check succeeds,
-// so a cancelled question or a failing query creates nothing. A held configuration lock refuses the change. Callers
-// run it only after the connection test has succeeded (ADR-0011).
+// A machine name that sshAliasName accepts is its own alias and is used without a question; for an address, or a name
+// that sshAliasName refuses, it asks on stderr and reads one answer line from Effects.Stdin without consuming later
+// input. An alias that a specific SSH configuration block claims, as sshAliasClaimed decides, is reported with the
+// options that block sets and asked again; end of input cancels. When an earlier setting that matches the alias, such as
+// a global Host * one, would give it another value for an entry option, no other alias can help, so it fails without
+// asking again and names that option. It verifies the agent identity before reading home data and queries ssh -G as
+// agent. It writes no host entry and leaves existing configuration content unchanged unless it returns the chosen alias;
+// a missing .ssh directory is created, mode 0700, only after an alias is chosen and its ssh -G check succeeds, so a
+// cancelled question or a failing query creates nothing, and a held configuration lock refuses the change. It runs only
+// after the successful password test (ADR-0011); #112 supplies that caller, which does not exist yet.
 func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects Effects) (string, error) {
 	if !verifyAgent(effects, stderr) {
 		return "", fmt.Errorf("SSH alias requires the agent identity; SSH configuration unchanged")
@@ -130,7 +136,7 @@ func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects E
 		if len(claimed) == 0 {
 			return alias, nil
 		}
-		fmt.Fprintf(stderr, "SSH alias %s is already claimed by a Host or Match host block for it that sets %s; nothing written, choose another alias name\n", alias, strings.Join(claimed, ", "))
+		fmt.Fprintf(stderr, "SSH alias %s is already claimed by a specific SSH configuration block that sets %s; nothing written, choose another alias name\n", alias, strings.Join(claimed, ", "))
 		alias = ""
 	}
 }
@@ -150,11 +156,10 @@ func sshOptionLines(values map[string]string) (string, error) {
 }
 
 // addSSHAlias adds the entry to the configuration in the home that root opens and returns no keywords, or writes nothing
-// and returns the keywords of the entry options that a Host pattern other than *, a Host glob, or a Match host or
-// originalhost block explicitly sets for the alias, which claims it. It holds the configuration lock across the claim
-// queries, the check of the resulting configuration, and the atomic write. Without a .ssh directory it checks the entry
-// alone first, so a failing query creates nothing, and it queries no more once the lock confirms there is still no
-// configuration file.
+// and returns the keywords of the entry options that a specific SSH configuration block sets for the alias, which claims
+// it as sshAliasClaimed decides. It holds the configuration lock across the claim queries, the check of the resulting
+// configuration, and the atomic write. Without a .ssh directory it checks the entry alone first, so a failing query
+// creates nothing, and it queries no more once the lock confirms there is still no configuration file.
 func addSSHAlias(root *os.Root, alias, entry string, want map[string]string, effects Effects) ([]string, error) {
 	_, err := root.Lstat(".ssh")
 	checked := errors.Is(err, os.ErrNotExist)
@@ -175,7 +180,7 @@ func addSSHAlias(root *os.Root, alias, entry string, want map[string]string, eff
 		return nil, err
 	}
 	if current.exists {
-		claimed, err := sshAliasClaimed(filepath.Join(root.Name(), ".ssh", "config"), current.content, alias, effects)
+		claimed, err := sshAliasClaimed(root, filepath.Join(root.Name(), ".ssh", "config"), current.content, alias, effects)
 		if err != nil || len(claimed) > 0 {
 			return claimed, err
 		}
@@ -311,27 +316,300 @@ func replaceSSHConfig(root *os.Root, mode os.FileMode, content []byte) error {
 	return nil
 }
 
-// sshAliasClaimed returns the keywords of the entry options that the configuration explicitly sets for the alias through
-// a block specific to it, which claims the alias. OpenSSH's -vv diagnostics name each applied Host pattern and each
-// matched Match block; a Host pattern other than *, or a Match block with a host or originalhost criterion, is specific,
-// while Host *, Host * lab, whose positive * matches every host, and other Match blocks are global. Without a specific
-// block nothing is claimed and global settings are left to checkSSHEntry. The diagnostics do not say which options a
-// block sets, so sshOptionsSetForAlias asks OpenSSH.
-func sshAliasClaimed(config string, content []byte, alias string, effects Effects) ([]string, error) {
-	_, diagnostics, err := runSSHQuery([]string{"-vv", "-G", "-F", config, alias}, nil, alias, effects)
-	if err != nil || !sshSpecificStanza(diagnostics) {
+// sshAliasClaimed returns, in entry order, the keywords of the entry options that a block specific to the alias explicitly
+// sets, which claims it. OpenSSH's -vvv diagnostics name the source file and line of each applied Host block and of each
+// matched Match block's criteria, also when an earlier Host * masks their values; for each, it reads only that block's
+// header and its own option keywords from the source OpenSSH read: the loaded configuration, a file inside the agent's
+// home through root, or, read-only, an included file elsewhere. A Host block is global when its patterns include one
+// that matches every allowed alias, such as *, "*", or ?*, and no negated pattern, so Host * lab is global and Host * !foo
+// is specific to every host it matches. A Match block is specific when a host or originalhost criterion, in any letter
+// case, is negated or narrower than every allowed alias, so Match host * and Match all are global; quoted arguments, such
+// as an exec command, stay single arguments. A specific block claims the alias only by setting an entry option, even to
+// the intended value or OpenSSH's default, so a block that sets only Port claims nothing; global settings are left to
+// checkSSHEntry. When a specific block's source cannot be read, or its body includes another file, it falls back to
+// sshOptionsSetForAlias.
+func sshAliasClaimed(root *os.Root, config string, content []byte, alias string, effects Effects) ([]string, error) {
+	_, diagnostics, err := runSSHQuery([]string{"-vvv", "-G", "-F", config, alias}, nil, alias, effects)
+	if err != nil {
 		return nil, err
 	}
-	return sshOptionsSetForAlias(content, alias, effects)
+	set := map[string]bool{}
+	unknown := false
+	for _, stanza := range sshAppliedStanzas(diagnostics) {
+		header, keywords, known := "", []string(nil), false
+		if lines, ok := sshStanzaFile(root, config, content, stanza.file); ok {
+			header, keywords, known = sshStanzaClaims(lines, stanza.line, stanza.match)
+		}
+		if !stanza.specific(header) {
+			continue
+		}
+		if !known {
+			unknown = true
+			continue
+		}
+		for _, keyword := range keywords {
+			set[keyword] = true
+		}
+	}
+	if unknown {
+		probed, err := sshOptionsSetForAlias(content, alias, effects)
+		if err != nil {
+			return nil, err
+		}
+		for _, keyword := range probed {
+			set[keyword] = true
+		}
+	}
+	var claimed []string
+	for _, option := range sshEntryOptions {
+		if set[option.keyword] {
+			claimed = append(claimed, option.keyword)
+		}
+	}
+	return claimed, nil
+}
+
+// sshAppliedStanza is one Host or Match block that OpenSSH's diagnostics report as applied to a host: the file and line
+// of its header when they are named, whether it is a Match block, and the pattern or criteria OpenSSH echoes for it.
+type sshAppliedStanza struct {
+	file   string
+	line   int
+	match  bool
+	echoed string
+}
+
+// specific reports whether the stanza is specific to the host rather than global. A Host block is judged by the patterns
+// of its source header when one is given, and otherwise by the one pattern OpenSSH echoes, which omits the others and
+// any negation; a Match block is judged by the criteria OpenSSH echoes.
+func (s sshAppliedStanza) specific(header string) bool {
+	if s.match {
+		return sshMatchSpecific(s.echoed)
+	}
+	patterns := []string{s.echoed}
+	if header != "" {
+		patterns = sshHeaderArguments(header)
+	}
+	return !sshPatternsGlobal(patterns)
+}
+
+// sshAppliedStanzas lists, in order, the Host blocks and matched Match blocks that OpenSSH's diagnostics report as applied.
+// A Host block carries the file and line from its debug1 line; a Match block carries those of its first debug3 criterion
+// line, which is its header, and none for criteria such as all that OpenSSH checks without one or at lower verbosity.
+func sshAppliedStanzas(diagnostics string) []sshAppliedStanza {
+	var applied []sshAppliedStanza
+	var pending *sshAppliedStanza
+	for _, line := range strings.Split(diagnostics, "\n") {
+		line = strings.TrimSpace(line)
+		if rest, ok := strings.CutPrefix(line, "debug1: "); ok {
+			if location, pattern, ok := strings.Cut(rest, ": Applying options for "); ok {
+				file, number := sshDiagnosticLocation(location)
+				applied = append(applied, sshAppliedStanza{file: file, line: number, echoed: pattern})
+			}
+			continue
+		}
+		if rest, ok := strings.CutPrefix(line, "debug2: checking match for '"); ok {
+			criteria, _, _ := strings.Cut(rest, "' host ")
+			pending = &sshAppliedStanza{match: true, echoed: criteria}
+			continue
+		}
+		if rest, ok := strings.CutPrefix(line, "debug3: "); ok && pending != nil && pending.file == "" {
+			for _, marker := range []string{": matched '", ": not matched '"} {
+				if location, _, ok := strings.Cut(rest, marker); ok {
+					pending.file, pending.line = sshDiagnosticLocation(location)
+					break
+				}
+			}
+			continue
+		}
+		if line == "debug2: match found" && pending != nil {
+			applied = append(applied, *pending)
+		}
+		if line == "debug2: match found" || line == "debug2: match not found" {
+			pending = nil
+		}
+	}
+	return applied
+}
+
+// sshDiagnosticLocation splits an OpenSSH diagnostic location of the form "FILE line N" into the file and line number,
+// or returns no file when the location does not have that form.
+func sshDiagnosticLocation(location string) (string, int) {
+	at := strings.LastIndex(location, " line ")
+	if at < 0 {
+		return "", 0
+	}
+	number, err := strconv.Atoi(location[at+len(" line "):])
+	if err != nil || number < 1 {
+		return "", 0
+	}
+	return location[:at], number
+}
+
+// sshStanzaFile returns the lines of the source file holding an applied stanza, at the path OpenSSH reports: the loaded
+// bytes for the configuration file itself, a file inside the agent's home read through root, or another absolute path
+// read only, never written, since OpenSSH already read it as agent. It returns false for an unreadable source or one
+// larger than sshSourceLimit.
+func sshStanzaFile(root *os.Root, config string, content []byte, file string) ([]string, bool) {
+	if file == "" {
+		return nil, false
+	}
+	data := content
+	if file != config {
+		var err error
+		if relative, relErr := filepath.Rel(root.Name(), file); relErr == nil && filepath.IsLocal(relative) {
+			data, err = root.ReadFile(relative)
+		} else if filepath.IsAbs(file) {
+			data, err = readSSHSource(file)
+		} else {
+			return nil, false
+		}
+		if err != nil || len(data) > sshSourceLimit {
+			return nil, false
+		}
+	}
+	return strings.Split(string(data), "\n"), true
+}
+
+// readSSHSource reads at most one byte beyond sshSourceLimit of a configuration source outside the agent's home, opening
+// it read-only.
+func readSSHSource(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(io.LimitReader(file, sshSourceLimit+1))
+}
+
+// sshStanzaClaims returns the header of the Host or Match block at the 1-based line number and the entry keywords its own
+// body sets, up to the next Host or Match line; known is false when that line is not such a header or the body holds an
+// Include, whose options it cannot see.
+func sshStanzaClaims(lines []string, number int, match bool) (header string, keywords []string, known bool) {
+	kind := "Host"
+	if match {
+		kind = "Match"
+	}
+	if number < 1 || number > len(lines) || !strings.EqualFold(sshConfigKeyword(lines[number-1]), kind) {
+		return "", nil, false
+	}
+	for _, line := range lines[number:] {
+		keyword := sshConfigKeyword(line)
+		if strings.EqualFold(keyword, "Host") || strings.EqualFold(keyword, "Match") {
+			break
+		}
+		if strings.EqualFold(keyword, "Include") {
+			return "", nil, false
+		}
+		for _, option := range sshEntryOptions {
+			if strings.EqualFold(keyword, option.keyword) {
+				keywords = append(keywords, option.keyword)
+			}
+		}
+	}
+	return strings.TrimSpace(lines[number-1]), keywords, true
+}
+
+// sshConfigKeyword returns the keyword of one ssh_config line, up to its first space, tab, or equals sign, or nothing for
+// a blank or comment line.
+func sshConfigKeyword(line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return ""
+	}
+	if end := strings.IndexAny(line, " \t="); end >= 0 {
+		return line[:end]
+	}
+	return line
+}
+
+// sshHeaderArguments returns the arguments of an ssh_config header line after its keyword and an optional equals sign,
+// such as the patterns of a Host line, split as sshConfigArguments does.
+func sshHeaderArguments(header string) []string {
+	rest := strings.TrimSpace(strings.TrimSpace(header)[len(sshConfigKeyword(header)):])
+	return sshConfigArguments(strings.TrimPrefix(rest, "="))
+}
+
+// sshConfigArguments splits ssh_config arguments at unquoted spaces and tabs, as OpenSSH does, keeping a double-quoted
+// span, such as a Match exec command or a quoted Host pattern, inside one argument without its quotes; a backslash before
+// a double quote inside a quoted span keeps the quote. It is no shell parser and leaves every other character as written.
+func sshConfigArguments(text string) []string {
+	var arguments []string
+	var current strings.Builder
+	quoted, started := false, false
+	for i := 0; i < len(text); i++ {
+		switch c := text[i]; {
+		case quoted && c == '\\' && i+1 < len(text) && text[i+1] == '"':
+			current.WriteByte('"')
+			i++
+		case c == '"':
+			quoted, started = !quoted, true
+		case !quoted && (c == ' ' || c == '\t'):
+			if started {
+				arguments = append(arguments, current.String())
+				current.Reset()
+				started = false
+			}
+		default:
+			current.WriteByte(c)
+			started = true
+		}
+	}
+	if started {
+		arguments = append(arguments, current.String())
+	}
+	return arguments
+}
+
+// sshUniversalPattern reports whether an OpenSSH host pattern matches every name sshAliasName accepts: it holds at least
+// one * and otherwise at most one ?, because every alias has at least one character.
+func sshUniversalPattern(pattern string) bool {
+	return strings.Contains(pattern, "*") && strings.Trim(pattern, "*?") == "" && strings.Count(pattern, "?") <= 1
+}
+
+// sshPatternsGlobal reports whether a Host or Match host pattern list applies to every allowed alias: it holds a universal
+// positive pattern and no negated pattern that could exclude one.
+func sshPatternsGlobal(patterns []string) bool {
+	universal := false
+	for _, pattern := range patterns {
+		if strings.HasPrefix(pattern, "!") {
+			return false
+		}
+		universal = universal || sshUniversalPattern(pattern)
+	}
+	return universal
+}
+
+// sshMatchSpecific reports whether Match criteria narrow the hosts they match: a host or originalhost criterion, in any
+// letter case, that is negated or whose comma-separated pattern list is not global. Criteria are split as
+// sshConfigArguments does, so a quoted exec command stays one argument; all, canonical, and final take no argument, and
+// criteria about users or commands do not make a block specific to an alias.
+func sshMatchSpecific(criteria string) bool {
+	words := sshConfigArguments(criteria)
+	for i := 0; i < len(words); i++ {
+		keyword, negated := strings.CutPrefix(words[i], "!")
+		if strings.EqualFold(keyword, "all") || strings.EqualFold(keyword, "canonical") || strings.EqualFold(keyword, "final") {
+			continue
+		}
+		argument := ""
+		if i+1 < len(words) {
+			i++
+			argument = words[i]
+		}
+		if (strings.EqualFold(keyword, "host") || strings.EqualFold(keyword, "originalhost")) && (negated || !sshPatternsGlobal(strings.Split(argument, ","))) {
+			return true
+		}
+	}
+	return false
 }
 
 // sshOptionsSetForAlias returns, in entry order, the keywords of the entry options that the configuration sets for the
-// alias but not equally for every alias. It has ssh -G resolve the configuration followed by a trailing Host * block of placeholder
-// values, twice with opposite IdentitiesOnly values, for the alias and for sshControlAlias. Because OpenSSH keeps the
-// first value it reads, an option the alias does not resolve to exactly its placeholder was set by an earlier rule; when
-// the control alias, which no specific block matches, resolves the same value, a global rule set it, as with Host * beside
-// a Port-only Host glob. A specific block that sets the same value as an earlier global one cannot be told apart from it
-// and counts as global. When a specific block also matches the control alias, the comparison is not used.
+// alias but not equally for every alias; sshAliasClaimed falls back to it for specific blocks it cannot read. It has
+// ssh -G resolve the configuration followed by a trailing Host * block of placeholder values, twice with opposite
+// IdentitiesOnly values, for the alias and for sshControlAlias. Because OpenSSH keeps the first value it reads, an option
+// the alias does not resolve to exactly its placeholder was set by an earlier rule; when the control alias, which no
+// specific block matches, resolves the same value, a global rule set it. A specific block that sets the same value as an
+// earlier global one cannot be told apart from it this way and counts as global. When the -vv diagnostics show a
+// specific block that also matches the control alias, the comparison is not used.
 func sshOptionsSetForAlias(content []byte, alias string, effects Effects) ([]string, error) {
 	set := map[string]bool{}
 	for _, probe := range []struct{ name, identitiesOnly string }{{"a", "yes"}, {"b", "no"}} {
@@ -374,23 +652,10 @@ func sshOptionsSetForAlias(content []byte, alias string, effects Effects) ([]str
 	return claimed, nil
 }
 
-// sshSpecificStanza reports whether ssh -vv diagnostics show an applied Host pattern other than * or a matched Match
-// block whose criteria include host or originalhost, as opposed to Host *, Match all, or other global criteria.
+// sshSpecificStanza reports whether OpenSSH's diagnostics show an applied block specific to the host, judged only by what
+// OpenSSH echoes: a Host pattern that does not match every allowed alias, or Match criteria that sshMatchSpecific narrows.
 func sshSpecificStanza(diagnostics string) bool {
-	hostCriteria := false
-	for _, line := range strings.Split(diagnostics, "\n") {
-		if _, pattern, ok := strings.Cut(line, ": Applying options for "); ok && strings.HasPrefix(line, "debug1: ") && strings.TrimSpace(pattern) != "*" {
-			return true
-		}
-		if rest, ok := strings.CutPrefix(line, "debug2: checking match for '"); ok {
-			criteria, _, _ := strings.Cut(rest, "' host ")
-			hostCriteria = slices.ContainsFunc(strings.Fields(criteria), func(word string) bool { return word == "host" || word == "originalhost" })
-		}
-		if strings.TrimSpace(line) == "debug2: match found" && hostCriteria {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(sshAppliedStanzas(diagnostics), func(stanza sshAppliedStanza) bool { return stanza.specific("") })
 }
 
 // checkSSHEntry has ssh -G resolve the alias from the exact configuration bytes about to be written, read from the query's
@@ -436,13 +701,14 @@ func resolveSSHCandidate(content []byte, host string, verbose bool, effects Effe
 	return resolved, diagnostics, nil
 }
 
-// runSSHQuery runs one bounded ssh query as agent with the fixed SSH environment and returns its output and diagnostics.
-// A failure reports OpenSSH's own diagnostic lines without the debug lines that verbose queries add.
+// runSSHQuery runs one ssh query as agent with the fixed SSH environment and returns its output and diagnostics, refusing
+// output beyond sshQueryLimit or diagnostics beyond sshDiagnosticLimit. A failure reports OpenSSH's own diagnostic lines
+// without the debug lines that verbose queries add.
 func runSSHQuery(args []string, stdin io.Reader, alias string, effects Effects) (string, string, error) {
 	if stdin == nil {
 		stdin = strings.NewReader("")
 	}
-	stdout, diagnostic := sshOutputBuffer{limit: sshQueryLimit}, sshOutputBuffer{limit: sshQueryLimit}
+	stdout, diagnostic := sshOutputBuffer{limit: sshQueryLimit}, sshOutputBuffer{limit: sshDiagnosticLimit}
 	err := effects.Start(Process{Program: sshProgram, Args: args, Identity: agentIdentity, EnvironmentPolicy: SSHEnvironment, Stdin: stdin, Stdout: &stdout, Stderr: &diagnostic})
 	if err != nil {
 		var reported []string
