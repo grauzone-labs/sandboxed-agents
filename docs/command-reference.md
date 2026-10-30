@@ -56,6 +56,22 @@ Names:
 - **`SET` and `LIST`.** Both are comma-separated names. `--with SET` names toolchains: `dotnet`, `playwright`, `azure`, and `native`, or `none` alone for the base image without toolchains. `--agents LIST` names agents of the catalog: `copilot`, `claude`, `codex`, and `opencode`. An unknown name fails before Podman is called and lists the valid names.
 - **Parsing.** An unknown option, a duplicate option, a missing value, and a value on a switch are usage errors. After `--`, every argument is a positional argument.
 
+### Help
+
+Every level of the command chain has help: the root, each command group, and each command.
+
+| You run | You get |
+|---|---|
+| `sandboxed-agents --help`, `sandboxed-agents -h`, or `sandboxed-agents help` | The root help: a description, the usage, and every command and group with a one-line description. |
+| `GROUP --help`, `GROUP -h`, `GROUP help`, or `help GROUP`, for `agents`, `integrations`, or `tools` | The group's help: a description, the usage, and every subcommand with a one-line description. |
+| `COMMAND --help`, `COMMAND -h`, `COMMAND NAME --help`, or `help COMMAND`, where `COMMAND` is a command path such as `up` or `tools enable` | The command's help: a description, the usage as in the grammar above, the arguments, each option with its value and its default where one exists, and examples. |
+
+The help of a command lists the catalog values it accepts as the executable holds them: agents and their login workflows, integrations with their workflows and options, toolchains, Tools with their channels, and actions. Help goes to standard output and exits with status zero. It calls no Podman and reads and writes no host state.
+
+`help` is a command word only in the command position; it reserves no sandbox name, so `up help` creates a sandbox named `help`. A leaf command takes `--help` or `-h` anywhere before `--`, except that `agents run NAME AGENT [ARG...]` passes every argument after `AGENT` on to the agent unchanged, `--help` included; `agents run --help` and `agents run NAME --help` show the help of `agents run`.
+
+A usage error keeps its message and exits with status 2. The message is followed by the usage of the deepest level the arguments reached, the command list for the root or a group, and the help command to run: `tools bogus` ends with `run 'sandboxed-agents tools --help' for usage`, and `tools enable agent01` ends with `run 'sandboxed-agents tools enable --help' for usage`.
+
 ## General commands
 
 | Command | What it does |
