@@ -115,7 +115,12 @@ func (w agentWork) changeSession() error {
 	return tmux(w.effects, nil, io.Discard, w.stderr, "new-session", "-d", "-s", w.request.name, "-c", "/workspace", "--", "/usr/bin/env", commandPath(w.home, w.request.definition))
 }
 
-// attach selects the exact session name and keeps terminal IO outside the manager lock.
+// attach selects the exact session name and keeps terminal IO outside the manager lock. It passes -u and -2 so tmux
+// treats the attaching client as a UTF-8 terminal with 256 colours whatever TERM and locale reach it inside the sandbox.
+// In a local reproduction with a stand-in agent, a client environment of TERM=xterm and no locale variable made tmux
+// draw every non-ASCII glyph as an underscore and map each colour onto eight; the two flags removed both symptoms. That
+// environment is a modelled one: the TERM and locale podman exec gives a real sandbox, and the cause of the fragments
+// reported in #114, remain unconfirmed.
 func (w agentWork) attach() int {
-	return exitStatus(tmux(w.effects, w.effects.Stdin, w.stdout, w.stderr, "attach-session", "-t", "="+w.request.name), w.stderr)
+	return exitStatus(tmux(w.effects, w.effects.Stdin, w.stdout, w.stderr, "-u", "-2", "attach-session", "-t", "="+w.request.name), w.stderr)
 }
