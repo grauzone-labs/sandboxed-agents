@@ -54,6 +54,12 @@ var sandboxArgument = helpRow{"NAME", "The sandbox name."}
 // forceSessions describes --force of the commands that end agent sessions.
 var forceSessions = helpOption{name: "force", text: "Proceed although agent sessions are running, and end them."}
 
+// forceAgentSession describes --force of the agent commands that end the agent's own session.
+var forceAgentSession = helpOption{name: "force", text: "Proceed although the agent's session runs, and end it."}
+
+// sshConfigOption describes --ssh-config of the commands that start a sandbox.
+var sshConfigOption = helpOption{name: "ssh-config", text: "Install the opt-in SSH setup once the sandbox runs."}
+
 // helpTopics returns the help of every level of the command chain, keyed by command path, with
 // catalog values read from catalog.Default at call time.
 func helpTopics() map[string]helpEntry {
@@ -99,7 +105,7 @@ func helpTopics() map[string]helpEntry {
 				{name: "with", value: "SET", text: "Toolchain set: comma-separated names of " + toolchains + ", or none alone for the base image.", defaultValue: "none"},
 				{name: "agents", value: "LIST", text: "Agents to enable once the sandbox runs: comma-separated names of " + agents + "."},
 				{name: "port", value: "N", text: "Host loopback port for SSH.", defaultValue: strconv.Itoa(defaultSSHPort) + ", or the next port no sandbox has recorded"},
-				{name: "ssh-config", text: "Install the opt-in SSH setup once the sandbox runs."},
+				sshConfigOption,
 				{name: "memory", value: "SIZE", text: "Memory limit; the sandbox gets no swap.", defaultValue: "8g"},
 				{name: "cpus", value: "N", text: "CPU limit.", defaultValue: "4"},
 				{name: "pids-limit", value: "N", text: "Limit on processes.", defaultValue: "2048"},
@@ -112,7 +118,7 @@ func helpTopics() map[string]helpEntry {
 			summary:   "Start a stopped sandbox.",
 			usage:     []string{"start NAME [--ssh-config]"},
 			arguments: []helpRow{sandboxArgument},
-			options:   []helpOption{{name: "ssh-config", text: "Install the opt-in SSH setup once the sandbox runs."}},
+			options:   []helpOption{sshConfigOption},
 			examples:  []string{"start agent01"},
 		},
 		"stop": {
@@ -186,7 +192,7 @@ func helpTopics() map[string]helpEntry {
 			summary:   "Remove an agent's command, selection entry, and pin, and keep its credentials.",
 			usage:     []string{"agents disable NAME AGENT [--force]"},
 			arguments: []helpRow{sandboxArgument, agentArgument},
-			options:   []helpOption{{name: "force", text: "Proceed although the agent's session runs, and end it."}},
+			options:   []helpOption{forceAgentSession},
 			examples:  []string{"agents disable agent01 claude"},
 		},
 		"agents update": {
@@ -195,7 +201,7 @@ func helpTopics() map[string]helpEntry {
 			arguments: []helpRow{sandboxArgument, agentArgument},
 			options: []helpOption{
 				{name: "unpin", text: "Install the newest version and clear the pin."},
-				{name: "force", text: "Proceed although the agent's session runs, and end it."},
+				forceAgentSession,
 			},
 			examples: []string{"agents update agent01 claude", "agents update agent01 codex --unpin"},
 		},
