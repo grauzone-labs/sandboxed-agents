@@ -270,15 +270,17 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 			}
 			request.Options[catalog.SSHHostOption] = target
 		}
+		label := selection.Integration + " " + selection.Workflow
+		if selection.Workflow == "" {
+			// A workflow without a name, such as SSH's, is named by its command.
+			label = selection.Integration + " config"
+		}
 		for option := range request.Options {
 			if !slices.Contains(selection.Definition.Options, option) {
-				if selection.Integration == catalog.SSHIntegration {
-					return request, fmt.Errorf("%s config does not support option %q", selection.Integration, "--"+option)
-				}
 				if len(selection.Definition.Options) > 0 {
-					return request, fmt.Errorf("%s %s does not support option %q", selection.Integration, selection.Workflow, "--"+option)
+					return request, fmt.Errorf("%s does not support option %q", label, "--"+option)
 				}
-				return request, fmt.Errorf("%s %s takes no options", selection.Integration, selection.Workflow)
+				return request, fmt.Errorf("%s takes no options", label)
 			}
 		}
 	}
