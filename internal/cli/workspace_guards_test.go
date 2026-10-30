@@ -273,16 +273,29 @@ func TestWindowsNonDriveWorkspaceFailsBeforePreflight(t *testing.T) {
 	}
 }
 
-// TestWindowsWorkspaceMissingStateUsesHostStateDiagnostic proves a missing Windows state root reports the shared host-state requirement with up's usage and help pointer before external queries through RunWithHost.
+// TestWindowsWorkspaceMissingStateUsesHostStateDiagnostic proves a missing Windows state root reports the shared host-state requirement with the generic usage line and no help pointer before external queries through RunWithHost.
 func TestWindowsWorkspaceMissingStateUsesHostStateDiagnostic(t *testing.T) {
 	f := windowsHost(t)
 	t.Setenv("LOCALAPPDATA", "")
 	status, output, calls := f.run(t, "up", "agent01", t.TempDir())
-	want := "step 1: LOCALAPPDATA is required for host state\nusage: sandboxed-agents up NAME [WORKSPACE] [--with SET] [--agents LIST] [--port N] [--ssh-config] [--memory SIZE] [--cpus N] [--pids-limit N] [--shm-size SIZE]\nrun 'sandboxed-agents up --help' for usage\n"
+	want := "step 1: LOCALAPPDATA is required for host state\nusage: sandboxed-agents COMMAND [ARG...]\n"
 	if status != 2 || output != want || len(calls) != 0 {
 		t.Fatalf("status=%d output=%q calls=%v; want shared host-state diagnostic=%q", status, output, calls, want)
 	}
 	if calls := testutil.Invocations(t, f.fakes.SSHLog); len(calls) != 0 {
 		t.Fatalf("missing state reached host SSH: %v", calls)
+	}
+}
+
+// TestParsedCommandMissingStateKeepsGenericUsage proves a lifecycle command that parses but
+// finds no Windows state root keeps the host-state message, exit status 2, and the generic
+// usage line without a help pointer, before external queries through RunWithHost.
+func TestParsedCommandMissingStateKeepsGenericUsage(t *testing.T) {
+	f := windowsHost(t)
+	t.Setenv("LOCALAPPDATA", "")
+	status, output, calls := f.run(t, "stop", "agent01")
+	want := "step 1: LOCALAPPDATA is required for host state\nusage: sandboxed-agents COMMAND [ARG...]\n"
+	if status != 2 || output != want || len(calls) != 0 {
+		t.Fatalf("status=%d output=%q calls=%v; want generic host-state diagnostic=%q", status, output, calls, want)
 	}
 }
