@@ -40,7 +40,7 @@ func TestAgentRunForwardsArgumentsStreamsAndExit(t *testing.T) {
 
 }
 
-// TestAgentSessionStartsOnceAndAttachesWithoutLock proves repeated clients share one session and attachment releases the manager lock at RunWithEffects and its process seam.
+// TestAgentSessionStartsOnceAndAttachesWithoutLock proves repeated clients share one session, attach as a UTF-8 client with 256 colours, and release the manager lock while attached at RunWithEffects and its process seam.
 func TestAgentSessionStartsOnceAndAttachesWithoutLock(t *testing.T) {
 	home, version, installs := t.TempDir(), "1.2.3", 0
 	e := agentEffects(t, home, &version, &installs)
@@ -62,8 +62,9 @@ func TestAgentSessionStartsOnceAndAttachesWithoutLock(t *testing.T) {
 			}
 			starts++
 			running = true
-		case "attach-session":
-			if !reflect.DeepEqual(p.Args[4:], []string{"attach-session", "-t", "=codex"}) {
+		case "-u":
+			// The attaching client assumes a UTF-8 terminal with 256 colours whatever TERM and locale reach it in the sandbox.
+			if !reflect.DeepEqual(p.Args[4:], []string{"-u", "-2", "attach-session", "-t", "=codex"}) {
 				t.Fatal(p.Args)
 			}
 			attaches++

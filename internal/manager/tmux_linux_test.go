@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,18 +17,7 @@ import (
 
 // TestAgentSessionLifetimeWithLocalTmux proves a detached session survives its caller and vanishes with the agent through RunWithEffects and a real local tmux process adapter.
 func TestAgentSessionLifetimeWithLocalTmux(t *testing.T) {
-	tmuxPath, err := exec.LookPath("tmux")
-	if err != nil {
-		t.Skip("local tmux unavailable; injected process tests cover the manager contract")
-	}
-	// Keep socket path short enough for sockaddr_un regardless of the test root.
-	socketDir, err := os.MkdirTemp("/tmp", "sa-tmux-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(socketDir)
-	socket := filepath.Join(socketDir, "socket")
-	defer exec.Command(tmuxPath, "-S", socket, "kill-server").Run()
+	tmuxPath, localArgs := localTmux(t)
 	home, version, installs := t.TempDir(), "1.2.3", 0
 	e := agentEffects(t, home, &version, &installs)
 	runAgents(t, e, 0, "enable", "codex")
@@ -41,18 +31,11 @@ func TestAgentSessionLifetimeWithLocalTmux(t *testing.T) {
 		if p.Program != "tmux" || p.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
 			t.Fatalf("process=%+v", p)
 		}
-		if p.Args[4] == "attach-session" {
+		if slices.Contains(p.Args, "attach-session") {
 			attaches++
 			return nil
 		} // Model terminal detach at the process seam.
-		args := append([]string{}, p.Args...)
-		args[0], args[1] = "-S", socket
-		for i, arg := range args {
-			if arg == "/workspace" {
-				args[i] = home
-			}
-		}
-		cmd := exec.Command(tmuxPath, args...)
+		cmd := exec.Command(tmuxPath, localArgs(p.Args, home)...)
 		cmd.Env = append(os.Environ(), "TMUX=", "TMUX_TMPDIR=")
 		cmd.Stdout, cmd.Stderr = p.Stdout, p.Stderr
 		return cmd.Run()
@@ -94,5 +77,35 @@ func TestAgentSessionLifetimeWithLocalTmux(t *testing.T) {
 	out.Reset()
 	if status := manager.RunWithEffects([]string{"sessions"}, &out, io.Discard, e); status != 0 || out.Len() != 0 {
 		t.Fatalf("empty query=%q status=%d", &out, status)
+	}
+}
+
+// localTmux returns the local tmux executable and a rewrite of manager tmux arguments onto a private socket that the
+// test's cleanup kills, with the sandbox's /workspace replaced by the given home. Without a local tmux the test skips.
+func localTmux(t *testing.T) (string, func(args []string, home string) []string) {
+	t.Helper()
+	tmuxPath, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("local tmux unavailable; injected process tests cover the manager contract")
+	}
+	// Keep socket path short enough for sockaddr_un regardless of the test root.
+	socketDir, err := os.MkdirTemp("/tmp", "sa-tmux-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	socket := filepath.Join(socketDir, "socket")
+	t.Cleanup(func() {
+		exec.Command(tmuxPath, "-S", socket, "kill-server").Run()
+		os.RemoveAll(socketDir)
+	})
+	return tmuxPath, func(managerArgs []string, home string) []string {
+		args := append([]string{}, managerArgs...)
+		args[0], args[1] = "-S", socket
+		for i, arg := range args {
+			if arg == "/workspace" {
+				args[i] = home
+			}
+		}
+		return args
 	}
 }
