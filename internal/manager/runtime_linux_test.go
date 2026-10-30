@@ -519,7 +519,7 @@ func TestProductionSSHKeysIgnoreExplicitEnvironment(t *testing.T) {
 		},
 	})
 	err := e.Start(Process{
-		Program: "/usr/bin/ssh-keygen", Identity: agentIdentity, EnvironmentPolicy: SSHKeyEnvironment,
+		Program: "/usr/bin/ssh-keygen", Identity: agentIdentity, EnvironmentPolicy: SSHEnvironment,
 		Environment: []string{"PATH=/caller/bin", "HOME=/caller", "SSH_ASKPASS_REQUIRE=force", "SSH_AUTH_SOCK=/caller/socket", "LD_PRELOAD=/caller/lib", "SECRET=explicit"},
 	})
 	if err != nil || starts != 1 {

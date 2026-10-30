@@ -79,12 +79,8 @@ func prepareSSHKey(home, name string, effects Effects) (string, error) {
 		return "", fmt.Errorf("cannot open SSH home data")
 	}
 	defer root.Close()
-	if err := root.Mkdir(".ssh", 0700); err != nil && !errors.Is(err, os.ErrExist) {
-		return "", fmt.Errorf("cannot create SSH directory")
-	}
-	info, err := root.Lstat(".ssh")
-	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || !sshFileOwned(info) {
-		return "", fmt.Errorf("SSH directory must be owned by agent with mode 0700; no files changed")
+	if err := prepareSSHDirectory(root); err != nil {
+		return "", err
 	}
 	lock := filepath.Join(".ssh", "."+name+".lock")
 	if err := root.Mkdir(lock, 0700); err != nil {
@@ -101,7 +97,7 @@ func prepareSSHKey(home, name string, effects Effects) (string, error) {
 		return "", errUnsafeSSHKey
 	}
 	path := filepath.Join(home, relative)
-	if err := effects.Start(Process{Program: sshKeygenProgram, Args: []string{"-q", "-t", "ed25519", "-N", "", "-C", "", "-f", path}, Identity: agentIdentity, EnvironmentPolicy: SSHKeyEnvironment, Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: io.Discard}); err != nil {
+	if err := effects.Start(Process{Program: sshKeygenProgram, Args: []string{"-q", "-t", "ed25519", "-N", "", "-C", "", "-f", path}, Identity: agentIdentity, EnvironmentPolicy: SSHEnvironment, Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: io.Discard}); err != nil {
 		return "", fmt.Errorf("SSH key generation failed; any generated key material is retained")
 	}
 	return validateSSHKey(root, home, relative, effects)
@@ -131,17 +127,37 @@ func readSSHPublic(root *os.Root, relative string) (string, error) {
 	return public, nil
 }
 
-// sshPublicBuffer bounds untrusted ssh-keygen output without exposing excess data or retaining private material in diagnostics.
-type sshPublicBuffer struct {
+// prepareSSHDirectory creates the agent's .ssh directory with mode 0700 when it is missing and refuses one that is
+// not a real directory owned by agent with exactly that mode; the key and alias stages share it.
+func prepareSSHDirectory(root *os.Root) error {
+	if err := root.Mkdir(".ssh", 0700); err != nil && !errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("cannot create SSH directory")
+	}
+	return checkSSHDirectory(root)
+}
+
+// checkSSHDirectory refuses a .ssh directory that is not a real directory owned by agent with mode 0700, without creating one.
+func checkSSHDirectory(root *os.Root) error {
+	info, err := root.Lstat(".ssh")
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || !sshFileOwned(info) {
+		return fmt.Errorf("SSH directory must be owned by agent with mode 0700; no files changed")
+	}
+	return nil
+}
+
+// sshOutputBuffer bounds untrusted output of a local SSH process to limit bytes without exposing excess data
+// or retaining private material in diagnostics.
+type sshOutputBuffer struct {
+	limit    int
 	data     []byte
 	overflow bool
 }
 
-// Write captures at most one small public-key response while draining all subprocess output.
-func (b *sshPublicBuffer) Write(data []byte) (int, error) {
+// Write captures output up to the limit, records whether any was dropped, and drains the rest.
+func (b *sshOutputBuffer) Write(data []byte) (int, error) {
 	n := len(data)
-	if len(data) > sshPublicLimit-len(b.data) {
-		data = data[:sshPublicLimit-len(b.data)]
+	if len(data) > b.limit-len(b.data) {
+		data = data[:b.limit-len(b.data)]
 		b.overflow = true
 	}
 	b.data = append(b.data, data...)
@@ -154,8 +170,8 @@ func validateSSHKey(root *os.Root, home, relative string, effects Effects) (stri
 	if err != nil {
 		return "", err
 	}
-	var derived sshPublicBuffer
-	err = effects.Start(Process{Program: sshKeygenProgram, Args: []string{"-y", "-P", "", "-f", filepath.Join(home, relative)}, Identity: agentIdentity, EnvironmentPolicy: SSHKeyEnvironment, Stdin: strings.NewReader(""), Stdout: &derived, Stderr: io.Discard})
+	derived := sshOutputBuffer{limit: sshPublicLimit}
+	err = effects.Start(Process{Program: sshKeygenProgram, Args: []string{"-y", "-P", "", "-f", filepath.Join(home, relative)}, Identity: agentIdentity, EnvironmentPolicy: SSHEnvironment, Stdin: strings.NewReader(""), Stdout: &derived, Stderr: io.Discard})
 	if err != nil || derived.overflow {
 		return "", fmt.Errorf("SSH private key is invalid or unavailable; no key overwritten")
 	}
