@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"bytes"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -9,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 )
 
@@ -19,8 +19,8 @@ const (
 	sshQueryLimit = 64 << 10
 	// sshAnswerLimit exceeds any valid alias, so a longer answer is refused as invalid.
 	sshAnswerLimit = 1024
-	// sshNoConfig is the ssh -F argument with which OpenSSH reads no configuration file at all.
-	sshNoConfig = "none"
+	// sshCandidateConfig makes ssh -G read the configuration it would see after the write from the query's standard input.
+	sshCandidateConfig = "/dev/stdin"
 	// sshConfigLock serializes changes to the agent's SSH configuration across concurrent workflows.
 	sshConfigLock = ".ssh/.config.lock"
 )
@@ -28,17 +28,19 @@ const (
 // sshAliasName admits one literal Host pattern: no spaces, wildcards, negation, tokens, or leading dash.
 var sshAliasName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$`)
 
-// configureSSHAlias chooses the alias for a normalized outbound SSH target and adds its host entry,
-// with the remote username and the dedicated key keyName in ~/.ssh, to the agent's ~/.ssh/config.
-// A machine name is its own alias; an address asks for one on stderr and reads the answer line from
-// Effects.Stdin without consuming later input. An alias for which the configuration already resolves
-// hostname, user, identityfile, or identitiesonly, through its own entry or Host *, is reported and
-// asked again; end of input cancels. It verifies the agent identity before reading home data and
-// queries ssh -G as agent. It writes no host entry and leaves existing configuration content unchanged
-// unless it returns the chosen alias. A missing .ssh directory is created, mode 0700, only after an alias
-// is chosen and its ssh -G query succeeds, so a cancelled question or a failing query creates nothing.
-// A held configuration lock refuses the change. Callers run it only after the connection test has
-// succeeded (ADR-0011).
+// sshOption is one effective ssh -G option the host entry sets, with the value OpenSSH must report for the alias.
+type sshOption struct{ key, value string }
+
+// configureSSHAlias chooses the alias for a normalized outbound SSH target and adds its host entry, with the remote
+// username, the dedicated key keyName in ~/.ssh, IdentitiesOnly, and the agent's ~/.ssh/known_hosts, to ~/.ssh/config.
+// A machine name is its own alias; an address asks for one on stderr and reads the answer line from Effects.Stdin
+// without consuming later input. An alias that a Host pattern other than * or a Match block other than Match all
+// already claims is reported and asked again; end of input cancels. When an earlier global setting would override
+// one of the entry's values, no alias can help, so it fails without asking again. It verifies the agent identity
+// before reading home data and queries ssh -G as agent. It writes no host entry and leaves existing configuration
+// content unchanged unless it returns the chosen alias. A missing .ssh directory is created, mode 0700, only after
+// an alias is chosen and its ssh -G check succeeds, so a cancelled question or a failing query creates nothing.
+// A held configuration lock refuses the change. Callers run it only after the connection test has succeeded (ADR-0011).
 func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects Effects) (string, error) {
 	if !verifyAgent(effects, stderr) {
 		return "", fmt.Errorf("SSH alias requires the agent identity; SSH configuration unchanged")
@@ -50,14 +52,17 @@ func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects E
 	if err != nil || !filepath.IsAbs(home) {
 		return "", fmt.Errorf("SSH home data is unavailable")
 	}
+	identityPath := filepath.Join(home, ".ssh", keyName)
+	// #109 keeps confirmed host keys in the agent's usual known_hosts; the entry names it so the alias never depends on another default.
+	knownHostsPath := filepath.Join(home, ".ssh", "known_hosts")
 	hostName, hostErr := sshConfigValue(target, true)
 	userName, userErr := sshConfigValue(user, false)
-	identity, identityErr := sshConfigValue(filepath.Join(home, ".ssh", keyName), true)
-	// #109 keeps confirmed host keys in the agent's usual known_hosts; the entry names it so the alias never depends on another default.
-	knownHosts, knownHostsErr := sshConfigValue(filepath.Join(home, ".ssh", "known_hosts"), true)
+	identity, identityErr := sshConfigValue(identityPath, true)
+	knownHosts, knownHostsErr := sshConfigValue(knownHostsPath, true)
 	if hostErr != nil || userErr != nil || identityErr != nil || knownHostsErr != nil {
 		return "", fmt.Errorf("SSH host entry values cannot be written safely; SSH configuration unchanged")
 	}
+	want := []sshOption{{"hostname", target}, {"user", user}, {"identityfile", identityPath}, {"identitiesonly", "yes"}, {"userknownhostsfile", knownHostsPath}}
 	root, err := os.OpenRoot(home)
 	if err != nil {
 		return "", fmt.Errorf("cannot open SSH home data")
@@ -68,7 +73,7 @@ func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects E
 		if err := checkSSHDirectory(root); err != nil {
 			return "", err
 		}
-		if _, err := inspectSSHConfig(root, home); err != nil {
+		if _, err := readSSHConfig(root); err != nil {
 			return "", err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -95,11 +100,11 @@ func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects E
 			continue
 		}
 		entry := fmt.Sprintf("Host %s\n    HostName %s\n    User %s\n    IdentityFile %s\n    IdentitiesOnly yes\n    UserKnownHostsFile %s\n", alias, hostName, userName, identity, knownHosts)
-		written, err := writeSSHAlias(root, home, alias, entry, effects)
+		added, err := addSSHAlias(root, home, alias, entry, want, effects)
 		if err != nil {
 			return "", err
 		}
-		if written {
+		if added {
 			return alias, nil
 		}
 		fmt.Fprintf(stderr, "SSH alias %s is already configured in the agent's SSH configuration; nothing written, choose another alias name\n", alias)
@@ -107,12 +112,15 @@ func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects E
 	}
 }
 
-// writeSSHAlias adds the entry unless the configuration already resolves the alias, and reports whether it wrote.
-// Without a .ssh directory it first checks that the client answers, so a failing query creates nothing; it then
-// creates the directory and holds the configuration lock across the conflict query and the write.
-func writeSSHAlias(root *os.Root, home, alias, entry string, effects Effects) (bool, error) {
-	if _, err := root.Lstat(".ssh"); errors.Is(err, os.ErrNotExist) {
-		if _, err := sshResolve(sshNoConfig, alias, effects); err != nil {
+// addSSHAlias adds the entry unless a specific Host pattern or Match block already claims the alias, and reports
+// whether it did. It holds the configuration lock across the claim query, the check of the resulting configuration,
+// and the atomic write. Without a .ssh directory it checks the entry alone first, so a failing query creates nothing,
+// and it queries no more once the lock confirms there is still no configuration file.
+func addSSHAlias(root *os.Root, home, alias, entry string, want []sshOption, effects Effects) (bool, error) {
+	_, err := root.Lstat(".ssh")
+	checked := errors.Is(err, os.ErrNotExist)
+	if checked {
+		if err := checkSSHEntry([]byte(entry), alias, want, effects); err != nil {
 			return false, err
 		}
 	}
@@ -123,32 +131,65 @@ func writeSSHAlias(root *os.Root, home, alias, entry string, effects Effects) (b
 		return false, fmt.Errorf("another SSH configuration change is in progress, or its lock %s was left behind; retry after it finishes or remove that lock; SSH configuration unchanged", filepath.Join(home, sshConfigLock))
 	}
 	defer root.Remove(sshConfigLock)
-	config, err := inspectSSHConfig(root, home)
+	current, err := readSSHConfig(root)
 	if err != nil {
 		return false, err
 	}
-	conflict, err := sshAliasConflict(config, alias, effects)
-	if err != nil || conflict {
-		return false, err
+	if current.exists {
+		claimed, err := sshAliasClaimed(filepath.Join(home, ".ssh", "config"), alias, effects)
+		if err != nil || claimed {
+			return false, err
+		}
+		checked = false
 	}
-	return true, replaceSSHConfig(root, entry)
+	content := appendSSHEntry(current.content, entry)
+	if !checked {
+		if err := checkSSHEntry(content, alias, want, effects); err != nil {
+			return false, err
+		}
+	}
+	return true, replaceSSHConfig(root, current.mode, content)
 }
 
-// inspectSSHConfig returns the configuration file path for ssh -G -F, or sshNoConfig when the file is absent,
-// and refuses a file that is not regular, is not owned by agent, or is writable by group or others, as OpenSSH does.
-func inspectSSHConfig(root *os.Root, home string) (string, error) {
+// sshConfigFile is the agent's ~/.ssh/config as read under the lock: whether it exists, its bytes, and the mode a replacement keeps.
+type sshConfigFile struct {
+	exists  bool
+	content []byte
+	mode    os.FileMode
+}
+
+// readSSHConfig reads ~/.ssh/config, or reports it absent with the 0600 mode a new file receives, and refuses a file that is
+// not regular, is not owned by agent, or is writable by group or others, as OpenSSH does.
+func readSSHConfig(root *os.Root) (sshConfigFile, error) {
 	relative := filepath.Join(".ssh", "config")
 	info, err := root.Lstat(relative)
 	if errors.Is(err, os.ErrNotExist) {
-		return sshNoConfig, nil
+		return sshConfigFile{mode: 0600}, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("cannot inspect SSH configuration")
+		return sshConfigFile{}, fmt.Errorf("cannot inspect SSH configuration")
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 || !sshFileOwned(info) {
-		return "", fmt.Errorf("SSH configuration must be a regular file owned by agent and not writable by others; SSH configuration unchanged")
+		return sshConfigFile{}, fmt.Errorf("SSH configuration must be a regular file owned by agent and not writable by others; SSH configuration unchanged")
 	}
-	return filepath.Join(home, relative), nil
+	content, err := root.ReadFile(relative)
+	if err != nil {
+		return sshConfigFile{}, fmt.Errorf("cannot read SSH configuration; SSH configuration unchanged")
+	}
+	return sshConfigFile{exists: true, content: content, mode: info.Mode().Perm()}, nil
+}
+
+// appendSSHEntry returns the previous configuration bytes, unchanged, followed by the entry; earlier content without a final
+// newline gains one, and a blank line separates the entry from it.
+func appendSSHEntry(previous []byte, entry string) []byte {
+	if len(previous) == 0 {
+		return []byte(entry)
+	}
+	content := append([]byte{}, previous...)
+	if content[len(content)-1] != '\n' {
+		content = append(content, '\n')
+	}
+	return append(append(content, '\n'), entry...)
 }
 
 // askSSHAlias asks for an alias name and reads one answer line; end of input cancels without writing.
@@ -199,28 +240,9 @@ func sshConfigValue(value string, tokens bool) (string, error) {
 	return value, nil
 }
 
-// replaceSSHConfig writes the previous configuration bytes, unchanged, followed by the entry to a new file in .ssh and
-// renames it over the configuration, so readers see the old or the new file and a failed write leaves the old one intact.
-// The new file keeps the previous mode, or 0600 when there was none; earlier content without a final newline gains one,
-// and a blank line separates the entry from it. The temporary file is removed when any step fails.
-func replaceSSHConfig(root *os.Root, entry string) error {
-	relative := filepath.Join(".ssh", "config")
-	var previous []byte
-	mode := os.FileMode(0600)
-	if info, err := root.Lstat(relative); err == nil {
-		if previous, err = root.ReadFile(relative); err != nil {
-			return fmt.Errorf("cannot read SSH configuration; SSH configuration unchanged")
-		}
-		mode = info.Mode().Perm()
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("cannot inspect SSH configuration")
-	}
-	if len(previous) > 0 {
-		if previous[len(previous)-1] != '\n' {
-			entry = "\n" + entry
-		}
-		entry = "\n" + entry
-	}
+// replaceSSHConfig writes content to a new file in .ssh with the given mode and renames it over the configuration, so readers
+// see the old or the new file and a failed write leaves the old one intact. The temporary file is removed when any step fails.
+func replaceSSHConfig(root *os.Root, mode os.FileMode, content []byte) error {
 	suffix := make([]byte, 8)
 	if _, err := rand.Read(suffix); err != nil {
 		return fmt.Errorf("cannot name a temporary SSH configuration; SSH configuration unchanged")
@@ -230,7 +252,7 @@ func replaceSSHConfig(root *os.Root, entry string) error {
 	if err != nil {
 		return fmt.Errorf("cannot create a temporary SSH configuration; SSH configuration unchanged")
 	}
-	_, writeErr := file.Write(append(previous, entry...))
+	_, writeErr := file.Write(content)
 	if writeErr == nil {
 		writeErr = file.Chmod(mode)
 	}
@@ -241,7 +263,7 @@ func replaceSSHConfig(root *os.Root, entry string) error {
 		writeErr = closeErr
 	}
 	if writeErr == nil {
-		writeErr = root.Rename(temporary, relative)
+		writeErr = root.Rename(temporary, filepath.Join(".ssh", "config"))
 	}
 	if writeErr != nil {
 		root.Remove(temporary)
@@ -250,47 +272,75 @@ func replaceSSHConfig(root *os.Root, entry string) error {
 	return nil
 }
 
-// sshAliasOptions are the effective options the host entry sets; an alias conflicts when the configuration already
-// resolves any of them differently from an unconfigured client, because OpenSSH keeps the first value it reads.
-var sshAliasOptions = []string{"hostname", "user", "identityfile", "identitiesonly"}
-
-// sshAliasConflict reports whether the configuration file, or sshNoConfig when it is absent, resolves hostname, user,
-// identityfile, or identitiesonly for the alias differently from an unconfigured client. A hand-written entry or a
-// Host * value for one of these options conflicts; other options, such as ServerAliveInterval, do not.
-func sshAliasConflict(config, alias string, effects Effects) (bool, error) {
-	configured, err := sshResolve(config, alias, effects)
+// sshAliasClaimed reports whether the configuration file already claims the alias: OpenSSH's -vv diagnostics name each
+// applied Host pattern and each matched Match block, and any Host pattern other than * or Match block other than Match all
+// claims it, whatever options it sets. The global Host * block and Match all apply to every alias and claim none.
+func sshAliasClaimed(config, alias string, effects Effects) (bool, error) {
+	_, diagnostics, err := runSSHQuery([]string{"-vv", "-G", "-F", config, alias}, nil, alias, effects)
 	if err != nil {
 		return false, err
 	}
-	defaults, err := sshResolve(sshNoConfig, alias, effects)
-	if err != nil {
-		return false, err
-	}
-	return sshAliasValues(configured) != sshAliasValues(defaults), nil
-}
-
-// sshAliasValues keeps the ssh -G lines of the options the host entry sets, in output order, and drops every other line.
-func sshAliasValues(output string) string {
-	var kept strings.Builder
-	for _, line := range strings.Split(output, "\n") {
-		key, _, _ := strings.Cut(line, " ")
-		if slices.Contains(sshAliasOptions, key) {
-			kept.WriteString(line + "\n")
+	criteria := ""
+	for _, line := range strings.Split(diagnostics, "\n") {
+		if _, pattern, ok := strings.Cut(line, ": Applying options for "); ok && strings.HasPrefix(line, "debug1: ") && strings.TrimSpace(pattern) != "*" {
+			return true, nil
+		}
+		if rest, ok := strings.CutPrefix(line, "debug2: checking match for '"); ok {
+			criteria, _, _ = strings.Cut(rest, "' host ")
+		}
+		if strings.TrimSpace(line) == "debug2: match found" && criteria != "all" {
+			return true, nil
 		}
 	}
-	return kept.String()
+	return false, nil
 }
 
-// sshResolve returns the effective client configuration ssh -G reports for the alias, queried as agent with the fixed SSH
-// environment. config is a configuration file path or sshNoConfig, OpenSSH's "none", for the unconfigured client.
-func sshResolve(config, alias string, effects Effects) (string, error) {
-	stdout, diagnostic := sshOutputBuffer{limit: sshQueryLimit}, sshOutputBuffer{limit: sshQueryLimit}
-	err := effects.Start(Process{Program: sshProgram, Args: []string{"-G", "-F", config, alias}, Identity: agentIdentity, EnvironmentPolicy: SSHEnvironment, Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &diagnostic})
+// checkSSHEntry has ssh -G resolve the alias from the exact configuration bytes about to be written, read from the query's
+// standard input, and refuses them when an earlier global setting makes OpenSSH, which keeps the first value it reads,
+// report another value for an option the entry sets. Another alias would meet the same setting, so the error asks for
+// the setting to be changed instead of offering another question.
+func checkSSHEntry(content []byte, alias string, want []sshOption, effects Effects) error {
+	output, _, err := runSSHQuery([]string{"-G", "-F", sshCandidateConfig, alias}, bytes.NewReader(content), alias, effects)
 	if err != nil {
-		return "", fmt.Errorf("SSH configuration query for %s failed: %s", alias, strings.TrimSpace(string(diagnostic.data)))
+		return err
 	}
-	if stdout.overflow {
-		return "", fmt.Errorf("SSH configuration query for %s returned too much output", alias)
+	resolved := map[string][]string{}
+	for _, line := range strings.Split(output, "\n") {
+		if key, value, ok := strings.Cut(line, " "); ok {
+			resolved[key] = append(resolved[key], value)
+		}
 	}
-	return string(stdout.data), nil
+	var overridden []string
+	for _, option := range want {
+		if got := resolved[option.key]; len(got) != 1 || got[0] != option.value {
+			overridden = append(overridden, fmt.Sprintf("%s %q instead of %q", option.key, strings.Join(got, ", "), option.value))
+		}
+	}
+	if len(overridden) > 0 {
+		return fmt.Errorf("an earlier Host * or Match setting in the agent's SSH configuration would give alias %s %s for every alias; change that setting and retry; SSH configuration unchanged", alias, strings.Join(overridden, "; "))
+	}
+	return nil
+}
+
+// runSSHQuery runs one bounded ssh query as agent with the fixed SSH environment and returns its output and diagnostics.
+// A failure reports OpenSSH's own diagnostic lines without the debug lines that verbose queries add.
+func runSSHQuery(args []string, stdin io.Reader, alias string, effects Effects) (string, string, error) {
+	if stdin == nil {
+		stdin = strings.NewReader("")
+	}
+	stdout, diagnostic := sshOutputBuffer{limit: sshQueryLimit}, sshOutputBuffer{limit: sshQueryLimit}
+	err := effects.Start(Process{Program: sshProgram, Args: args, Identity: agentIdentity, EnvironmentPolicy: SSHEnvironment, Stdin: stdin, Stdout: &stdout, Stderr: &diagnostic})
+	if err != nil {
+		var reported []string
+		for _, line := range strings.Split(string(diagnostic.data), "\n") {
+			if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "debug") && !strings.HasPrefix(line, "OpenSSH_") {
+				reported = append(reported, line)
+			}
+		}
+		return "", "", fmt.Errorf("SSH configuration query for %s failed: %s", alias, strings.Join(reported, "; "))
+	}
+	if stdout.overflow || diagnostic.overflow {
+		return "", "", fmt.Errorf("SSH configuration query for %s returned too much output", alias)
+	}
+	return string(stdout.data), string(diagnostic.data), nil
 }
