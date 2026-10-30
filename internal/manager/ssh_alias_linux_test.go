@@ -47,23 +47,41 @@ func probeResolution(alias, input string) (string, bool) {
 	return "", false
 }
 
-// acceptEntry answers claim queries with only the global Host * block applied, placeholder probes with no option set earlier, and
-// candidate queries with the entry's values in effect.
+// acceptEntry answers -vv queries with only the global Host * block applied, placeholder probes for the alias and the control alias with
+// no option set earlier, and candidate queries with the entry's values in effect.
 func acceptEntry(hostName, user, home string) func(sshQuery) sshAnswer {
 	return func(q sshQuery) sshAnswer {
+		var answer sshAnswer
 		if q.verbose {
-			return sshAnswer{stderr: "OpenSSH_9.2p1\ndebug1: Reading configuration data " + q.config + "\ndebug1: " + q.config + " line 1: Applying options for *\n"}
+			answer.stderr = "OpenSSH_9.2p1\ndebug1: Reading configuration data " + q.config + "\ndebug1: " + q.config + " line 1: Applying options for *\n"
 		}
 		if probe, ok := probeResolution(q.alias, q.input); ok {
-			return sshAnswer{stdout: probe}
+			answer.stdout = probe
+		} else if !q.verbose {
+			answer.stdout = entryResolution(q.alias, hostName, user, home)
 		}
-		return sshAnswer{stdout: entryResolution(q.alias, hostName, user, home)}
+		return answer
 	}
 }
 
-// claimAlias answers like accept, except that the claim query for alias also reports the given OpenSSH diagnostic lines and, when
-// changed names an ssh -G line such as "user bob", the placeholder probes for alias resolve that option to it, as an earlier rule
-// that explicitly sets the option makes OpenSSH do.
+// withOption returns ssh -G output in which the option of changed, an ssh -G line such as "user bob", resolves to that line alone.
+func withOption(output, changed string) string {
+	key, _, ok := strings.Cut(changed, " ")
+	if !ok {
+		return output
+	}
+	var lines []string
+	for _, line := range strings.SplitAfter(output, "\n") {
+		if !strings.HasPrefix(line, key+" ") {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "") + changed + "\n"
+}
+
+// claimAlias answers like accept, except that -vv queries for alias also report the given OpenSSH diagnostic lines and, when changed
+// names an ssh -G line such as "user bob", the placeholder probes for alias, but not for the control alias, resolve that option to it,
+// as a block specific to the alias that explicitly sets the option makes OpenSSH do.
 func claimAlias(accept func(sshQuery) sshAnswer, alias, diagnostics, changed string) func(sshQuery) sshAnswer {
 	return func(q sshQuery) sshAnswer {
 		answer := accept(q)
@@ -74,15 +92,7 @@ func claimAlias(accept func(sshQuery) sshAnswer, alias, diagnostics, changed str
 			answer.stderr += diagnostics
 		}
 		if _, probe := probeResolution(q.alias, q.input); probe {
-			if key, _, ok := strings.Cut(changed, " "); ok {
-				var lines []string
-				for _, line := range strings.SplitAfter(answer.stdout, "\n") {
-					if !strings.HasPrefix(line, key+" ") {
-						lines = append(lines, line)
-					}
-				}
-				answer.stdout = strings.Join(lines, "") + changed + "\n"
-			}
+			answer.stdout = withOption(answer.stdout, changed)
 		}
 		return answer
 	}
@@ -90,7 +100,7 @@ func claimAlias(accept func(sshQuery) sshAnswer, alias, diagnostics, changed str
 
 // aliasEffects supplies a verified agent with a temporary home and stdin, and answers ssh at the process seam from a script. It checks
 // that every query runs the trusted client as agent with the fixed SSH environment and is a -vv claim query on the configuration file
-// or a query that reads a candidate configuration, the one about to be written or a placeholder probe, from /dev/stdin.
+// or a query, with or without -vv, that reads a candidate configuration, the one about to be written or a placeholder probe, from /dev/stdin.
 func aliasEffects(t *testing.T, home string, stdin io.Reader, resolve func(sshQuery) sshAnswer, queries *[]sshQuery) Effects {
 	t.Helper()
 	return Effects{
@@ -108,12 +118,13 @@ func aliasEffects(t *testing.T, home string, stdin io.Reader, resolve func(sshQu
 			switch {
 			case len(p.Args) == 5 && p.Args[0] == "-vv" && p.Args[1] == "-G" && p.Args[2] == "-F" && filepath.IsAbs(p.Args[3]) && p.Args[3] != "/dev/stdin":
 				q = sshQuery{verbose: true, config: p.Args[3], alias: p.Args[4]}
-			case len(p.Args) == 4 && p.Args[0] == "-G" && p.Args[1] == "-F" && p.Args[2] == "/dev/stdin":
+			case len(p.Args) == 4 && p.Args[0] == "-G" && p.Args[1] == "-F" && p.Args[2] == "/dev/stdin",
+				len(p.Args) == 5 && p.Args[0] == "-vv" && p.Args[1] == "-G" && p.Args[2] == "-F" && p.Args[3] == "/dev/stdin":
 				input, err := io.ReadAll(p.Stdin)
 				if err != nil {
 					t.Fatal(err)
 				}
-				q = sshQuery{config: p.Args[2], alias: p.Args[3], input: string(input)}
+				q = sshQuery{verbose: p.Args[0] == "-vv", config: "/dev/stdin", alias: p.Args[len(p.Args)-1], input: string(input)}
 			default:
 				t.Fatalf("unexpected ssh arguments: %q", p.Args)
 			}
@@ -269,7 +280,8 @@ func TestSSHAliasConflictWritesNothingAndAsksAgain(t *testing.T) {
 			resolve := claimAlias(acceptEntry(test.target, "alice", home), test.claimed, strings.ReplaceAll(test.diagnostics, "CONFIG", config), test.changed)
 			var stderr bytes.Buffer
 			alias, err := configureSSHAlias(test.target, "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, strings.NewReader(test.answers), resolve, nil))
-			if !strings.Contains(stderr.String(), "SSH alias "+test.claimed+" is already configured") || !strings.Contains(stderr.String(), "SSH alias name for "+test.target) {
+			keyword := map[string]string{"hostname": "HostName", "user": "User", "identityfile": "IdentityFile", "identitiesonly": "IdentitiesOnly", "userknownhostsfile": "UserKnownHostsFile"}[strings.Fields(test.changed)[0]]
+			if !strings.Contains(stderr.String(), "SSH alias "+test.claimed+" is already claimed by a Host or Match host block for it that sets "+keyword+";") || !strings.Contains(stderr.String(), "SSH alias name for "+test.target) {
 				t.Fatalf("conflict not reported or no new question: %q", stderr.String())
 			}
 			got := readConfig(t, config)
@@ -303,10 +315,58 @@ func TestSSHAliasAcceptsSpecificStanzaWithUnrelatedOptions(t *testing.T) {
 			resolve := claimAlias(acceptEntry("build.example", "alice", home), "build.example", strings.ReplaceAll(diagnostics, "CONFIG", config), "port 2222")
 			var stderr bytes.Buffer
 			alias, err := configureSSHAlias("build.example", "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, strings.NewReader(""), resolve, nil))
-			if err != nil || alias != "build.example" || strings.Contains(stderr.String(), "already configured") {
+			if err != nil || alias != "build.example" || strings.Contains(stderr.String(), "is already claimed by") {
 				t.Fatalf("alias=%q error=%v diagnostics=%q", alias, err, stderr.String())
 			}
 			if got := readConfig(t, config); got != existing+"\n"+aliasEntry("build.example", "build.example", "alice", home) {
+				t.Fatalf("config=%q", got)
+			}
+		})
+	}
+}
+
+// TestSSHAliasTellsGlobalSettingsFromSpecificClaims proves an entry option that the placeholder probes resolve to the same earlier value
+// for the alias and for the control alias, such as Host * IdentitiesOnly yes beside a Port-only Host *.lan glob, is global, so the machine
+// name is used without a question, while the same probes claim the alias when the control alias also matches a specific block, at the
+// configureSSHAlias seam with scripted ssh -vv -G diagnostics and placeholder probes.
+func TestSSHAliasTellsGlobalSettingsFromSpecificClaims(t *testing.T) {
+	for _, test := range []struct {
+		name, controlDiagnostics string
+		claimed                  bool
+	}{
+		{"global setting beside a Port-only glob", "", false},
+		{"control alias matching a specific block", "debug1: /dev/stdin line 3: Applying options for _sandboxed-agents-*\n", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			existing := "Host *\n    IdentitiesOnly yes\nHost *.lan\n    Port 2222\n"
+			config := writeSSHConfig(t, home, existing, 0600)
+			accept := acceptEntry("build.lan", "alice", home)
+			resolve := func(q sshQuery) sshAnswer {
+				answer := accept(q)
+				if q.verbose && q.alias == "build.lan" {
+					answer.stderr += "debug1: " + config + " line 3: Applying options for *.lan\n"
+				}
+				if q.verbose && q.alias == "_sandboxed-agents-control" {
+					answer.stderr += test.controlDiagnostics
+				}
+				if _, probe := probeResolution(q.alias, q.input); probe {
+					answer.stdout = withOption(answer.stdout, "identitiesonly yes")
+				}
+				return answer
+			}
+			var stderr bytes.Buffer
+			alias, err := configureSSHAlias("build.lan", "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, strings.NewReader(""), resolve, nil))
+			if test.claimed {
+				if err == nil || !strings.Contains(stderr.String(), "SSH alias build.lan is already claimed by a Host or Match host block for it that sets IdentitiesOnly;") || readConfig(t, config) != existing {
+					t.Fatalf("alias=%q error=%v diagnostics=%q", alias, err, stderr.String())
+				}
+				return
+			}
+			if err != nil || alias != "build.lan" || strings.Contains(stderr.String(), "SSH alias name for") {
+				t.Fatalf("alias=%q error=%v diagnostics=%q", alias, err, stderr.String())
+			}
+			if got := readConfig(t, config); got != existing+"\n"+aliasEntry("build.lan", "build.lan", "alice", home) {
 				t.Fatalf("config=%q", got)
 			}
 		})
@@ -356,7 +416,7 @@ func TestSSHAliasIgnoresUnrelatedEffectiveOptions(t *testing.T) {
 	}, "build.example", "debug2: checking match for 'all' host build.example originally build.example\ndebug2: match found\n", "")
 	var stderr bytes.Buffer
 	alias, err := configureSSHAlias("build.example", "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, strings.NewReader(""), resolve, nil))
-	if err != nil || alias != "build.example" || strings.Contains(stderr.String(), "already configured") {
+	if err != nil || alias != "build.example" || strings.Contains(stderr.String(), "is already claimed by") {
 		t.Fatalf("alias=%q error=%v diagnostics=%q", alias, err, stderr.String())
 	}
 	if got := readConfig(t, config); got != existing+"\n"+aliasEntry("build.example", "build.example", "alice", home) {
@@ -372,7 +432,7 @@ func TestSSHAliasAcceptsGlobalValuesEqualToEntry(t *testing.T) {
 	config := writeSSHConfig(t, home, existing, 0600)
 	var stderr bytes.Buffer
 	alias, err := configureSSHAlias("192.0.2.10", "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, strings.NewReader("lab\n"), acceptEntry("192.0.2.10", "alice", home), nil))
-	if err != nil || alias != "lab" || strings.Contains(stderr.String(), "already configured") {
+	if err != nil || alias != "lab" || strings.Contains(stderr.String(), "is already claimed by") {
 		t.Fatalf("alias=%q error=%v diagnostics=%q", alias, err, stderr.String())
 	}
 	if got := readConfig(t, config); got != existing+"\n"+aliasEntry("lab", "192.0.2.10", "alice", home) {
@@ -533,8 +593,8 @@ func TestSSHAliasLocksQueriesButNotQuestions(t *testing.T) {
 	if alias, err := configureSSHAlias("192.0.2.10", "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, stdin, resolve, &queries)); err != nil || alias != "lab2" {
 		t.Fatalf("alias=%q error=%v diagnostics=%q", alias, err, stderr.String())
 	}
-	// lab: claim and the first placeholder probe, which already shows the earlier HostName; lab2: claim and candidate check.
-	if len(queries) != 4 {
+	// lab: claim and two placeholder probes, each for the alias and the control alias; lab2: claim and candidate check.
+	if len(queries) != 7 {
 		t.Fatalf("queries=%v", queries)
 	}
 	if _, err := os.Stat(lock); !os.IsNotExist(err) {
@@ -641,9 +701,11 @@ func realSSHEffects(t *testing.T, home string, stdin io.Reader) Effects {
 
 // TestSSHAliasResolvesThroughRealOpenSSH proves with the local OpenSSH client, where installed, that the entry beside benign or matching
 // Host * options resolves hostname, user, identityfile, identitiesonly, and the agent home's known_hosts through ssh -G -F FILE; that a
-// contradicting Host * value fails once without another question; that an existing entry, Host ALIAS, Host glob, or Match host or originalhost
-// block setting one of those options, even to the intended value or to the value ssh -G -F none reports, asks for another alias; and that such
-// a block setting only Port, or Match all, does not. It exercises the configureSSHAlias seam with Effects.Start running the real /usr/bin/ssh -G as the process seam.
+// contradicting Host * or Host * lab value, both global because their positive * matches every host, fails once without another question;
+// that an existing entry, Host ALIAS, Host glob, or Match host or originalhost block explicitly setting one of those options, even to the
+// intended value or to the value ssh -G -F none reports, asks for another alias; and that such a block setting only Port, or Match all, does
+// not, also beside a Host * block that sets one of those options to the intended value, so a machine name is used directly without a
+// question. It exercises the configureSSHAlias seam with Effects.Start running the real /usr/bin/ssh -G as the process seam.
 func TestSSHAliasResolvesThroughRealOpenSSH(t *testing.T) {
 	for _, test := range []struct {
 		name, target, user, existing, answers, alias, failure string
@@ -665,6 +727,9 @@ func TestSSHAliasResolvesThroughRealOpenSSH(t *testing.T) {
 		{"Match host with the default UserKnownHostsFile", "192.0.2.10", "alice", "Match host lab\n    UserKnownHostsFile ~/.ssh/known_hosts ~/.ssh/known_hosts2\n", "lab\nlab2\n", "lab2", "", true},
 		{"Host ALIAS with a default IdentityFile", "192.0.2.10", "alice", "Host lab\n    IdentityFile ~/.ssh/id_rsa\n", "lab\nlab2\n", "lab2", "", true},
 		{"Match all claims nothing", "192.0.2.10", "alice", "Match all\n    Compression yes\n", "lab\n", "lab", "", false},
+		{"Port-only Host glob beside Host star IdentitiesOnly", "build.lan", "alice", "Host *\n    IdentitiesOnly yes\nHost *.lan\n    Port 2222\n", "", "build.lan", "", false},
+		{"Host star lab equal to the entry", "192.0.2.10", "alice", "Host * lab\n    IdentitiesOnly yes\n", "lab\n", "lab", "", false},
+		{"Host star lab other user", "192.0.2.10", "alice", "Host * lab\n    User bob\n", "lab\nlab2\n", "", "user", false},
 		{"no configuration file", "build.example", "alice", "NONE", "", "build.example", "", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -688,7 +753,7 @@ func TestSSHAliasResolvesThroughRealOpenSSH(t *testing.T) {
 			if err != nil || alias != test.alias {
 				t.Fatalf("alias=%q error=%v diagnostics=%q", alias, err, stderr.String())
 			}
-			if test.claimed != strings.Contains(stderr.String(), "already configured") {
+			if test.claimed != strings.Contains(stderr.String(), "is already claimed by") {
 				t.Fatalf("claimed=%v diagnostics=%q", test.claimed, stderr.String())
 			}
 			output, err := exec.Command("/usr/bin/ssh", "-G", "-F", config, alias).Output()
