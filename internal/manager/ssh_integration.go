@@ -23,8 +23,10 @@ const (
 // errUnsafeSSHKey refuses incomplete or unsafe key pairs without replacing either file.
 var errUnsafeSSHKey = errors.New("SSH key files are incomplete or unsafe; no key overwritten")
 
-// configureSSH prepares only the dedicated-key stage of the undelivered outbound SSH workflow.
-// It validates direct manager requests and verifies agent identity before accessing home data.
+// configureSSH runs the outbound SSH workflow: it validates direct manager requests and verifies agent identity before
+// accessing home data, prepares the dedicated key and prints its public key, and then asks for approval of the
+// connection test. Declining or cancelling the question starts no process, writes no host entry, keeps the key, and
+// returns 1.
 func configureSSH(args []string, stdout, stderr io.Writer, effects Effects) int {
 	if _, err := catalog.Default.ResolveConfig(catalog.SSHIntegration, ""); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -66,6 +68,19 @@ func configureSSH(args []string, stdout, stderr io.Writer, effects Effects) int 
 	}
 	if _, err := fmt.Fprintln(stdout, public); err != nil {
 		fmt.Fprintln(stderr, "cannot print SSH public key; dedicated key retained")
+		return 1
+	}
+	stdin := effects.Stdin
+	if stdin == nil {
+		stdin = strings.NewReader("")
+	}
+	approved, err := approveSSHTest(stdin, *user, target, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "\n%v; no connection made, no host entry written, dedicated key retained at %s\n", err, path)
+		return 1
+	}
+	if !approved {
+		fmt.Fprintf(stderr, "SSH connection test declined; no connection made, no host entry written, dedicated key retained at %s\n", path)
 		return 1
 	}
 	return 0
