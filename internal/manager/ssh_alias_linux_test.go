@@ -770,6 +770,33 @@ func TestSSHAliasRefusesInvalidAliasNames(t *testing.T) {
 	}
 }
 
+// TestSSHAliasRefusesInvalidMachineNameWithoutQuestion proves a machine-name target that is not a valid alias, such as one starting with an
+// underscore or longer than 253 characters, fails once with an error naming it, asks no question, reads no input, runs no ssh -G query,
+// and creates nothing, at the configureSSHAlias seam with scripted standard input.
+func TestSSHAliasRefusesInvalidMachineNameWithoutQuestion(t *testing.T) {
+	for name, target := range map[string]string{"leading underscore": "_build.example", "254 characters without root dot": strings.Repeat("a", 254)} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			stdin := strings.NewReader("lab\n")
+			var queries []sshQuery
+			var stderr bytes.Buffer
+			alias, err := configureSSHAlias(target, "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, stdin, acceptEntry(target, "alice", home), &queries))
+			if err == nil || alias != "" || !strings.Contains(err.Error(), "machine name "+target+" is not a valid SSH alias") || !strings.Contains(err.Error(), "SSH configuration unchanged") {
+				t.Fatalf("alias=%q error=%v", alias, err)
+			}
+			if strings.Contains(stderr.String(), "SSH alias name for") || strings.Contains(stderr.String(), "invalid SSH alias name") || len(queries) != 0 {
+				t.Fatalf("diagnostics=%q queries=%v", stderr.String(), queries)
+			}
+			if rest, _ := io.ReadAll(stdin); string(rest) != "lab\n" {
+				t.Fatalf("remaining input=%q", rest)
+			}
+			if entries, err := os.ReadDir(home); err != nil || len(entries) != 0 {
+				t.Fatalf("home entries=%v error=%v", entries, err)
+			}
+		})
+	}
+}
+
 // TestSSHAliasEscapesTokensAndBackslashes proves a zoned IPv6 HostName and a username with a backslash are written with OpenSSH's %% and \\ escapes,
 // while the check expects their unescaped values, at the configureSSHAlias seam's written entry.
 func TestSSHAliasEscapesTokensAndBackslashes(t *testing.T) {
