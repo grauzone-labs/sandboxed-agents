@@ -279,10 +279,10 @@ func (e sshExit) Error() string { return "exit status " + strconv.Itoa(int(e)) }
 func (e sshExit) ExitCode() int { return int(e) }
 
 // TestSSHIntegrationTestsConnectionWithPasswordOnly proves an approved connection test starts the image's ssh once as
-// agent with the fixed SSH environment and only password authentication: no key, ssh-agent, host-based, or GSSAPI login,
-// no configuration file, no system-wide known hosts file, an interactive confirmation of an unknown host key that is
-// recorded in the agent's known_hosts, and no password or key path in its arguments, environment, or input, through
-// RunWithEffects and a recorded ssh start.
+// the `agent` user with the fixed SSH environment and only password authentication: no key, ssh-agent, host-based, or
+// GSSAPI login, no configuration file, no system-wide known hosts file, an interactive confirmation of an unknown host
+// key that is recorded in the `agent` user's known_hosts, and no password or key path in its arguments, environment, or
+// input, through RunWithEffects and a recorded ssh start.
 func TestSSHIntegrationTestsConnectionWithPasswordOnly(t *testing.T) {
 	home := t.TempDir()
 	var tests []manager.Process
