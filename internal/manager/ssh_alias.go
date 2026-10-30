@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -34,13 +35,14 @@ type sshOption struct{ key, value string }
 // configureSSHAlias chooses the alias for a normalized outbound SSH target and adds its host entry, with the remote
 // username, the dedicated key keyName in ~/.ssh, IdentitiesOnly, and the agent's ~/.ssh/known_hosts, to ~/.ssh/config.
 // A machine name is its own alias; an address asks for one on stderr and reads the answer line from Effects.Stdin
-// without consuming later input. An alias that a Host pattern other than * or a Match block other than Match all
-// already claims is reported and asked again; end of input cancels. When an earlier global setting would override
-// one of the entry's values, no alias can help, so it fails without asking again. It verifies the agent identity
-// before reading home data and queries ssh -G as agent. It writes no host entry and leaves existing configuration
-// content unchanged unless it returns the chosen alias. A missing .ssh directory is created, mode 0700, only after
-// an alias is chosen and its ssh -G check succeeds, so a cancelled question or a failing query creates nothing.
-// A held configuration lock refuses the change. Callers run it only after the connection test has succeeded (ADR-0011).
+// without consuming later input. An alias that a Host pattern other than * or a Match host or originalhost block
+// already claims, by changing one of the entry's options, is reported and asked again; end of input cancels. When an
+// earlier global setting would override one of the entry's values, no alias can help, so it fails without asking
+// again. It verifies the agent identity before reading home data and queries ssh -G as agent. It writes no host entry
+// and leaves existing configuration content unchanged unless it returns the chosen alias. A missing .ssh directory is
+// created, mode 0700, only after an alias is chosen and its ssh -G check succeeds, so a cancelled question or a failing
+// query creates nothing. A held configuration lock refuses the change. Callers run it only after the connection test
+// has succeeded (ADR-0011).
 func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects Effects) (string, error) {
 	if !verifyAgent(effects, stderr) {
 		return "", fmt.Errorf("SSH alias requires the agent identity; SSH configuration unchanged")
@@ -113,7 +115,7 @@ func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects E
 }
 
 // addSSHAlias adds the entry to the configuration in the home that root opens unless a specific Host pattern or
-// Match block already claims the alias, and reports whether it did. It holds the configuration lock across the claim
+// Match host block already claims the alias, and reports whether it did. It holds the configuration lock across the claim
 // query, the check of the resulting configuration, and the atomic write. Without a .ssh directory it checks the entry
 // alone first, so a failing query creates nothing, and it queries no more once the lock confirms there is still no
 // configuration file.
@@ -273,27 +275,54 @@ func replaceSSHConfig(root *os.Root, mode os.FileMode, content []byte) error {
 	return nil
 }
 
-// sshAliasClaimed reports whether the configuration file already claims the alias: OpenSSH's -vv diagnostics name each
-// applied Host pattern and each matched Match block, and any Host pattern other than * or Match block other than Match all
-// claims it, whatever options it sets. The global Host * block and Match all apply to every alias and claim none.
+// sshEntryOptions are the ssh -G options the host entry sets; only a change to one of them claims an alias.
+var sshEntryOptions = []string{"hostname", "user", "identityfile", "identitiesonly", "userknownhostsfile"}
+
+// sshAliasClaimed reports whether the configuration file already claims the alias. OpenSSH's -vv diagnostics name each
+// applied Host pattern and each matched Match block; a Host pattern other than *, or a Match block with a host or
+// originalhost criterion, is specific to the alias. Such a block claims the alias only when OpenSSH then resolves one of
+// the entry's options differently from ssh -G -F none, even to the intended value, so a rerun finds its own entry while a
+// block that sets only Port or ServerAliveInterval claims nothing. Global blocks are left to checkSSHEntry.
 func sshAliasClaimed(config, alias string, effects Effects) (bool, error) {
-	_, diagnostics, err := runSSHQuery([]string{"-vv", "-G", "-F", config, alias}, nil, alias, effects)
+	configured, diagnostics, err := runSSHQuery([]string{"-vv", "-G", "-F", config, alias}, nil, alias, effects)
+	if err != nil || !sshSpecificStanza(diagnostics) {
+		return false, err
+	}
+	defaults, _, err := runSSHQuery([]string{"-G", "-F", "none", alias}, nil, alias, effects)
 	if err != nil {
 		return false, err
 	}
-	criteria := ""
+	return sshEntryValues(configured) != sshEntryValues(defaults), nil
+}
+
+// sshSpecificStanza reports whether ssh -vv diagnostics show an applied Host pattern other than * or a matched Match
+// block whose criteria include host or originalhost, as opposed to Host *, Match all, or other global criteria.
+func sshSpecificStanza(diagnostics string) bool {
+	hostCriteria := false
 	for _, line := range strings.Split(diagnostics, "\n") {
 		if _, pattern, ok := strings.Cut(line, ": Applying options for "); ok && strings.HasPrefix(line, "debug1: ") && strings.TrimSpace(pattern) != "*" {
-			return true, nil
+			return true
 		}
 		if rest, ok := strings.CutPrefix(line, "debug2: checking match for '"); ok {
-			criteria, _, _ = strings.Cut(rest, "' host ")
+			criteria, _, _ := strings.Cut(rest, "' host ")
+			hostCriteria = slices.ContainsFunc(strings.Fields(criteria), func(word string) bool { return word == "host" || word == "originalhost" })
 		}
-		if strings.TrimSpace(line) == "debug2: match found" && criteria != "all" {
-			return true, nil
+		if strings.TrimSpace(line) == "debug2: match found" && hostCriteria {
+			return true
 		}
 	}
-	return false, nil
+	return false
+}
+
+// sshEntryValues keeps the ssh -G lines of the options the host entry sets, in output order, and drops every other line.
+func sshEntryValues(output string) string {
+	var kept strings.Builder
+	for _, line := range strings.Split(output, "\n") {
+		if key, _, _ := strings.Cut(line, " "); slices.Contains(sshEntryOptions, key) {
+			kept.WriteString(line + "\n")
+		}
+	}
+	return kept.String()
 }
 
 // checkSSHEntry has ssh -G resolve the alias from the exact configuration bytes about to be written, read from the query's
