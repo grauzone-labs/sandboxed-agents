@@ -16,7 +16,7 @@ const sshConnectTimeout = "15"
 // key, or failed authentication; the remote command's status passes through as any other value.
 const sshFailureStatus = 255
 
-// errSSHTestCancelled reports end of input at the approval question or an interrupted connection test.
+// errSSHTestCancelled reports end of input or Ctrl+C at the approval question, or an interrupted connection test.
 var errSSHTestCancelled = errors.New("SSH connection test cancelled")
 
 // approveSSHTest asks on stderr whether to test the connection to user@target with password authentication and reads
@@ -37,6 +37,29 @@ func approveSSHTest(stdin io.Reader, user, target string, stderr io.Writer) (boo
 			return false, nil
 		}
 		fmt.Fprintln(stderr, "answer yes or no")
+	}
+}
+
+// awaitSSHApproval asks for approval of the connection test as approveSSHTest does while Ctrl+C is caught, and returns
+// errSSHTestCancelled as soon as an interrupt arrives, so an interrupted question ends the flow with its message instead
+// of ending the manager silently. The unanswered read is left behind; the flow ends without reading again.
+func awaitSSHApproval(stdin io.Reader, user, target string, stderr io.Writer, effects Effects) (bool, error) {
+	interrupts, stop := watchInterrupts(effects)
+	defer stop()
+	type answer struct {
+		approved bool
+		err      error
+	}
+	answers := make(chan answer, 1)
+	go func() {
+		approved, err := approveSSHTest(stdin, user, target, stderr)
+		answers <- answer{approved, err}
+	}()
+	select {
+	case a := <-answers:
+		return a.approved, a.err
+	case <-interrupts:
+		return false, errSSHTestCancelled
 	}
 }
 

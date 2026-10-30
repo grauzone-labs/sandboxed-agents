@@ -25,10 +25,10 @@ var errUnsafeSSHKey = errors.New("SSH key files are incomplete or unsafe; no key
 
 // configureSSH runs the outbound SSH workflow: it validates direct manager requests and verifies agent identity before
 // accessing home data, prepares the dedicated key and prints its public key, and then asks for approval of the
-// connection test. Declining or cancelling the question starts no process, writes no host entry, keeps the key, and
-// returns 1. After approval it runs the password connection test; any failure writes no host entry, leaves the SSH
-// configuration unchanged, keeps the key, and returns 1. Only a successful test runs the alias host entry unit, and
-// only its success returns 0; the report says that key-based login is not verified.
+// connection test. Declining the question, or cancelling it with end of input or Ctrl+C, starts no process, writes no
+// host entry, keeps the key, and returns 1. After approval it runs the password connection test; any failure writes no
+// host entry, leaves the SSH configuration unchanged, keeps the key, and returns 1. Only a successful test runs the
+// alias host entry unit, and only its success returns 0; the report says that key-based login is not verified.
 func configureSSH(args []string, stdout, stderr io.Writer, effects Effects) int {
 	if _, err := catalog.Default.ResolveConfig(catalog.SSHIntegration, ""); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -76,7 +76,7 @@ func configureSSH(args []string, stdout, stderr io.Writer, effects Effects) int 
 	if stdin == nil {
 		stdin = strings.NewReader("")
 	}
-	approved, err := approveSSHTest(stdin, *user, target, stderr)
+	approved, err := awaitSSHApproval(stdin, *user, target, stderr, effects)
 	if err != nil {
 		fmt.Fprintf(stderr, "\n%v; no connection made, no host entry written, dedicated key retained at %s\n", err, path)
 		return 1
