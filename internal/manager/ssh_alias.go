@@ -62,6 +62,19 @@ var sshEntryOptions = []sshEntryOption{
 	{key: "userknownhostsfile", keyword: "UserKnownHostsFile", tokens: true},
 }
 
+// sshEntryValues keys values, given one per entry option in sshEntryOptions order, by each option's ssh -G key. It panics
+// when the number of values differs from the number of entry options, which only a programming error causes.
+func sshEntryValues(values ...string) map[string]string {
+	if len(values) != len(sshEntryOptions) {
+		panic(fmt.Sprintf("sshEntryValues: %d values for %d entry options", len(values), len(sshEntryOptions)))
+	}
+	keyed := make(map[string]string, len(values))
+	for i, option := range sshEntryOptions {
+		keyed[option.key] = values[i]
+	}
+	return keyed
+}
+
 // configureSSHAlias chooses the alias for a normalized outbound SSH target and adds its host entry, with the remote
 // username, the dedicated key keyName in ~/.ssh, IdentitiesOnly, and the agent's ~/.ssh/known_hosts, to ~/.ssh/config.
 // A machine name is its own alias and is used without a question; one that sshAliasName refuses fails without a
@@ -86,13 +99,7 @@ func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects E
 		return "", fmt.Errorf("SSH home data is unavailable")
 	}
 	// #109 keeps confirmed host keys in the agent's usual known_hosts; the entry names it so the alias never depends on another default.
-	want := map[string]string{
-		"hostname":           target,
-		"user":               user,
-		"identityfile":       filepath.Join(home, ".ssh", keyName),
-		"identitiesonly":     "yes",
-		"userknownhostsfile": filepath.Join(home, ".ssh", "known_hosts"),
-	}
+	want := sshEntryValues(target, user, filepath.Join(home, ".ssh", keyName), "yes", filepath.Join(home, ".ssh", "known_hosts"))
 	lines, err := sshOptionLines(want)
 	if err != nil {
 		return "", fmt.Errorf("SSH host entry values cannot be written safely; SSH configuration unchanged")
@@ -647,13 +654,7 @@ func sshOptionsSetForAlias(content []byte, alias string, effects Effects) ([]str
 	set := map[string]bool{}
 	for _, probe := range []struct{ name, identitiesOnly string }{{"a", "yes"}, {"b", "no"}} {
 		placeholder := "sandboxed-agents-probe-" + probe.name
-		placeholders := map[string]string{
-			"hostname":           placeholder + ".invalid",
-			"user":               placeholder,
-			"identityfile":       "/nonexistent/" + placeholder,
-			"identitiesonly":     probe.identitiesOnly,
-			"userknownhostsfile": "/nonexistent/" + placeholder,
-		}
+		placeholders := sshEntryValues(placeholder+".invalid", placeholder, "/nonexistent/"+placeholder, probe.identitiesOnly, "/nonexistent/"+placeholder)
 		lines, err := sshOptionLines(placeholders)
 		if err != nil {
 			return nil, err
