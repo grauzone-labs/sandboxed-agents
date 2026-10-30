@@ -13,8 +13,11 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/sshkey"
 )
 
+// sshSetup holds one sandbox's managed SSH paths, the user's SSH configuration
+// path, and the controller group whose locks directory serialises changes to
+// the group's shared SSH configuration.
 type sshSetup struct {
-	groupDir, dir, config, userConfig, entry, identity, knownHosts string
+	group, locks, groupDir, dir, config, userConfig, entry, identity, knownHosts string
 }
 
 // installLifecycleSSHSetup installs opt-in SSH setup after a lifecycle action and adds a retry
@@ -49,7 +52,7 @@ func sshSetupPaths(request Request, platform string) (sshSetup, error) {
 	group := filepath.Join(root, "group-"+request.Group, "ssh")
 	hash := sha256.Sum256([]byte(request.Name))
 	dir := filepath.Join(group, fmt.Sprintf("sandbox-%x", hash))
-	return sshSetup{groupDir: group, dir: dir, config: filepath.Join(group, "config"), userConfig: filepath.Join(home, ".ssh", "config"), entry: filepath.Join(dir, "entry"), identity: filepath.Join(dir, "id_ed25519"), knownHosts: filepath.Join(dir, "known_hosts")}, nil
+	return sshSetup{group: request.Group, locks: filepath.Join(root, "group-"+request.Group, "locks"), groupDir: group, dir: dir, config: filepath.Join(group, "config"), userConfig: filepath.Join(home, ".ssh", "config"), entry: filepath.Join(dir, "entry"), identity: filepath.Join(dir, "id_ed25519"), knownHosts: filepath.Join(dir, "known_hosts")}, nil
 }
 
 // sshHostName returns the sandbox's SSH alias, qualifying it with any nondefault controller
@@ -159,13 +162,28 @@ func configureSSH(request Request, p podmanTarget, stdout, stderr io.Writer) err
 	return err
 }
 
+// lockConfiguration takes the controller group's SSH configuration lock without
+// waiting, refusing with a retry error while another command holds it. The
+// caller already holds the sandbox's lifecycle lock and closes the returned
+// file to release the group lock.
+func (s sshSetup) lockConfiguration() (*os.File, error) {
+	return acquireSSHConfigLock(s.locks, s.group)
+}
+
 // removeHostSetup deletes this sandbox's host files and refreshes the group's
-// managed configuration, removing its Include when no host entries remain.
+// managed configuration, removing its Include when no host entries remain. It
+// holds the group's SSH configuration lock throughout and changes nothing when
+// that lock is busy.
 func (s sshSetup) removeHostSetup() error {
+	lock, err := s.lockConfiguration()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	if err := os.RemoveAll(s.dir); err != nil {
 		return err
 	}
-	_, err := s.updateConfiguration("")
+	_, err = s.updateConfiguration("")
 	return err
 }
 
@@ -180,7 +198,14 @@ func requireSSHManager(request Request, p podmanTarget) error {
 // installSSHSetup authorizes a dedicated key, pins the sandbox's host key, and
 // publishes the opt-in host configuration after checking for conflicts. A
 // repeat with a matching pin keeps the setup and only restores a missing Include.
+// It holds the group's SSH configuration lock from before the first check until
+// it returns, and changes nothing when that lock is busy.
 func installSSHSetup(request Request, p podmanTarget, objects sandboxObjects, s sshSetup, stdout io.Writer) error {
+	lock, err := s.lockConfiguration()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	if err := requireSSHManager(request, p); err != nil {
 		return err
 	}
