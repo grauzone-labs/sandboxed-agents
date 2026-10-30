@@ -26,7 +26,9 @@ var errUnsafeSSHKey = errors.New("SSH key files are incomplete or unsafe; no key
 // configureSSH runs the outbound SSH workflow: it validates direct manager requests and verifies agent identity before
 // accessing home data, prepares the dedicated key and prints its public key, and then asks for approval of the
 // connection test. Declining or cancelling the question starts no process, writes no host entry, keeps the key, and
-// returns 1.
+// returns 1. After approval it runs the password connection test; any failure writes no host entry, leaves the SSH
+// configuration unchanged, keeps the key, and returns 1. Only a successful test runs the alias host entry unit, and
+// only its success returns 0; the report says that key-based login is not verified.
 func configureSSH(args []string, stdout, stderr io.Writer, effects Effects) int {
 	if _, err := catalog.Default.ResolveConfig(catalog.SSHIntegration, ""); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -87,6 +89,12 @@ func configureSSH(args []string, stdout, stderr io.Writer, effects Effects) int 
 		fmt.Fprintf(stderr, "%v; no host entry written, SSH configuration unchanged, dedicated key retained at %s\n", err, path)
 		return 1
 	}
+	alias, err := configureSSHAlias(target, *user, name, stderr, effects)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v; dedicated key retained at %s\n", err, path)
+		return 1
+	}
+	fmt.Fprintf(stderr, "SSH alias %s configured for %s@%s with the dedicated key. The password test succeeded; key-based login is not verified. Add the public key above to the remote account's ~/.ssh/authorized_keys before you use ssh %s.\n", alias, *user, target, alias)
 	return 0
 }
 

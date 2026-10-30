@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -230,4 +231,63 @@ func TestSSHIntegrationNamesEachConnectionFailure(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSSHIntegrationWritesAliasOnlyAfterSuccessfulTest proves a successful connection test is followed by the alias host
+// entry unit: a machine name becomes its own alias and an address takes the alias the user answers next, the entry
+// resolves through the local ssh -G to the target, remote username, and dedicated key, the command exits zero, and its
+// report does not claim key-based login was verified, through RunWithEffects with a scripted connection test and the
+// local OpenSSH client answering the alias unit's ssh -G queries without any connection.
+func TestSSHIntegrationWritesAliasOnlyAfterSuccessfulTest(t *testing.T) {
+	enableSSHIntegration(t)
+	for _, c := range []struct{ host, answers, alias, hostName string }{
+		{"Build.Example", "yes\n", "build.example", "build.example"},
+		{"192.0.2.10", "yes\nbuild01\n", "build01", "192.0.2.10"},
+	} {
+		t.Run(c.host, func(t *testing.T) {
+			home := t.TempDir()
+			tested, queriedEarly := false, false
+			status, out, diag, _ := runSSHFlow(t, home, c.host, "alice", c.answers, func(p manager.Process) error {
+				if !slices.Contains(p.Args, "-G") {
+					tested = true
+					return nil
+				}
+				queriedEarly = queriedEarly || !tested
+				return localSSHQuery(home, p)
+			})
+			if status != 0 || !tested || queriedEarly {
+				t.Fatalf("status=%d tested=%v queriedEarly=%v diagnostics=%s", status, tested, queriedEarly, diag)
+			}
+			keys, _ := filepath.Glob(filepath.Join(home, ".ssh", "id_ed25519_remote_*"))
+			if len(keys) != 2 {
+				t.Fatalf("keys=%q", keys)
+			}
+			var resolved bytes.Buffer
+			query := exec.Command("/usr/bin/ssh", "-G", "-F", filepath.Join(home, ".ssh", "config"), c.alias)
+			query.Stdout, query.Env = &resolved, []string{"PATH=/usr/bin:/bin", "HOME=" + home, "LC_ALL=C"}
+			if err := query.Run(); err != nil {
+				t.Fatal(err)
+			}
+			for _, line := range []string{"hostname " + c.hostName, "user alice", "identityfile " + keys[0], "identitiesonly yes"} {
+				if !strings.Contains(resolved.String(), line+"\n") {
+					t.Fatalf("ssh -G %s lacks %q:\n%s", c.alias, line, &resolved)
+				}
+			}
+			if !strings.HasPrefix(out, "ssh-ed25519 ") || strings.Count(out, "\n") != 1 {
+				t.Fatalf("standard output beyond the public key: %q", out)
+			}
+			if !strings.Contains(diag, "SSH alias "+c.alias+" configured") || !strings.Contains(diag, "key-based login is not verified") || strings.Contains(strings.ToLower(diag), "key-based login verified") {
+				t.Fatalf("success report: %s", diag)
+			}
+		})
+	}
+}
+
+// localSSHQuery answers one ssh -G query of the alias unit with the local OpenSSH client in the fixed SSH environment for
+// home; ssh -G only prints the resolved configuration and opens no connection.
+func localSSHQuery(home string, p manager.Process) error {
+	query := exec.Command(p.Program, p.Args...)
+	query.Stdin, query.Stdout, query.Stderr = p.Stdin, p.Stdout, p.Stderr
+	query.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + home, "LC_ALL=C", "SSH_ASKPASS_REQUIRE=never"}
+	return query.Run()
 }
