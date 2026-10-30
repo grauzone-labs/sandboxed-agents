@@ -72,7 +72,9 @@ func TestSSHConfigRejectsForeignOptions(t *testing.T) {
 	}
 }
 
-// TestSSHConfigRequiresTerminalAndRunsAsAgent proves the key workflow needs both terminal streams and forwards only explicit values as agent through the host CLI/fake-Podman seam.
+// TestSSHConfigRequiresTerminalAndRunsAsAgent proves the SSH config workflow (key, approval, connection test, and alias)
+// needs both terminal streams and forwards only explicit values as agent in one interactive session through the host
+// CLI/fake-Podman seam.
 func TestSSHConfigRequiresTerminalAndRunsAsAgent(t *testing.T) {
 	for _, terminals := range [][2]bool{{false, false}, {true, false}, {false, true}, {true, true}} {
 		t.Run(fmt.Sprint(terminals), func(t *testing.T) {
