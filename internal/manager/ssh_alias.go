@@ -373,9 +373,7 @@ func sshAliasClaimed(root *os.Root, config string, content []byte, alias string,
 			if index := slices.IndexFunc(sshEntryOptions, func(option sshEntryOption) bool { return strings.EqualFold(keyword, option.keyword) }); index >= 0 {
 				set[sshEntryOptions[index].keyword] = true
 			} else if stanza.literal() {
-				if !slices.ContainsFunc(other, func(seen string) bool { return strings.EqualFold(seen, keyword) }) {
-					other = append(other, keyword)
-				}
+				other = appendSSHKeywordOnce(other, keyword)
 			} else if strings.EqualFold(keyword, "Include") {
 				unknown = true
 			}
@@ -390,16 +388,29 @@ func sshAliasClaimed(root *os.Root, config string, content []byte, alias string,
 			set[keyword] = true
 		}
 	}
-	var claimed []string
+	if claimed := append(sshKeywordsInEntryOrder(set), other...); len(claimed) > 0 {
+		return claimed, nil
+	}
+	return unread, nil
+}
+
+// sshKeywordsInEntryOrder returns, in entry order, the keyword of each entry option whose keyword set holds.
+func sshKeywordsInEntryOrder(set map[string]bool) []string {
+	var keywords []string
 	for _, option := range sshEntryOptions {
 		if set[option.keyword] {
-			claimed = append(claimed, option.keyword)
+			keywords = append(keywords, option.keyword)
 		}
 	}
-	if claimed = append(claimed, other...); len(claimed) == 0 {
-		claimed = unread
+	return keywords
+}
+
+// appendSSHKeywordOnce returns keywords with keyword appended, unless keywords already holds it in any letter case.
+func appendSSHKeywordOnce(keywords []string, keyword string) []string {
+	if slices.ContainsFunc(keywords, func(seen string) bool { return strings.EqualFold(seen, keyword) }) {
+		return keywords
 	}
-	return claimed, nil
+	return append(keywords, keyword)
 }
 
 // sshAppliedStanza is one Host or Match block that OpenSSH's diagnostics report as applied to a host: the file and line
@@ -541,8 +552,8 @@ func sshStanzaClaims(lines []string, number int, match bool) (header string, key
 		if strings.EqualFold(keyword, "Host") || strings.EqualFold(keyword, "Match") {
 			break
 		}
-		if keyword != "" && !slices.ContainsFunc(keywords, func(seen string) bool { return strings.EqualFold(seen, keyword) }) {
-			keywords = append(keywords, keyword)
+		if keyword != "" {
+			keywords = appendSSHKeywordOnce(keywords, keyword)
 		}
 	}
 	return strings.TrimSpace(lines[number-1]), keywords, true
@@ -674,16 +685,10 @@ func sshOptionsSetForAlias(content []byte, alias string, effects Effects) ([]str
 			if slices.Equal(got, []string{placeholders[option.key]}) || (controlGlobal && slices.Equal(got, control[option.key])) {
 				continue
 			}
-			set[option.key] = true
+			set[option.keyword] = true
 		}
 	}
-	var claimed []string
-	for _, option := range sshEntryOptions {
-		if set[option.key] {
-			claimed = append(claimed, option.keyword)
-		}
-	}
-	return claimed, nil
+	return sshKeywordsInEntryOrder(set), nil
 }
 
 // sshSpecificStanza reports whether OpenSSH's diagnostics show an applied block specific to the host, judged only by what
