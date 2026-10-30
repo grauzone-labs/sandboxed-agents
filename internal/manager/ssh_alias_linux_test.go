@@ -112,20 +112,20 @@ func aliasEffects(t *testing.T, home string, stdin io.Reader, resolve func(sshQu
 		UIDs:          func() (int, int, int) { return 1000, 1000, 1000 },
 		GIDs:          func() (int, int, int) { return 1000, 1000, 1000 },
 		Start: func(p Process) error {
-			if p.Program != "/usr/bin/ssh" || p.Identity != agentIdentity || p.EnvironmentPolicy != SSHEnvironment {
+			if p.Program != sshProgram || p.Identity != agentIdentity || p.EnvironmentPolicy != SSHEnvironment {
 				t.Fatalf("unexpected process: %+v", p)
 			}
 			var q sshQuery
 			switch {
-			case len(p.Args) == 5 && p.Args[0] == "-vvv" && p.Args[1] == "-G" && p.Args[2] == "-F" && filepath.IsAbs(p.Args[3]) && p.Args[3] != "/dev/stdin":
+			case len(p.Args) == 5 && p.Args[0] == "-vvv" && p.Args[1] == "-G" && p.Args[2] == "-F" && filepath.IsAbs(p.Args[3]) && p.Args[3] != sshCandidateConfig:
 				q = sshQuery{verbose: true, config: p.Args[3], alias: p.Args[4]}
-			case len(p.Args) == 4 && p.Args[0] == "-G" && p.Args[1] == "-F" && p.Args[2] == "/dev/stdin",
-				len(p.Args) == 5 && p.Args[0] == "-vv" && p.Args[1] == "-G" && p.Args[2] == "-F" && p.Args[3] == "/dev/stdin":
+			case len(p.Args) == 4 && p.Args[0] == "-G" && p.Args[1] == "-F" && p.Args[2] == sshCandidateConfig,
+				len(p.Args) == 5 && p.Args[0] == "-vv" && p.Args[1] == "-G" && p.Args[2] == "-F" && p.Args[3] == sshCandidateConfig:
 				input, err := io.ReadAll(p.Stdin)
 				if err != nil {
 					t.Fatal(err)
 				}
-				q = sshQuery{verbose: p.Args[0] == "-vv", config: "/dev/stdin", alias: p.Args[len(p.Args)-1], input: string(input)}
+				q = sshQuery{verbose: p.Args[0] == "-vv", config: sshCandidateConfig, alias: p.Args[len(p.Args)-1], input: string(input)}
 			default:
 				t.Fatalf("unexpected ssh arguments: %q", p.Args)
 			}
@@ -638,7 +638,7 @@ func TestSSHAliasRefusesHeldConfigurationLock(t *testing.T) {
 	home := t.TempDir()
 	existing := "# hand-written\n"
 	config := writeSSHConfig(t, home, existing, 0600)
-	lock := filepath.Join(home, ".ssh", ".config.lock")
+	lock := filepath.Join(home, sshConfigLock)
 	if err := os.Mkdir(lock, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -675,7 +675,7 @@ func (r lockObservingReader) Read(data []byte) (int, error) {
 func TestSSHAliasLocksQueriesButNotQuestions(t *testing.T) {
 	home := t.TempDir()
 	config := writeSSHConfig(t, home, "Host lab\n    HostName 203.0.113.9\n", 0600)
-	lock := filepath.Join(home, ".ssh", ".config.lock")
+	lock := filepath.Join(home, sshConfigLock)
 	claimed := claimAlias(acceptEntry("192.0.2.10", "alice", home), "lab", "debug1: "+config+" line 1: Applying options for lab\n", "hostname 203.0.113.9")
 	resolve := func(q sshQuery) sshAnswer {
 		if _, err := os.Stat(lock); err != nil {
@@ -800,21 +800,33 @@ func TestSSHAliasEscapesTokensAndBackslashes(t *testing.T) {
 	}
 }
 
+// realSSHEnvironment returns the fixed environment that sshEnvironment gives SSH processes, with HOME pointing at the
+// temporary home instead of the agent's.
+func realSSHEnvironment(home string) []string {
+	environment := sshEnvironment()
+	for i, variable := range environment {
+		if strings.HasPrefix(variable, "HOME=") {
+			environment[i] = "HOME=" + home
+		}
+	}
+	return environment
+}
+
 // realSSHEffects runs ssh -G through the local OpenSSH client at the process seam, skipping the test where none is installed;
 // queries only resolve configuration and make no network connection.
 func realSSHEffects(t *testing.T, home string, stdin io.Reader) Effects {
 	t.Helper()
-	if _, err := os.Stat("/usr/bin/ssh"); err != nil {
+	if _, err := os.Stat(sshProgram); err != nil {
 		t.Skip("the local OpenSSH client is not installed")
 	}
 	effects := aliasEffects(t, home, stdin, nil, nil)
 	effects.Start = func(p Process) error {
-		if p.Program != "/usr/bin/ssh" || p.Identity != agentIdentity || slices.Index(p.Args, "-G") < 0 {
+		if p.Program != sshProgram || p.Identity != agentIdentity || slices.Index(p.Args, "-G") < 0 {
 			t.Fatalf("unexpected process: %+v", p)
 		}
 		c := exec.Command(p.Program, p.Args...)
 		c.Stdin, c.Stdout, c.Stderr = p.Stdin, p.Stdout, p.Stderr
-		c.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + home, "LC_ALL=C"}
+		c.Env = realSSHEnvironment(home)
 		return c.Run()
 	}
 	return effects
@@ -899,16 +911,11 @@ func TestSSHAliasResolvesThroughRealOpenSSH(t *testing.T) {
 			if test.claimed != strings.Contains(stderr.String(), claimedText) {
 				t.Fatalf("claimed=%v diagnostics=%q", test.claimed, stderr.String())
 			}
-			output, err := exec.Command("/usr/bin/ssh", "-G", "-F", config, alias).Output()
+			output, err := exec.Command(sshProgram, "-G", "-F", config, alias).Output()
 			if err != nil {
 				t.Fatalf("ssh -G %s: %v", alias, err)
 			}
-			resolved := map[string][]string{}
-			for _, line := range strings.Split(string(output), "\n") {
-				if key, value, ok := strings.Cut(line, " "); ok {
-					resolved[key] = append(resolved[key], value)
-				}
-			}
+			resolved := sshResolvedOptions(string(output))
 			for key, want := range map[string]string{
 				"hostname":       test.target,
 				"user":           test.user,
@@ -981,10 +988,10 @@ func TestSSHAliasWritesMachineAliasDespiteLargeDiagnostics(t *testing.T) {
 	}
 	config := writeSSHConfig(t, home, existing.String(), 0600)
 	var diagnostics bytes.Buffer
-	query := exec.Command("/usr/bin/ssh", "-vvv", "-G", "-F", config, "build.example")
+	query := exec.Command(sshProgram, "-vvv", "-G", "-F", config, "build.example")
 	query.Stdout, query.Stderr = io.Discard, &diagnostics
-	query.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + home, "LC_ALL=C"}
-	if err := query.Run(); err != nil || diagnostics.Len() <= 64<<10 {
+	query.Env = realSSHEnvironment(home)
+	if err := query.Run(); err != nil || diagnostics.Len() <= sshQueryLimit {
 		t.Fatalf("precondition: diagnostics=%d bytes error=%v", diagnostics.Len(), err)
 	}
 	var stderr bytes.Buffer

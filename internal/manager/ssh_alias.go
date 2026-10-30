@@ -759,13 +759,18 @@ func resolveSSHCandidate(content []byte, host string, verbose bool, effects Effe
 	if err != nil {
 		return nil, "", err
 	}
+	return sshResolvedOptions(output), diagnostics, nil
+}
+
+// sshResolvedOptions returns each option's values, in the order listed, by ssh -G key from an ssh -G option listing.
+func sshResolvedOptions(output string) map[string][]string {
 	resolved := map[string][]string{}
 	for _, line := range strings.Split(output, "\n") {
 		if key, value, ok := strings.Cut(line, " "); ok {
 			resolved[key] = append(resolved[key], value)
 		}
 	}
-	return resolved, diagnostics, nil
+	return resolved
 }
 
 // runSSHQuery runs one ssh query for queriedAlias, the alias or the control alias, as agent with the fixed SSH environment
