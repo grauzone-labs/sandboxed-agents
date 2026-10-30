@@ -139,7 +139,7 @@ A command that would end an agent session, or replace the installation of an age
 | `ssh-config NAME --remove` | Removes the host side of the SSH setup and, on a running sandbox, the authorization in the sandbox. |
 | `fingerprint NAME` | Prints the SSH host key fingerprints of the sandbox, one line per key type, for comparison in a desktop UI. |
 
-Running `ssh-config NAME --install` again with a matching host key changes nothing, except that it restores a missing `Include` of the controller group in your SSH configuration and reports `SSH setup for NAME is unchanged; restored its Include in the SSH configuration`.
+Running `ssh-config NAME --install` again with a matching host key changes no host key and no entry. It rewrites the controller group's managed SSH configuration with the same content, so that file's mode or ACL can change to the managed default, and it restores a missing `Include` of the controller group in your SSH configuration, reporting `SSH setup for NAME is unchanged; restored its Include in the SSH configuration`. When the state path contains `%`, the command first runs `ssh -V`, and a failure of that query fails the command.
 
 `--install` and `--remove` together are a usage error. See [SSH access](ssh.md) for VS Code Remote SSH, host entry names, and recovery.
 

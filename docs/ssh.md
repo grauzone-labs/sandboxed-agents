@@ -26,7 +26,7 @@ Each of them does the following:
 
 The sandbox must be running. `ssh-config NAME --install` on a stopped sandbox fails and names `start NAME`; it starts nothing. `up NAME --ssh-config` on an existing sandbox starts it and installs the SSH setup.
 
-Running `ssh-config NAME --install` again with an unchanged host key changes nothing, says so, and exits zero. If the `Include` of the controller group is missing from your SSH configuration, the repeat install restores it and says that instead.
+Running `ssh-config NAME --install` again with an unchanged host key changes no host key and no entry, says so, and exits zero. It rewrites the controller group's managed SSH configuration with the same content, so its file mode or ACL can change to the managed default. If the `Include` of the controller group is missing from your SSH configuration, the repeat install restores it and says that instead. When the state path contains `%`, the repeat install first runs `ssh -V`; if that query fails, the command fails.
 
 If the installation fails during `up` or `start`, the sandbox keeps running. The command exits non-zero, names the reason, and names `ssh-config NAME --install` to retry.
 
@@ -97,7 +97,7 @@ The authorized key lives in the sandbox:
 
 A refused `remove` leaves the SSH setup untouched.
 
-Changes to the SSH setup of one controller group do not run at the same time. When another SSH setup command of the group holds its lock, `--install` and `--remove` exit non-zero, change no SSH file, and say `controller group "GROUP": another SSH setup command is in progress; retry`. If `remove NAME` meets this after it removed the container, it reports the same message and leaves the sandbox's SSH files in place; run `remove NAME` again to finish the cleanup, while the sandbox's volumes remain.
+Changes to the shared host-side SSH files of one controller group do not run at the same time; authorization changes for different sandboxes of the group may overlap. When another command that changes those shared files holds the group's lock, `--install` and `--remove` exit non-zero, change no SSH file, and say `controller group "GROUP": another SSH setup command is in progress; retry`. If `remove NAME` meets this after it removed the container, it reports the same message and leaves the sandbox's SSH files in place; run `remove NAME` again to finish the cleanup, while the sandbox's volumes remain.
 
 ## Connect with VS Code Remote SSH
 
