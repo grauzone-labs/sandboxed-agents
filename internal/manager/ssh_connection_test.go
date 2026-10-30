@@ -2,9 +2,12 @@ package manager_test
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -109,6 +112,121 @@ func TestSSHIntegrationAsksApprovalBeforeAnyConnection(t *testing.T) {
 				if _, err := os.Lstat(filepath.Join(home, ".ssh", name)); !os.IsNotExist(err) {
 					t.Fatalf("%s written after %s: %v", name, c.name, err)
 				}
+			}
+		})
+	}
+}
+
+// sshExit is a recorded ssh exit status at the process seam, as exec reports one.
+type sshExit int
+
+// Error describes the recorded exit status.
+func (e sshExit) Error() string { return "exit status " + strconv.Itoa(int(e)) }
+
+// ExitCode returns the recorded exit status; a negative value records death by a signal.
+func (e sshExit) ExitCode() int { return int(e) }
+
+// TestSSHIntegrationTestsConnectionWithPasswordOnly proves an approved connection test starts the image's ssh once as
+// agent with the fixed SSH environment and only password authentication: no key, agent, host-based, or GSSAPI login, no
+// configuration file, an interactive confirmation of an unknown host key that is recorded in the agent's known_hosts, and
+// no password or key path in its arguments, environment, or input, through RunWithEffects and a recorded ssh start.
+func TestSSHIntegrationTestsConnectionWithPasswordOnly(t *testing.T) {
+	enableSSHIntegration(t)
+	home := t.TempDir()
+	var tests []manager.Process
+	status, _, diag, _ := runSSHFlow(t, home, "Build.Example", "alice", "yes\n", func(p manager.Process) error {
+		tests = append(tests, p)
+		fmt.Fprint(p.Stderr, "alice@build.example: Permission denied (password).\r\n")
+		return sshExit(255)
+	})
+	if status != 1 || len(tests) != 1 {
+		t.Fatalf("status=%d tests=%d diagnostics=%s", status, len(tests), diag)
+	}
+	p := tests[0]
+	want := []string{"-F", "none", "-n", "-T",
+		"-o", "BatchMode=no",
+		"-o", "ConnectTimeout=15",
+		"-o", "StrictHostKeyChecking=ask",
+		"-o", "UserKnownHostsFile=" + filepath.Join(home, ".ssh", "known_hosts"),
+		"-o", "UpdateHostKeys=no",
+		"-o", "PreferredAuthentications=password,keyboard-interactive",
+		"-o", "PasswordAuthentication=yes",
+		"-o", "KbdInteractiveAuthentication=yes",
+		"-o", "PubkeyAuthentication=no",
+		"-o", "HostbasedAuthentication=no",
+		"-o", "GSSAPIAuthentication=no",
+		"-o", "IdentityAgent=none",
+		"-l", "alice", "--", "build.example", "true"}
+	if p.Program != "/usr/bin/ssh" || p.Identity != (manager.Identity{UID: 1000, GID: 1000}) || p.EnvironmentPolicy != manager.SSHEnvironment || len(p.Environment) != 0 || !slices.Equal(p.Args, want) {
+		t.Fatalf("connection test process %+v\nwant args %q", p, want)
+	}
+	if strings.Contains(strings.Join(p.Args, " "), "id_ed25519_remote_") {
+		t.Fatalf("dedicated key offered to the remote machine: %q", p.Args)
+	}
+	if p.Stdin == nil {
+		t.Fatal("connection test inherits the manager's standard input")
+	}
+	if input, _ := io.ReadAll(p.Stdin); len(input) != 0 {
+		t.Fatalf("connection test received input %q", input)
+	}
+}
+
+// TestSSHIntegrationNamesEachConnectionFailure proves each recorded ssh exit status and diagnostic maps to a recognizable
+// cause, shows ssh's own diagnostic, exits non-zero, queries no alias, keeps the dedicated key, and leaves an existing
+// ~/.ssh/config byte for byte unchanged, through RunWithEffects and a scripted ssh connection test.
+func TestSSHIntegrationNamesEachConnectionFailure(t *testing.T) {
+	enableSSHIntegration(t)
+	for _, c := range []struct {
+		name, host, diagnostic string
+		exit                   int
+		says                   []string
+	}{
+		{"name not resolvable", "build.example", "ssh: Could not resolve hostname build.example: Name or service not known\r\n", 255, []string{"remote machine name build.example cannot be resolved"}},
+		{"timed out", "build.example", "ssh: connect to host build.example port 22: Connection timed out\r\n", 255, []string{"remote machine build.example is unreachable or timed out"}},
+		{"no route", "192.0.2.10", "ssh: connect to host 192.0.2.10 port 22: No route to host\r\n", 255, []string{"remote machine 192.0.2.10 is unreachable or timed out"}},
+		{"refused", "build.example", "ssh: connect to host build.example port 22: Connection refused\r\n", 255, []string{"remote machine build.example is unreachable or timed out"}},
+		{"host key rejected", "build.example", "Host key verification failed.\r\n", 255, []string{"remote host key rejected"}},
+		{"host key changed", "build.example", "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\r\n@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\r\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\r\nHost key for build.example has changed and you have requested strict checking.\r\nHost key verification failed.\r\n", 255, []string{"remote host key rejected", "changed"}},
+		{"authentication failed", "build.example", "alice@build.example: Permission denied (publickey,password).\r\n", 255, []string{"authentication as alice failed"}},
+		{"no password method", "build.example", "alice@build.example: Permission denied (publickey).\r\n", 255, []string{"authentication as alice failed", "does not offer password authentication"}},
+		{"interrupted", "build.example", "", -1, []string{"SSH connection test cancelled"}},
+		{"other", "build.example", "", 3, []string{"SSH connection test failed with exit status 3"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			home := t.TempDir()
+			config := []byte("# kept\nHost other\n    User bob\n")
+			if err := os.Mkdir(filepath.Join(home, ".ssh"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), config, 0600); err != nil {
+				t.Fatal(err)
+			}
+			tests := 0
+			status, _, diag, _ := runSSHFlow(t, home, c.host, "alice", "y\n", func(p manager.Process) error {
+				if slices.Contains(p.Args, "-G") {
+					t.Fatalf("alias queried after a failed connection test: %q", p.Args)
+				}
+				tests++
+				fmt.Fprint(p.Stderr, c.diagnostic)
+				return sshExit(c.exit)
+			})
+			if status != 1 || tests != 1 {
+				t.Fatalf("status=%d tests=%d diagnostics=%s", status, tests, diag)
+			}
+			for _, says := range append(c.says, "no host entry written", "dedicated key retained at ") {
+				if !strings.Contains(diag, says) {
+					t.Fatalf("diagnostics lack %q: %s", says, diag)
+				}
+			}
+			if !strings.Contains(diag, c.diagnostic) {
+				t.Fatalf("ssh diagnostic not shown: %s", diag)
+			}
+			if got, err := os.ReadFile(filepath.Join(home, ".ssh", "config")); err != nil || !bytes.Equal(got, config) {
+				t.Fatalf("SSH configuration changed: %q %v", got, err)
+			}
+			keys, _ := filepath.Glob(filepath.Join(home, ".ssh", "id_ed25519_remote_*"))
+			if len(keys) != 2 {
+				t.Fatalf("dedicated key not retained: %q", keys)
 			}
 		})
 	}
