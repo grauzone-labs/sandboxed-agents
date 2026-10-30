@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -55,9 +54,11 @@ func aliasEffects(t *testing.T, home string, stdin io.Reader, resolve func(sshQu
 	}
 }
 
-// aliasEntry is the host entry #111 specifies, in the layout the configuration file receives.
-func aliasEntry(alias, hostName, user, identityFile string) string {
-	return "Host " + alias + "\n    HostName " + hostName + "\n    User " + user + "\n    IdentityFile " + identityFile + "\n    IdentitiesOnly yes\n"
+// aliasEntry is the host entry #111 specifies, in the layout the configuration file receives: the dedicated test key and,
+// as #109 decided, the agent home's known_hosts.
+func aliasEntry(alias, hostName, user, home string) string {
+	return "Host " + alias + "\n    HostName " + hostName + "\n    User " + user + "\n    IdentityFile " + filepath.Join(home, ".ssh", "id_ed25519_remote_test") +
+		"\n    IdentitiesOnly yes\n    UserKnownHostsFile " + filepath.Join(home, ".ssh", "known_hosts") + "\n"
 }
 
 // writeSSHConfig creates the agent's .ssh directory and a configuration file with the given bytes and mode.
@@ -104,7 +105,7 @@ func TestSSHAliasMachineNameUsesTargetWithoutQuestion(t *testing.T) {
 	if len(queries) == 0 || queries[0].alias != "build.example" {
 		t.Fatalf("queries=%v", queries)
 	}
-	want := aliasEntry("build.example", "build.example", "alice", filepath.Join(home, ".ssh", "id_ed25519_remote_test"))
+	want := aliasEntry("build.example", "build.example", "alice", home)
 	if got := readConfig(t, filepath.Join(home, ".ssh", "config")); got != want {
 		t.Fatalf("config=%q\nwant %q", got, want)
 	}
@@ -139,7 +140,7 @@ func TestSSHAliasAddressTargetAsksForAlias(t *testing.T) {
 			if err != nil || got != alias || strings.Count(stderr.String(), "SSH alias name for "+target) != 1 {
 				t.Fatalf("alias=%q error=%v diagnostics=%q", got, err, stderr.String())
 			}
-			want := aliasEntry(alias, target, "alice", filepath.Join(home, ".ssh", "id_ed25519_remote_test"))
+			want := aliasEntry(alias, target, "alice", home)
 			if config := readConfig(t, filepath.Join(home, ".ssh", "config")); config != want {
 				t.Fatalf("config=%q\nwant %q", config, want)
 			}
@@ -156,7 +157,7 @@ func TestSSHAliasPreservesExistingConfiguration(t *testing.T) {
 	if _, err := configureSSHAlias("build.example", "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, strings.NewReader(""), unconfigured, nil)); err != nil {
 		t.Fatalf("error=%v diagnostics=%q", err, stderr.String())
 	}
-	want := existing + "\n\n" + aliasEntry("build.example", "build.example", "alice", filepath.Join(home, ".ssh", "id_ed25519_remote_test"))
+	want := existing + "\n\n" + aliasEntry("build.example", "build.example", "alice", home)
 	if got := readConfig(t, config); got != want {
 		t.Fatalf("config=%q\nwant %q", got, want)
 	}
@@ -203,7 +204,7 @@ func TestSSHAliasConflictWritesNothingAndAsksAgain(t *testing.T) {
 				}
 				return
 			}
-			want := existing + "\n" + aliasEntry(test.alias, test.target, "alice", filepath.Join(home, ".ssh", "id_ed25519_remote_test"))
+			want := existing + "\n" + aliasEntry(test.alias, test.target, "alice", home)
 			if err != nil || alias != test.alias || got != want {
 				t.Fatalf("alias=%q error=%v config=%q\nwant %q", alias, err, got, want)
 			}
@@ -229,7 +230,7 @@ func TestSSHAliasReplacesConfigurationAtomically(t *testing.T) {
 	if old, err := io.ReadAll(previous); err != nil || string(old) != existing {
 		t.Fatalf("previous file changed in place: %q %v", old, err)
 	}
-	want := existing + "\n" + aliasEntry("build.example", "build.example", "alice", filepath.Join(home, ".ssh", "id_ed25519_remote_test"))
+	want := existing + "\n" + aliasEntry("build.example", "build.example", "alice", home)
 	if got := readConfig(t, config); got != want {
 		t.Fatalf("config=%q\nwant %q", got, want)
 	}
@@ -259,7 +260,7 @@ func TestSSHAliasIgnoresUnrelatedEffectiveOptions(t *testing.T) {
 	if err != nil || alias != "build.example" || strings.Contains(stderr.String(), "already configured") {
 		t.Fatalf("alias=%q error=%v diagnostics=%q", alias, err, stderr.String())
 	}
-	want := existing + "\n" + aliasEntry("build.example", "build.example", "alice", filepath.Join(home, ".ssh", "id_ed25519_remote_test"))
+	want := existing + "\n" + aliasEntry("build.example", "build.example", "alice", home)
 	if got := readConfig(t, config); got != want {
 		t.Fatalf("config=%q\nwant %q", got, want)
 	}
@@ -433,7 +434,7 @@ func TestSSHAliasRefusesInvalidAliasNames(t *testing.T) {
 			t.Fatalf("invalid alias reached ssh -G: %v", q)
 		}
 	}
-	want := aliasEntry("lab", "192.0.2.10", "alice", filepath.Join(home, ".ssh", "id_ed25519_remote_test"))
+	want := aliasEntry("lab", "192.0.2.10", "alice", home)
 	if got := readConfig(t, filepath.Join(home, ".ssh", "config")); got != want {
 		t.Fatalf("config=%q", got)
 	}
@@ -446,21 +447,17 @@ func TestSSHAliasEscapesTokensAndBackslashes(t *testing.T) {
 	if _, err := configureSSHAlias("fe80::1%eth0", `dom\alice`, "id_ed25519_remote_test", &stderr, aliasEffects(t, home, strings.NewReader("linklocal\n"), unconfigured, nil)); err != nil {
 		t.Fatalf("error=%v diagnostics=%q", err, stderr.String())
 	}
-	want := aliasEntry("linklocal", "fe80::1%%eth0", `dom\\alice`, filepath.Join(home, ".ssh", "id_ed25519_remote_test"))
+	want := aliasEntry("linklocal", "fe80::1%%eth0", `dom\\alice`, home)
 	if got := readConfig(t, filepath.Join(home, ".ssh", "config")); got != want {
 		t.Fatalf("config=%q\nwant %q", got, want)
 	}
 }
 
 // TestSSHAliasResolvesThroughRealOpenSSH proves, where the local OpenSSH client is installed, that the written entry beside a benign Host * option
-// resolves hostname, user, identityfile, identitiesonly, and the default agent known_hosts through the real ssh -G -F FILE, without a network connection.
+// resolves hostname, user, identityfile, identitiesonly, and the agent home's known_hosts through the real ssh -G -F FILE, without a network connection.
 func TestSSHAliasResolvesThroughRealOpenSSH(t *testing.T) {
 	if _, err := os.Stat("/usr/bin/ssh"); err != nil {
 		t.Skip("the local OpenSSH client is not installed")
-	}
-	account, err := user.Current()
-	if err != nil {
-		t.Fatal(err)
 	}
 	home := t.TempDir()
 	config := writeSSHConfig(t, home, "# kept by hand\nHost *\n    ServerAliveInterval 30\n", 0600)
@@ -498,9 +495,8 @@ func TestSSHAliasResolvesThroughRealOpenSSH(t *testing.T) {
 			t.Errorf("%s=%q want %q", key, got, want)
 		}
 	}
-	// The #109 decision keeps confirmed host keys in the agent's usual known_hosts, so the entry adds no UserKnownHostsFile.
-	knownHosts := resolved["userknownhostsfile"]
-	if len(knownHosts) != 1 || strings.Fields(knownHosts[0])[0] != filepath.Join(account.HomeDir, ".ssh", "known_hosts") {
-		t.Errorf("userknownhostsfile=%q want the passwd home's .ssh/known_hosts first", knownHosts)
+	// The #109 decision keeps confirmed host keys in the agent home's known_hosts, which the entry names explicitly.
+	if got, want := resolved["userknownhostsfile"], filepath.Join(home, ".ssh", "known_hosts"); len(got) != 1 || got[0] != want {
+		t.Errorf("userknownhostsfile=%q want %q", got, want)
 	}
 }
