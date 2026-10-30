@@ -81,14 +81,16 @@ func sshEntryValues(values ...string) map[string]string {
 // username, the dedicated key keyName in ~/.ssh, IdentitiesOnly, and the agent's ~/.ssh/known_hosts, to ~/.ssh/config.
 // A machine name is its own alias and is used without a question; one that sshAliasName refuses fails without a
 // question and changes nothing. For an address it asks on stderr and reads one answer line from Effects.Stdin without
-// consuming later input, and asks again after an answer that sshAliasName refuses. An alias that a specific SSH configuration block claims, as sshAliasClaimed decides, is reported with the
-// options that block sets and asked again; end of input cancels. When an earlier setting that matches the alias, such as
-// one under Host * or before the first Host line, would give it another value for an entry option, or another key beside
-// the dedicated IdentityFile, it fails without asking again and names that option, as checkSSHEntry decides. It verifies the agent identity before reading home data and queries ssh -G as
-// agent. It writes no host entry and leaves existing configuration content unchanged unless it returns the chosen alias;
-// a missing .ssh directory is created, mode 0700, only after an alias is chosen and its ssh -G check succeeds, so a
-// cancelled question or a failing query creates nothing, and a held configuration lock refuses the change. It runs only
-// after the successful password test (ADR-0011); #112 supplies that caller, which does not exist yet.
+// consuming later input, and asks again after an answer that sshAliasName refuses. An alias that a specific SSH
+// configuration block claims, as sshAliasClaimed decides, is reported with the options that block sets and asked again;
+// end of input cancels. When an earlier setting that matches the alias, such as one under Host * or before the first
+// Host line, would give it another value for an entry option, or another key beside the dedicated IdentityFile, it
+// fails without asking again and names that option, as checkSSHEntry decides. It verifies the agent identity before
+// reading home data and queries ssh -G as agent. It writes no host entry and leaves existing configuration content
+// unchanged unless it returns the chosen alias; a missing .ssh directory is created, mode 0700, only after an alias is
+// chosen and its ssh -G check succeeds, so a cancelled question or a failing query creates nothing, and a held
+// configuration lock refuses the change. It runs only after the successful password test (ADR-0011); #112 supplies that
+// caller, which does not exist yet.
 func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects Effects) (string, error) {
 	if !verifyAgent(effects, stderr) {
 		return "", fmt.Errorf("SSH alias requires the agent identity; SSH configuration unchanged")
@@ -658,12 +660,12 @@ func sshMatchSpecific(criteria string) bool {
 // sshOptionsSetForAlias returns, in entry order, the keywords of the entry options that the configuration sets for the
 // alias but not equally for every alias; sshAliasClaimed falls back to it for specific blocks it cannot read. It has
 // ssh -G resolve the configuration followed by a trailing Host * block of placeholder values, twice with opposite
-// IdentitiesOnly values, for the alias and for sshControlAlias. Because OpenSSH keeps the first value it reads, and lists
-// an earlier IdentityFile ahead of the placeholder one, an option the alias does not resolve to exactly its placeholder
-// was set by an earlier rule; when the control alias, which no
-// specific block matches, resolves the same value, a global rule set it. A specific block that sets the same value as an
-// earlier global one cannot be told apart from it this way and counts as global. When the -vv diagnostics show a
-// specific block that also matches the control alias, the comparison is not used.
+// IdentitiesOnly values, for the alias and for sshControlAlias. Because OpenSSH keeps the first value it reads, and
+// lists an earlier IdentityFile ahead of the placeholder one, an option the alias does not resolve to exactly its
+// placeholder was set by an earlier rule; when the control alias, which no specific block matches, resolves the same
+// value, a global rule set it. A specific block that sets the same value as an earlier global one cannot be told apart
+// from it this way and counts as global. When the -vv diagnostics show a specific block that also matches the control
+// alias, the comparison is not used.
 func sshOptionsSetForAlias(content []byte, alias string, effects Effects) ([]string, error) {
 	set := map[string]bool{}
 	for _, probe := range []struct{ name, identitiesOnly string }{{"a", "yes"}, {"b", "no"}} {
