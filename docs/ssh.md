@@ -2,6 +2,8 @@
 
 Every sandbox runs an SSH server that is published only on host loopback. Editors and desktop UIs connect to it over SSH ([ADR 0002](adr/0002-ssh-access-with-opt-in-host-setup.md)). This page shows how to set up that access, connect with VS Code Remote SSH and other desktop UIs, and recover when something changes.
 
+This page covers connections from your host into a sandbox. To connect a sandbox outward to a remote machine, use the [SSH integration](integrations.md#ssh-to-a-remote-machine).
+
 ## You may not need SSH
 
 `shell NAME` opens a shell as `agent` in `/workspace` through Podman and needs no SSH setup. Use the SSH setup when an editor or desktop UI has to connect.

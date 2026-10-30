@@ -9,7 +9,7 @@ It is one static executable, and the host needs only Podman and OpenSSH; [Host p
 - One sandbox per workspace, created with `up`, with a workspace volume of its own or exactly one host directory bound at `/workspace`.
 - The agents `copilot`, `claude`, `codex`, and `opencode`, installed into a sandbox on request, with login, one-shot runs, and persistent sessions you can detach from.
 - Optional toolchains in the sandbox image: `dotnet`, `playwright`, `azure`, and `native`.
-- Integrations for Git identity and credentials, GitHub, Azure, and Azure DevOps.
+- Integrations for Git identity and credentials, GitHub, Azure, Azure DevOps, and SSH to a remote machine.
 - SSH access for editors such as VS Code Remote SSH, as an opt-in setup.
 - `update` to move a sandbox to a newer image with rollback, and `update --all` for every sandbox.
 - The Tool T3 Code, installed into a sandbox on request, so that you can follow and steer its agents from the T3 mobile app, linked through your T3 account or by a QR code over Tailscale ([Tools](docs/tools.md)).
@@ -39,7 +39,7 @@ Install methods: the downloaded binary (both quick guides show download, checksu
 | [Images](docs/images.md) | Base image, toolchains, builds, updates, rollback |
 | [SSH access](docs/ssh.md) | Opt-in SSH setup, VS Code Remote SSH, fingerprints |
 | [Agents](docs/agents.md) | Enable, pin, update, log in, run, and sessions |
-| [Integrations](docs/integrations.md) | Git, GitHub, Azure, and Azure DevOps |
+| [Integrations](docs/integrations.md) | Git, GitHub, Azure, Azure DevOps, and SSH to a remote machine |
 | [Tools](docs/tools.md) | T3 Code: enable, update, the service, T3 Connect and QR pairing, the network paths, delete |
 | [Releases](docs/releases.md) | Release files, attestations, previews, gates, install methods |
 | [npm package](docs/npm-package.md) and [NuGet package](docs/nuget-package.md) | Installing from a package |
