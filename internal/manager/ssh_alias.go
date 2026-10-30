@@ -189,8 +189,10 @@ func sshOptionLines(values map[string]string) (string, error) {
 // creates nothing, and it queries no more once the lock confirms there is still no configuration file.
 func addSSHAlias(root *os.Root, alias, entry string, want map[string]string, effects Effects) ([]string, error) {
 	_, err := root.Lstat(".ssh")
-	entryAloneChecked := errors.Is(err, os.ErrNotExist)
-	if entryAloneChecked {
+	// contentChecked holds whether checkSSHEntry has checked the bytes about to be written; while no configuration file
+	// exists, those bytes are the entry alone.
+	contentChecked := errors.Is(err, os.ErrNotExist)
+	if contentChecked {
 		if err := checkSSHEntry([]byte(entry), alias, want, effects); err != nil {
 			return nil, err
 		}
@@ -211,10 +213,10 @@ func addSSHAlias(root *os.Root, alias, entry string, want map[string]string, eff
 		if err != nil || len(claimed) > 0 {
 			return claimed, err
 		}
-		entryAloneChecked = false
+		contentChecked = false
 	}
 	content := appendSSHEntry(current.content, entry)
-	if !entryAloneChecked {
+	if !contentChecked {
 		if err := checkSSHEntry(content, alias, want, effects); err != nil {
 			return nil, err
 		}
