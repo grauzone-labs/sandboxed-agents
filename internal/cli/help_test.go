@@ -221,8 +221,8 @@ func TestLeafHelpShowsUsageOptionsAndExample(t *testing.T) {
 // update's help shows both the NAME and --all forms, at the cli.RunWithHost seam.
 func TestLeafHelpShowsDefaultsAndBothUpdateForms(t *testing.T) {
 	_, stdout, _, _ := runHelp(t, "up", "--help")
-	for _, option := range []string{"--memory SIZE", "--cpus N", "--pids-limit N", "--shm-size SIZE", "--port N"} {
-		want := map[string]string{"--memory SIZE": "8g", "--cpus N": "4", "--pids-limit N": "2048", "--shm-size SIZE": "1g", "--port N": "2222"}[option]
+	defaults := map[string]string{"--memory SIZE": "8g", "--cpus N": "4", "--pids-limit N": "2048", "--shm-size SIZE": "1g", "--port N": "2222"}
+	for option, want := range defaults {
 		if !regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(option) + ` .*\(default ` + regexp.QuoteMeta(want) + ``).MatchString(stdout) {
 			t.Errorf("up help does not give %s the default %s:\n%s", option, want, stdout)
 		}
