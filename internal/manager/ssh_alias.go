@@ -175,8 +175,8 @@ func sshOptionLines(values map[string]string) (string, error) {
 // creates nothing, and it queries no more once the lock confirms there is still no configuration file.
 func addSSHAlias(root *os.Root, alias, entry string, want map[string]string, effects Effects) ([]string, error) {
 	_, err := root.Lstat(".ssh")
-	checked := errors.Is(err, os.ErrNotExist)
-	if checked {
+	entryAloneChecked := errors.Is(err, os.ErrNotExist)
+	if entryAloneChecked {
 		if err := checkSSHEntry([]byte(entry), alias, want, effects); err != nil {
 			return nil, err
 		}
@@ -197,10 +197,10 @@ func addSSHAlias(root *os.Root, alias, entry string, want map[string]string, eff
 		if err != nil || len(claimed) > 0 {
 			return claimed, err
 		}
-		checked = false
+		entryAloneChecked = false
 	}
 	content := appendSSHEntry(current.content, entry)
-	if !checked {
+	if !entryAloneChecked {
 		if err := checkSSHEntry(content, alias, want, effects); err != nil {
 			return nil, err
 		}
@@ -351,47 +351,47 @@ func sshAliasClaimed(root *os.Root, config string, content []byte, alias string,
 	if err != nil {
 		return nil, err
 	}
-	set := map[string]bool{}
-	var other, unread []string
-	unknown := false
+	claimedOptions := map[string]bool{}
+	var otherKeywords, unreadLiteralBlocks []string
+	needsProbe := false
 	for _, stanza := range sshAppliedStanzas(diagnostics) {
 		header, keywords, known := "", []string(nil), false
-		if lines, ok := sshStanzaFile(root, config, content, stanza.file); ok {
+		if lines, ok := sshStanzaSourceLines(root, config, content, stanza.file); ok {
 			header, keywords, known = sshStanzaClaims(lines, stanza.line, stanza.match)
 		}
 		if !stanza.specific(header) {
 			continue
 		}
 		if !known {
-			unknown = true
+			needsProbe = true
 			if stanza.literal() {
-				unread = append(unread, fmt.Sprintf("options at %s line %d", stanza.file, stanza.line))
+				unreadLiteralBlocks = append(unreadLiteralBlocks, fmt.Sprintf("options at %s line %d", stanza.file, stanza.line))
 			}
 			continue
 		}
 		for _, keyword := range keywords {
 			if index := slices.IndexFunc(sshEntryOptions, func(option sshEntryOption) bool { return strings.EqualFold(keyword, option.keyword) }); index >= 0 {
-				set[sshEntryOptions[index].keyword] = true
+				claimedOptions[sshEntryOptions[index].keyword] = true
 			} else if stanza.literal() {
-				other = appendSSHKeywordOnce(other, keyword)
+				otherKeywords = appendSSHKeywordOnce(otherKeywords, keyword)
 			} else if strings.EqualFold(keyword, "Include") {
-				unknown = true
+				needsProbe = true
 			}
 		}
 	}
-	if unknown {
+	if needsProbe {
 		probed, err := sshOptionsSetForAlias(content, alias, effects)
 		if err != nil {
 			return nil, err
 		}
 		for _, keyword := range probed {
-			set[keyword] = true
+			claimedOptions[keyword] = true
 		}
 	}
-	if claimed := append(sshKeywordsInEntryOrder(set), other...); len(claimed) > 0 {
+	if claimed := append(sshKeywordsInEntryOrder(claimedOptions), otherKeywords...); len(claimed) > 0 {
 		return claimed, nil
 	}
-	return unread, nil
+	return unreadLiteralBlocks, nil
 }
 
 // sshKeywordsInEntryOrder returns, in entry order, the keyword of each entry option whose keyword set holds.
@@ -495,10 +495,11 @@ func sshDiagnosticLocation(location string) (string, int) {
 	return location[:at], number
 }
 
-// sshStanzaFile returns the lines of the source file holding an applied stanza, at the path OpenSSH reports: the bytes
-// already loaded under the lock for the configuration file itself, or another source that readSSHSource reads. It returns
-// false when OpenSSH names no file, or when that other source cannot be read or holds more than sshSourceLimit bytes.
-func sshStanzaFile(root *os.Root, config string, content []byte, file string) ([]string, bool) {
+// sshStanzaSourceLines returns the lines of the source file holding an applied stanza, at the path OpenSSH reports: the
+// bytes already loaded under the lock for the configuration file itself, or another source that readSSHSource reads. It
+// returns false when OpenSSH names no file, or when that other source cannot be read or holds more than sshSourceLimit
+// bytes.
+func sshStanzaSourceLines(root *os.Root, config string, content []byte, file string) ([]string, bool) {
 	if file == "" {
 		return nil, false
 	}
@@ -745,10 +746,10 @@ func resolveSSHCandidate(content []byte, host string, verbose bool, effects Effe
 	return resolved, diagnostics, nil
 }
 
-// runSSHQuery runs one ssh query as agent with the fixed SSH environment and returns its output and diagnostics, refusing
-// output beyond sshQueryLimit or diagnostics beyond sshDiagnosticLimit. A failure reports OpenSSH's own diagnostic lines
-// without the debug lines that verbose queries add.
-func runSSHQuery(args []string, stdin io.Reader, alias string, effects Effects) (string, string, error) {
+// runSSHQuery runs one ssh query for queriedAlias, the alias or the control alias, as agent with the fixed SSH environment
+// and returns its output and diagnostics, refusing output beyond sshQueryLimit or diagnostics beyond sshDiagnosticLimit.
+// A failure names queriedAlias and reports OpenSSH's own diagnostic lines without the debug lines that verbose queries add.
+func runSSHQuery(args []string, stdin io.Reader, queriedAlias string, effects Effects) (string, string, error) {
 	if stdin == nil {
 		stdin = strings.NewReader("")
 	}
@@ -761,10 +762,10 @@ func runSSHQuery(args []string, stdin io.Reader, alias string, effects Effects) 
 				reported = append(reported, line)
 			}
 		}
-		return "", "", fmt.Errorf("SSH configuration query for %s failed: %s", alias, strings.Join(reported, "; "))
+		return "", "", fmt.Errorf("SSH configuration query for %s failed: %s", queriedAlias, strings.Join(reported, "; "))
 	}
 	if stdout.overflow || diagnostic.overflow {
-		return "", "", fmt.Errorf("SSH configuration query for %s returned too much output", alias)
+		return "", "", fmt.Errorf("SSH configuration query for %s returned too much output", queriedAlias)
 	}
 	return string(stdout.data), string(diagnostic.data), nil
 }
