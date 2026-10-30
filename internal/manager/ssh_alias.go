@@ -155,9 +155,9 @@ func sshOptionLines(values map[string]string) (string, error) {
 	return lines.String(), nil
 }
 
-// addSSHAlias adds the entry to the configuration in the home that root opens and returns no keywords, or writes nothing
-// and returns the keywords of the entry options that a specific SSH configuration block sets for the alias, which claims
-// it as sshAliasClaimed decides. It holds the configuration lock across the claim queries, the check of the resulting
+// addSSHAlias adds the entry to the configuration in the home that root opens and returns nothing, or writes nothing and
+// returns the option keywords, as sshAliasClaimed reports them, of a specific SSH configuration block that claims the
+// alias. It holds the configuration lock across the claim queries, the check of the resulting
 // configuration, and the atomic write. Without a .ssh directory it checks the entry alone first, so a failing query
 // creates nothing, and it queries no more once the lock confirms there is still no configuration file.
 func addSSHAlias(root *os.Root, alias, entry string, want map[string]string, effects Effects) ([]string, error) {
@@ -316,24 +316,29 @@ func replaceSSHConfig(root *os.Root, mode os.FileMode, content []byte) error {
 	return nil
 }
 
-// sshAliasClaimed returns, in entry order, the keywords of the entry options that a block specific to the alias explicitly
-// sets, which claims it. OpenSSH's -vvv diagnostics name the source file and line of each applied Host block and of each
-// matched Match block's criteria, also when an earlier Host * masks their values; for each, it reads only that block's
-// header and its own option keywords from the source OpenSSH read: the loaded configuration, a file inside the agent's
-// home through root, or, read-only, an included file elsewhere. A Host block is global when its patterns include one
-// that matches every allowed alias, such as *, "*", or ?*, and no negated pattern, so Host * lab is global and Host * !foo
-// is specific to every host it matches. A Match block is specific when a host or originalhost criterion, in any letter
-// case, is negated or narrower than every allowed alias, so Match host * and Match all are global; quoted arguments, such
-// as an exec command, stay single arguments. A specific block claims the alias only by setting an entry option, even to
-// the intended value or OpenSSH's default, so a block that sets only Port claims nothing; global settings are left to
-// checkSSHEntry. When a specific block's source cannot be read, or its body includes another file, it falls back to
-// sshOptionsSetForAlias.
+// sshAliasClaimed returns what claims the alias: first, in entry order, the keywords of the entry options that a block
+// specific to the alias explicitly sets, then the other keywords that a literal Host block for the alias sets, and nothing
+// when no block claims it. OpenSSH's -vvv diagnostics name the source file and line of each applied Host block and of
+// each matched Match block's criteria, also when an earlier Host * masks their values; for each, it reads only that
+// block's header and its own option keywords from the source OpenSSH read: the loaded configuration, a file inside the
+// agent's home through root, or, read-only, an included file elsewhere. A Host block is global when its patterns include
+// one that matches every allowed alias, such as *, "*", or ?*, and no negated pattern, so Host * lab is global and
+// Host * !foo is specific to every host it matches. A Match block is specific when a host or originalhost criterion, in
+// any letter case, is negated or narrower than every allowed alias, so Match host * and Match all are global; quoted
+// arguments, such as an exec command, stay single arguments. A specific Host block whose matching pattern has no wildcard,
+// such as Host lab, is a hand-written entry for the alias and claims it by setting any option, Port or Include included;
+// an empty one claims nothing. A narrower Host glob, such as Host lab-*, or a specific Match block claims the alias only
+// by setting an entry option, even to the intended value or OpenSSH's default, so such a block that sets only Port claims
+// nothing. Global settings are left to checkSSHEntry. When a specific block's source cannot be read, or the body of a
+// glob or Match block includes another file, it falls back to sshOptionsSetForAlias; a literal Host block whose source
+// cannot be read still claims the alias and, when nothing else names the claim, is reported by its file and line.
 func sshAliasClaimed(root *os.Root, config string, content []byte, alias string, effects Effects) ([]string, error) {
 	_, diagnostics, err := runSSHQuery([]string{"-vvv", "-G", "-F", config, alias}, nil, alias, effects)
 	if err != nil {
 		return nil, err
 	}
 	set := map[string]bool{}
+	var other, unread []string
 	unknown := false
 	for _, stanza := range sshAppliedStanzas(diagnostics) {
 		header, keywords, known := "", []string(nil), false
@@ -345,10 +350,21 @@ func sshAliasClaimed(root *os.Root, config string, content []byte, alias string,
 		}
 		if !known {
 			unknown = true
+			if stanza.literal() {
+				unread = append(unread, fmt.Sprintf("options at %s line %d", stanza.file, stanza.line))
+			}
 			continue
 		}
 		for _, keyword := range keywords {
-			set[keyword] = true
+			if index := slices.IndexFunc(sshEntryOptions, func(option sshEntryOption) bool { return strings.EqualFold(keyword, option.keyword) }); index >= 0 {
+				set[sshEntryOptions[index].keyword] = true
+			} else if stanza.literal() {
+				if !slices.ContainsFunc(other, func(seen string) bool { return strings.EqualFold(seen, keyword) }) {
+					other = append(other, keyword)
+				}
+			} else if strings.EqualFold(keyword, "Include") {
+				unknown = true
+			}
 		}
 	}
 	if unknown {
@@ -365,6 +381,9 @@ func sshAliasClaimed(root *os.Root, config string, content []byte, alias string,
 		if set[option.keyword] {
 			claimed = append(claimed, option.keyword)
 		}
+	}
+	if claimed = append(claimed, other...); len(claimed) == 0 {
+		claimed = unread
 	}
 	return claimed, nil
 }
@@ -390,6 +409,12 @@ func (s sshAppliedStanza) specific(header string) bool {
 		patterns = sshHeaderArguments(header)
 	}
 	return !sshPatternsGlobal(patterns)
+}
+
+// literal reports whether the stanza is a Host block whose matching pattern, the first positive pattern OpenSSH echoes as
+// matched, has no * or ? wildcard, so the pattern names the alias itself as a hand-written entry for it does.
+func (s sshAppliedStanza) literal() bool {
+	return !s.match && s.echoed != "" && !strings.ContainsAny(s.echoed, "*?")
 }
 
 // sshAppliedStanzas lists, in order, the Host blocks and matched Match blocks that OpenSSH's diagnostics report as applied.
@@ -481,9 +506,9 @@ func readSSHSource(path string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(file, sshSourceLimit+1))
 }
 
-// sshStanzaClaims returns the header of the Host or Match block at the 1-based line number and the entry keywords its own
-// body sets, up to the next Host or Match line; known is false when that line is not such a header or the body holds an
-// Include, whose options it cannot see.
+// sshStanzaClaims returns the header of the Host or Match block at the 1-based line number and, once each in the order
+// and letter case first written, every keyword its own body sets up to the next Host or Match line, Include among them;
+// known is false when that line is not such a header.
 func sshStanzaClaims(lines []string, number int, match bool) (header string, keywords []string, known bool) {
 	kind := "Host"
 	if match {
@@ -497,13 +522,8 @@ func sshStanzaClaims(lines []string, number int, match bool) (header string, key
 		if strings.EqualFold(keyword, "Host") || strings.EqualFold(keyword, "Match") {
 			break
 		}
-		if strings.EqualFold(keyword, "Include") {
-			return "", nil, false
-		}
-		for _, option := range sshEntryOptions {
-			if strings.EqualFold(keyword, option.keyword) {
-				keywords = append(keywords, option.keyword)
-			}
+		if keyword != "" && !slices.ContainsFunc(keywords, func(seen string) bool { return strings.EqualFold(seen, keyword) }) {
+			keywords = append(keywords, keyword)
 		}
 	}
 	return strings.TrimSpace(lines[number-1]), keywords, true
