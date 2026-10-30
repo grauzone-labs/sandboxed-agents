@@ -89,10 +89,12 @@ func sshEntryValues(values map[string]string) map[string]string {
 // configuration block claims, as sshAliasClaimed decides, is reported with the options that block sets and asked again;
 // end of input cancels. When an earlier setting that matches the alias, such as one under Host * or before the first
 // Host line, would give it another value for an entry option, or another key beside the dedicated IdentityFile, it
-// fails without asking again and names that option, as checkSSHEntry decides. It verifies the agent identity before
-// reading home data and queries ssh -G as agent. It writes no host entry and leaves existing configuration content
-// unchanged unless it returns the chosen alias; a missing .ssh directory is created, mode 0700, only after an alias is
-// chosen and its ssh -G check succeeds, so a cancelled question or a failing query creates nothing, and a held
+// fails without asking again and names that option, as checkSSHEntry decides. Every ssh -G query passes -F with the
+// agent's own configuration, so OpenSSH does not read the image's system configuration, /etc/ssh/ssh_config and
+// /etc/ssh/ssh_config.d, and a system-wide Host * setting there is outside the check. It verifies the agent identity
+// before reading home data and queries ssh -G as agent. It writes no host entry and leaves existing configuration
+// content unchanged unless it returns the chosen alias; a missing .ssh directory is created, mode 0700, only after an
+// alias is chosen and its ssh -G check succeeds, so a cancelled question or a failing query creates nothing, and a held
 // configuration lock refuses the change. It runs only after the successful password test (ADR-0011); #112 supplies that
 // caller, which does not exist yet.
 func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects Effects) (string, error) {
@@ -182,11 +184,11 @@ func sshOptionLines(values map[string]string) (string, error) {
 	return lines.String(), nil
 }
 
-// addSSHAlias adds the entry to the configuration in the home that root opens and returns nothing, or writes nothing and
-// returns the option keywords, as sshAliasClaimed reports them, of a specific SSH configuration block that claims the
-// alias. It holds the configuration lock across the claim queries, the check of the resulting
-// configuration, and the atomic write. Without a .ssh directory it checks the entry alone first, so a failing query
-// creates nothing, and it queries no more once the lock confirms there is still no configuration file.
+// addSSHAlias adds the entry to the configuration in the home that root opens and returns nothing, or writes nothing
+// and returns the option keywords, as sshAliasClaimed reports them, of a specific SSH configuration block that claims
+// the alias. It holds the configuration lock across the claim queries, the check of the resulting configuration, and
+// the atomic write. Without a .ssh directory it checks the entry alone first, so a failing query creates nothing, and
+// it queries no more once the lock confirms there is still no configuration file.
 func addSSHAlias(root *os.Root, alias, entry string, want map[string]string, effects Effects) ([]string, error) {
 	_, err := root.Lstat(".ssh")
 	// contentChecked holds whether checkSSHEntry has checked the bytes about to be written; while no configuration file
@@ -511,10 +513,10 @@ func sshDiagnosticLocation(location string) (string, int) {
 	return location[:at], number
 }
 
-// sshStanzaSourceLines returns the lines of the source file holding an applied stanza, at the path OpenSSH reports: the
-// bytes already loaded under the lock for the configuration file itself, or another source that readSSHSource reads. It
-// returns false when OpenSSH names no file, or when that other source cannot be read or holds more than sshSourceLimit
-// bytes.
+// sshStanzaSourceLines returns the lines of the source file holding an applied stanza, at the path OpenSSH reports:
+// the bytes already loaded under the lock for the configuration file itself, or another source that readSSHSource
+// reads. It returns false when OpenSSH names no file, or when that other source cannot be read or holds more than
+// sshSourceLimit bytes.
 func sshStanzaSourceLines(root *os.Root, config string, content []byte, file string) ([]string, bool) {
 	if file == "" {
 		return nil, false
