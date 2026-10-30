@@ -120,7 +120,7 @@ sandboxed-agents agents run agent01 codex exec "list the TODO comments"
 sandboxed-agents agents run agent01 opencode run "summarize README.md" < /dev/null
 ```
 
-`run` starts the agent's command once in `/workspace` as `agent`, with every argument after the agent name passed on unchanged and in order, including arguments that start with a dash. The agent's standard input, output, and error are your terminal's streams, and the exit status of `agents run` is the agent's exit status. Only `run` passes another program's exit status through; every other `agents` command uses its own.
+`run` starts the agent's command once in `/workspace` as `agent`, with every argument after the agent name passed on unchanged and in order, including arguments that start with a dash. So `--help` after the agent name shows the agent's own help; `agents run --help` without a sandbox name shows the help of `agents run` itself. The agent's standard input, output, and error are your terminal's streams, and the exit status of `agents run` is the agent's exit status. Only `run` passes another program's exit status through; every other `agents` command uses its own.
 
 A terminal is not required. When both standard input and standard output are a terminal, the agent gets a pseudo-terminal and runs interactively; otherwise it runs with plain pipes, so you can script it, redirect its output, or feed it input from a file. The agent has to be enabled; otherwise `run` names `agents enable NAME AGENT`.
 

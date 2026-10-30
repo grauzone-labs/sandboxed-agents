@@ -108,3 +108,18 @@ func TestHelpResourceDefaultsMatchParser(t *testing.T) {
 		t.Fatalf("up help names %d resource limits; want 4", checked)
 	}
 }
+
+// TestCommandReferenceDocumentsHelp proves docs/command-reference.md documents the --help, -h, and
+// help forms of the root, a group, and a command. It exercises the command reference beside
+// TestCommandReferenceMatchesCommandTree.
+func TestCommandReferenceDocumentsHelp(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "command-reference.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, form := range []string{"`sandboxed-agents --help`", "`sandboxed-agents -h`", "`sandboxed-agents help`", "`GROUP --help`", "`help GROUP`", "`COMMAND --help`", "`COMMAND NAME --help`", "`help COMMAND`"} {
+		if !strings.Contains(string(data), form) {
+			t.Errorf("command reference does not document %s", form)
+		}
+	}
+}
