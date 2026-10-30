@@ -104,10 +104,11 @@ func testSSHConnection(home, target, user string, stderr io.Writer, effects Effe
 }
 
 // sshTestFailure names the outcome of a connection test that did not exit zero: cancelled when Ctrl+C arrived or ssh died
-// of a signal, and nil for any exit status other than 255, because ssh reports its own failures with 255 and any other
-// status comes from the remote command after the login succeeded. Only for status 255 do ssh's diagnostics name the
-// cause: a rejected or changed remote host key, failed authentication, a remote machine name that cannot be resolved,
-// or a remote machine that is unreachable or timed out; otherwise the exit status.
+// of a signal, unable to run ssh when the error carries no exit status because ssh could not be started, and nil for any
+// exit status other than 255, because ssh reports its own failures with 255 and any other status comes from the remote
+// command after the login succeeded. Only for status 255 do ssh's diagnostics name the cause: a rejected or changed
+// remote host key, failed authentication, a remote machine name that cannot be resolved, or a remote machine that is
+// unreachable or timed out; otherwise the exit status.
 func sshTestFailure(target, user string, err error, diagnostics string, interrupts <-chan os.Signal) error {
 	var exit interface{ ExitCode() int }
 	hasExit := errors.As(err, &exit)
