@@ -347,7 +347,7 @@ func checkSSHEntry(content []byte, alias string, want []sshOption, effects Effec
 		}
 	}
 	if len(overridden) > 0 {
-		return fmt.Errorf("an earlier Host * or Match setting in the agent's SSH configuration would give alias %s %s for every alias; change that setting and retry; SSH configuration unchanged", alias, strings.Join(overridden, "; "))
+		return fmt.Errorf("an earlier setting in the agent's SSH configuration would still apply for alias %s, which OpenSSH would resolve with %s because it keeps the first value it reads; change that setting and retry; SSH configuration unchanged", alias, strings.Join(overridden, "; "))
 	}
 	return nil
 }
