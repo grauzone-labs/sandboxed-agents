@@ -281,7 +281,8 @@ A decline, a cancellation, and every failure exit non-zero, write no host entry,
 | Cause | Message |
 |---|---|
 | You decline the approval | `SSH connection test declined; no connection made, no host entry written, dedicated key retained at PATH` |
-| Input ends or Ctrl+C arrives at the approval, or Ctrl+C interrupts the test | `SSH connection test cancelled`, then the same consequences |
+| Input ends or Ctrl+C arrives at the approval | `SSH connection test cancelled; no connection made, no host entry written, dedicated key retained at PATH` |
+| Ctrl+C interrupts the test after you approved it | `SSH connection test cancelled; no host entry written, SSH configuration unchanged, dedicated key retained at PATH` |
 | The machine name does not resolve | `SSH connection test failed: remote machine name HOST cannot be resolved` |
 | The machine is unreachable, refuses the connection, or times out | `SSH connection test failed: remote machine HOST is unreachable or timed out` |
 | You do not confirm the unknown host key | `SSH connection test failed: remote host key rejected; the host key of HOST was not confirmed` |
