@@ -163,8 +163,10 @@ func (c Catalog) LoginIntegrationNames() []string {
 func (c Catalog) ResolveLogin(name, workflow string) (string, error) {
 	integration, known := c.Integrations[name]
 	if !known || integration.Login == nil || !integration.Login.Delivered {
-		if known && len(integration.ConfigWorkflowNames()) > 0 {
-			return "", fmt.Errorf("%s has no login workflow; use integrations config NAME %s; config workflows: %s", name, name, ValidNames(integration.ConfigWorkflowNames()))
+		if names := integration.ConfigWorkflowNames(); known && slices.Equal(names, []string{""}) {
+			return "", fmt.Errorf("%s has no login workflow; use integrations config NAME %s", name, name)
+		} else if known && len(names) > 0 {
+			return "", fmt.Errorf("%s has no login workflow; use integrations config NAME %s; config workflows: %s", name, name, ValidNames(names))
 		}
 		return "", fmt.Errorf("unknown integration %q: %s", name, ValidNames(c.LoginIntegrationNames()))
 	}

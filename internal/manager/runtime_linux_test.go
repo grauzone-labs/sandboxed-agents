@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 	"golang.org/x/sys/unix"
 )
 
@@ -470,13 +469,6 @@ func TestProductionAzureBrowserRejectsUnusableExecutable(t *testing.T) {
 
 // TestProductionSSHKeysIgnoreAmbientAuthentication proves the SSH key policy strips askpass, agent sockets, preload, and debug settings through RunWithEffects and the production exec.Cmd seam.
 func TestProductionSSHKeysIgnoreAmbientAuthentication(t *testing.T) {
-	old := catalog.Default.Integrations["ssh"]
-	integration := old
-	workflow := integration.ConfigWorkflows[""]
-	workflow.Delivered = true
-	integration.ConfigWorkflows = map[string]catalog.ConfigWorkflow{"": workflow}
-	catalog.Default.Integrations["ssh"] = integration
-	t.Cleanup(func() { catalog.Default.Integrations["ssh"] = old })
 	starts := 0
 	e := newEffects(systemCalls{
 		Identity: func() Identity { return agentIdentity },
