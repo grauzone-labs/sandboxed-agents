@@ -26,7 +26,7 @@ Each of them does the following:
 
 The sandbox must be running. `ssh-config NAME --install` on a stopped sandbox fails and names `start NAME`; it starts nothing. `up NAME --ssh-config` on an existing sandbox starts it and installs the SSH setup.
 
-Running `ssh-config NAME --install` again with an unchanged host key changes nothing, says so, and exits zero.
+Running `ssh-config NAME --install` again with an unchanged host key changes nothing, says so, and exits zero. If the `Include` of the controller group is missing from your SSH configuration, the repeat install restores it and says that instead.
 
 If the installation fails during `up` or `start`, the sandbox keeps running. The command exits non-zero, names the reason, and names `ssh-config NAME --install` to retry.
 
@@ -97,6 +97,8 @@ The authorized key lives in the sandbox:
 
 A refused `remove` leaves the SSH setup untouched.
 
+Changes to the SSH setup of one controller group do not run at the same time. When another SSH setup command of the group holds its lock, `--install` and `--remove` exit non-zero, change no SSH file, and say `controller group "GROUP": another SSH setup command is in progress; retry`. If `remove NAME` meets this after it removed the container, it reports the same message and leaves the sandbox's SSH files in place; run `remove NAME` again to finish the cleanup, while the sandbox's volumes remain.
+
 ## Connect with VS Code Remote SSH
 
 1. Install the SSH setup: `sandboxed-agents ssh-config agent01 --install`.
@@ -146,7 +148,7 @@ The `Include` line points at the group's managed configuration in host state. Ho
 
 When the host state path contains `%`, `--install` asks the SSH client for its version with `ssh -V` and writes the spelling that client needs; this includes the `OpenSSH_for_Windows` version format. Without `%` in the path, both spellings are identical and no version query happens. The `IdentityFile` and `UserKnownHostsFile` lines of the host entry escape `%` for every client version. Removing an SSH setup recognizes either spelling of the `Include` line, so `--remove` cleans up a line written for an older or newer client.
 
-The `Include` line is written once per group, when the group's first SSH setup is installed. Running `ssh-config NAME --install` again with an unchanged host key changes nothing, so it does not rewrite the line. If you upgrade your SSH client across 9.9 (in either direction) and the host state path contains `%`, regenerate the line: remove every SSH setup of the controller group, which also removes the group's `Include` line, then install them again.
+The `Include` line is written once per group, when the group's first SSH setup is installed. Running `ssh-config NAME --install` again with an unchanged host key leaves the line in place. If you removed it, that repeat install writes it again and says so. If you upgrade your SSH client across 9.9 (in either direction) and the host state path contains `%`, regenerate the line: remove every SSH setup of the controller group, which also removes the group's `Include` line, then install them again.
 
 ```text
 sandboxed-agents ssh-config agent01 --remove
