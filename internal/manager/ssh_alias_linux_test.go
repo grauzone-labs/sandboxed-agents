@@ -14,8 +14,9 @@ import (
 	"testing"
 )
 
-// sshQuery is one ssh -G request: whether it asks for -vv stanza diagnostics, its configuration file argument, the alias,
-// and the candidate configuration it received on standard input.
+// sshQuery is one ssh -G request: whether it asks for stanza diagnostics, with -vvv for a claim query on the configuration
+// file or -vv for a candidate query, its configuration file argument, the alias, and the candidate configuration it
+// received on standard input.
 type sshQuery struct {
 	verbose              bool
 	config, alias, input string
