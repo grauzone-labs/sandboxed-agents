@@ -64,9 +64,9 @@ var sshEntryOptions = []sshEntryOption{
 
 // configureSSHAlias chooses the alias for a normalized outbound SSH target and adds its host entry, with the remote
 // username, the dedicated key keyName in ~/.ssh, IdentitiesOnly, and the agent's ~/.ssh/known_hosts, to ~/.ssh/config.
-// A machine name that sshAliasName accepts is its own alias and is used without a question; for an address, or a name
-// that sshAliasName refuses, it asks on stderr and reads one answer line from Effects.Stdin without consuming later
-// input. An alias that a specific SSH configuration block claims, as sshAliasClaimed decides, is reported with the
+// A machine name is its own alias and is used without a question; one that sshAliasName refuses fails without a
+// question and changes nothing. For an address it asks on stderr and reads one answer line from Effects.Stdin without
+// consuming later input, and asks again after an answer that sshAliasName refuses. An alias that a specific SSH configuration block claims, as sshAliasClaimed decides, is reported with the
 // options that block sets and asked again; end of input cancels. When an earlier setting that matches the alias, such as
 // one under Host * or before the first Host line, would give it another value for an entry option, or another key beside
 // the dedicated IdentityFile, it fails without asking again and names that option, as checkSSHEntry decides. It verifies the agent identity before reading home data and queries ssh -G as
@@ -117,10 +117,12 @@ func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects E
 	if stdin == nil {
 		stdin = strings.NewReader("")
 	}
-	// An address has no readable name, so the user picks the alias.
+	// An address has no readable name, so the user picks the alias; a machine name is the alias and is never replaced by a question.
 	alias := target
 	if _, err := netip.ParseAddr(target); err == nil {
 		alias = ""
+	} else if !sshAliasName.MatchString(target) {
+		return "", fmt.Errorf("machine name %s is not a valid SSH alias; an alias uses letters, digits, dots, dashes, or underscores, starts with a letter or digit, and has at most 253 characters plus a final dot; SSH configuration unchanged", target)
 	}
 	for {
 		if alias == "" {
