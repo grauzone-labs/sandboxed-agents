@@ -63,15 +63,16 @@ func awaitSSHApproval(stdin io.Reader, user, target string, stderr io.Writer, ef
 	}
 }
 
-// testSSHConnection logs in to target as user once with the image's ssh, run as agent in the fixed SSH environment, and
-// returns nil when the login succeeds. The remote command is exit, which ends a POSIX shell, cmd, and PowerShell alike;
-// its exit status is not the test, so any status other than ssh's own 255 counts as a successful login, even from a
-// restricted remote shell or a forced command. It reads no configuration file and allows only password and
+// testSSHConnection logs in to target as user once with the image's ssh, run as the `agent` user in the fixed SSH
+// environment, and returns nil when the login succeeds. The remote command is exit, which ends a POSIX shell, cmd, and
+// PowerShell alike; its exit status is not the test, so any status other than ssh's own 255 counts as a successful login,
+// even from a restricted remote shell or a forced command. It reads no configuration file and allows only password and
 // keyboard-interactive authentication, so no key, ssh-agent, host-based, or GSSAPI login is attempted and the dedicated
 // key is neither offered nor installed. ssh itself reads the password from the terminal without echo; the password never
 // passes through the manager, ssh's arguments, its environment, or its standard input, which is empty. ssh shows an
 // unknown host key with its fingerprint and asks before it sends the password; no system-wide known hosts file is
-// trusted, a confirmed key is recorded in the agent's ~/.ssh/known_hosts, and a refused or changed one ends the test.
+// trusted, a confirmed key is recorded in the `agent` user's ~/.ssh/known_hosts, and a refused or changed one ends the
+// test.
 // ssh's diagnostics reach stderr and are kept, bounded, to name the failure as sshTestFailure does.
 func testSSHConnection(home, target, user string, stderr io.Writer, effects Effects) error {
 	knownHosts, err := sshConfigValue(filepath.Join(home, ".ssh", "known_hosts"), true)
