@@ -367,7 +367,8 @@ func TestSSHAliasAcceptsGlobalValuesEqualToEntry(t *testing.T) {
 }
 
 // TestSSHAliasRefusesGlobalValuesContradictingEntry proves an earlier global User or IdentitiesOnly that OpenSSH would keep instead of the entry's
-// value fails once with an error naming the option, asks no further question, and writes nothing, at the configureSSHAlias seam with scripted ssh -G.
+// value fails once with an error naming the option and the alias, without claiming the setting applies to every alias, asks no further question,
+// and writes nothing, at the configureSSHAlias seam with scripted ssh -G.
 func TestSSHAliasRefusesGlobalValuesContradictingEntry(t *testing.T) {
 	for _, test := range []struct{ name, line, replacement string }{
 		{"User", "user alice\n", "user bob\n"},
@@ -387,7 +388,8 @@ func TestSSHAliasRefusesGlobalValuesContradictingEntry(t *testing.T) {
 			var stderr bytes.Buffer
 			_, err := configureSSHAlias("192.0.2.10", "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, stdin, resolve, nil))
 			key, _, _ := strings.Cut(test.replacement, " ")
-			if err == nil || !strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), "change that setting") {
+			// The error is about this alias's resolution; an earlier rule need not apply to every alias.
+			if err == nil || !strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), "for alias lab") || !strings.Contains(err.Error(), "change that setting") || strings.Contains(err.Error(), "every alias") {
 				t.Fatalf("error=%v", err)
 			}
 			if strings.Count(stderr.String(), "SSH alias name for") != 1 || readConfig(t, config) != existing {
@@ -626,7 +628,8 @@ func realSSHEffects(t *testing.T, home string, stdin io.Reader) Effects {
 // TestSSHAliasResolvesThroughRealOpenSSH proves with the local OpenSSH client, where installed, that the entry beside benign or matching
 // Host * options resolves hostname, user, identityfile, identitiesonly, and the agent home's known_hosts through ssh -G -F FILE; that a
 // contradicting Host * value fails once without another question; that an existing entry, Host ALIAS, Host glob, or Match host or originalhost
-// block changing one of those options, even to the intended value, asks for another alias; and that such a block setting only Port, or Match all, does not.
+// block changing one of those options, even to the intended value, asks for another alias; and that such a block setting only Port, or Match all,
+// does not. It exercises the configureSSHAlias seam with Effects.Start running the real /usr/bin/ssh -G as the process seam.
 func TestSSHAliasResolvesThroughRealOpenSSH(t *testing.T) {
 	for _, test := range []struct {
 		name, target, user, existing, answers, alias, failure string
