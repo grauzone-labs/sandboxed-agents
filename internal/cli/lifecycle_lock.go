@@ -7,24 +7,35 @@ import (
 	"path/filepath"
 )
 
+// hostStateError marks a failure to resolve the host state root: a problem of the host
+// environment that no command usage fixes. Its message is its cause's.
+type hostStateError struct{ cause error }
+
+// Error returns the message of the underlying cause unchanged.
+func (e hostStateError) Error() string { return e.cause.Error() }
+
+// Unwrap exposes the underlying cause for error inspection.
+func (e hostStateError) Unwrap() error { return e.cause }
+
 // hostStateRoot resolves host state, ignoring relative XDG_STATE_HOME values
-// on Linux and requiring an absolute LOCALAPPDATA path on Windows.
+// on Linux and requiring an absolute LOCALAPPDATA path on Windows. Each failure is a
+// hostStateError.
 func hostStateRoot(platform string) (string, error) {
 	root := os.Getenv("XDG_STATE_HOME")
 	if platform == "windows" {
 		root = os.Getenv("LOCALAPPDATA")
 		if root == "" {
-			return "", fmt.Errorf("LOCALAPPDATA is required for host state")
+			return "", hostStateError{fmt.Errorf("LOCALAPPDATA is required for host state")}
 		}
 	} else if root == "" || !filepath.IsAbs(root) {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", err
+			return "", hostStateError{err}
 		}
 		root = filepath.Join(home, ".local", "state")
 	}
 	if !filepath.IsAbs(root) {
-		return "", fmt.Errorf("host state path must be absolute: %s", root)
+		return "", hostStateError{fmt.Errorf("host state path must be absolute: %s", root)}
 	}
 	return filepath.Join(root, "sandboxed-agents"), nil
 }

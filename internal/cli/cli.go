@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,7 +24,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 // RunWithHost runs the public command boundary with host facts and shell input
 // supplied by the caller. Zero-valued fields use the real host; processes run on PATH.
 // A help request prints its help to stdout and exits 0 without Podman or host state;
-// a usage error exits 2 with the usage of the deepest level the arguments reached.
+// a usage error exits 2 with the usage of the deepest level the arguments reached, and a
+// host state root that cannot be resolved exits 2 with the generic usage line, since help
+// cannot fix it.
 func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 	host = host.defaults()
 	var stateRoot string
@@ -55,7 +58,11 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 	}})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		writeUsage(stderr, topic)
+		if errors.As(err, new(hostStateError)) {
+			fmt.Fprintln(stderr, "usage: sandboxed-agents COMMAND [ARG...]")
+		} else {
+			writeUsage(stderr, topic)
+		}
 		return 2
 	}
 	if help {
