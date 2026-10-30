@@ -1,6 +1,6 @@
 # Integrations
 
-This page shows you how to set up Git identity and credentials in a sandbox and how to sign in to GitHub, Azure, and Azure DevOps from it. Integrations configure accounts and services inside a sandbox through config and login workflows.
+This page shows you how to set up Git identity and credentials in a sandbox, how to sign in to GitHub, Azure, and Azure DevOps from it, and how to connect it to a remote machine over SSH. Integrations configure accounts and services inside a sandbox through config and login workflows.
 
 Every integration command needs a running sandbox. A stopped sandbox fails and names `start NAME`; a sandbox with only volumes names `up NAME`. If the manager does not answer, the command names `check NAME` for diagnosis and `restart NAME` as the next step. Nothing starts automatically and there is no fallback around the manager. Invalid integration or workflow names list the available choices before any Podman call.
 
@@ -233,3 +233,81 @@ The offline tests run real Git against a stub `az` and contact no Azure DevOps s
 7. On a sandbox without the `azure` toolchain, confirm the command fails non-zero and writes no `credential.` entry.
 
 Record the sandbox image, host platform, tested commit, `az version`, and each step's result. Never record the token.
+
+## SSH
+
+The SSH integration connects the sandbox to a remote machine you control. It prepares a dedicated key for that machine, tests the connection with the remote account's password, and then writes an alias host entry, so that `ssh ALIAS` inside the sandbox names the machine, the user, and the key.
+
+```sh
+sandboxed-agents integrations config agent01 ssh --host build.example --user alice
+```
+
+`--host HOST` is an IPv4 address, an IPv6 address, or a machine name, and `--user USER` is the remote username. Both are required. The [command reference](command-reference.md#planned-ssh-integration) gives the exact forms the options accept and the checks that run before the workflow starts.
+
+The command is staged: until the delivered catalog lists it, the executable still answers `ssh` as an unknown integration. The [command reference](command-reference.md#planned-ssh-integration) says when that changes.
+
+This is the sandbox's outbound connection to a machine you name. It is not the [SSH setup](ssh.md), which lets an editor on the host connect to the sandbox ([ADR 0002](adr/0002-ssh-access-with-opt-in-host-setup.md)); the two share nothing. The SSH integration reads and writes only `/home/agent/.ssh/` in the sandbox's home volume. It never reads, writes, or changes your host's SSH files, `known_hosts`, or agent, and it does not connect the host to the sandbox.
+
+### What the command needs
+
+Standard input and standard output must both be terminals. Without them the command fails with "ssh config needs an interactive terminal" before the manager starts, so no key is generated and nothing is written. The terminal is connected through to the sandbox, so you answer the prompts below yourself.
+
+### What happens, in order
+
+1. **The key.** The manager creates `/home/agent/.ssh/` with mode `0700` when it is missing and generates an Ed25519 key, `id_ed25519_remote_<target-hash>` with its `.pub` sibling, in it. The name is derived from the machine only, so the same machine always uses the same key, whatever username or alias you give; a valid existing pair is reused and its public key printed again. A damaged, incomplete, or mismatched key is refused and never overwritten. The key location is reported on standard error as `Dedicated SSH key location: PATH`, and the public key is printed on standard output as one line in `authorized_keys` format, which you can copy.
+2. **The approval.** Before anything connects, the command asks:
+
+   ```text
+   Test the connection to alice@build.example with password authentication now? ssh asks for the password. [y/N]: 
+   ```
+
+   `y` or `yes` approves. `n`, `no`, or an empty answer declines, and any other answer asks again. Nothing has contacted the remote machine at this point.
+3. **The password test.** The manager runs the image's `ssh` as `agent` once, against the remote machine, with the remote username and a connection timeout of 15 seconds. It runs `true` on the remote machine and succeeds only when that exits zero. Only password and keyboard-interactive authentication are allowed: the dedicated key, any SSH agent, and host-based and GSSAPI logins are switched off, and no configuration file is read. `ssh` itself asks for the password on your terminal and reads it without echo. The password never passes through the manager and is not in any argument, environment value, file, or output.
+4. **The host key.** For a machine whose host key is not yet known, `ssh` shows the key's fingerprint and asks whether to continue, before it asks for the password. A key you confirm is stored in `/home/agent/.ssh/known_hosts`, and it stays there even when the password test fails afterwards. A key you do not confirm ends the test. A key that differs from the stored one is refused and ends the test; the command never replaces it.
+5. **The alias.** Only after the test succeeds, the command adds a host entry to `/home/agent/.ssh/config` with the remote machine as `HostName`, the remote `User`, the dedicated key as `IdentityFile` with `IdentitiesOnly yes`, and `/home/agent/.ssh/known_hosts` as `UserKnownHostsFile`. For a machine name, the machine name, in lowercase, is the alias and the command asks nothing. For an IP address, the command asks `SSH alias name for ADDRESS:` and reads the name; an invalid name asks again. An alias that an existing, more specific block of the file already claims is refused with a message naming the options that block sets, and the command asks for another name. A machine name that is not a valid alias fails and writes nothing. Existing content of the file stays unchanged; the entry is appended.
+
+On success the command exits zero and reports the alias, for example:
+
+```text
+SSH alias build01 configured for alice@192.0.2.10 with the dedicated key. The password test succeeded; key-based login is not verified. Add the public key above to the remote account's ~/.ssh/authorized_keys before you use ssh build01.
+```
+
+### What it does not do
+
+A successful password test does not prove that the dedicated key is authorized on the remote machine. The command neither tries a key-based login nor reports one as verified, and it does not install the public key on the remote machine. Add the printed public key to the remote account's `~/.ssh/authorized_keys` yourself. Until you do, `ssh ALIAS` from the sandbox fails to authenticate with the key. Installing the key automatically and verifying key-based login are out of scope of this command.
+
+### Declines and failures
+
+A decline, a cancellation, and every failure exit non-zero, write no host entry, and leave `/home/agent/.ssh/config` unchanged. The generated key stays, and every message names its location. The messages are:
+
+| Cause | Message |
+|---|---|
+| You decline the approval | `SSH connection test declined; no connection made, no host entry written, dedicated key retained at PATH` |
+| Input ends at the approval, or Ctrl+C interrupts the test | `SSH connection test cancelled`, then the same consequences |
+| The machine name does not resolve | `SSH connection test failed: remote machine name HOST cannot be resolved` |
+| The machine is unreachable, refuses the connection, or times out | `SSH connection test failed: remote machine HOST is unreachable or timed out` |
+| You do not confirm the unknown host key | `SSH connection test failed: remote host key rejected; the host key of HOST was not confirmed` |
+| The host key differs from the stored one | `SSH connection test failed: remote host key rejected; the host key of HOST changed since it was trusted in ~/.ssh/known_hosts and is refused` |
+| The password is wrong, or the remote account refuses it | `SSH connection test failed: authentication as USER failed` |
+| The remote machine offers no password authentication | `SSH connection test failed: authentication as USER failed; the remote machine does not offer password authentication` |
+| Anything else | `SSH connection test failed with exit status N` |
+
+After the cause, each failure adds `no host entry written, SSH configuration unchanged, dedicated key retained at PATH`. `ssh`'s own diagnostics also appear on your terminal. A host key you confirmed before such a failure remains in `/home/agent/.ssh/known_hosts`. A failure while the alias is written, such as a refused alias or a configuration lock left behind, reports its own message and also keeps the key; the password test had already succeeded by then. To retry after a failure, run the same command again: the key is reused.
+
+### Where it lives
+
+The key, the confirmed host keys, and the alias entry live in `/home/agent/.ssh/` in the home volume. They survive `stop`, `start`, and `update`, and only `sandboxed-agents remove NAME --volumes` deletes them. Every agent in the sandbox can use the dedicated key, because the agents share the sandbox's `agent` user and its files; so can every program you start there. Give the remote account only the access you accept for all of them, and treat the private key as a credential every agent can use. To revoke it, remove the public key from the remote account's `authorized_keys`; removing the files in the sandbox does not remove it there.
+
+### Manual SSH connection check
+
+The offline tests use fake processes and a local test-only SSH peer on loopback, and they contact no remote machine, so a real password test is proven only by this check. Run it with a remote machine you control, an account on it that accepts password authentication, and a throwaway sandbox; the [manual checklist](manual-checklist.md#ssh-connection) lists it. Never use a machine you do not control.
+
+1. Run `sandboxed-agents integrations config agent01 ssh --host HOST --user USER </dev/null`. Confirm it fails with the terminal error and a non-zero status, and that `/home/agent/.ssh/` in `shell agent01` holds no `id_ed25519_remote_*` file.
+2. Run the command with a terminal. Confirm it prints one public-key line and the key location, and then the approval question, and that the remote machine's log shows no connection yet.
+3. Answer `n`. Confirm the declined message, a non-zero status, no connection in the remote log, and no `Host` entry for the machine in `/home/agent/.ssh/config`. The key files stay.
+4. Run the command again and answer `y`. Compare the fingerprint `ssh` shows with the host key of the remote machine (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` there), confirm it, and enter a wrong password until `ssh` gives up. Confirm the authentication message, a non-zero status, and no `Host` entry. The confirmed host key is in `known_hosts`.
+5. Run the command once more, answer `y`, and enter the right password. Confirm the password was not echoed, that for an IP address the command asked for an alias name, that it exits zero with the report above, and that `ssh -G ALIAS` in `shell agent01` shows the host, user, and dedicated key.
+6. Run `ssh ALIAS` in `shell agent01` before and after you add the printed public key to the remote account's `~/.ssh/authorized_keys`. Confirm the first does not log in with the key, and the second does. The command itself verified neither.
+7. Confirm your host's `~/.ssh` is unchanged by the whole check.
+
+Record the sandbox image, host platform, tested commit, `ssh -V` from the sandbox, and each step's result. Never record a password.
