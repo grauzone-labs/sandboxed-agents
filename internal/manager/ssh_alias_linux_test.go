@@ -34,30 +34,49 @@ func entryResolution(alias, hostName, user, home string) string {
 		filepath.Join(home, ".ssh", "id_ed25519_remote_test") + "\nuserknownhostsfile " + filepath.Join(home, ".ssh", "known_hosts") + "\n"
 }
 
-// acceptEntry answers claim queries with only the global Host * block applied and candidate queries with the entry's values in effect.
+// unconfiguredResolution is what ssh -G -F none reports for an alias that no configuration touches.
+func unconfiguredResolution(alias string) string {
+	return "host " + alias + "\nuser agent\nhostname " + alias + "\nport 22\nidentitiesonly no\nidentityfile ~/.ssh/id_rsa\nidentityfile ~/.ssh/id_ed25519\nuserknownhostsfile ~/.ssh/known_hosts ~/.ssh/known_hosts2\n"
+}
+
+// acceptEntry answers claim queries with only the global Host * block applied and no relevant option changed, unconfigured queries
+// with the client default, and candidate queries with the entry's values in effect.
 func acceptEntry(hostName, user, home string) func(sshQuery) sshAnswer {
 	return func(q sshQuery) sshAnswer {
-		if q.verbose {
-			return sshAnswer{stderr: "OpenSSH_9.2p1\ndebug1: Reading configuration data " + q.config + "\ndebug1: " + q.config + " line 1: Applying options for *\n"}
+		switch {
+		case q.verbose:
+			return sshAnswer{stdout: unconfiguredResolution(q.alias), stderr: "OpenSSH_9.2p1\ndebug1: Reading configuration data " + q.config + "\ndebug1: " + q.config + " line 1: Applying options for *\n"}
+		case q.config == "none":
+			return sshAnswer{stdout: unconfiguredResolution(q.alias)}
 		}
 		return sshAnswer{stdout: entryResolution(q.alias, hostName, user, home)}
 	}
 }
 
-// claimAlias answers like accept, except that the claim query for alias also reports the given OpenSSH diagnostic lines.
-func claimAlias(accept func(sshQuery) sshAnswer, alias, diagnostics string) func(sshQuery) sshAnswer {
+// claimAlias answers like accept, except that the claim query for alias also reports the given OpenSSH diagnostic lines and, when
+// changed names an ssh -G line such as "user bob", resolves that option to it.
+func claimAlias(accept func(sshQuery) sshAnswer, alias, diagnostics, changed string) func(sshQuery) sshAnswer {
 	return func(q sshQuery) sshAnswer {
 		answer := accept(q)
 		if q.verbose && q.alias == alias {
 			answer.stderr += diagnostics
+			if key, _, ok := strings.Cut(changed, " "); ok {
+				var lines []string
+				for _, line := range strings.SplitAfter(answer.stdout, "\n") {
+					if !strings.HasPrefix(line, key+" ") {
+						lines = append(lines, line)
+					}
+				}
+				answer.stdout = strings.Join(lines, "") + changed + "\n"
+			}
 		}
 		return answer
 	}
 }
 
 // aliasEffects supplies a verified agent with a temporary home and stdin, and answers ssh at the process seam from a script. It checks
-// that every query runs the trusted client as agent with the fixed SSH environment and is either a -vv claim query on the configuration
-// file or a candidate query that reads the configuration about to be written from /dev/stdin.
+// that every query runs the trusted client as agent with the fixed SSH environment and is a -vv claim query on the configuration file,
+// an unconfigured -F none query, or a candidate query that reads the configuration about to be written from /dev/stdin.
 func aliasEffects(t *testing.T, home string, stdin io.Reader, resolve func(sshQuery) sshAnswer, queries *[]sshQuery) Effects {
 	t.Helper()
 	return Effects{
@@ -75,6 +94,8 @@ func aliasEffects(t *testing.T, home string, stdin io.Reader, resolve func(sshQu
 			switch {
 			case len(p.Args) == 5 && p.Args[0] == "-vv" && p.Args[1] == "-G" && p.Args[2] == "-F" && filepath.IsAbs(p.Args[3]) && p.Args[3] != "/dev/stdin":
 				q = sshQuery{verbose: true, config: p.Args[3], alias: p.Args[4]}
+			case len(p.Args) == 4 && p.Args[0] == "-G" && p.Args[1] == "-F" && p.Args[2] == "none":
+				q = sshQuery{config: "none", alias: p.Args[3]}
 			case len(p.Args) == 4 && p.Args[0] == "-G" && p.Args[1] == "-F" && p.Args[2] == "/dev/stdin":
 				input, err := io.ReadAll(p.Stdin)
 				if err != nil {
@@ -213,24 +234,25 @@ func TestSSHAliasPreservesExistingConfiguration(t *testing.T) {
 	}
 }
 
-// TestSSHAliasConflictWritesNothingAndAsksAgain proves an alias that OpenSSH reports as claimed by a Host pattern other than *, a Host glob, or
-// a Match block other than Match all, whatever options it sets, writes nothing, is reported, and asks for another alias name, at the
-// configureSSHAlias seam with scripted ssh -vv -G diagnostics.
+// TestSSHAliasConflictWritesNothingAndAsksAgain proves an alias that a Host pattern other than *, a Host glob, or a Match host or originalhost
+// block claims by changing hostname, user, identityfile, identitiesonly, or userknownhostsfile from the client default, even to the intended
+// value, writes nothing, is reported, and asks for another alias name, at the configureSSHAlias seam with scripted ssh -vv -G diagnostics.
 func TestSSHAliasConflictWritesNothingAndAsksAgain(t *testing.T) {
 	for _, test := range []struct {
-		name, target, answers, claimed, diagnostics, alias string
+		name, target, answers, claimed, diagnostics, changed, alias string
 	}{
-		{"hand-written address alias", "192.0.2.10", "lab\nlab2\n", "lab", "debug1: CONFIG line 3: Applying options for lab\n", "lab2"},
-		{"Port-only machine name stanza", "build.example", "build2\n", "build.example", "debug1: CONFIG line 3: Applying options for build.example\n", "build2"},
-		{"Host glob", "192.0.2.10", "lab-1\nlab2\n", "lab-1", "debug1: CONFIG line 3: Applying options for lab-*\n", "lab2"},
-		{"Match host block", "192.0.2.10", "lab\nlab2\n", "lab", "debug2: checking match for 'host lab' host lab originally lab\ndebug2: match found\n", "lab2"},
-		{"rerun every alias claimed", "build.example", "", "build.example", "debug1: CONFIG line 3: Applying options for build.example\n", ""},
+		{"hand-written address alias", "192.0.2.10", "lab\nlab2\n", "lab", "debug1: CONFIG line 3: Applying options for lab\n", "hostname 203.0.113.9", "lab2"},
+		{"machine name stanza with the intended user", "build.example", "build2\n", "build.example", "debug1: CONFIG line 3: Applying options for build.example\n", "user alice", "build2"},
+		{"Host glob", "192.0.2.10", "lab-1\nlab2\n", "lab-1", "debug1: CONFIG line 3: Applying options for lab-*\n", "identitiesonly yes", "lab2"},
+		{"Match host block", "192.0.2.10", "lab\nlab2\n", "lab", "debug2: checking match for 'host lab' host lab originally lab\ndebug2: match found\n", "user bob", "lab2"},
+		{"Match originalhost block", "192.0.2.10", "lab\nlab2\n", "lab", "debug2: checking match for 'originalhost lab' host lab originally lab\ndebug2: match found\n", "userknownhostsfile /elsewhere", "lab2"},
+		{"rerun every alias claimed", "build.example", "", "build.example", "debug1: CONFIG line 3: Applying options for build.example\n", "identityfile ~/.ssh/id_ed25519_remote_test", ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
 			existing := "# hand-written\n"
 			config := writeSSHConfig(t, home, existing, 0600)
-			resolve := claimAlias(acceptEntry(test.target, "alice", home), test.claimed, strings.ReplaceAll(test.diagnostics, "CONFIG", config))
+			resolve := claimAlias(acceptEntry(test.target, "alice", home), test.claimed, strings.ReplaceAll(test.diagnostics, "CONFIG", config), test.changed)
 			var stderr bytes.Buffer
 			alias, err := configureSSHAlias(test.target, "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, strings.NewReader(test.answers), resolve, nil))
 			if !strings.Contains(stderr.String(), "SSH alias "+test.claimed+" is already configured") || !strings.Contains(stderr.String(), "SSH alias name for "+test.target) {
@@ -246,6 +268,32 @@ func TestSSHAliasConflictWritesNothingAndAsksAgain(t *testing.T) {
 			want := existing + "\n" + aliasEntry(test.alias, test.target, "alice", home)
 			if err != nil || alias != test.alias || got != want {
 				t.Fatalf("alias=%q error=%v config=%q\nwant %q", alias, err, got, want)
+			}
+		})
+	}
+}
+
+// TestSSHAliasAcceptsSpecificStanzaWithUnrelatedOptions proves a Host ALIAS, Host glob, or Match host block that matches the alias but changes
+// none of hostname, user, identityfile, identitiesonly, or userknownhostsfile from the client default, such as one setting only Port, does not
+// claim the alias, at the configureSSHAlias seam with scripted ssh -vv -G diagnostics and an unconfigured ssh -G -F none comparison.
+func TestSSHAliasAcceptsSpecificStanzaWithUnrelatedOptions(t *testing.T) {
+	for name, diagnostics := range map[string]string{
+		"Port-only Host ALIAS": "debug1: CONFIG line 1: Applying options for build.example\n",
+		"Port-only Host glob":  "debug1: CONFIG line 1: Applying options for build.*\n",
+		"Port-only Match host": "debug2: checking match for 'host build.example' host build.example originally build.example\ndebug2: match found\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			existing := "Host build.example\n    Port 2222\n"
+			config := writeSSHConfig(t, home, existing, 0600)
+			resolve := claimAlias(acceptEntry("build.example", "alice", home), "build.example", strings.ReplaceAll(diagnostics, "CONFIG", config), "port 2222")
+			var stderr bytes.Buffer
+			alias, err := configureSSHAlias("build.example", "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, strings.NewReader(""), resolve, nil))
+			if err != nil || alias != "build.example" || strings.Contains(stderr.String(), "already configured") {
+				t.Fatalf("alias=%q error=%v diagnostics=%q", alias, err, stderr.String())
+			}
+			if got := readConfig(t, config); got != existing+"\n"+aliasEntry("build.example", "build.example", "alice", home) {
+				t.Fatalf("config=%q", got)
 			}
 		})
 	}
@@ -291,7 +339,7 @@ func TestSSHAliasIgnoresUnrelatedEffectiveOptions(t *testing.T) {
 		answer := accept(q)
 		answer.stdout = strings.NewReplacer("port 22\n", "port 2222\n", "serveraliveinterval 0\n", "serveraliveinterval 30\n").Replace(answer.stdout)
 		return answer
-	}, "build.example", "debug2: checking match for 'all' host build.example originally build.example\ndebug2: match found\n")
+	}, "build.example", "debug2: checking match for 'all' host build.example originally build.example\ndebug2: match found\n", "")
 	var stderr bytes.Buffer
 	alias, err := configureSSHAlias("build.example", "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, strings.NewReader(""), resolve, nil))
 	if err != nil || alias != "build.example" || strings.Contains(stderr.String(), "already configured") {
@@ -357,7 +405,7 @@ func TestSSHAliasRefusesGlobalValuesContradictingEntry(t *testing.T) {
 func TestSSHAliasLeavesLaterInputUnread(t *testing.T) {
 	home := t.TempDir()
 	config := writeSSHConfig(t, home, "Host lab\n    HostName 203.0.113.9\n", 0600)
-	resolve := claimAlias(acceptEntry("192.0.2.10", "alice", home), "lab", "debug1: "+config+" line 1: Applying options for lab\n")
+	resolve := claimAlias(acceptEntry("192.0.2.10", "alice", home), "lab", "debug1: "+config+" line 1: Applying options for lab\n", "hostname 203.0.113.9")
 	stdin := strings.NewReader("lab\nlab2\nlater answer\n")
 	var stderr bytes.Buffer
 	if alias, err := configureSSHAlias("192.0.2.10", "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, stdin, resolve, nil)); err != nil || alias != "lab2" {
@@ -450,13 +498,13 @@ func (r lockObservingReader) Read(data []byte) (int, error) {
 	return r.input.Read(data)
 }
 
-// TestSSHAliasLocksQueriesButNotQuestions proves every claim query, check, and the write run under the configuration lock while alias questions,
+// TestSSHAliasLocksQueriesButNotQuestions proves every claim query, unconfigured comparison, check, and the write run under the configuration lock while alias questions,
 // including the one after a conflict, wait outside it, and the lock is released afterwards, at the configureSSHAlias seam.
 func TestSSHAliasLocksQueriesButNotQuestions(t *testing.T) {
 	home := t.TempDir()
 	config := writeSSHConfig(t, home, "Host lab\n    HostName 203.0.113.9\n", 0600)
 	lock := filepath.Join(home, ".ssh", ".config.lock")
-	claimed := claimAlias(acceptEntry("192.0.2.10", "alice", home), "lab", "debug1: "+config+" line 1: Applying options for lab\n")
+	claimed := claimAlias(acceptEntry("192.0.2.10", "alice", home), "lab", "debug1: "+config+" line 1: Applying options for lab\n", "hostname 203.0.113.9")
 	resolve := func(q sshQuery) sshAnswer {
 		if _, err := os.Stat(lock); err != nil {
 			t.Fatalf("query %v ran without the configuration lock", q)
@@ -469,7 +517,8 @@ func TestSSHAliasLocksQueriesButNotQuestions(t *testing.T) {
 	if alias, err := configureSSHAlias("192.0.2.10", "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, stdin, resolve, &queries)); err != nil || alias != "lab2" {
 		t.Fatalf("alias=%q error=%v diagnostics=%q", alias, err, stderr.String())
 	}
-	if len(queries) != 3 {
+	// lab: claim and unconfigured comparison; lab2: claim and candidate check.
+	if len(queries) != 4 {
 		t.Fatalf("queries=%v", queries)
 	}
 	if _, err := os.Stat(lock); !os.IsNotExist(err) {
@@ -576,8 +625,8 @@ func realSSHEffects(t *testing.T, home string, stdin io.Reader) Effects {
 
 // TestSSHAliasResolvesThroughRealOpenSSH proves with the local OpenSSH client, where installed, that the entry beside benign or matching
 // Host * options resolves hostname, user, identityfile, identitiesonly, and the agent home's known_hosts through ssh -G -F FILE; that a
-// contradicting Host * value fails once without another question; and that an existing entry, a Host glob, or a Match host block for the
-// alias asks for another one while Match all does not.
+// contradicting Host * value fails once without another question; that an existing entry, Host ALIAS, Host glob, or Match host or originalhost
+// block changing one of those options, even to the intended value, asks for another alias; and that such a block setting only Port, or Match all, does not.
 func TestSSHAliasResolvesThroughRealOpenSSH(t *testing.T) {
 	for _, test := range []struct {
 		name, target, user, existing, answers, alias, failure string
@@ -588,8 +637,13 @@ func TestSSHAliasResolvesThroughRealOpenSSH(t *testing.T) {
 		{"Host star other user", "192.0.2.10", "alice", "Host *\n    User bob\n", "lab\nlab2\n", "", "user", false},
 		{"Host star IdentitiesOnly no", "192.0.2.10", "alice", "Host *\n    IdentitiesOnly no\n", "lab\nlab2\n", "", "identitiesonly", false},
 		{"rerun with the same entry", "192.0.2.10", "alice", "ENTRY", "lab\nlab2\n", "lab2", "", true},
-		{"Host glob claims", "192.0.2.10", "alice", "Host lab-*\n    Port 2\n", "lab-1\nlab2\n", "lab2", "", true},
-		{"Match host claims", "192.0.2.10", "alice", "Match host lab\n    Port 3\n", "lab\nlab2\n", "lab2", "", true},
+		{"Port-only Host ALIAS", "192.0.2.10", "alice", "Host lab\n    Port 2222\n    ServerAliveInterval 30\n", "lab\n", "lab", "", false},
+		{"Host ALIAS with the intended user", "192.0.2.10", "alice", "Host lab\n    User alice\n", "lab\nlab2\n", "lab2", "", true},
+		{"Port-only Host glob", "192.0.2.10", "alice", "Host lab-*\n    Port 2\n", "lab-1\n", "lab-1", "", false},
+		{"Host glob with IdentitiesOnly", "192.0.2.10", "alice", "Host lab-*\n    IdentitiesOnly yes\n", "lab-1\nlab2\n", "lab2", "", true},
+		{"Port-only Match host", "192.0.2.10", "alice", "Match host lab\n    Port 3\n", "lab\n", "lab", "", false},
+		{"Match host with HostName", "192.0.2.10", "alice", "Match host lab\n    HostName 203.0.113.9\n", "lab\nlab2\n", "lab2", "", true},
+		{"Match originalhost with UserKnownHostsFile", "192.0.2.10", "alice", "Match originalhost lab\n    UserKnownHostsFile /elsewhere\n", "lab\nlab2\n", "lab2", "", true},
 		{"Match all claims nothing", "192.0.2.10", "alice", "Match all\n    Compression yes\n", "lab\n", "lab", "", false},
 		{"no configuration file", "build.example", "alice", "NONE", "", "build.example", "", false},
 	} {
