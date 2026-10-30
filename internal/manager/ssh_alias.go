@@ -326,9 +326,11 @@ func sshEntryValues(output string) string {
 }
 
 // checkSSHEntry has ssh -G resolve the alias from the exact configuration bytes about to be written, read from the query's
-// standard input, and refuses them when an earlier global setting makes OpenSSH, which keeps the first value it reads,
-// report another value for an option the entry sets. Another alias would meet the same setting, so the error asks for
-// the setting to be changed instead of offering another question.
+// standard input, and refuses them when an earlier option in that candidate configuration that matches the alias, such as
+// one under Host * or a Match block without host criteria, takes precedence because OpenSSH keeps the first value it reads,
+// so the alias would resolve another value for an option the entry sets. The error names the alias and the option and asks
+// for the earlier setting to be changed instead of offering another question; whether that setting also matches other
+// aliases depends on its own rule.
 func checkSSHEntry(content []byte, alias string, want []sshOption, effects Effects) error {
 	output, _, err := runSSHQuery([]string{"-G", "-F", sshCandidateConfig, alias}, bytes.NewReader(content), alias, effects)
 	if err != nil {
