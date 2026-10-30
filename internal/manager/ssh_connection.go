@@ -71,8 +71,8 @@ func awaitSSHApproval(stdin io.Reader, user, target string, stderr io.Writer, ef
 // key is neither offered nor installed. ssh itself reads the password from the terminal without echo; the password never
 // passes through the manager, ssh's arguments, its environment, or its standard input, which is empty. ssh shows an
 // unknown host key with its fingerprint and asks before it sends the password; no system-wide known hosts file is
-// trusted, a confirmed key is recorded in the agent's ~/.ssh/known_hosts, and a refused or changed one ends the test. ssh's diagnostics reach stderr and are kept,
-// bounded, to name the failure as sshTestFailure does.
+// trusted, a confirmed key is recorded in the agent's ~/.ssh/known_hosts, and a refused or changed one ends the test.
+// ssh's diagnostics reach stderr and are kept, bounded, to name the failure as sshTestFailure does.
 func testSSHConnection(home, target, user string, stderr io.Writer, effects Effects) error {
 	knownHosts, err := sshConfigValue(filepath.Join(home, ".ssh", "known_hosts"), true)
 	if err != nil {
