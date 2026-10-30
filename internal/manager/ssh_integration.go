@@ -140,7 +140,7 @@ func prepareSSHDirectory(root *os.Root) error {
 func checkSSHDirectory(root *os.Root) error {
 	info, err := root.Lstat(".ssh")
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || !sshFileOwned(info) {
-		return fmt.Errorf("SSH directory must be owned by agent with mode 0700; no files changed")
+		return fmt.Errorf("~/.ssh must be a directory, not a link, owned by agent with mode 0700; no files changed")
 	}
 	return nil
 }

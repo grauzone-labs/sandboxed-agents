@@ -100,7 +100,7 @@ func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects E
 			continue
 		}
 		entry := fmt.Sprintf("Host %s\n    HostName %s\n    User %s\n    IdentityFile %s\n    IdentitiesOnly yes\n    UserKnownHostsFile %s\n", alias, hostName, userName, identity, knownHosts)
-		added, err := addSSHAlias(root, home, alias, entry, want, effects)
+		added, err := addSSHAlias(root, alias, entry, want, effects)
 		if err != nil {
 			return "", err
 		}
@@ -112,11 +112,12 @@ func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects E
 	}
 }
 
-// addSSHAlias adds the entry unless a specific Host pattern or Match block already claims the alias, and reports
-// whether it did. It holds the configuration lock across the claim query, the check of the resulting configuration,
-// and the atomic write. Without a .ssh directory it checks the entry alone first, so a failing query creates nothing,
-// and it queries no more once the lock confirms there is still no configuration file.
-func addSSHAlias(root *os.Root, home, alias, entry string, want []sshOption, effects Effects) (bool, error) {
+// addSSHAlias adds the entry to the configuration in the home that root opens unless a specific Host pattern or
+// Match block already claims the alias, and reports whether it did. It holds the configuration lock across the claim
+// query, the check of the resulting configuration, and the atomic write. Without a .ssh directory it checks the entry
+// alone first, so a failing query creates nothing, and it queries no more once the lock confirms there is still no
+// configuration file.
+func addSSHAlias(root *os.Root, alias, entry string, want []sshOption, effects Effects) (bool, error) {
 	_, err := root.Lstat(".ssh")
 	checked := errors.Is(err, os.ErrNotExist)
 	if checked {
@@ -128,7 +129,7 @@ func addSSHAlias(root *os.Root, home, alias, entry string, want []sshOption, eff
 		return false, err
 	}
 	if err := root.Mkdir(sshConfigLock, 0700); err != nil {
-		return false, fmt.Errorf("another SSH configuration change is in progress, or its lock %s was left behind; retry after it finishes or remove that lock; SSH configuration unchanged", filepath.Join(home, sshConfigLock))
+		return false, fmt.Errorf("another SSH configuration change is in progress, or its lock %s was left behind; retry after it finishes or remove that lock; SSH configuration unchanged", filepath.Join(root.Name(), sshConfigLock))
 	}
 	defer root.Remove(sshConfigLock)
 	current, err := readSSHConfig(root)
@@ -136,7 +137,7 @@ func addSSHAlias(root *os.Root, home, alias, entry string, want []sshOption, eff
 		return false, err
 	}
 	if current.exists {
-		claimed, err := sshAliasClaimed(filepath.Join(home, ".ssh", "config"), alias, effects)
+		claimed, err := sshAliasClaimed(filepath.Join(root.Name(), ".ssh", "config"), alias, effects)
 		if err != nil || claimed {
 			return false, err
 		}
