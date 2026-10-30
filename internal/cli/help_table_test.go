@@ -73,7 +73,8 @@ func TestHelpUsageFollowsCommandReferenceGrammar(t *testing.T) {
 		t.Fatal(err)
 	}
 	grammar := map[string]bool{}
-	for _, line := range strings.Split(string(data), "\n") {
+	// A Windows checkout may end the doc's lines with CRLF; compare them as LF.
+	for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
 		grammar[line] = true
 	}
 	for command := range commands {
