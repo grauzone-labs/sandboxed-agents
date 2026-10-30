@@ -177,8 +177,8 @@ func TestGitConfigRejectsSSHOptions(t *testing.T) {
 	}
 }
 
-// TestSSHConfigStepOneAndDeliveryGateCallNoPodman proves the delivery gate of the default catalog admits a valid SSH config request in cli.Parse, and invalid inputs refuse before external calls through the host CLI boundary.
-func TestSSHConfigStepOneAndDeliveryGateCallNoPodman(t *testing.T) {
+// TestSSHConfigAdmitsValidRequestAndRefusesInvalidWithoutPodman proves the delivery gate of the default catalog admits a valid SSH config request through cli.Parse, and that a missing host, a missing user, or an invalid host or user is refused before any Podman call through the host CLI boundary.
+func TestSSHConfigAdmitsValidRequestAndRefusesInvalidWithoutPodman(t *testing.T) {
 	request, err := cli.Parse([]string{"integrations", "config", "agent01", "ssh", "--host", "worker", "--user", "alice"}, "default")
 	if err != nil || request.ConfigSelection.Integration != "ssh" || request.Options["host"] != "worker" || request.Options["user"] != "alice" {
 		t.Fatalf("request=%+v error=%v; want the delivered ssh selection", request, err)
