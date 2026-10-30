@@ -84,12 +84,14 @@ func (s sshSetup) includeLine(expandTokens bool) string {
 	return "Include " + path + "\n"
 }
 
-// updateConfiguration adds includeLine only during installation. An empty line
-// requests removal cleanup, preserving any Include the user deleted themselves.
-func (s sshSetup) updateConfiguration(includeLine string) error {
+// updateConfiguration rewrites the group's managed configuration from its host
+// entries and adds includeLine to the user's SSH configuration when it is
+// missing, reporting whether it added the line. An empty line requests removal
+// cleanup, preserving any Include the user deleted themselves.
+func (s sshSetup) updateConfiguration(includeLine string) (bool, error) {
 	entries, err := os.ReadDir(s.groupDir)
 	if err != nil && !os.IsNotExist(err) {
-		return err
+		return false, err
 	}
 	var managed bytes.Buffer
 	for _, entry := range entries {
@@ -101,13 +103,13 @@ func (s sshSetup) updateConfiguration(includeLine string) error {
 			continue
 		}
 		if err != nil {
-			return err
+			return false, err
 		}
 		managed.Write(data)
 	}
 	user, err := os.ReadFile(s.userConfig)
 	if err != nil && !os.IsNotExist(err) {
-		return err
+		return false, err
 	}
 	var withoutInclude bytes.Buffer
 	hasInclude := false
@@ -121,21 +123,22 @@ func (s sshSetup) updateConfiguration(includeLine string) error {
 	}
 	if managed.Len() == 0 {
 		if err := os.Remove(s.config); err != nil && !os.IsNotExist(err) {
-			return err
+			return false, err
 		}
 		if hasInclude {
-			return writeSSHFile(s.userConfig, withoutInclude.Bytes(), 0600, true)
+			return false, writeSSHFile(s.userConfig, withoutInclude.Bytes(), 0600, true)
 		}
-		return nil
+		return false, nil
 	}
 	if err := writeSSHFile(s.config, managed.Bytes(), 0600, false); err != nil {
-		return err
+		return false, err
 	}
 	if hasInclude || includeLine == "" {
-		return nil
+		return false, nil
 	}
 	if err := createSSHDirectory(filepath.Dir(s.userConfig)); err != nil {
-		return err
+		return false, err
 	}
-	return writeSSHFile(s.userConfig, append([]byte(includeLine), user...), 0600, true)
+	err = writeSSHFile(s.userConfig, append([]byte(includeLine), user...), 0600, true)
+	return err == nil, err
 }
