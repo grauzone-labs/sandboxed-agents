@@ -306,6 +306,7 @@ func TestParsedCommandMissingStateKeepsGenericUsage(t *testing.T) {
 func TestParsedCommandHomeLookupFailureKeepsGenericUsage(t *testing.T) {
 	f := linuxHost(t)
 	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
 	status, output, calls := f.run(t, "up", "agent01", t.TempDir())
 	if status != 2 || !strings.HasSuffix(output, "\nusage: sandboxed-agents COMMAND [ARG...]\n") || strings.Contains(output, "--help") {
 		t.Fatalf("status=%d output=%q calls=%v; want exit 2, the generic usage line, and no --help pointer", status, output, calls)
