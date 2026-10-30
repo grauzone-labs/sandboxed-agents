@@ -47,7 +47,7 @@ func TestAgentSessionStartsOnceAndAttachesWithoutLock(t *testing.T) {
 	runAgents(t, e, 0, "enable", "codex")
 	running, starts, attaches := false, 0, 0
 	e.Start = func(p manager.Process) error {
-		if p.Program != "tmux" || p.Identity != (manager.Identity{UID: 1000, GID: 1000}) || !reflect.DeepEqual(p.Args[:4], []string{"-L", "sandboxed-agents", "-f", "/dev/null"}) {
+		if p.Program != "tmux" || p.Identity != (manager.Identity{UID: 1000, GID: 1000}) || !reflect.DeepEqual(p.Args[:tmuxServerArgCount], []string{"-L", "sandboxed-agents", "-f", "/dev/null"}) {
 			t.Fatalf("process=%+v", p)
 		}
 		switch tmuxCommand(p.Args) {
@@ -57,14 +57,14 @@ func TestAgentSessionStartsOnceAndAttachesWithoutLock(t *testing.T) {
 			}
 		case "new-session":
 			want := []string{"new-session", "-d", "-s", "codex", "-c", "/workspace", "--", "/usr/bin/env", filepath.Join(home, ".local", "bin", "codex")}
-			if !reflect.DeepEqual(p.Args[4:], want) {
+			if !reflect.DeepEqual(p.Args[tmuxServerArgCount:], want) {
 				t.Fatalf("creation=%q", p.Args)
 			}
 			starts++
 			running = true
 		case "attach-session":
 			// The attaching client assumes a UTF-8 terminal with 256 colours whatever TERM and locale reach it in the sandbox.
-			if !reflect.DeepEqual(p.Args[4:], []string{"-u", "-2", "attach-session", "-t", "=codex"}) {
+			if !reflect.DeepEqual(p.Args[tmuxServerArgCount:], []string{"-u", "-2", "attach-session", "-t", "=codex"}) {
 				t.Fatal(p.Args)
 			}
 			attaches++
@@ -105,7 +105,7 @@ func TestAgentInstallationGuardsItsOwnSession(t *testing.T) {
 						io.WriteString(p.Stdout, "codex\n")
 					}
 				case "kill-session":
-					if !reflect.DeepEqual(p.Args[4:], []string{"kill-session", "-t", "=codex"}) {
+					if !reflect.DeepEqual(p.Args[tmuxServerArgCount:], []string{"kill-session", "-t", "=codex"}) {
 						t.Fatal(p.Args)
 					}
 					running = false
@@ -272,10 +272,14 @@ func TestAgentSessionQueryFailurePreventsChanges(t *testing.T) {
 	}
 }
 
+// tmuxServerArgCount is the number of server arguments, -L sandboxed-agents -f /dev/null, that open every argument list
+// the manager passes to tmux, ahead of the client flags and the tmux command.
+const tmuxServerArgCount = 4
+
 // tmuxCommand returns the tmux command among the arguments the manager passes to tmux: the first argument after the
-// four server arguments that is not a client flag such as -u or -2.
+// server arguments that is not a client flag such as -u or -2.
 func tmuxCommand(args []string) string {
-	for _, arg := range args[4:] {
+	for _, arg := range args[tmuxServerArgCount:] {
 		if !strings.HasPrefix(arg, "-") {
 			return arg
 		}
