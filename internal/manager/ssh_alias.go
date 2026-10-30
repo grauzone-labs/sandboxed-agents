@@ -64,17 +64,21 @@ var sshEntryOptions = []sshEntryOption{
 	{key: "userknownhostsfile", keyword: "UserKnownHostsFile", tokens: true},
 }
 
-// sshEntryValues keys values, given one per entry option in sshEntryOptions order, by each option's ssh -G key. It panics
-// when the number of values differs from the number of entry options, which only a programming error causes.
-func sshEntryValues(values ...string) map[string]string {
-	if len(values) != len(sshEntryOptions) {
-		panic(fmt.Sprintf("sshEntryValues: %d values for %d entry options", len(values), len(sshEntryOptions)))
+// sshEntryValues returns values, keyed by ssh -G key, after checking that they hold one value for every entry option in
+// sshEntryOptions and nothing else, so each caller names the option of every value it gives. It panics when a key is
+// missing or names no entry option, which only a programming error causes.
+func sshEntryValues(values map[string]string) map[string]string {
+	for key := range values {
+		if !slices.ContainsFunc(sshEntryOptions, func(option sshEntryOption) bool { return option.key == key }) {
+			panic(fmt.Sprintf("sshEntryValues: %s is not an entry option", key))
+		}
 	}
-	keyed := make(map[string]string, len(values))
-	for i, option := range sshEntryOptions {
-		keyed[option.key] = values[i]
+	for _, option := range sshEntryOptions {
+		if _, ok := values[option.key]; !ok {
+			panic(fmt.Sprintf("sshEntryValues: no value for entry option %s", option.key))
+		}
 	}
-	return keyed
+	return values
 }
 
 // configureSSHAlias chooses the alias for a normalized outbound SSH target and adds its host entry, with the remote
@@ -103,7 +107,13 @@ func configureSSHAlias(target, user, keyName string, stderr io.Writer, effects E
 		return "", fmt.Errorf("SSH home data is unavailable")
 	}
 	// #109 keeps confirmed host keys in the agent's usual known_hosts; the entry names it so the alias never depends on another default.
-	want := sshEntryValues(target, user, filepath.Join(home, ".ssh", keyName), "yes", filepath.Join(home, ".ssh", "known_hosts"))
+	want := sshEntryValues(map[string]string{
+		"hostname":           target,
+		"user":               user,
+		"identityfile":       filepath.Join(home, ".ssh", keyName),
+		"identitiesonly":     "yes",
+		"userknownhostsfile": filepath.Join(home, ".ssh", "known_hosts"),
+	})
 	lines, err := sshOptionLines(want)
 	if err != nil {
 		return "", fmt.Errorf("SSH host entry values cannot be written safely; SSH configuration unchanged")
@@ -670,7 +680,13 @@ func sshOptionsSetForAlias(content []byte, alias string, effects Effects) ([]str
 	set := map[string]bool{}
 	for _, probe := range []struct{ name, identitiesOnly string }{{"a", "yes"}, {"b", "no"}} {
 		placeholder := sshProbePlaceholder + probe.name
-		placeholders := sshEntryValues(placeholder+".invalid", placeholder, "/nonexistent/"+placeholder, probe.identitiesOnly, "/nonexistent/"+placeholder)
+		placeholders := sshEntryValues(map[string]string{
+			"hostname":           placeholder + ".invalid",
+			"user":               placeholder,
+			"identityfile":       "/nonexistent/" + placeholder,
+			"identitiesonly":     probe.identitiesOnly,
+			"userknownhostsfile": "/nonexistent/" + placeholder,
+		})
 		lines, err := sshOptionLines(placeholders)
 		if err != nil {
 			return nil, err
