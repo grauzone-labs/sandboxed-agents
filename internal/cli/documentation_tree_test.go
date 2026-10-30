@@ -139,14 +139,8 @@ func commandReferenceError(document string) error {
 		return fmt.Errorf("command reference grammar differs from command tree\ndocumented: %#v\nexecutable: %#v", documented, want)
 	}
 	for command, definition := range commands {
-		minimum := definition.min
-		if command == "integrations config" {
-			// The catalog requires an explicit workflow after NAME and git;
-			// the tree's two-argument form exists to diagnose its omission.
-			minimum = 3
-		}
-		if got := ranges[command]; got.min != minimum || got.max != definition.max {
-			return fmt.Errorf("command reference %s positional range is %d..%d; executable requires %d..%d", command, got.min, got.max, minimum, definition.max)
+		if got := ranges[command]; got.min != definition.min || got.max != definition.max {
+			return fmt.Errorf("command reference %s positional range is %d..%d; executable requires %d..%d", command, got.min, got.max, definition.min, definition.max)
 		}
 	}
 	return nil
