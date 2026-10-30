@@ -44,8 +44,9 @@ func (r sshFlowRecorder) Write(data []byte) (int, error) {
 }
 
 // runSSHFlow runs the SSH integration with scripted answers on standard input and returns its status, standard output,
-// diagnostics, and the ordered events of public output, answer reads, and process starts. connect answers every
-// connection test the flow starts through /usr/bin/ssh; key processes run the local ssh-keygen as sshKeyEffects does.
+// diagnostics, and the ordered events of public output, answer reads, and process starts. connect answers every process
+// the flow starts other than /usr/bin/ssh-keygen, which covers the connection test and the alias unit's ssh -G queries;
+// /usr/bin/ssh-keygen runs locally as sshKeyEffects does, and with a nil connect any other process fails the test.
 func runSSHFlow(t *testing.T, home, host, user, answers string, connect func(manager.Process) error) (int, string, string, []sshFlowEvent) {
 	t.Helper()
 	var calls []manager.Process
