@@ -299,3 +299,15 @@ func TestParsedCommandMissingStateKeepsGenericUsage(t *testing.T) {
 		t.Fatalf("status=%d output=%q calls=%v; want generic host-state diagnostic=%q", status, output, calls, want)
 	}
 }
+
+// TestParsedCommandHomeLookupFailureKeepsGenericUsage proves a lifecycle command that parses but
+// cannot find the user's home directory keeps exit status 2 and the generic usage line without a
+// help pointer through RunWithHost.
+func TestParsedCommandHomeLookupFailureKeepsGenericUsage(t *testing.T) {
+	f := linuxHost(t)
+	t.Setenv("HOME", "")
+	status, output, calls := f.run(t, "up", "agent01", t.TempDir())
+	if status != 2 || !strings.HasSuffix(output, "\nusage: sandboxed-agents COMMAND [ARG...]\n") || strings.Contains(output, "--help") {
+		t.Fatalf("status=%d output=%q calls=%v; want exit 2, the generic usage line, and no --help pointer", status, output, calls)
+	}
+}
