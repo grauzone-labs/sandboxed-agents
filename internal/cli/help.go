@@ -461,8 +461,9 @@ func commandPath(words []string) (string, []string) {
 
 // requestedHelp reports whether args ask for help and for which topic. The root and the groups
 // take --help, -h, and help [COMMAND [SUBCOMMAND]]; a leaf takes --help or -h before any "--",
-// and agents run only before its AGENT argument, so that later arguments reach the agent. A help
-// command that names no known topic returns the deepest recognised topic and an error.
+// and agents run only before its AGENT argument, so that later arguments reach the agent. A token
+// the parser reads as an option's value is never a help request. A help command that names no
+// known topic returns the deepest recognised topic and an error.
 func requestedHelp(args []string) (string, bool, error) {
 	if len(args) > 0 && args[0] == "help" {
 		return helpCommandTopic(args[1:])
@@ -483,15 +484,37 @@ func requestedHelp(args []string) (string, bool, error) {
 	if topic == "agents run" {
 		rest = rest[:min(2, len(rest))]
 	}
-	for _, arg := range rest {
+	options := leafOptions(topic)
+	positionals := 0
+	for index := 0; index < len(rest); index++ {
+		arg := rest[index]
 		if arg == "--" {
 			break
 		}
 		if helpFlag(arg) {
 			return topic, true, nil
 		}
+		if !strings.HasPrefix(arg, "-") {
+			positionals++
+			if topic == "integrations config" && positionals == 2 {
+				for _, option := range catalog.Default.StagedConfigOptionNames(arg) {
+					options[option] = true
+				}
+			}
+			continue
+		}
+		if takesValue(options, arg) && index+1 < len(rest) && !strings.HasPrefix(rest[index+1], "--") {
+			index++
+		}
 	}
 	return "", false, nil
+}
+
+// takesValue reports whether the parser reads the token after arg as arg's value: arg is
+// --NAME without "=" and NAME is a value option of options.
+func takesValue(options map[string]bool, arg string) bool {
+	name, _, hasValue := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
+	return strings.HasPrefix(arg, "--") && !hasValue && options[name]
 }
 
 // helpCommandTopic resolves the words after a help command to a topic; a trailing help option is

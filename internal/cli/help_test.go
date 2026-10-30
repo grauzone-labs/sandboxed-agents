@@ -322,6 +322,28 @@ func TestUsageErrorsNameTheDeepestHelp(t *testing.T) {
 	}
 }
 
+// TestHelpOptionAsOptionValueReachesTheParser proves a -h that follows a value option is that
+// option's value, not a help request: the run keeps parsing and fails with the parser's own
+// message for the same arguments and exit status 2 instead of printing help, at the
+// cli.RunWithHost seam checked against cli.Parse.
+func TestHelpOptionAsOptionValueReachesTheParser(t *testing.T) {
+	for _, args := range [][]string{
+		{"integrations", "config", "agent01", "git", "identity", "--name", "-h", "--bogus"},
+		{"up", "agent01", "--memory", "-h"},
+		{"agents", "enable", "agent01", "claude", "--version", "-h"},
+		{"tools", "pair", "agent01", "t3code", "--ttl", "-h"},
+	} {
+		_, parseErr := cli.Parse(args, "default")
+		if parseErr == nil {
+			t.Fatalf("%v: Parse accepted the arguments; the case needs a parse error after the value", args)
+		}
+		status, stdout, stderr, calls := runHelp(t, args...)
+		if status != 2 || stdout != "" || len(calls) != 0 || !strings.HasPrefix(stderr, "step 1: "+parseErr.Error()+"\n") {
+			t.Errorf("%v: status=%d stdout=%q stderr=%q calls=%v; want the parser's %q and status 2", args, status, stdout, stderr, calls, parseErr)
+		}
+	}
+}
+
 // TestHelpMakesNoPodmanCallAndWritesNoHostState proves every help form at every level of the
 // command chain makes no Podman call, queries no host fact, and leaves the host state roots empty,
 // at the cli.RunWithHost seam with a fake Podman on PATH.

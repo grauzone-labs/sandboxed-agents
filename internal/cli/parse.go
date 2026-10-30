@@ -73,6 +73,20 @@ var commands = map[string]commandSpec{
 	"tools delete":        spec(2, 2, true, "", ""),
 }
 
+// leafOptions returns the options a known leaf command accepts before its positionals stage more,
+// keyed by name with true for an option that takes a value. integrations config gets a new map of
+// the catalog's delivered config options, so staging adds to it without touching commands.
+func leafOptions(command string) map[string]bool {
+	if command != "integrations config" {
+		return commands[command].options
+	}
+	options := make(map[string]bool)
+	for _, option := range catalog.Default.ConfigOptionNames() {
+		options[option] = true
+	}
+	return options
+}
+
 // Parse enforces command-first grammar and step 1 checks before any Podman call.
 func Parse(args []string, group string) (Request, error) {
 	return parseForHost(args, group, Host{}.defaults())
@@ -100,12 +114,7 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 	if !known {
 		return request, fmt.Errorf("unknown command %q", request.Command)
 	}
-	if request.Command == "integrations config" {
-		definition.options = make(map[string]bool)
-		for _, option := range catalog.Default.ConfigOptionNames() {
-			definition.options[option] = true
-		}
-	}
+	definition.options = leafOptions(request.Command)
 
 	if request.Command == "update" && len(rest) > 0 && strings.HasPrefix(rest[0], "--") && slices.Contains(rest, "--all") {
 		definition = spec(0, 0, false, "", "all force")
