@@ -374,6 +374,50 @@ func TestSSHAliasClaimsLiteralHostBlockWithAnyOption(t *testing.T) {
 	}
 }
 
+// TestSSHAliasLimitsBlockSourceReads proves a Host lab block source of exactly sshSourceLimit bytes, inside the agent's home or outside it,
+// is read so its User claims lab by name, while a source one byte longer is not inspected, so the literal block still claims lab by its file
+// and line and lab2 is chosen, at the configureSSHAlias seam with scripted ssh -vvv -G diagnostics that locate the block in that source.
+func TestSSHAliasLimitsBlockSourceReads(t *testing.T) {
+	block := "Host lab\n    User carol\n"
+	for _, test := range []struct {
+		name    string
+		outside bool
+		size    int
+	}{
+		{"home source at the limit", false, sshSourceLimit},
+		{"home source over the limit", false, sshSourceLimit + 1},
+		{"outside source at the limit", true, sshSourceLimit},
+		{"outside source over the limit", true, sshSourceLimit + 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			existing := "# hand-written\n"
+			config := writeSSHConfig(t, home, existing, 0600)
+			source := filepath.Join(home, ".ssh", "included")
+			if test.outside {
+				source = filepath.Join(t.TempDir(), "included")
+			}
+			padding := strings.Repeat("#", test.size-len(block)-1) + "\n"
+			if err := os.WriteFile(source, []byte(block+padding), 0600); err != nil {
+				t.Fatal(err)
+			}
+			resolve := claimAlias(acceptEntry("192.0.2.10", "alice", home), "lab", "debug1: "+source+" line 1: Applying options for lab\n", "")
+			var stderr bytes.Buffer
+			alias, err := configureSSHAlias("192.0.2.10", "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, strings.NewReader("lab\nlab2\n"), resolve, nil))
+			keywords := "User"
+			if test.size > sshSourceLimit {
+				keywords = "options at " + source + " line 1"
+			}
+			if err != nil || alias != "lab2" || !strings.Contains(stderr.String(), claimMessage("lab", keywords)) {
+				t.Fatalf("alias=%q error=%v diagnostics=%q", alias, err, stderr.String())
+			}
+			if got := readConfig(t, config); got != existing+"\n"+aliasEntry("lab2", "192.0.2.10", "alice", home) {
+				t.Fatalf("config=%q", got)
+			}
+		})
+	}
+}
+
 // TestSSHAliasTellsGlobalSettingsFromSpecificClaims proves a readable Port-only Host *.lan block beside Host * IdentitiesOnly yes claims nothing
 // without placeholder probes, so the machine name is used without a question; that for a block whose source cannot be read in the agent's home,
 // an entry option the placeholder probes resolve to the same earlier value for the alias and the control alias is global; and that the same
