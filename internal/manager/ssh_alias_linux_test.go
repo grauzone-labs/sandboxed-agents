@@ -228,7 +228,8 @@ func TestSSHAliasMachineNameUsesTargetWithoutQuestion(t *testing.T) {
 	}
 }
 
-// TestSSHAliasCreatesMissingConfigurationAsAgent proves a missing .ssh directory and config file are created owned by the agent with modes 0700 and 0600, at the configureSSHAlias seam over a temporary home.
+// TestSSHAliasCreatesMissingConfigurationAsAgent proves a missing .ssh directory and config file are created owned by the agent with modes
+// 0700 and 0600, at the configureSSHAlias seam over a temporary home.
 func TestSSHAliasCreatesMissingConfigurationAsAgent(t *testing.T) {
 	home := t.TempDir()
 	if _, stderr, err := configureTestAlias(t, home, "build.example", "", acceptEntry("build.example", "alice", home), nil); err != nil {
@@ -246,7 +247,8 @@ func TestSSHAliasCreatesMissingConfigurationAsAgent(t *testing.T) {
 	}
 }
 
-// TestSSHAliasAddressTargetAsksForAlias proves IPv4 and IPv6 targets ask the user for an alias name and write an entry for that alias with the address as HostName, at the configureSSHAlias seam with scripted standard input.
+// TestSSHAliasAddressTargetAsksForAlias proves IPv4 and IPv6 targets ask the user for an alias name and write an entry for that alias with
+// the address as HostName, at the configureSSHAlias seam with scripted standard input.
 func TestSSHAliasAddressTargetAsksForAlias(t *testing.T) {
 	for target, alias := range map[string]string{"192.0.2.10": "lab", "2001:db8::1": "lab-v6"} {
 		t.Run(target, func(t *testing.T) {
@@ -476,7 +478,8 @@ func TestSSHAliasTellsGlobalSettingsFromSpecificClaims(t *testing.T) {
 }
 
 // TestSSHAliasReplacesConfigurationAtomically proves the entry reaches ~/.ssh/config by replacing the file in one rename: a reader of the
-// previous file still sees exactly the previous bytes, the new file keeps the previous mode, and no temporary file remains, at the configureSSHAlias seam.
+// previous file still sees exactly the previous bytes, the new file keeps the previous mode, and no temporary file remains, at the
+// configureSSHAlias seam.
 func TestSSHAliasReplacesConfigurationAtomically(t *testing.T) {
 	home := t.TempDir()
 	existing := "# kept by hand\nHost other\n    User bob\n"
@@ -720,7 +723,8 @@ func TestSSHAliasQueriesOnceWithoutConfiguration(t *testing.T) {
 	}
 }
 
-// TestSSHAliasRefusesNonAgentBeforeHomeAccess proves container root is refused before home data is read or ssh -G starts, at the configureSSHAlias seam's verifyAgent identity check.
+// TestSSHAliasRefusesNonAgentBeforeHomeAccess proves container root is refused before home data is read or ssh -G starts, at the
+// configureSSHAlias seam's verifyAgent identity check.
 func TestSSHAliasRefusesNonAgentBeforeHomeAccess(t *testing.T) {
 	var queries []sshQuery
 	home := t.TempDir()
@@ -737,7 +741,8 @@ func TestSSHAliasRefusesNonAgentBeforeHomeAccess(t *testing.T) {
 	}
 }
 
-// TestSSHAliasRefusesInvalidAliasNames proves alias answers with spaces, patterns, a leading dash, or no text are refused and asked again before any query or write, at the configureSSHAlias seam with scripted standard input.
+// TestSSHAliasRefusesInvalidAliasNames proves alias answers with spaces, patterns, a leading dash, or no text are refused and asked again
+// before any query or write, at the configureSSHAlias seam with scripted standard input.
 func TestSSHAliasRefusesInvalidAliasNames(t *testing.T) {
 	home := t.TempDir()
 	var queries []sshQuery
@@ -835,17 +840,19 @@ func realSSHEffects(t *testing.T, home string, stdin io.Reader) Effects {
 // TestSSHAliasResolvesThroughRealOpenSSH proves with the local OpenSSH client, where installed, that the entry beside benign or matching
 // Host * options resolves hostname, user, identityfile, identitiesonly, and the agent home's known_hosts through ssh -G -F FILE; that a
 // contradicting Host * or Host * lab value, both global because their positive * matches every host, or a Host * or pre-block IdentityFile,
-// which OpenSSH offers beside the dedicated key, fails once without another question;
-// that an existing entry, Host ALIAS, Host glob, or Match host or originalhost block, with its criterion keyword in any letter case such as
-// Match Host or Match OriginalHost and also after a quoted Match exec command, explicitly setting one of those options, even to the
-// intended value or to the value ssh -G -F none reports, asks for another alias with the neutral claim message, also when an earlier
-// Host * block masks that setting, and that a negated Host * !foo block setting one of them claims every alias it matches, so only foo
-// is accepted; that a literal Host ALIAS block setting only Port and ServerAliveInterval also asks for another alias, while an empty
-// Host ALIAS block does not; that a Host glob or Match host block setting only Port, or Match all, does not claim the alias, also beside a
-// Host * block that sets one of those options to the intended value, so a machine name is used directly without a question; that universal Host ?*, quoted Host "*", and Match host *
-// blocks setting the intended value claim nothing; and that a valid 254-character machine name with its trailing DNS root dot is used
-// directly as its own alias without a question. It exercises the configureSSHAlias seam with Effects.Start running the real
-// /usr/bin/ssh -G as the process seam; the Match exec fixture runs only the shell builtin true.
+// which OpenSSH offers beside the dedicated key, fails once without another question; that an existing entry, Host ALIAS, Host glob, or
+// Match host or originalhost block, with its criterion keyword in any letter case such as Match Host or Match OriginalHost and also after a
+// quoted Match exec command, explicitly setting one of those options, even to the intended value or to the value ssh -G -F none reports,
+// asks for another alias with the neutral claim message, also when an earlier Host * block masks that setting, and that a negated Host *
+// !foo block setting one of them claims every alias it matches, so only foo is accepted; that a literal Host ALIAS block setting only Port
+// and ServerAliveInterval also asks for another alias, while an empty Host ALIAS block does not; that a Host glob or Match host block
+// setting only Port, or Match all, does not claim the alias, also beside a Host * block that sets one of those options to the intended
+// value, so a machine name is used directly without a question; that universal Host ?*, quoted Host "*", and Match host * blocks setting
+// the intended value claim nothing; and that a valid 254-character machine name with its trailing DNS root dot is used directly as its own
+// alias without a question. The ssh -G -F FILE query that proves those options, like every query configureSSHAlias runs, passes -F with the
+// agent's own configuration, so a system-wide Host * setting in the image's OpenSSH configuration is outside both the check and this test.
+// It exercises the configureSSHAlias seam with Effects.Start running the real /usr/bin/ssh -G as the process seam; the Match exec fixture
+// runs only the shell builtin true.
 func TestSSHAliasResolvesThroughRealOpenSSH(t *testing.T) {
 	// A valid 254-character machine name: four labels of at most 63 characters and the trailing DNS root dot.
 	longName := strings.Repeat("a", 63) + "." + strings.Repeat("a", 63) + "." + strings.Repeat("a", 63) + "." + strings.Repeat("b", 61) + "."
