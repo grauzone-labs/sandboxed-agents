@@ -300,7 +300,7 @@ The command exits zero only when the password test succeeded and the alias host 
 |---|---|
 | `SSH connection test declined` or `SSH connection test cancelled` | You did not answer `yes`, ended the input, or pressed Ctrl+C. No connection was made. |
 | `name not resolvable` | The machine name has no address in the sandbox's name resolution. |
-| `unreachable or timed out` | The machine refused the connection on port 22, has no route, or did not answer within 15 seconds. |
+| `unreachable or timed out` | The machine refused the connection on port 22, has no route, did not answer within 15 seconds, or a firewall or security policy in the sandbox's network denied the connection. |
 | `host key rejected` | You did not confirm the host key, or it differs from the one already trusted. |
 | `authentication failed` | The machine refused the username and password, or does not offer password authentication. |
 

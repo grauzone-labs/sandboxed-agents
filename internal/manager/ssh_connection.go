@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -18,6 +20,9 @@ const (
 	// sshFailureStatus is the exit status ssh reports for its own errors; any other status is the remote command's.
 	sshFailureStatus = 255
 )
+
+// sshOfferedMethods finds the authentication methods a server offers in OpenSSH's lowercased "permission denied (METHODS)" diagnostic.
+var sshOfferedMethods = regexp.MustCompile(`permission denied \(([a-z0-9@.,-]+)\)`)
 
 // errSSHCancelled reports a connection test the user cancelled: the approval question ended without an answer, by end of input
 // or Ctrl+C, or Ctrl+C arrived while ssh ran.
@@ -145,7 +150,8 @@ func testSSHConnection(target, user, home string, interrupts <-chan os.Signal, s
 }
 
 // sshFailureCause names the cause of a failed connection test from OpenSSH's diagnostics: name not resolvable, unreachable or timed
-// out, host key rejected, distinguishing a changed key, and authentication failed; other failures are reported as such.
+// out, also when a local policy denies the connect, host key rejected, distinguishing a changed key, and authentication failed,
+// distinguishing a server that offers no password authentication; other failures are reported as such.
 func sshFailureCause(diagnostics, target, user string) error {
 	text := strings.ToLower(diagnostics)
 	has := func(phrases ...string) bool {
@@ -163,9 +169,14 @@ func sshFailureCause(diagnostics, target, user string) error {
 		return fmt.Errorf("SSH connection test failed: host key rejected: the host key of %s was not confirmed", target)
 	case has("could not resolve hostname"):
 		return fmt.Errorf("SSH connection test failed: name not resolvable: %s cannot be resolved", target)
-	case has("connection timed out", "operation timed out", "connection refused", "no route to host", "network is unreachable", "host is unreachable"):
+	case has("connection timed out", "operation timed out", "connection refused", "no route to host", "network is unreachable", "host is unreachable", "port 22: permission denied"):
+		// A connect error that a local firewall or security policy causes reads "port 22: Permission denied", not an authentication failure.
 		return fmt.Errorf("SSH connection test failed: unreachable or timed out: %s did not accept a connection on port 22", target)
 	case has("permission denied", "too many authentication failures", "no more authentication methods"):
+		// OpenSSH lists the methods the server still offers, as in "Permission denied (publickey,password)."
+		if methods := sshOfferedMethods.FindStringSubmatch(text); methods != nil && !slices.Contains(strings.Split(methods[1], ","), "password") {
+			return fmt.Errorf("SSH connection test failed: authentication failed: %s does not offer password authentication for %s", target, user)
+		}
 		return fmt.Errorf("SSH connection test failed: authentication failed: %s did not accept the password for %s", target, user)
 	}
 	return fmt.Errorf("SSH connection test failed: ssh reported an error, shown above")

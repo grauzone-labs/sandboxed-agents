@@ -225,7 +225,8 @@ func TestSSHConnectionTestUsesPasswordAuthenticationOnly(t *testing.T) {
 }
 
 // TestSSHConnectionFailuresNameTheirCause proves through RunWithEffects that each recorded ssh failure, an unresolvable name, an
-// unreachable or silent machine, a host key the user rejected or one that changed, and a refused password, produces a message naming
+// unreachable or silent machine, also one a local firewall blocks, a host key the user rejected or one that changed, a refused
+// password, and a machine that offers no password authentication, produces a message naming
 // its cause, as does an ssh that cannot start, exits non-zero, leaves an existing ~/.ssh/config byte for byte unchanged, writes no host entry, and names the retained key.
 func TestSSHConnectionFailuresNameTheirCause(t *testing.T) {
 	for _, test := range []struct {
@@ -242,7 +243,8 @@ func TestSSHConnectionFailuresNameTheirCause(t *testing.T) {
 		{"host key changed", "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\r\n@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\r\n" +
 			"Host key for worker has changed and you have requested strict checking.\r\nHost key verification failed.\r\n", "host key rejected: the host key of worker differs from the one trusted", 255},
 		{"authentication failed", "Permission denied, please try again.\r\nalice@worker: Permission denied (password).\r\n", "authentication failed", 255},
-		{"password method not offered", "alice@worker: Permission denied (publickey).\r\n", "authentication failed", 255},
+		{"password method not offered", "alice@worker: Permission denied (publickey,keyboard-interactive).\r\n", "authentication failed: worker does not offer password authentication", 255},
+		{"local connect denied", "ssh: connect to host worker port 22: Permission denied\r\n", "unreachable or timed out", 255},
 		{"other ssh failure", "kex_exchange_identification: Connection closed by remote host\r\n", "SSH connection test failed", 255},
 		{"ssh cannot start", "", "ssh could not start", -1},
 	} {
