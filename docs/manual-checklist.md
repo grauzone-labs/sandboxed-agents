@@ -33,7 +33,7 @@ These steps create, update, and delete sandboxes, install software, and edit SSH
 
    The group's containers are named `sandboxed-agents.manual-check.NAME`, and its SSH host entries `NAME.manual-check`.
 3. **Images are shared.** An image name contains no controller group, so every group of the same executable uses the same images. Run `build` only where an item calls for it (once, in [Persistence and update](#persistence-and-update)), and do not use the machine for other work that depends on `sandboxed-agents` images.
-4. **Name sandboxes as the items do** (`chk-persist`, `chk-vs`, `chk-base`, `chk-native`, `chk-int`, and the guide's `agent01`). Each item says when its sandbox is removed with `remove NAME --volumes`. `chk-persist` lives through several items and is removed last.
+4. **Name sandboxes as the items do** (`chk-persist`, `chk-vs`, `chk-remote`, `chk-base`, `chk-native`, `chk-int`, and the guide's `agent01`). Each item says when its sandbox is removed with `remove NAME --volumes`. `chk-persist` lives through several items and is removed last.
 5. **Use accounts you can revoke.** Revoke what you granted only at the end, in [Final cleanup](#final-cleanup), because the earlier items need the logins to still exist.
 6. **Never write a token, one-time code, login URL, or account secret into notes or the record.** The record has no field for them, and nothing may be added. The runner's files hold command output and exit statuses, readable by the operator only; they never leave the host.
 7. **Create no release tag and publish nothing.** This checklist only reads a preview that already exists. Uploading the record is a separate maintainer step ([Upload](#upload)).
@@ -62,7 +62,7 @@ The preflight is the first command of a run and the precondition of every other 
 
 **State an item must see unchanged.** Where an item says the state is captured before and after a command, the runner writes `list`, `podman ps --all`, `podman volume ls`, and `podman inspect` of the named sandbox and of its backup container into one file each and compares the two byte for byte; any difference fails the item. A missing object makes `inspect` print an error; both captures hold the same error, so the comparison still means something.
 
-**The record.** `manual-check record` is the only writer of the record ([The record](#the-record)): `record init FILE --commit SHA` creates it, `record add FILE --name ID --result pass|fail --date YYYY-MM-DD --platform linux|windows-11` adds one check a person ran (a pass needs `--human-observed`; a rerun needs `--replace`), `record status FILE` lists the identifiers that are still not run, and `record validate FILE` applies the documented check. The top-level result becomes `pass` only when all 25 identifiers are present and passed.
+**The record.** `manual-check record` is the only writer of the record ([The record](#the-record)): `record init FILE --commit SHA` creates it, `record add FILE --name ID --result pass|fail --date YYYY-MM-DD --platform linux|windows-11` adds one check a person ran (a pass needs `--human-observed`; a rerun needs `--replace`), `record status FILE` lists the identifiers that are still not run, and `record validate FILE` applies the documented check. The top-level result becomes `pass` only when all 26 identifiers are present and passed.
 
 ## Order of the run
 
@@ -72,7 +72,7 @@ Several items share one long-lived sandbox, `chk-persist`, so that a login done 
 2. The logins, all in `chk-persist`: [agent logins](#agent-logins), [GitHub](#github-login), [Azure device code](#azure-login-device-code), [Azure browser](#azure-login-browser), [Azure DevOps](#azure-devops-token), [T3 Connect](#t3-connect-login-and-link), [QR pairing over the tailnet](#qr-pairing-over-the-tailnet) (its step 10 and its record wait for step 3).
 3. [Persistence and update](#persistence-and-update): the setup, the baseline round, then `stop` and `start`, then the one `build` and the `update`, with the same observations each time, followed by the phone's reach after that update for `t3-qr-pair`.
 4. [No-terminal refusals](#toolchain-requirement-and-no-terminal-refusals), which also use `chk-persist`.
-5. The independent items, each with a sandbox it removes itself: [VS Code Remote SSH](#vs-code-remote-ssh), [an interrupted update](#an-interrupted-update), the [toolchain requirement](#toolchain-requirement-and-no-terminal-refusals), the [quick guides](#quick-guides), and the [installs](#installers-issue-no-podman-call) on clean machines.
+5. The independent items, each with a sandbox it removes itself: [VS Code Remote SSH](#vs-code-remote-ssh), [SSH to a remote machine](#ssh-to-a-remote-machine), [an interrupted update](#an-interrupted-update), the [toolchain requirement](#toolchain-requirement-and-no-terminal-refusals), the [quick guides](#quick-guides), and the [installs](#installers-issue-no-podman-call) on clean machines.
 6. [Release files](#release-files-and-attestations).
 7. [Final cleanup](#final-cleanup): the destructive removal of `chk-persist`, then the [image comparison](#no-command-removes-an-image), then every revocation.
 
@@ -93,6 +93,7 @@ Each item has a fixed identifier. The identifier is the `name` of its check in t
 | `t3-connect-link` | [T3 Connect login and link](#t3-connect-login-and-link) | either |
 | `t3-qr-pair` | [QR pairing over the tailnet](#qr-pairing-over-the-tailnet) | either |
 | `vscode-remote-ssh` | [VS Code Remote SSH](#vs-code-remote-ssh) | either |
+| `ssh-remote-connection` | [SSH to a remote machine](#ssh-to-a-remote-machine) | either |
 | `npm-install-clean` | [npm install on a clean machine](#npm-install-on-a-clean-machine) | either |
 | `nuget-install-clean` | [NuGet install on a clean machine](#nuget-install-on-a-clean-machine) | `windows-11` |
 | `quick-guide-linux` | [Linux quick guide](#quick-guides) | `linux` |
@@ -119,6 +120,7 @@ Every identifier maps to one runner command, or to none, and to the steps a pers
 | `github-login`, `azure-login-device-code`, `azure-login-browser`, `azdo-token` | none; `persistence setup` records the Azure account by hash afterwards | the logins and the tunnel |
 | `t3-connect-link`, `t3-qr-pair` | none | the T3 Connect login, link, unlink, and logout with the phone; the tailnet login, the QR pairing, and the second sandbox |
 | `vscode-remote-ssh` | `vscode prepare`, `vscode verify --file NAME`, `vscode cleanup` | the editor connection, the file, `whoami` |
+| `ssh-remote-connection` | none | the remote machine, every answer and password, the observations on both machines |
 | `npm-install-clean` | `npm-clean --tarball FILE` | provides the clean machine |
 | `nuget-install-clean` | `nuget-clean prepare`, then `after-install`, `after-reinstall`, `after-remove` | `version` in a new terminal |
 | `quick-guide-linux`, `quick-guide-windows` | none | the guide, start to end |
@@ -331,6 +333,20 @@ Identifier `vscode-remote-ssh`. Follow [SSH access](ssh.md#connect-with-vs-code-
 4. `manual-check vscode verify --run ID --file NAME` checks that the file is present under `/workspace` in `sandboxed-agents shell chk-vs`.
 
 **Expected:** the connection opens with no host key prompt; `whoami` prints `agent`; the file created in the editor appears in the sandbox. Then close the VS Code window and run `manual-check vscode cleanup --run ID`, which runs `ssh-config chk-vs --remove` and `remove chk-vs --volumes`.
+
+### SSH to a remote machine
+
+Identifier `ssh-remote-connection`. Follow [Manual SSH connection check](integrations.md#manual-ssh-connection-check) in a sandbox of its own, `chk-remote`, against a remote machine you control: it runs an SSH server on port 22 that accepts password authentication for a test account, and you can read its SSH log and change its host key. Use a disposable machine or account; never a machine whose host key or `authorized_keys` you care about.
+
+1. `sandboxed-agents up chk-remote`, then run `sandboxed-agents integrations config chk-remote ssh --host HOST --user USER` with the remote machine's name and answer `no`. **Expected:** one public key line, a non-zero status, a message that no connection was made and where the key remains, and no connection from the sandbox in the remote machine's SSH log.
+2. Run it again, answer `yes`, and answer `no` at `ssh`'s host key prompt after comparing the fingerprint with the machine's own. **Expected:** the same public key, the fingerprint shown before any password prompt, a non-zero status naming `host key rejected`, and no `/home/agent/.ssh/config` in `shell chk-remote`.
+3. Run it again, confirm the host key, and give a wrong password. **Expected:** nothing you type is shown, a non-zero status naming `authentication failed`, the host key in `/home/agent/.ssh/known_hosts`, and still no `/home/agent/.ssh/config`.
+4. Run it again with the right password. **Expected:** no host key prompt, exit status zero, a message that the password test does not prove the key is authorized, and `ssh -G HOST` in `shell chk-remote` resolving the remote machine, the username, the dedicated key, and `identitiesonly yes`.
+5. Run it with a machine name that does not resolve and with the IP address of a machine that does not answer. **Expected:** non-zero statuses naming `name not resolvable` and `unreachable or timed out`.
+6. Change the remote machine's host key and run the command with its name once more. **Expected:** `ssh`'s changed-key warning, no password prompt, and a non-zero status naming `host key rejected`. Restore the original host key.
+7. **Expected:** the remote account's `authorized_keys` is unchanged, the remote SSH log shows only password logins, and the host's `~/.ssh/config`, `~/.ssh/known_hosts`, and keys are unchanged. Then run `sandboxed-agents remove chk-remote --volumes`.
+
+Never record the password, the remote machine's name, or its address.
 
 ### An interrupted update
 
@@ -704,7 +720,7 @@ Each object of `checks` has exactly these fields, and no others:
 Rules:
 
 - **A missing or an additional field is rejected**, in the record and in a check. No field can hold a note, a name, a host, a URL, or a token.
-- The top-level `result` is `pass` only when the record has one check for each of the 25 identifiers and every check passed. In every other case it is `fail`. (The stable release check reads the top-level `result`, the shape of the record, and the commit; the completeness of the list is this checklist's rule, not something the check enforces.)
+- The top-level `result` is `pass` only when the record has one check for each of the 26 identifiers and every check passed. In every other case it is `fail`. (The stable release check reads the top-level `result`, the shape of the record, and the commit; the completeness of the list is this checklist's rule, not something the check enforces.)
 - A check is recorded only after you ran it. A check you have not run has no entry. A record in progress, or one with any failed check, has the top-level `result` `fail`. An item counts as passed only after a rerun on the commit under test shows it passing; a defect found during the run is filed as its own issue.
 - The record marks every item as checked by hand. Nothing in it comes from the offline suite or the live suite.
 - **The repository holds no passing record, and none may be committed.** A record exists only as an upload to a preview prerelease.
@@ -723,10 +739,10 @@ The shape, with placeholders that are not values to copy (`FULL_COMMIT_SHA` stan
 }
 ```
 
-Before you upload, check the file against the schema with `jq`. The check requires exactly the fields above, a `result` of `pass` or `fail` at both levels, only the 25 identifiers of this document, each at most once, the fixed platform of the platform-bound identifiers, and, for a record that says `pass`, all 25 identifiers present and every check passed. It also requires the top-level `result` to be `fail` when any check failed:
+Before you upload, check the file against the schema with `jq`. The check requires exactly the fields above, a `result` of `pass` or `fail` at both levels, only the 26 identifiers of this document, each at most once, the fixed platform of the platform-bound identifiers, and, for a record that says `pass`, all 26 identifiers present and every check passed. It also requires the top-level `result` to be `fail` when any check failed:
 
 ```sh
-IDS='["agent-login-copilot","agent-login-claude","agent-login-codex","agent-login-opencode","github-login","azure-login-device-code","azure-login-browser","azdo-token","t3-connect-link","t3-qr-pair","vscode-remote-ssh","npm-install-clean","nuget-install-clean","quick-guide-linux","quick-guide-windows","selection-pins-persist","git-identity-persist","credentials-persist","update-complete","update-interrupted","azure-toolchain-required","login-needs-terminal","no-image-removal","installers-no-podman","preview-attestation"]'
+IDS='["agent-login-copilot","agent-login-claude","agent-login-codex","agent-login-opencode","github-login","azure-login-device-code","azure-login-browser","azdo-token","t3-connect-link","t3-qr-pair","vscode-remote-ssh","ssh-remote-connection","npm-install-clean","nuget-install-clean","quick-guide-linux","quick-guide-windows","selection-pins-persist","git-identity-persist","credentials-persist","update-complete","update-interrupted","azure-toolchain-required","login-needs-terminal","no-image-removal","installers-no-podman","preview-attestation"]'
 jq -e --argjson ids "$IDS" '
   (keys == ["checks","commit","kind","result","schema_version"])
   and .schema_version == 1 and .kind == "manual-checklist"

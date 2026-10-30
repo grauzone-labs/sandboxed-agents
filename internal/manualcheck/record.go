@@ -15,7 +15,7 @@ import (
 	"strings"
 )
 
-// Identifiers are the 25 check identifiers of the checklist, in the order of its table.
+// Identifiers are the 26 check identifiers of the checklist, in the order of its table.
 var Identifiers = []string{
 	"agent-login-copilot",
 	"agent-login-claude",
@@ -28,6 +28,7 @@ var Identifiers = []string{
 	"t3-connect-link",
 	"t3-qr-pair",
 	"vscode-remote-ssh",
+	"ssh-remote-connection",
 	"npm-install-clean",
 	"nuget-install-clean",
 	"quick-guide-linux",
@@ -158,9 +159,9 @@ func (r *Record) Save(path string) error {
 }
 
 // Validate applies the rules of the checklist's "The record" section: the exact fields, a lowercase
-// 40-character commit, pass or fail at both levels, only the 25 identifiers each at most once,
+// 40-character commit, pass or fail at both levels, only the 26 identifiers each at most once,
 // the fixed platform of the platform-bound identifiers, fail whenever a check failed, and for a
-// pass all 25 identifiers present and passed. A record in progress with no checks is invalid, as
+// pass all 26 identifiers present and passed. A record in progress with no checks is invalid, as
 // the documented jq check says.
 func (r *Record) Validate() error {
 	if r.SchemaVersion != 1 || r.Kind != "manual-checklist" {
@@ -203,14 +204,14 @@ func (r *Record) Validate() error {
 		return errors.New("result must be fail when a check failed")
 	}
 	if r.Result == "pass" && (len(seen) != len(Identifiers) || failed) {
-		return errors.New("result pass needs all 25 identifiers present and passed")
+		return errors.New("result pass needs all 26 identifiers present and passed")
 	}
 	return nil
 }
 
 // AddCheck records one check a person ran. A pass needs humanObserved, because no runner output is
 // a manual observation. An identifier already recorded needs replace, for a rerun. The top-level
-// result becomes pass only when all 25 identifiers are present and passed.
+// result becomes pass only when all 26 identifiers are present and passed.
 func (r *Record) AddCheck(check Check, replace, humanObserved bool) error {
 	if !slices.Contains(Identifiers, check.Name) {
 		return fmt.Errorf("unknown identifier %q", check.Name)

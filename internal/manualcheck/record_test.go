@@ -11,7 +11,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/manualcheck"
 )
 
-// TestRecordIdentifiersMatchChecklist proves the runner's 25 identifiers are exactly the rows of
+// TestRecordIdentifiersMatchChecklist proves the runner's 26 identifiers are exactly the rows of
 // the "Check identifiers" table in docs/manual-checklist.md, in order, with the same fixed
 // platforms, through the real document and the exported list.
 func TestRecordIdentifiersMatchChecklist(t *testing.T) {
@@ -31,8 +31,8 @@ func TestRecordIdentifiersMatchChecklist(t *testing.T) {
 	if !slices.Equal(documented, manualcheck.Identifiers) {
 		t.Fatalf("documented identifiers %v differ from the runner's %v", documented, manualcheck.Identifiers)
 	}
-	if len(documented) != 25 {
-		t.Fatalf("want 25 identifiers, got %d", len(documented))
+	if len(documented) != 26 {
+		t.Fatalf("want 26 identifiers, got %d", len(documented))
 	}
 	for name, platform := range platforms {
 		fixed := manualcheck.PlatformOf(name)
@@ -47,7 +47,7 @@ func TestRecordIdentifiersMatchChecklist(t *testing.T) {
 
 // TestRecordValidateRules proves Validate applies every rule of "The record": the fields, the
 // commit form, the identifiers, duplicates, the fixed platforms, the date form, fail on any
-// failed check, and pass only with all 25 passed, through LoadRecord on real files.
+// failed check, and pass only with all 26 passed, through LoadRecord on real files.
 func TestRecordValidateRules(t *testing.T) {
 	commit := strings.Repeat("a", 40)
 	write := func(t *testing.T, text string) string {
@@ -91,7 +91,7 @@ func TestRecordValidateRules(t *testing.T) {
 
 // TestRecordAddCheckOwnsThePass proves AddCheck records a pass only with the human-observed flag,
 // refuses an unknown identifier, a wrong fixed platform, and a silent overwrite, and turns the
-// result to pass only when all 25 identifiers passed, through the real Record functions and an
+// result to pass only when all 26 identifiers passed, through the real Record functions and an
 // on-disk round trip.
 func TestRecordAddCheckOwnsThePass(t *testing.T) {
 	record, err := manualcheck.NewRecord(strings.Repeat("a", 40))
@@ -130,7 +130,7 @@ func TestRecordAddCheckOwnsThePass(t *testing.T) {
 		}
 	}
 	if record.Result != "pass" {
-		t.Fatalf("all 25 passed but result is %s", record.Result)
+		t.Fatalf("all 26 passed but result is %s", record.Result)
 	}
 	path := filepath.Join(t.TempDir(), "manual-checklist.json")
 	if err := record.Save(path); err != nil {
@@ -140,7 +140,7 @@ func TestRecordAddCheckOwnsThePass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := loaded.Validate(); err != nil || !strings.Contains(loaded.Status(), "recorded 25 of 25 identifiers; 0 not run; 0 failed") {
+	if err := loaded.Validate(); err != nil || !strings.Contains(loaded.Status(), "recorded 26 of 26 identifiers; 0 not run; 0 failed") {
 		t.Fatalf("round trip: %v\n%s", err, loaded.Status())
 	}
 	info, err := os.Stat(path)

@@ -27,13 +27,13 @@ func TestRecordCommands(t *testing.T) {
 	if status, stdout, stderr := execute("record", "add", file, "--name", "github-login", "--result", "pass", "--date", "2026-10-22", "--platform", "linux", "--human-observed"); status != 0 || !strings.Contains(stdout, "record result fail") {
 		t.Fatalf("add: %d %s %s", status, stdout, stderr)
 	}
-	if status, stdout, _ := execute("record", "status", file); status != 0 || !strings.Contains(stdout, "recorded 1 of 25 identifiers; 24 not run; 0 failed") {
+	if status, stdout, _ := execute("record", "status", file); status != 0 || !strings.Contains(stdout, "recorded 1 of 26 identifiers; 25 not run; 0 failed") {
 		t.Fatalf("status: %d %s", status, stdout)
 	}
 	if status, _, _ := execute("record", "validate", file); status != 0 {
 		t.Fatal("a valid record did not validate")
 	}
-	if status, stdout, _ := execute("record", "ids"); status != 0 || len(strings.Fields(stdout)) != 25 {
+	if status, stdout, _ := execute("record", "ids"); status != 0 || len(strings.Fields(stdout)) != 26 {
 		t.Fatalf("ids: %d %s", status, stdout)
 	}
 	if status, _, _ := execute("nonsense"); status != 2 {
