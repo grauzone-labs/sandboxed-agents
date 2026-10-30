@@ -55,11 +55,11 @@ func workspacePathForHost(path, hostOS string) (string, error) {
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		return "", err
+		return "", hostStateError{err}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", err
+		return "", hostStateError{err}
 	}
 	stateRoot, err := hostStateRoot(hostOS)
 	if err != nil {
