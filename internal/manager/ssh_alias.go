@@ -38,6 +38,8 @@ const (
 	// sshControlAlias is a host name that sshAliasName never accepts, so no chosen alias equals it; placeholder probes
 	// resolve it beside the alias to tell settings every alias gets from settings specific to the alias.
 	sshControlAlias = "_sandboxed-agents-control"
+	// sshProbePlaceholder begins the placeholder values of the trailing Host * block that placeholder probes append.
+	sshProbePlaceholder = "sandboxed-agents-probe-"
 )
 
 // sshAliasName admits one literal Host pattern: no spaces, wildcards, negation, tokens, or leading dash. It allows up to
@@ -665,7 +667,7 @@ func sshMatchSpecific(criteria string) bool {
 func sshOptionsSetForAlias(content []byte, alias string, effects Effects) ([]string, error) {
 	set := map[string]bool{}
 	for _, probe := range []struct{ name, identitiesOnly string }{{"a", "yes"}, {"b", "no"}} {
-		placeholder := "sandboxed-agents-probe-" + probe.name
+		placeholder := sshProbePlaceholder + probe.name
 		placeholders := sshEntryValues(placeholder+".invalid", placeholder, "/nonexistent/"+placeholder, probe.identitiesOnly, "/nonexistent/"+placeholder)
 		lines, err := sshOptionLines(placeholders)
 		if err != nil {
