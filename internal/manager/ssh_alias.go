@@ -41,11 +41,12 @@ const (
 // 253 characters, or 254 when the last one is the DNS root dot of a fully qualified machine name.
 var sshAliasName = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,252}|[A-Za-z0-9._-]{252}\.)$`)
 
-// sshEntryOption is one option the host entry sets: its ssh -G key, its ssh_config keyword, and whether the keyword
-// expands % tokens, so its value needs %% escapes.
+// sshEntryOption is one option the host entry sets: its ssh -G key, its ssh_config keyword, whether the keyword
+// expands % tokens, so its value needs %% escapes, and whether OpenSSH collects every value that applies, as for
+// IdentityFile, instead of keeping the first one it reads.
 type sshEntryOption struct {
-	key, keyword string
-	tokens       bool
+	key, keyword     string
+	tokens, collects bool
 }
 
 // sshEntryOptions lists, in entry order, every option the host entry sets; the entry lines, the values checked through
@@ -53,7 +54,7 @@ type sshEntryOption struct {
 var sshEntryOptions = []sshEntryOption{
 	{key: "hostname", keyword: "HostName", tokens: true},
 	{key: "user", keyword: "User"},
-	{key: "identityfile", keyword: "IdentityFile", tokens: true},
+	{key: "identityfile", keyword: "IdentityFile", tokens: true, collects: true},
 	{key: "identitiesonly", keyword: "IdentitiesOnly"},
 	{key: "userknownhostsfile", keyword: "UserKnownHostsFile", tokens: true},
 }
@@ -64,8 +65,8 @@ var sshEntryOptions = []sshEntryOption{
 // that sshAliasName refuses, it asks on stderr and reads one answer line from Effects.Stdin without consuming later
 // input. An alias that a specific SSH configuration block claims, as sshAliasClaimed decides, is reported with the
 // options that block sets and asked again; end of input cancels. When an earlier setting that matches the alias, such as
-// a global Host * one, would give it another value for an entry option, no other alias can help, so it fails without
-// asking again and names that option. It verifies the agent identity before reading home data and queries ssh -G as
+// one under Host * or before the first Host line, would give it another value for an entry option, or another key beside
+// the dedicated IdentityFile, it fails without asking again and names that option, as checkSSHEntry decides. It verifies the agent identity before reading home data and queries ssh -G as
 // agent. It writes no host entry and leaves existing configuration content unchanged unless it returns the chosen alias;
 // a missing .ssh directory is created, mode 0700, only after an alias is chosen and its ssh -G check succeeds, so a
 // cancelled question or a failing query creates nothing, and a held configuration lock refuses the change. It runs only
@@ -625,8 +626,9 @@ func sshMatchSpecific(criteria string) bool {
 // sshOptionsSetForAlias returns, in entry order, the keywords of the entry options that the configuration sets for the
 // alias but not equally for every alias; sshAliasClaimed falls back to it for specific blocks it cannot read. It has
 // ssh -G resolve the configuration followed by a trailing Host * block of placeholder values, twice with opposite
-// IdentitiesOnly values, for the alias and for sshControlAlias. Because OpenSSH keeps the first value it reads, an option
-// the alias does not resolve to exactly its placeholder was set by an earlier rule; when the control alias, which no
+// IdentitiesOnly values, for the alias and for sshControlAlias. Because OpenSSH keeps the first value it reads, and lists
+// an earlier IdentityFile ahead of the placeholder one, an option the alias does not resolve to exactly its placeholder
+// was set by an earlier rule; when the control alias, which no
 // specific block matches, resolves the same value, a global rule set it. A specific block that sets the same value as an
 // earlier global one cannot be told apart from it this way and counts as global. When the -vv diagnostics show a
 // specific block that also matches the control alias, the comparison is not used.
@@ -680,10 +682,11 @@ func sshSpecificStanza(diagnostics string) bool {
 
 // checkSSHEntry has ssh -G resolve the alias from the exact configuration bytes about to be written, read from the query's
 // standard input, and refuses them when an earlier option in that candidate configuration that matches the alias, such as
-// one under Host * or a Match block without host criteria, takes precedence because OpenSSH keeps the first value it reads,
-// so the alias would resolve another value for an option the entry sets. The error names the alias and the option and asks
-// for the earlier setting to be changed instead of offering another question; whether that setting also matches other
-// aliases depends on its own rule.
+// one under Host *, before the first Host or Match line, or in a Match block without host criteria, would make the alias
+// resolve another value for an option the entry sets: OpenSSH keeps the first value it reads for most options, and offers
+// every IdentityFile that applies, so an earlier IdentityFile adds a key beside the dedicated one. The error names the
+// alias, each such option with its resolved and intended values, and that reason, and asks for the earlier setting to be
+// changed instead of offering another question; whether that setting also matches other aliases depends on its own rule.
 func checkSSHEntry(content []byte, alias string, want map[string]string, effects Effects) error {
 	resolved, _, err := resolveSSHCandidate(content, alias, false, effects)
 	if err != nil {
@@ -692,11 +695,15 @@ func checkSSHEntry(content []byte, alias string, want map[string]string, effects
 	var overridden []string
 	for _, option := range sshEntryOptions {
 		if got := resolved[option.key]; !slices.Equal(got, []string{want[option.key]}) {
-			overridden = append(overridden, fmt.Sprintf("%s %q instead of %q", option.key, strings.Join(got, ", "), want[option.key]))
+			reason := "it keeps the first value it reads"
+			if option.collects {
+				reason = "it offers every IdentityFile that applies"
+			}
+			overridden = append(overridden, fmt.Sprintf("%s %q instead of %q because %s", option.key, strings.Join(got, ", "), want[option.key], reason))
 		}
 	}
 	if len(overridden) > 0 {
-		return fmt.Errorf("an earlier setting in the agent's SSH configuration would still apply for alias %s, which OpenSSH would resolve with %s because it keeps the first value it reads; change that setting and retry; SSH configuration unchanged", alias, strings.Join(overridden, "; "))
+		return fmt.Errorf("an earlier setting in the agent's SSH configuration would still apply for alias %s, which OpenSSH would resolve with %s; change that setting and retry; SSH configuration unchanged", alias, strings.Join(overridden, "; "))
 	}
 	return nil
 }

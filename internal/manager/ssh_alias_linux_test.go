@@ -496,16 +496,19 @@ func TestSSHAliasAcceptsGlobalValuesEqualToEntry(t *testing.T) {
 }
 
 // TestSSHAliasRefusesGlobalValuesContradictingEntry proves an earlier global User or IdentitiesOnly that OpenSSH would keep instead of the entry's
-// value fails once with an error naming the option and the alias, without claiming the setting applies to every alias, asks no further question,
-// and writes nothing, at the configureSSHAlias seam with scripted ssh -G.
+// value, or a Host * or pre-block IdentityFile that OpenSSH would offer beside the dedicated key, fails once with an error naming the option, the
+// alias, and why OpenSSH resolves it so, without claiming the setting applies to every alias, asks no further question, and writes nothing, at
+// the configureSSHAlias seam with scripted ssh -G.
 func TestSSHAliasRefusesGlobalValuesContradictingEntry(t *testing.T) {
-	for _, test := range []struct{ name, line, replacement string }{
-		{"User", "user alice\n", "user bob\n"},
-		{"IdentitiesOnly", "identitiesonly yes\n", "identitiesonly no\n"},
+	for _, test := range []struct{ name, existing, line, replacement, reason string }{
+		{"User", "Host *\n    User bob\n", "user alice\n", "user bob\n", "keeps the first value it reads"},
+		{"IdentitiesOnly", "Host *\n    IdentitiesOnly no\n", "identitiesonly yes\n", "identitiesonly no\n", "keeps the first value it reads"},
+		{"Host star IdentityFile", "Host *\n    IdentityFile ~/.ssh/id_rsa\n", "identityfile ", "identityfile ~/.ssh/id_rsa\nidentityfile ", "offers every IdentityFile that applies"},
+		{"pre-block IdentityFile", "IdentityFile ~/.ssh/id_rsa\nHost other\n    User bob\n", "identityfile ", "identityfile ~/.ssh/id_rsa\nidentityfile ", "offers every IdentityFile that applies"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
-			existing := "Host *\n    " + strings.TrimSuffix(test.replacement, "\n") + "\n"
+			existing := test.existing
 			config := writeSSHConfig(t, home, existing, 0600)
 			accept := acceptEntry("192.0.2.10", "alice", home)
 			resolve := func(q sshQuery) sshAnswer {
@@ -518,8 +521,11 @@ func TestSSHAliasRefusesGlobalValuesContradictingEntry(t *testing.T) {
 			_, err := configureSSHAlias("192.0.2.10", "alice", "id_ed25519_remote_test", &stderr, aliasEffects(t, home, stdin, resolve, nil))
 			key, _, _ := strings.Cut(test.replacement, " ")
 			// The error is about this alias's resolution; an earlier rule need not apply to every alias.
-			if err == nil || !strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), "for alias lab") || !strings.Contains(err.Error(), "change that setting") || strings.Contains(err.Error(), "every alias") {
+			if err == nil || !strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), "for alias lab") || !strings.Contains(err.Error(), test.reason) || !strings.Contains(err.Error(), "change that setting") || strings.Contains(err.Error(), "every alias") {
 				t.Fatalf("error=%v", err)
+			}
+			if key == "identityfile" && strings.Contains(err.Error(), "keeps the first value") {
+				t.Fatalf("IdentityFile error claims OpenSSH keeps the first value: %v", err)
 			}
 			if strings.Count(stderr.String(), "SSH alias name for") != 1 || readConfig(t, config) != existing {
 				t.Fatalf("diagnostics=%q config=%q", stderr.String(), readConfig(t, config))
@@ -756,7 +762,8 @@ func realSSHEffects(t *testing.T, home string, stdin io.Reader) Effects {
 
 // TestSSHAliasResolvesThroughRealOpenSSH proves with the local OpenSSH client, where installed, that the entry beside benign or matching
 // Host * options resolves hostname, user, identityfile, identitiesonly, and the agent home's known_hosts through ssh -G -F FILE; that a
-// contradicting Host * or Host * lab value, both global because their positive * matches every host, fails once without another question;
+// contradicting Host * or Host * lab value, both global because their positive * matches every host, or a Host * or pre-block IdentityFile,
+// which OpenSSH offers beside the dedicated key, fails once without another question;
 // that an existing entry, Host ALIAS, Host glob, or Match host or originalhost block, with its criterion keyword in any letter case such as
 // Match Host or Match OriginalHost and also after a quoted Match exec command, explicitly setting one of those options, even to the
 // intended value or to the value ssh -G -F none reports, asks for another alias with the neutral claim message, also when an earlier
@@ -778,6 +785,8 @@ func TestSSHAliasResolvesThroughRealOpenSSH(t *testing.T) {
 		{"Host star equal to the entry", "192.0.2.10", "alice", "Host *\n    User alice\n    IdentitiesOnly yes\n    UserKnownHostsFile HOME/.ssh/known_hosts\n", "lab\n", "lab", "", false},
 		{"Host star other user", "192.0.2.10", "alice", "Host *\n    User bob\n", "lab\nlab2\n", "", "user", false},
 		{"Host star IdentitiesOnly no", "192.0.2.10", "alice", "Host *\n    IdentitiesOnly no\n", "lab\nlab2\n", "", "identitiesonly", false},
+		{"Host star IdentityFile", "192.0.2.10", "alice", "Host *\n    IdentityFile ~/.ssh/id_rsa\n", "lab\nlab2\n", "", "identityfile", false},
+		{"pre-block IdentityFile", "192.0.2.10", "alice", "IdentityFile ~/.ssh/id_rsa\nHost other\n    User bob\n", "lab\nlab2\n", "", "identityfile", false},
 		{"rerun with the same entry", "192.0.2.10", "alice", "ENTRY", "lab\nlab2\n", "lab2", "", true},
 		{"Port-only Host ALIAS", "192.0.2.10", "alice", "Host lab\n    Port 2222\n    ServerAliveInterval 30\n", "lab\nlab2\n", "lab2", "", true},
 		{"empty Host ALIAS", "192.0.2.10", "alice", "Host lab\n", "lab\n", "lab", "", false},
