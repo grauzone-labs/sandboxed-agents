@@ -61,7 +61,8 @@ var forceAgentSession = helpOption{name: "force", text: "Proceed although the ag
 var sshConfigOption = helpOption{name: "ssh-config", text: "Install the opt-in SSH setup once the sandbox runs."}
 
 // helpTopics returns the help of every level of the command chain, keyed by command path, with
-// catalog values read from catalog.Default at call time.
+// catalog values read from catalog.Default and up's resource defaults from DefaultResources at
+// call time.
 func helpTopics() map[string]helpEntry {
 	agents := strings.Join(catalog.Default.AgentNames(), ", ")
 	toolchains := strings.Join(catalog.Default.Toolchains, ", ")
@@ -69,6 +70,7 @@ func helpTopics() map[string]helpEntry {
 	toolArgument := helpRow{"TOOL", "A Tool of the Tool catalog: " + strings.Join(catalog.Default.ToolNames(), ", ") + "."}
 	channel := helpOption{name: "channel", value: "CHANNEL", text: "Record a channel of the Tool; see Channels."}
 	pinVersion := helpOption{name: "version", value: "X", text: "Install exactly this version and record it as a Tool pin."}
+	resources := DefaultResources()
 	topics := map[string]helpEntry{
 		"version": {
 			summary:  "Print the version and the hash of the embedded build assets.",
@@ -106,10 +108,10 @@ func helpTopics() map[string]helpEntry {
 				{name: "agents", value: "LIST", text: "Agents to enable once the sandbox runs: comma-separated names of " + agents + "."},
 				{name: "port", value: "N", text: "Host loopback port for SSH.", defaultValue: strconv.Itoa(defaultSSHPort) + ", or the next port no sandbox has recorded"},
 				sshConfigOption,
-				{name: "memory", value: "SIZE", text: "Memory limit; the sandbox gets no swap.", defaultValue: "8g"},
-				{name: "cpus", value: "N", text: "CPU limit.", defaultValue: "4"},
-				{name: "pids-limit", value: "N", text: "Limit on processes.", defaultValue: "2048"},
-				{name: "shm-size", value: "SIZE", text: "Size of /dev/shm.", defaultValue: "1g"},
+				{name: "memory", value: "SIZE", text: "Memory limit; the sandbox gets no swap.", defaultValue: sizeText(resources.Memory)},
+				{name: "cpus", value: "N", text: "CPU limit.", defaultValue: strconv.FormatFloat(resources.CPUs, 'f', -1, 64)},
+				{name: "pids-limit", value: "N", text: "Limit on processes.", defaultValue: strconv.FormatInt(resources.PIDsLimit, 10)},
+				{name: "shm-size", value: "SIZE", text: "Size of /dev/shm.", defaultValue: sizeText(resources.ShmSize)},
 			},
 			examples: []string{"up agent01", "up agent01 --with dotnet --agents claude,codex --memory 12g"},
 			footer:   "SIZE is a whole number of bytes with an optional k, m, g, or t suffix. Options apply when the sandbox is created.",
@@ -323,6 +325,20 @@ func helpTopics() map[string]helpEntry {
 		footer:   "Run 'sandboxed-agents COMMAND --help' or 'sandboxed-agents help COMMAND' for the help of a command.",
 	}
 	return topics
+}
+
+// sizeText formats a byte count as the SIZE that up accepts, with the largest of the t, g, m,
+// or k suffixes that divides it exactly, or as plain bytes when none does.
+func sizeText(bytes int64) string {
+	for _, unit := range []struct {
+		suffix string
+		bytes  int64
+	}{{"t", 1 << 40}, {"g", 1 << 30}, {"m", 1 << 20}, {"k", 1 << 10}} {
+		if bytes%unit.bytes == 0 {
+			return strconv.FormatInt(bytes/unit.bytes, 10) + unit.suffix
+		}
+	}
+	return strconv.FormatInt(bytes, 10)
 }
 
 // groupEntry builds a group's help from the summaries of its subcommands.
