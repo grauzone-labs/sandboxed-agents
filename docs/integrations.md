@@ -248,7 +248,7 @@ This is the sandbox's outbound connection to a machine you name. It is not the [
 
 ### What the command needs
 
-Standard input and standard output must both be terminals. Without them the command fails with "ssh config needs an interactive terminal" before the manager starts, so no key is generated and nothing is written. The terminal is connected through to the sandbox, so you answer the prompts below yourself.
+Standard input and standard output must both be terminals. Without them the command fails with "ssh config needs an interactive terminal" before the SSH configuration workflow starts, so no key is generated and nothing is written. The terminal is connected through to the sandbox, so you answer the prompts below yourself.
 
 ### What happens, in order
 
