@@ -19,12 +19,15 @@ import (
 // sources they read, and each answer, and serialize on a lock directory.
 const (
 	sshProgram = "/usr/bin/ssh"
-	// sshQueryLimit bounds the ssh -G option listing a query keeps from standard output.
+	// sshQueryLimit bounds the ssh -G option listing a query keeps from standard output; a successful query with a longer
+	// listing is refused.
 	sshQueryLimit = 64 << 10
-	// sshDiagnosticLimit bounds the diagnostics a query keeps from standard error; -vvv reports several lines for every
-	// Host and Match block, so a long configuration needs far more room than its option listing.
+	// sshDiagnosticLimit bounds the diagnostics a query keeps from standard error; a successful query with longer diagnostics
+	// is refused, and a failing one reports only what was kept. -vvv reports several lines for every Host and Match block,
+	// so a long configuration needs far more room than its option listing.
 	sshDiagnosticLimit = 1 << 20
-	// sshSourceLimit bounds each configuration source file read to inspect an applied block.
+	// sshSourceLimit bounds how much of an included configuration source readSSHSource reads to inspect an applied block;
+	// a longer source is not inspected.
 	sshSourceLimit = 1 << 20
 	// sshAnswerLimit exceeds any valid alias, so a longer answer is refused as invalid.
 	sshAnswerLimit = 1024
@@ -320,9 +323,9 @@ func replaceSSHConfig(root *os.Root, mode os.FileMode, content []byte) error {
 // sshAliasClaimed returns what claims the alias: first, in entry order, the keywords of the entry options that a block
 // specific to the alias explicitly sets, then the other keywords that a literal Host block for the alias sets, and nothing
 // when no block claims it. OpenSSH's -vvv diagnostics name the source file and line of each applied Host block and of
-// each matched Match block's criteria, also when an earlier Host * masks their values; for each, it reads only that
-// block's header and its own option keywords from the source OpenSSH read: the loaded configuration, a file inside the
-// agent's home through root, or, read-only, an included file elsewhere. A Host block is global when its patterns include
+// each matched Match block's criteria, also when an earlier Host * masks their values; for each, it takes the source OpenSSH
+// read, the configuration bytes already loaded or an included file that readSSHSource reads within sshSourceLimit, and
+// inspects only that block's header and the option keywords of its own body. A Host block is global when its patterns include
 // one that matches every allowed alias, such as *, "*", or ?*, and no negated pattern, so Host * lab is global and
 // Host * !foo is specific to every host it matches. A Match block is specific when a host or originalhost criterion, in
 // any letter case, is negated or narrower than every allowed alias, so Match host * and Match all are global; quoted
@@ -330,9 +333,10 @@ func replaceSSHConfig(root *os.Root, mode os.FileMode, content []byte) error {
 // such as Host lab, is a hand-written entry for the alias and claims it by setting any option, Port or Include included;
 // an empty one claims nothing. A narrower Host glob, such as Host lab-*, or a specific Match block claims the alias only
 // by setting an entry option, even to the intended value or OpenSSH's default, so such a block that sets only Port claims
-// nothing. Global settings are left to checkSSHEntry. When a specific block's source cannot be read, or the body of a
-// glob or Match block includes another file, it falls back to sshOptionsSetForAlias; a literal Host block whose source
-// cannot be read still claims the alias and, when nothing else names the claim, is reported by its file and line.
+// nothing. Global settings are left to checkSSHEntry. When a specific block's source is not named, cannot be read, holds
+// more than sshSourceLimit bytes, or has no such header at the reported line, or the body of a glob or Match block
+// includes another file, it falls back to sshOptionsSetForAlias; a literal Host block whose source cannot be inspected
+// this way still claims the alias and, when nothing else names the claim, is reported by its file and line.
 func sshAliasClaimed(root *os.Root, config string, content []byte, alias string, effects Effects) ([]string, error) {
 	_, diagnostics, err := runSSHQuery([]string{"-vvv", "-G", "-F", config, alias}, nil, alias, effects)
 	if err != nil {
@@ -471,10 +475,9 @@ func sshDiagnosticLocation(location string) (string, int) {
 	return location[:at], number
 }
 
-// sshStanzaFile returns the lines of the source file holding an applied stanza, at the path OpenSSH reports: the loaded
-// bytes for the configuration file itself, a file inside the agent's home read through root, or another absolute path
-// read only, never written, since OpenSSH already read it as agent. It returns false for an unreadable source or one
-// larger than sshSourceLimit.
+// sshStanzaFile returns the lines of the source file holding an applied stanza, at the path OpenSSH reports: the bytes
+// already loaded under the lock for the configuration file itself, or another source that readSSHSource reads. It returns
+// false when OpenSSH names no file, or when that other source cannot be read or holds more than sshSourceLimit bytes.
 func sshStanzaFile(root *os.Root, config string, content []byte, file string) ([]string, bool) {
 	if file == "" {
 		return nil, false
@@ -482,29 +485,35 @@ func sshStanzaFile(root *os.Root, config string, content []byte, file string) ([
 	data := content
 	if file != config {
 		var err error
-		if relative, relErr := filepath.Rel(root.Name(), file); relErr == nil && filepath.IsLocal(relative) {
-			data, err = root.ReadFile(relative)
-		} else if filepath.IsAbs(file) {
-			data, err = readSSHSource(file)
-		} else {
-			return nil, false
-		}
-		if err != nil || len(data) > sshSourceLimit {
+		if data, err = readSSHSource(root, file); err != nil {
 			return nil, false
 		}
 	}
 	return strings.Split(string(data), "\n"), true
 }
 
-// readSSHSource reads at most one byte beyond sshSourceLimit of a configuration source outside the agent's home, opening
-// it read-only.
-func readSSHSource(path string) ([]byte, error) {
-	file, err := os.Open(path)
+// readSSHSource reads a configuration source that OpenSSH reported reading as agent, opening it read-only through root
+// when it lies inside the agent's home and directly when it is another absolute path. It reads at most one byte beyond
+// sshSourceLimit and refuses a source longer than that limit, a relative path, or one it cannot open or read.
+func readSSHSource(root *os.Root, path string) ([]byte, error) {
+	var file *os.File
+	var err error
+	if relative, relErr := filepath.Rel(root.Name(), path); relErr == nil && filepath.IsLocal(relative) {
+		file, err = root.Open(relative)
+	} else if filepath.IsAbs(path) {
+		file, err = os.Open(path)
+	} else {
+		return nil, fmt.Errorf("SSH configuration source %s is not an absolute path", path)
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
-	return io.ReadAll(io.LimitReader(file, sshSourceLimit+1))
+	data, err := io.ReadAll(io.LimitReader(file, sshSourceLimit+1))
+	if err == nil && len(data) > sshSourceLimit {
+		err = fmt.Errorf("SSH configuration source %s exceeds %d bytes", path, sshSourceLimit)
+	}
+	return data, err
 }
 
 // sshStanzaClaims returns the header of the Host or Match block at the 1-based line number and, once each in the order
