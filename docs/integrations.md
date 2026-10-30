@@ -283,6 +283,8 @@ A decline, a cancellation, and every failure exit non-zero, write no host entry,
 | You decline the approval | `SSH connection test declined; no connection made, no host entry written, dedicated key retained at PATH` |
 | Input ends or Ctrl+C arrives at the approval | `SSH connection test cancelled; no connection made, no host entry written, dedicated key retained at PATH` |
 | Ctrl+C interrupts the test after you approved it | `SSH connection test cancelled; no host entry written, SSH configuration unchanged, dedicated key retained at PATH` |
+| The path of `/home/agent/.ssh/known_hosts` cannot be passed to `ssh` safely, so `ssh` is not started | `SSH connection test failed: the known_hosts path cannot be passed to ssh safely` |
+| `ssh` cannot be started | `SSH connection test could not run ssh` |
 | The machine name does not resolve | `SSH connection test failed: remote machine name HOST cannot be resolved` |
 | The machine is unreachable, refuses the connection, or times out | `SSH connection test failed: remote machine HOST is unreachable or timed out` |
 | You do not confirm the unknown host key | `SSH connection test failed: remote host key rejected; the host key of HOST was not confirmed` |
