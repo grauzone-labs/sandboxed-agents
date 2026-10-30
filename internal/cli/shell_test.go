@@ -179,12 +179,12 @@ func TestShellRefusesStoppedSandbox(t *testing.T) {
 	}
 }
 
-// TestShellRequiresName proves shell without NAME returns exact usage and calls no process through RunWithHost and fake Podman.
+// TestShellRequiresName proves shell without NAME returns shell's exact usage and help pointer and calls no process through RunWithHost and fake Podman.
 func TestShellRequiresName(t *testing.T) {
 	f := linuxHost(t)
 	configureSandboxQueries(f, "default", "")
 	status, output, calls := f.run(t, "shell")
-	want := "step 1: sandbox name must follow the command path\nusage: sandboxed-agents COMMAND [ARG...]\n"
+	want := "step 1: sandbox name must follow the command path\nusage: sandboxed-agents shell NAME\nrun 'sandboxed-agents shell --help' for usage\n"
 	if status != 2 || output != want {
 		t.Fatalf("status=%d output=%q want=%q", status, output, want)
 	}

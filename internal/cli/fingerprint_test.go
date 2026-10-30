@@ -169,11 +169,11 @@ func TestFingerprintRejectsInvalidPublicKeys(t *testing.T) {
 	}
 }
 
-// TestFingerprintRequiresName proves missing NAME returns usage without any process through RunWithHost and fake Podman.
+// TestFingerprintRequiresName proves missing NAME returns fingerprint's usage and help pointer without any process through RunWithHost and fake Podman.
 func TestFingerprintRequiresName(t *testing.T) {
 	f := linuxHost(t)
 	status, stdout, stderr, calls := runCommand(t, f, "fingerprint")
-	want := "step 1: sandbox name must follow the command path\nusage: sandboxed-agents COMMAND [ARG...]\n"
+	want := "step 1: sandbox name must follow the command path\nusage: sandboxed-agents fingerprint NAME\nrun 'sandboxed-agents fingerprint --help' for usage\n"
 	if status != 2 || stdout != "" || stderr != want || len(calls) != 0 {
 		t.Fatalf("status=%d stdout=%q stderr=%q calls=%v", status, stdout, stderr, calls)
 	}
