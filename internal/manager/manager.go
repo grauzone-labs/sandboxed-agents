@@ -37,8 +37,8 @@ const (
 	AzureDevOpsEnvironment
 	// AzureEnvironment selects the environment for Azure authentication.
 	AzureEnvironment
-	// SSHKeyEnvironment fixes the environment of local SSH key and configuration processes, ignoring ambient variables and Process.Environment overrides.
-	SSHKeyEnvironment
+	// SSHEnvironment fixes the environment of local ssh-keygen and ssh -G processes, ignoring ambient variables and Process.Environment overrides.
+	SSHEnvironment
 )
 
 // Process is a program start requested at the operating-system seam.
@@ -53,7 +53,7 @@ type Process struct {
 	// AzureSSHHost supplies the validated SSH alias to Azure's browser callback.
 	AzureSSHHost string
 	// Environment holds variables appended after the policy environment, such as a Tool's home variable.
-	// SSHKeyEnvironment deliberately ignores these overrides to preserve its fixed SSH process environment.
+	// SSHEnvironment deliberately ignores these overrides to preserve its fixed SSH process environment.
 	Environment []string
 	// ProcessGroup starts the process as the leader of its own process group, so a supervisor can end every descendant.
 	ProcessGroup bool

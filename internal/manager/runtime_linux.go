@@ -44,9 +44,9 @@ func newEffects(calls systemCalls) Effects {
 			// unprivileged worker cannot call setgroups when spawning its peers.
 			NoSetGroups: calls.Identity().UID != 0,
 		}, Setpgid: process.ProcessGroup}
-		if process.EnvironmentPolicy == SSHKeyEnvironment {
-			// Key operations accept neither ambient variables nor Process.Environment overrides.
-			command.Env = sshKeyEnvironment()
+		if process.EnvironmentPolicy == SSHEnvironment {
+			// Local SSH key and configuration processes accept neither ambient variables nor Process.Environment overrides.
+			command.Env = sshEnvironment()
 			return command, nil
 		}
 		command.Env = agentEnvironment(calls.Environment())
@@ -183,9 +183,9 @@ func (c startedChild) Signal(sig os.Signal) error {
 	return syscall.Kill(pid, signal)
 }
 
-// sshKeyEnvironment fixes the local key process environment without accepting ambient
-// variables or Process.Environment overrides that could enable authentication or preload hooks.
-func sshKeyEnvironment() []string {
+// sshEnvironment fixes the environment of local ssh-keygen and ssh -G processes without accepting
+// ambient variables or Process.Environment overrides that could enable authentication or preload hooks.
+func sshEnvironment() []string {
 	return []string{"PATH=/usr/bin:/bin", "HOME=/home/agent", "USER=agent", "LOGNAME=agent", "LC_ALL=C", "SSH_ASKPASS_REQUIRE=never"}
 }
 
