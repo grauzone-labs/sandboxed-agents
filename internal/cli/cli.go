@@ -22,17 +22,25 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 // RunWithHost runs the public command boundary with host facts and shell input
 // supplied by the caller. Zero-valued fields use the real host; processes run on PATH.
+// A help request prints its help to stdout and exits 0 without Podman or host state;
+// a usage error exits 2 with the usage of the deepest level the arguments reached.
 func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 	host = host.defaults()
 	var stateRoot string
 	var request Request
+	var topic string
+	var help bool
 	err := checks.Run(checks.Checks{Usage: func() error {
+		var err error
+		if topic, help, err = requestedHelp(args); help {
+			return err
+		}
 		group, set := os.LookupEnv("SANDBOXED_AGENTS_GROUP")
 		if !set {
 			group = "default"
 		}
-		var err error
 		request, err = parseForHost(args, group, host)
+		topic = usageTopic(request.Command)
 		if err == nil {
 			switch request.Command {
 			case "up", "start", "stop", "restart", "remove", "update":
@@ -47,8 +55,12 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 	}})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		fmt.Fprintln(stderr, "usage: sandboxed-agents COMMAND [ARG...]")
+		writeUsage(stderr, topic)
 		return 2
+	}
+	if help {
+		writeHelp(stdout, topic)
+		return 0
 	}
 	checkedTarget := func() (podmanTarget, error) {
 		target, err := preflight(host)
