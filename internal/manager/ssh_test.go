@@ -2,10 +2,12 @@ package manager_test
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
@@ -107,7 +109,54 @@ func TestSSHHostKeyWaitsForStartup(t *testing.T) {
 	}
 }
 
-// TestSSHHostKeyFailsClosed proves unavailable or invalid host-key storage never emits a pin and nontransient errors are not retried through the manager command and filesystem error seam.
+// fakeClock installs a manual clock in effects whose Sleep advances Now by the requested duration
+// without waiting, and returns a function that reports the time elapsed on that clock.
+func fakeClock(effects *manager.Effects) func() time.Duration {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	current := start
+	effects.Now = func() time.Time { return current }
+	effects.Sleep = func(_ context.Context, d time.Duration) error { current = current.Add(d); return nil }
+	return func() time.Duration { return current.Sub(start) }
+}
+
+// TestSSHHostKeyWaitsSixSeconds proves a root host-key query returns a key published four
+// seconds into start-up and fails without output once the key is still missing after six
+// seconds, through the manager command, the injected filesystem seam and the injected clock.
+func TestSSHHostKeyWaitsSixSeconds(t *testing.T) {
+	t.Run("published after four seconds", func(t *testing.T) {
+		effects := noProcesses(t, manager.Identity{UID: 0, GID: 0})
+		elapsed := fakeClock(&effects)
+		effects.ReadFile = func(string) ([]byte, error) {
+			if elapsed() < 4*time.Second {
+				return nil, os.ErrNotExist
+			}
+			return []byte(dedicatedPublicKey + " host\n"), nil
+		}
+		var stdout, stderr bytes.Buffer
+		status := manager.RunWithEffects([]string{"ssh-host-key"}, &stdout, &stderr, effects)
+		if status != 0 || stdout.String() != dedicatedPublicKey+"\n" || stderr.Len() != 0 {
+			t.Fatalf("status=%d stdout=%q stderr=%q elapsed=%s", status, stdout.String(), stderr.String(), elapsed())
+		}
+		if got := elapsed(); got < 4*time.Second || got >= 5*time.Second {
+			t.Fatalf("key returned after %s; want about 4s", got)
+		}
+	})
+	t.Run("never published", func(t *testing.T) {
+		effects := noProcesses(t, manager.Identity{UID: 0, GID: 0})
+		elapsed := fakeClock(&effects)
+		effects.ReadFile = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+		var stdout, stderr bytes.Buffer
+		status := manager.RunWithEffects([]string{"ssh-host-key"}, &stdout, &stderr, effects)
+		if status == 0 || stdout.Len() != 0 || stderr.Len() == 0 {
+			t.Fatalf("status=%d stdout=%q stderr=%q", status, stdout.String(), stderr.String())
+		}
+		if got := elapsed(); got < 6*time.Second || got > 6*time.Second+100*time.Millisecond {
+			t.Fatalf("gave up after %s; want 6s", got)
+		}
+	})
+}
+
+// TestSSHHostKeyFailsClosed proves unavailable or invalid host-key storage never emits a pin and nontransient errors are not retried through the manager command, the filesystem error seam and the injected clock.
 func TestSSHHostKeyFailsClosed(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -120,6 +169,7 @@ func TestSSHHostKeyFailsClosed(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			effects := noProcesses(t, manager.Identity{UID: 0, GID: 0})
+			fakeClock(&effects)
 			reads := 0
 			effects.ReadFile = func(string) ([]byte, error) {
 				reads++
