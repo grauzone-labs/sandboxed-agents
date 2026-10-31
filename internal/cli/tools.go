@@ -59,18 +59,20 @@ func administerTool(request Request, p podmanTarget, stdout io.Writer) error {
 }
 
 // Limits of the host's Tool status query (#119). A query of the records alone starts no program in the
-// sandbox and keeps the short limit of the other manager queries. A query that runs upstream's status
-// commands waits for T3 Code's launcher and the tailnet node, which take several seconds right after an
-// enable or a start.
+// sandbox, so its time is the `podman exec` round trip; it gets the first-attempt limit of the read-only
+// manager requests, because that round trip exceeds 3 seconds on a host busy with a Tool's install or
+// start (#114). A query that runs upstream's status commands waits for T3 Code's launcher and the tailnet
+// node, which take several seconds right after an enable or a start.
 var (
-	toolRecordQueryTimeout   = 3 * time.Second
+	toolRecordQueryTimeout   = 10 * time.Second
 	toolUpstreamQueryTimeout = 30 * time.Second
 )
 
 // readToolStatus asks the manager, as agent, for the Tool selection, service, and node state, with the
 // upstream queries the flag selects (`--connect` for everything, `--tailnet` for the node's sign-in and
-// Serve state, none for the records alone), and validates the answer before callers use it. A query with
-// upstream parts that runs out of time is reported as slow upstream queries, not as an unanswering manager.
+// Serve state, none for the records alone), and validates the answer before callers use it. A query that
+// runs out of time is reported as a timed-out status query with its limit, naming slow upstream queries
+// when it had upstream parts, not as an unanswering manager; transport failures and invalid answers are.
 func readToolStatus(request Request, p podmanTarget, query string) (catalog.ToolStatus, error) {
 	var status catalog.ToolStatus
 	payload := []string{"status", request.Args[1]}
@@ -86,8 +88,11 @@ func readToolStatus(request Request, p podmanTarget, query string) (catalog.Tool
 		if ctx.Err() == nil && managerOperationFailure(err) {
 			return status, err
 		}
-		if query != "" && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return status, fmt.Errorf("tools status %s: upstream's status queries did not answer within %gs; the manager itself may still answer, see check %s", request.Args[1], limit.Seconds(), request.Name)
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			if query != "" {
+				return status, fmt.Errorf("tools status %s: upstream's status queries did not answer within %gs; the manager itself may still answer, see check %s", request.Args[1], limit.Seconds(), request.Name)
+			}
+			return status, fmt.Errorf("tools status %s: the status query timed out after %gs; the host or sandbox may be busy; retry, or see check %s", request.Args[1], limit.Seconds(), request.Name)
 		}
 		return status, agentManagerError(request, errors.Join(err, ctx.Err()))
 	}
