@@ -838,3 +838,63 @@ func TestToolsStatusWaitsLongerForUpstreamQueries(t *testing.T) {
 		t.Fatalf("hung upstream status: status=%d output=%s", status, output)
 	}
 }
+
+// TestToolsUpdateWaitsForASlowRecordQuery proves the update pre-check, under the default status limits, waits
+// for a records answer slower than the former 3-second limit and then runs the update, so a busy host does not
+// fail tools update (#114), through RunWithHost and fake Podman.
+func TestToolsUpdateWaitsForASlowRecordQuery(t *testing.T) {
+	f := sandboxStateFixture(t)
+	release := filepath.Join(t.TempDir(), "release")
+	f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+	f.responses[toolManagerPrefix+"status t3code"] = response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.1","pin":"0.1.1"}`, WaitFor: release}
+	f.responses[toolManagerPrefix+"update t3code"] = response{Output: "t3code enabled: version 0.1.1 (pin 0.1.1)\n"}
+	go func() {
+		time.Sleep(3500 * time.Millisecond)
+		os.WriteFile(release, nil, 0600)
+	}()
+	status, output, calls := f.run(t, "tools", "update", "agent01", "t3code")
+	if status != 0 || !strings.Contains(output, "t3code enabled: version 0.1.1 (pin 0.1.1)") {
+		t.Fatalf("slow record query: status=%d output=%s", status, output)
+	}
+	want := append(sandboxQueryCalls(), strings.Fields(agentWorkProbe), strings.Fields(toolManagerPrefix+"status t3code"), strings.Fields(toolManagerPrefix+"update t3code"))
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls=%v want=%v", calls, want)
+	}
+}
+
+// TestToolsUpdateNamesATimedOutRecordQuery proves the update pre-check reports a records query that exceeds its
+// limit as a status query timed out after that limit, not as an unanswering manager, while a transport failure
+// of the same query still reports an unanswering manager, and neither reaches the update, through RunWithHost,
+// fake Podman, and the status limit hook.
+func TestToolsUpdateNamesATimedOutRecordQuery(t *testing.T) {
+	restore := cli.SetToolStatusTimeouts(200*time.Millisecond, 3*time.Second)
+	defer restore()
+	for _, tc := range []struct {
+		name      string
+		answer    func(t *testing.T) response
+		message   string
+		forbidden string
+	}{
+		{"timeout", func(t *testing.T) response {
+			return response{Output: `{"name":"t3code","enabled":true,"installed_version":"0.1.1","pin":"0.1.1"}`, WaitFor: filepath.Join(t.TempDir(), "never-created")}
+		}, "tools status t3code: the status query timed out after 0.2s; the host or sandbox may be busy; retry, or see check agent01", "manager does not answer"},
+		{"transport", func(t *testing.T) response {
+			return response{Exit: 125, Stderr: "transport failed\n"}
+		}, "manager does not answer", "timed out"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := sandboxStateFixture(t)
+			f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+			f.responses[toolManagerPrefix+"status t3code"] = tc.answer(t)
+			f.responses[toolManagerPrefix+"update t3code"] = response{Output: "t3code enabled: version 0.1.1 (pin 0.1.1)\n"}
+			status, output, calls := f.run(t, "tools", "update", "agent01", "t3code")
+			if status != 1 || !strings.Contains(output, tc.message) || strings.Contains(output, tc.forbidden) {
+				t.Fatalf("status=%d output=%s want %q without %q", status, output, tc.message, tc.forbidden)
+			}
+			want := append(sandboxQueryCalls(), strings.Fields(agentWorkProbe), strings.Fields(toolManagerPrefix+"status t3code"))
+			if !reflect.DeepEqual(calls, want) {
+				t.Fatalf("calls=%v want=%v", calls, want)
+			}
+		})
+	}
+}
