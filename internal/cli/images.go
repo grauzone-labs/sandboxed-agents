@@ -32,7 +32,8 @@ func (p podmanTarget) exists(kind resourceKind, name string) (bool, error) {
 }
 
 // prepareUp creates an owned sandbox or reuses its inspected configuration under the lifecycle lock.
-func prepareUp(request Request, p podmanTarget, output io.Writer) error {
+// A long container create reports its progress line on progress.
+func prepareUp(request Request, p podmanTarget, output, progress io.Writer) error {
 	workspace := ""
 	if len(request.Args) == 2 {
 		workspace = request.Args[1]
@@ -104,7 +105,7 @@ func prepareUp(request Request, p podmanTarget, output io.Writer) error {
 		fmt.Fprintf(output, "created volume %s\n", volume)
 	}
 	args := sandboxCreateArgs(request, port, workspaceMount, tag)
-	if _, err := p.query(args...); err != nil {
+	if err := createSandboxContainer(p, request, args, progress); err != nil {
 		return fail(err)
 	}
 	containerCreated = true
