@@ -32,6 +32,10 @@ const nestedGuardEnv = "TEST_OFFLINE_GUARD_NESTED"
 
 // TestMain prepares development, release, fake, and live-transport fixture binaries for the built CLI seam, reuses them in nested runs, and removes its temporary build directory after testing.
 func TestMain(m *testing.M) {
+	// A copy of this binary installed as podman answers the live host-key helper's query.
+	if root := os.Getenv(fakeManagerExecRootEnv); root != "" {
+		os.Exit(fakeManagerExec(root, os.Args[1:]))
+	}
 	// Nested test runs reuse parent-built binaries with an isolated PATH.
 	executable = os.Getenv("TEST_SANDBOXED_AGENTS_EXECUTABLE")
 	fakeExecutable = os.Getenv("TEST_FAKE_EXECUTABLE")
