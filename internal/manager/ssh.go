@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -61,18 +62,39 @@ func sshAuthorize(text string, stderr io.Writer, effects Effects) int {
 	return exitStatus(effects.ReplaceAuthorizedKey([]byte(key+"\n")), stderr)
 }
 
-// sshHostKey waits briefly for server key generation and prints the validated Ed25519 public key.
+// sshHostKeyWait bounds how long ssh-host-key waits for the entrypoint's ssh-keygen to publish
+// the public key, since podman can accept exec before the entrypoint has generated it. The live
+// host-key helper gives the whole podman exec a 9 s deadline; 6 s leaves about 3 s of that for
+// podman exec start-up. It also stays inside the 10 s budget of the CLI's first read-only manager
+// attempt, which gives podman exec 9 s before its 1 s output drain.
+const sshHostKeyWait = 6 * time.Second
+
+// sshHostKeyClock returns the injected clock and sleep for the host-key wait, and the system clock
+// and a plain sleep for whichever of the two the effects leave unset.
+func sshHostKeyClock(effects Effects) (func() time.Time, func(time.Duration)) {
+	now, sleep := time.Now, time.Sleep
+	if effects.Now != nil {
+		now = effects.Now
+	}
+	if effects.Sleep != nil {
+		sleep = func(d time.Duration) { _ = effects.Sleep(context.Background(), d) }
+	}
+	return now, sleep
+}
+
+// sshHostKey polls for the server's public key while it is missing or empty, for up to
+// sshHostKeyWait on the injected clock, and prints the validated Ed25519 public key. Any other read
+// error, a key still absent after the wait, or an invalid key fails without output.
 func sshHostKey(stdout, stderr io.Writer, effects Effects) int {
 	if effects.ReadFile == nil {
 		return exitStatus(fmt.Errorf("SSH server storage is unavailable"), stderr)
 	}
-	// Podman can accept exec before the entrypoint finishes generating keys.
-	// Stay within the host's three-second administrative query deadline.
+	now, sleep := sshHostKeyClock(effects)
 	const path = "/etc/ssh/ssh_host_ed25519_key.pub"
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := now().Add(sshHostKeyWait)
 	data, err := effects.ReadFile(path)
-	for (os.IsNotExist(err) || err == nil && len(data) == 0) && time.Now().Before(deadline) {
-		time.Sleep(25 * time.Millisecond)
+	for (os.IsNotExist(err) || err == nil && len(data) == 0) && now().Before(deadline) {
+		sleep(25 * time.Millisecond)
 		data, err = effects.ReadFile(path)
 	}
 	if err != nil {

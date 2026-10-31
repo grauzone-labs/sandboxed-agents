@@ -100,7 +100,7 @@ func (host liveHost) assertSSHServer(t *testing.T, name, hostKey string) {
 	t.Fatalf("no completed Ed25519 key exchange for %s on recorded port %s:\n%s", name, port, diagnostics)
 }
 
-// Bounds of the live host-key query. The manager waits up to two seconds for the
+// Bounds of the live host-key query. The manager waits up to six seconds for the
 // entrypoint's ssh-keygen to publish the key, and podman exec start-up comes on
 // top of that wait. The bounds match the CLI's first read-only manager attempt
 // (a 10 s budget with 1 s of it kept for draining output), so the helper waits

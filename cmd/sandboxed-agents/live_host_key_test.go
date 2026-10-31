@@ -106,12 +106,12 @@ func publishHostKeyAfter(t *testing.T, root string, delay time.Duration) {
 const liveTestHostKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 // TestLiveSSHHostKeyWaitsForManagerAfterExecStartup proves the live helper returns the key when
-// podman exec start-up plus the manager's two-second wait for the key ends after three seconds,
-// the deadline at which the helper used to kill the query, through the helper's real podman
-// command and a fake podman exec that runs the real manager.
+// it is published five seconds after the query starts, behind 1.5 s of podman exec start-up and
+// 3.5 s into the manager's six-second wait, through the helper's real podman command and a fake
+// podman exec that runs the real manager.
 func TestLiveSSHHostKeyWaitsForManagerAfterExecStartup(t *testing.T) {
 	host, root := fakeManagerHost(t, 1500*time.Millisecond)
-	publishHostKeyAfter(t, root, 3200*time.Millisecond)
+	publishHostKeyAfter(t, root, 5*time.Second)
 	key, err := host.readSSHHostKey("demo")
 	if err != nil || key != liveTestHostKey {
 		t.Fatalf("key=%q error=%v", key, err)
