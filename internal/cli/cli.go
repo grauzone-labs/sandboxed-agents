@@ -150,7 +150,7 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			return 1
 		}
 		defer lock.Close()
-		if err := prepareUp(request, target, stdout); err != nil {
+		if err := prepareUp(request, target, stdout, stderr); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -197,13 +197,13 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 				return 1
 			}
 			defer lock.Close()
-			if err := updateSandbox(request, target, stdout); err != nil {
+			if err := updateSandbox(request, target, stdout, stderr); err != nil {
 				fmt.Fprintln(stderr, err)
 				return 1
 			}
 			return 0
 		}
-		if err := updateAllSandboxes(request, target, stateRoot, stdout); err != nil {
+		if err := updateAllSandboxes(request, target, stateRoot, stdout, stderr); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}

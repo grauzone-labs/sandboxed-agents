@@ -6,8 +6,9 @@ import (
 	"io"
 )
 
-// updateAllSandboxes holds every acquired lifecycle lock until all builds and changes finish.
-func updateAllSandboxes(request Request, p podmanTarget, stateRoot string, output io.Writer) error {
+// updateAllSandboxes holds every acquired lifecycle lock until all builds and changes finish. A long
+// replacement create reports its progress line on progress.
+func updateAllSandboxes(request Request, p podmanTarget, stateRoot string, output, progress io.Writer) error {
 	names, err := sandboxInventory(request.Group, p)
 	if err != nil {
 		return err
@@ -92,7 +93,7 @@ func updateAllSandboxes(request Request, p podmanTarget, stateRoot string, outpu
 		if plan.objects.backup {
 			err = recoverUpdate(plan.request, p, plan.objects, output)
 		} else {
-			err = plan.replace(p, tags[toolchainSet(plan.set)], output)
+			err = plan.replace(p, tags[toolchainSet(plan.set)], output, progress)
 		}
 		var restore toolRestoreFailure
 		if errors.As(err, &restore) {

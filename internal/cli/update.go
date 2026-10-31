@@ -13,8 +13,8 @@ import (
 const updateWasRunningLabel = "io.sandboxed-agents.update-was-running"
 
 // updateSandbox recovers an interrupted update or replaces an outdated sandbox image while
-// preserving its configuration.
-func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
+// preserving its configuration. A long replacement create reports its progress line on progress.
+func updateSandbox(request Request, p podmanTarget, output, progress io.Writer) error {
 	objects, err := requireSandbox(request, p)
 	if err != nil {
 		return err
@@ -34,7 +34,7 @@ func updateSandbox(request Request, p podmanTarget, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return plan.replace(p, tag, output)
+	return plan.replace(p, tag, output, progress)
 }
 
 type sandboxUpdate struct {
@@ -70,8 +70,9 @@ func prepareSandboxUpdate(request Request, p podmanTarget, objects sandboxObject
 	return &sandboxUpdate{request: request, objects: objects, set: set}, nil
 }
 
-// replace applies a prepared update and restores the sandbox when replacement fails.
-func (plan *sandboxUpdate) replace(p podmanTarget, tag string, output io.Writer) error {
+// replace applies a prepared update and restores the sandbox when replacement fails. A long
+// replacement create reports its progress line on progress.
+func (plan *sandboxUpdate) replace(p podmanTarget, tag string, output, progress io.Writer) error {
 	request, objects, set := plan.request, plan.objects, plan.set
 	args, port, err := replacementArgs(request, objects, set, tag)
 	if err != nil {
@@ -122,7 +123,7 @@ func (plan *sandboxUpdate) replace(p podmanTarget, tag string, output io.Writer)
 		}
 		return fmt.Errorf("%w; restored sandbox %s to its previous state", cause, request.Name)
 	}
-	if _, err = p.query(args...); err != nil {
+	if err = createSandboxContainer(p, request, args, progress); err != nil {
 		return rollback(err)
 	}
 	created = true
