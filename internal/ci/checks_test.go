@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -132,13 +133,16 @@ func TestChecksRequiredCommandPrintsActionsOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	build := exec.Command("go", "build", "-o", filepath.Join(t.TempDir(), "checks-required"), "./internal/ci/cmd/checks-required")
+	binary := filepath.Join(t.TempDir(), "checks-required")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	build := exec.Command("go", "build", "-o", binary, "./internal/ci/cmd/checks-required")
 	build.Dir = root
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build command: %v\n%s", err, output)
 	}
-	command := exec.Command(filepath.Join(filepath.Dir(build.Args[len(build.Args)-2]), "checks-required"))
-	command.Path = build.Args[3]
+	command := exec.Command(binary)
 	command.Dir = checkout
 	command.Env = append(os.Environ(), "GITHUB_EVENT_NAME=pull_request", "CI_BASE_SHA="+base, "CI_HEAD_SHA="+head)
 	var stderr bytes.Buffer

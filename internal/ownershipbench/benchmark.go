@@ -95,7 +95,7 @@ func ParseOptions(args []string, stderr io.Writer) (Options, map[string]any, err
 	if archiveErr != nil || !archive.Mode().IsRegular() || parentErr != nil || !parent.IsDir() || !fullImageID.MatchString(options.Image) {
 		return options, nil, errors.New("require a local archive, existing parent directory and full sha256 image ID")
 	}
-	if options.PeakBytes <= 0 || timeout < 0.1 || timeout > 7200 {
+	if options.PeakBytes <= 0 || !(timeout >= 0.1 && timeout <= 7200) {
 		return options, nil, errors.New("require positive peak-bytes and timeout between 0.1 and 7200 seconds")
 	}
 	if options.MountProgram != "" {
@@ -259,8 +259,13 @@ func (m *Measurement) Directory() string { return m.directory }
 // run times one Podman command separately, records its output in NAME.stdout and NAME.stderr,
 // samples the command's own process group and the free space into NAME.samples.jsonl while it
 // runs, and returns its standard output. A deadline, a crossed free-space floor, or a cancelled
-// context kills the command's process group, marks the cleanup as pending, and retains all state.
+// context kills the command's process group, marks the cleanup as pending, and retains all state;
+// a context cancelled before the start never starts the command, so no cleanup command follows an
+// interrupt.
 func (m *Measurement) run(ctx context.Context, name string, arguments []string, timeout time.Duration) (string, error) {
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("%s not started; interrupted by %v", name, context.Cause(ctx))
+	}
 	started := time.Now()
 	stdoutPath := filepath.Join(m.directory, name+".stdout")
 	stdout, err := os.OpenFile(stdoutPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
