@@ -31,24 +31,23 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify stable tag commit
-        id: tag
-        shell: bash
-        run: bash scripts/verify-stable-tag.sh
       - uses: actions/setup-go@v7
-        if: steps.tag.outputs.preview != 'true'
         with:
           go-version-file: go.mod
           cache: true
+      - name: Verify stable tag commit
+        id: tag
+        shell: bash
+        run: go run ./internal/release/cmd/verify-stable-tag
       - name: Install the verified preview provenance verifier
         if: steps.tag.outputs.preview != 'true'
         shell: bash
-        run: bash scripts/setup-release-gh.sh
+        run: go run ./internal/release/cmd/setup-gh
       - name: Build stable binaries
         if: steps.tag.outputs.preview != 'true'
         shell: bash
         run: |
-          bash scripts/release.sh "${STABLE_TAG#v}" "$RUNNER_TEMP/stable-release"
+          go run ./internal/release/cmd/build-release "${STABLE_TAG#v}" "$RUNNER_TEMP/stable-release"
       - name: Require a validated preview on this commit
         if: steps.tag.outputs.preview != 'true'
         env:

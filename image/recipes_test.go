@@ -22,7 +22,7 @@ func TestBaseRecipeSuppliesRuntimeContents(t *testing.T) {
 		"FROM debian:trixie-slim", "openssh-server", "openssh-client", "git", "gh", "tmux", "curl", "jq", "ripgrep", "less", "unzip", "ca-certificates",
 		"groupadd --gid 1000 agent", "useradd --uid 1000 --gid 1000", "rm -f /etc/ssh/ssh_host_*",
 		"COPY --chmod=0755 manager.bin /usr/local/bin/sandboxed-agents-manager",
-		"/usr/local/share/sandboxed-agents/versions.txt", "dpkg-query", "node --version", "npm --version",
+		"mkdir -p /usr/local/share/sandboxed-agents", "/usr/local/bin/sandboxed-agents-manager record-versions",
 		"libatomic1", "pkgs.tailscale.com/stable/debian trixie main", "apt-get install -y --no-install-recommends tailscale", "tailscale-signing-key.fingerprint Tailscale",
 	}, []string{"dotnet-sdk", "azure-cli", "playwright install", "build-essential", "npm install -g"})
 	// The manager changes with every executable; the package layers above it stay cached across those changes.
@@ -68,8 +68,8 @@ func TestSelectedToolchainsLayerOnBase(t *testing.T) {
 						t.Errorf("%s install count = %d, selected = %t", name, got, selected)
 					}
 				}
-				if !strings.Contains(recipe, "record-versions.sh") {
-					t.Fatal("toolchain recipe does not refresh versions manifest")
+				if !strings.HasSuffix(recipe, "\nRUN /usr/local/bin/sandboxed-agents-manager record-versions\n") {
+					t.Fatal("toolchain recipe does not refresh the versions manifest last")
 				}
 				return nil
 			})

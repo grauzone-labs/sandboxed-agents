@@ -27,7 +27,6 @@ func TestNpmPackageLifecycle(t *testing.T) {
 		t.Skip("npm executable lifecycle requires Linux amd64 or Windows amd64")
 	}
 	root := repositoryRoot(t)
-	releaseBash(t)
 	// Prepare the release expectation before this test redirects HOME to its installation fixture.
 	_ = releasetest.ExpectedPreparedVersion(t, releasetest.ReleaseVersion)
 	checkout := createReleaseRepository(t, root)
@@ -61,8 +60,7 @@ func TestNpmPackageLifecycle(t *testing.T) {
 	const upgradeVersion = "0.0.31-test"
 	runGit(t, checkout, "tag", "v"+upgradeVersion)
 	upgradeOutput := t.TempDir()
-	upgrade := exec.Command(releaseBash(t), filepath.ToSlash(filepath.Join(checkout, "scripts", "release.sh")), upgradeVersion, filepath.ToSlash(upgradeOutput))
-	setReleaseTestDirectoryAndEnvironment(upgrade, checkout)
+	upgrade := releaseCommandForVersion(t, checkout, upgradeVersion, upgradeOutput)
 	if result, err := upgrade.CombinedOutput(); err != nil {
 		t.Fatalf("upgrade release build: %v\n%s", err, result)
 	}

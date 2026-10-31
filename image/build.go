@@ -95,7 +95,7 @@ func writeToolchainRecipe(directory, hash string, toolchains []string) error {
 		}
 		fmt.Fprintf(&recipe, "\n# Toolchain: %s\n%s\n", name, fragment)
 	}
-	recipe.WriteString("\nCOPY toolchains/record-versions.sh /tmp/record-versions.sh\nRUN sh /tmp/record-versions.sh && rm /tmp/record-versions.sh\n")
+	recipe.WriteString("\nRUN /usr/local/bin/sandboxed-agents-manager record-versions\n")
 	return os.WriteFile(filepath.Join(directory, "toolchains", "Containerfile"), []byte(recipe.String()), 0600)
 }
 

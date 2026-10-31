@@ -90,7 +90,7 @@ func newEffects(calls systemCalls) Effects {
 		return calls.Start(command)
 	}
 	return Effects{Stdin: os.Stdin, HomeDirectory: func() (string, error) { return "/home/agent", nil }, Identity: calls.Identity, Groups: os.Getgroups, UIDs: unix.Getresuid, GIDs: unix.Getresgid, Start: run,
-		ReadFile: os.ReadFile, ReplaceAuthorizedKey: func(data []byte) error { return replaceAuthorizedKey("/etc/ssh", data) }, RemoveAuthorizedKey: func() error { return removeAuthorizedKey("/etc/ssh") }, Reexec: func(process Process) error {
+		ReadFile: os.ReadFile, LookPath: exec.LookPath, WriteFile: os.WriteFile, ReplaceAuthorizedKey: func(data []byte) error { return replaceAuthorizedKey("/etc/ssh", data) }, RemoveAuthorizedKey: func() error { return removeAuthorizedKey("/etc/ssh") }, Reexec: func(process Process) error {
 			path, err := calls.Executable()
 			if err != nil {
 				return err
