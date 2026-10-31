@@ -5,8 +5,9 @@ Playwright create at `0eb167b` spent many minutes in ownership mapping/copy-up; 
 observation does not identify a faulty driver, backing filesystem, or host setting.
 Do not change the current store to test a guess.
 
-The benchmark needs Python 3.11+, `findmnt`, rootless local Podman, and an **already
-built, supplied image archive**. It builds and pulls nothing. The previous live
+The benchmark is the Go command `internal/ownershipbench/cmd/benchmark-ownership`; it needs
+`findmnt`, rootless local Podman, a non-root Linux user, and an **already built, supplied
+image archive**. It builds and pulls nothing. The previous live
 invocation's Playwright images were cleaned up; an image/archive must be supplied
 before this experiment can run. Running it on either project host requires the
 live-validation skill's new-invocation checkpoint. No benchmark has been run live.
@@ -25,7 +26,7 @@ low. Record the estimate's basis beside the result. The archive already occupies
 space and is never deleted by this command.
 
 ```sh
-python3 scripts/benchmark-ownership.py \
+go run ./internal/ownershipbench/cmd/benchmark-ownership \
   --archive /path/to/IMAGE.tar --image sha256:FULL_ID \
   --baseline-info /path/to/baseline-info.json \
   --parent /path/on/current-filesystem/benchmarks --driver overlay \
@@ -66,7 +67,7 @@ After successful proof, cleanup rechecks the invocation label and stopped state,
 removes its container by exact ID, its labelled workspace volume, and only the
 supplied/verified image with `rmi --no-prune`. Imported parent images whose individual
 provenance is not recorded remain listed in the report. The store directory and
-logs remain; the script never prunes, resets, recursively deletes a store, or touches
+logs remain; the command never prunes, resets, recursively deletes a store, or touches
 source images. Retained storage and rootless runtime state need separate inspection
 before any later removal.
 
@@ -77,7 +78,7 @@ and engine state before any cleanup; never interpret a killed client as proof th
 mapping stopped. Do not remove a graphroot while an operation or mount is unverified.
 Failure to start a process also retains the new store without cleanup commands.
 SIGKILL or host failure cannot run that handler; reconcile the recorded state manually.
-The script runs no automatic timeout retry or host repair.
+The command runs no automatic timeout retry or host repair.
 
 References: [Podman storage and rootless options](https://docs.podman.io/en/latest/markdown/podman.1.html),
 [archive loading](https://docs.podman.io/en/latest/markdown/podman-load.1.html),

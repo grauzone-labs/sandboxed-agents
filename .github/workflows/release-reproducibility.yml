@@ -27,13 +27,17 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
       - name: Decide whether full checks are required
         id: changes
         shell: bash
         env:
           CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: bash scripts/ci-checks-required.sh >> "$GITHUB_OUTPUT"
+        run: go run ./internal/ci/cmd/checks-required >> "$GITHUB_OUTPUT"
 
   linux:
     needs: changes
@@ -48,36 +52,29 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Decide whether full checks are required
-        id: changes
-        shell: bash
-        env:
-          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: bash scripts/ci-checks-required.sh >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v7
-        if: steps.changes.outputs.run_checks == 'true'
+        if: needs.changes.outputs.run_checks == 'true'
         with:
           go-version-file: go.mod
           cache: true
       - uses: actions/setup-node@v7
-        if: steps.changes.outputs.run_checks == 'true'
+        if: needs.changes.outputs.run_checks == 'true'
         with:
           node-version: '24'
           package-manager-cache: false
       - name: Tag the runner checkout
-        if: steps.changes.outputs.run_checks == 'true'
+        if: needs.changes.outputs.run_checks == 'true'
         shell: bash
         run: git tag "v$RELEASE_VERSION" HEAD
       - name: Run the offline suite
-        if: steps.changes.outputs.run_checks == 'true'
+        if: needs.changes.outputs.run_checks == 'true'
         run: go test ./... -count=1
       - name: Build releases and report Linux version
-        if: steps.changes.outputs.run_checks == 'true'
+        if: needs.changes.outputs.run_checks == 'true'
         id: version
         shell: bash
         run: |
-          bash scripts/release.sh "$RELEASE_VERSION" "$RUNNER_TEMP/release-output"
+          go run ./internal/release/cmd/build-release "$RELEASE_VERSION" "$RUNNER_TEMP/release-output"
           version_output=$("$RUNNER_TEMP/release-output/sandboxed-agents-linux-amd64" version)
           printf '%s\n' "$version_output"
           asset_hash=$(printf '%s\n' "$version_output" | awk '$1 == "asset-sha256" { print $2 }')
@@ -105,8 +102,6 @@ jobs:
       linux_sha256: ${{ steps.version.outputs.linux_sha256 }}
       windows_sha256: ${{ steps.version.outputs.windows_sha256 }}
       npm_sha256: ${{ steps.version.outputs.npm_sha256 }}
-    env:
-      SANDBOXED_AGENTS_RELEASE_BASH: 'C:\Program Files\Git\bin\bash.exe'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -160,7 +155,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Python is missing on the Windows runner' }
           go test ./internal/manualcheck -run '^(TestInstallerTrustedSnapshotOnWindows|TestProtectedInstallerOutputOnWindows)$' -count=1 -v
           if ($LASTEXITCODE -ne 0) { throw 'Windows trusted-snapshot ACL tests failed' }
-      - name: Run image and release tests with Git for Windows Bash
+      - name: Run image and release tests
         shell: pwsh
         env:
           SANDBOXED_AGENTS_TEST_HKCU: '1'
@@ -171,8 +166,8 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $outputDirectory = "$env:RUNNER_TEMP/release-output".Replace('\', '/')
-          & $env:SANDBOXED_AGENTS_RELEASE_BASH scripts/release.sh $env:RELEASE_VERSION $outputDirectory
+          $outputDirectory = "$env:RUNNER_TEMP/release-output"
+          go run ./internal/release/cmd/build-release $env:RELEASE_VERSION $outputDirectory
           if ($LASTEXITCODE -ne 0) { throw 'Windows release build failed' }
           $versionOutput = & "$env:RUNNER_TEMP/release-output/sandboxed-agents-windows-amd64.exe" version
           if ($LASTEXITCODE -ne 0) { throw 'Windows version failed' }

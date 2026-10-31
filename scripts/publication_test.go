@@ -125,19 +125,10 @@ func TestPublicationWorkflowWiring(t *testing.T) {
 		t.Error("stable_gate caller permissions must grant only contents, actions and attestations reads to the reusable gate")
 	}
 	for _, required := range []string{
-		"  push:\n    tags: ['v*']", "cancel-in-progress: false", "uses: ./.github/workflows/stable-release-gate.yml", "needs: stable_gate", "needs.stable_gate.result == 'success'", "runs-on: ubuntu-24.04", "ref: ${{ github.sha }}", "fetch-depth: 0", "persist-credentials: false", "go-version-file: go.mod", "node-version: '24'", "npm install --global npm@11.5.1", "bash scripts/setup-release-gh.sh", "push-to-registry: false", "create-storage-record: false", "user: ${{ vars.NUGET_USER }}", "NUGET_OIDC_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}",
+		"  push:\n    tags: ['v*']", "cancel-in-progress: false", "uses: ./.github/workflows/stable-release-gate.yml", "needs: stable_gate", "needs.stable_gate.result == 'success'", "runs-on: ubuntu-24.04", "ref: ${{ github.sha }}", "fetch-depth: 0", "persist-credentials: false", "go-version-file: go.mod", "node-version: '24'", "npm install --global npm@11.5.1", "go run ./internal/release/cmd/setup-gh", "push-to-registry: false", "create-storage-record: false", "user: ${{ vars.NUGET_USER }}", "NUGET_OIDC_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("publication workflow omits %q", required)
-		}
-	}
-	installer, err := os.ReadFile(filepath.Join(repositoryRoot(t), "scripts/setup-release-gh.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, required := range []string{"v2.102.0/gh_2.102.0_linux_amd64.tar.gz", "bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386", "sha256sum --check --strict", `"$directory/gh_2.102.0_linux_amd64/bin/gh" --version`, `>> "$GITHUB_PATH"`} {
-		if !strings.Contains(string(installer), required) {
-			t.Errorf("shared verified gh setup omits %q", required)
 		}
 	}
 	_, publishJob, found := strings.Cut(permissionText, "\n  publish:\n")
@@ -185,7 +176,7 @@ func TestPublicationWorkflowWiring(t *testing.T) {
 		}
 	}
 	last := -1
-	for _, step := range []string{"bash scripts/setup-release-gh.sh", "bash scripts/release.sh", "go run ./internal/release/cmd/stable-gate", "uses: actions/attest@", "uses: NuGet/login@", "go run ./internal/release/cmd/publish-release"} {
+	for _, step := range []string{"go run ./internal/release/cmd/setup-gh", "go run ./internal/release/cmd/build-release", "go run ./internal/release/cmd/stable-gate", "uses: actions/attest@", "uses: NuGet/login@", "go run ./internal/release/cmd/publish-release"} {
 		next := strings.Index(publishJob, step)
 		if next < last || next < 0 {
 			t.Errorf("workflow order omits or misorders %q", step)
@@ -204,7 +195,7 @@ func TestPublicationWorkflowWiring(t *testing.T) {
 	}
 }
 
-// TestPublicationWorkflowReleaseNotes proves the maintained build-step shell accepts normal and large committed notes and refuses absent, blank or unreadable notes before invoking the stub release build through real Git and Bash with Actions pipefail options.
+// TestPublicationWorkflowReleaseNotes proves the maintained build-step shell accepts normal and large committed notes and refuses absent, blank or unreadable notes before invoking the release build, which a fake go command on PATH stands in for, through real Git and Bash with Actions pipefail options.
 func TestPublicationWorkflowReleaseNotes(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repositoryRoot(t), ".github/workflows/release.yml"))
 	if err != nil {
@@ -234,7 +225,7 @@ func TestPublicationWorkflowReleaseNotes(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			checkout := ciRepository(t)
-			ciWrite(t, checkout, "scripts/release.sh", "printf built > \"$BUILD_MARKER\"\n")
+			ciWrite(t, checkout, "docs/release-fixture.md", "release fixture\n")
 			const notesPath = "docs/release-notes/1.0.0.md"
 			if !test.missing {
 				ciWrite(t, checkout, notesPath, test.notes)
@@ -251,7 +242,7 @@ func TestPublicationWorkflowReleaseNotes(t *testing.T) {
 			marker, outputPath := filepath.Join(directory, "build-called"), filepath.Join(directory, "github-output")
 			command := exec.Command("bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", buildSteps[0][1])
 			command.Dir = checkout
-			command.Env = append(os.Environ(), "RELEASE_TAG=v1.0.0", "GITHUB_SHA="+commit, "RUNNER_TEMP="+directory, "GITHUB_OUTPUT="+outputPath, "BUILD_MARKER="+marker)
+			command.Env = append(os.Environ(), "PATH="+fakeGoDirectory(t)+string(os.PathListSeparator)+os.Getenv("PATH"), fakeGoVariable+"=1", "RELEASE_TAG=v1.0.0", "GITHUB_SHA="+commit, "RUNNER_TEMP="+directory, "GITHUB_OUTPUT="+outputPath, "BUILD_MARKER="+marker)
 			output, err := command.CombinedOutput()
 			if test.valid {
 				if err != nil {
@@ -275,32 +266,6 @@ func TestPublicationWorkflowReleaseNotes(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// TestReleaseGitHubCLISetupRejectsUnverifiedArchive proves the actual shared installer rejects untrusted download bytes before extraction or PATH installation through fake curl and tar boundaries.
-func TestReleaseGitHubCLISetupRejectsUnverifiedArchive(t *testing.T) {
-	root := releaseRepositoryOrSkip(t)
-	directory := t.TempDir()
-	for name, body := range map[string]string{
-		"curl": "#!/usr/bin/env bash\nwhile (($#)); do\n  if [[ $1 == --output ]]; then printf 'untrusted archive' > \"$2\"; exit 0; fi\n  shift\ndone\nexit 1\n",
-		"tar":  "#!/bin/sh\nprintf invoked > \"$GH_SETUP_TAR_MARKER\"\n",
-	} {
-		if err := os.WriteFile(filepath.Join(directory, name), []byte(body), 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	marker, outputPath := filepath.Join(directory, "tar-called"), filepath.Join(directory, "github-path")
-	command := exec.Command("bash", filepath.Join(root, "scripts/setup-release-gh.sh"))
-	command.Env = append(os.Environ(), "PATH="+directory+string(os.PathListSeparator)+os.Getenv("PATH"), "RUNNER_TEMP="+t.TempDir(), "GITHUB_PATH="+outputPath, "GH_SETUP_TAR_MARKER="+marker)
-	output, err := command.CombinedOutput()
-	if err == nil || !strings.Contains(string(output), "FAILED") {
-		t.Fatalf("untrusted CLI archive accepted: %v %s", err, output)
-	}
-	for _, name := range []string{marker, outputPath} {
-		if _, err := os.Stat(name); !os.IsNotExist(err) {
-			t.Fatalf("unverified CLI archive reached extraction or PATH installation: %s %v", name, err)
-		}
 	}
 }
 
@@ -644,7 +609,7 @@ func repositorySignedFixture(t *testing.T, unsigned []byte, tamper bool) []byte 
 // publicationTestFixture owns an isolated tagged checkout, real build output, and fake external service state.
 type publicationTestFixture struct{ checkout, output, services, version, commit string }
 
-// publicationFixture builds the real release script in a clean tagged checkout and installs fake GitHub and registry processes on PATH.
+// publicationFixture runs the real release build command in a clean tagged checkout and installs fake GitHub and registry processes on PATH.
 func publicationFixture(t *testing.T, version string) publicationTestFixture {
 	t.Helper()
 	root := releaseRepositoryOrSkip(t)
@@ -653,12 +618,10 @@ func publicationFixture(t *testing.T, version string) publicationTestFixture {
 	commit := ciCommit(t, checkout)
 	runGit(t, checkout, "tag", "v"+version)
 	f := publicationTestFixture{checkout: checkout, output: t.TempDir(), services: t.TempDir(), version: version, commit: commit}
-	command := exec.Command("bash", filepath.Join(checkout, "scripts/release.sh"), version, f.output)
-	setReleaseTestDirectoryAndEnvironment(command, checkout)
-	if output, err := command.CombinedOutput(); err != nil {
+	if output, err := releaseCommandForVersion(t, checkout, version, f.output).CombinedOutput(); err != nil {
 		t.Fatalf("publication build: %v\n%s", err, output)
 	}
-	command = exec.Command("go", "build", "-o", filepath.Join(f.services, "tools"), "testdata/publication-tools.go")
+	command := exec.Command("go", "build", "-o", filepath.Join(f.services, "tools"), "testdata/publication-tools.go")
 	command.Env = releaseTestEnvironment()
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("publication external fixture: %v\n%s", err, output)

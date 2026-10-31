@@ -77,14 +77,18 @@ type Effects struct {
 	Stdin io.Reader
 	// HomeDirectory is evaluated only by a verified agent worker. Tests use a
 	// temporary directory; production uses the sandbox's fixed home volume.
-	HomeDirectory        func() (string, error)
-	Identity             func() Identity
-	Groups               func() ([]int, error)
-	UIDs                 func() (real, effective, saved int)
-	GIDs                 func() (real, effective, saved int)
-	Start                func(Process) error
-	Reexec               func(Process) error
-	ReadFile             func(string) ([]byte, error)
+	HomeDirectory func() (string, error)
+	Identity      func() Identity
+	Groups        func() ([]int, error)
+	UIDs          func() (real, effective, saved int)
+	GIDs          func() (real, effective, saved int)
+	Start         func(Process) error
+	Reexec        func(Process) error
+	ReadFile      func(string) ([]byte, error)
+	// LookPath resolves a program on PATH; record-versions probes optional toolchains with it.
+	LookPath func(string) (string, error)
+	// WriteFile writes a whole file with a mode; record-versions writes the versions manifest with it.
+	WriteFile            func(string, []byte, os.FileMode) error
 	ReplaceAuthorizedKey func([]byte) error
 	RemoveAuthorizedKey  func() error
 	// Spawn starts a process without waiting for it; the service supervisor uses it for the service.
@@ -117,8 +121,11 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 		return azureBrowser(args[1], args[2], stdout, stderr, effects)
 	}
 	if len(args) == 1 && args[0] == "version" {
-		fmt.Fprintln(stdout, "sandboxed-agents-manager development")
+		fmt.Fprintln(stdout, managerVersionLine)
 		return 0
+	}
+	if len(args) == 1 && args[0] == "record-versions" {
+		return recordVersions(stdout, stderr, effects)
 	}
 	if status, handled := sshAdministration(args, stdout, stderr, effects); handled {
 		return status
@@ -178,7 +185,7 @@ func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) in
 		}
 	}
 
-	forms := append([]string{"version", "sessions", "ssh-host-key", "ssh-authorize KEY", "ssh-deauthorize"}, catalog.Default.ConfigUsage()...)
+	forms := append([]string{"version", "record-versions", "sessions", "ssh-host-key", "ssh-authorize KEY", "ssh-deauthorize"}, catalog.Default.ConfigUsage()...)
 	forms = append(forms, catalog.Default.LoginUsage()...)
 	fmt.Fprintln(stderr, "usage: sandboxed-agents-manager "+strings.Join(forms, " | "))
 	return 2

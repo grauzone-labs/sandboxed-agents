@@ -56,7 +56,7 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Install the verified publication tools
         shell: bash
-        run: bash scripts/setup-release-gh.sh
+        run: go run ./internal/release/cmd/setup-gh
       - name: Install npm with trusted publishing support
         if: ${{ !contains(github.ref_name, '-preview.') }}
         run: npm install --global npm@11.5.1
@@ -70,7 +70,7 @@ jobs:
           version=${RELEASE_TAG#v}
           base_version=${version%%-preview.*}
           git show "$GITHUB_SHA:docs/release-notes/$base_version.md" | grep '[^[:space:]]' > /dev/null
-          bash scripts/release.sh "$version" "$RUNNER_TEMP/release-output"
+          go run ./internal/release/cmd/build-release "$version" "$RUNNER_TEMP/release-output"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
       - name: Gate the rebuilt stable asset hash before any publication
         if: ${{ !contains(github.ref_name, '-preview.') }}

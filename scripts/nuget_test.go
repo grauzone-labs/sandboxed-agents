@@ -118,7 +118,7 @@ func TestNuGetWindowsRegistryHarnessRequiresOptIn(t *testing.T) {
 	}
 }
 
-// TestReleaseRefusesIgnoredNuGetInputs proves ignored NuGet tooling cannot enter a tagged release through the release script's clean-input guard.
+// TestReleaseRefusesIgnoredNuGetInputs proves ignored NuGet tooling cannot enter a tagged release through the release build command's clean-input guard.
 func TestReleaseRefusesIgnoredNuGetInputs(t *testing.T) {
 	checkout := createReleaseRepository(t, releaseRepositoryOrSkip(t))
 	tagReleaseRepository(t, checkout)
@@ -126,16 +126,14 @@ func TestReleaseRefusesIgnoredNuGetInputs(t *testing.T) {
 	assertReleaseRefused(t, checkout, "release refuses ignored release inputs")
 }
 
-// TestReleaseRefusesMalformedVersionsBeforeArtifacts proves release.sh rejects versions outside the NuGet version syntax before creating an output directory or executable.
+// TestReleaseRefusesMalformedVersionsBeforeArtifacts proves the release build command rejects versions outside the NuGet version syntax before creating an output directory or executable.
 func TestReleaseRefusesMalformedVersionsBeforeArtifacts(t *testing.T) {
 	checkout := createReleaseRepository(t, releaseRepositoryOrSkip(t))
 	runGit(t, checkout, "tag", "v1.0")
 	for _, version := range []string{"1.0", "1.2.3-preview..1", "1.2.3+build..5", "01.2.3", "1.02.3", "1.2.03", "1.2.3-preview.01", "1.2.3-01"} {
 		t.Run(version, func(t *testing.T) {
 			output := filepath.Join(t.TempDir(), "release")
-			command := exec.Command(releaseBash(t), filepath.ToSlash(filepath.Join(checkout, "scripts/release.sh")), version, filepath.ToSlash(output))
-			setReleaseTestDirectoryAndEnvironment(command, checkout)
-			result, err := command.CombinedOutput()
+			result, err := releaseCommandForVersion(t, checkout, version, output).CombinedOutput()
 			if err == nil {
 				t.Fatalf("malformed version was accepted: %s", result)
 			}
@@ -197,15 +195,13 @@ func TestNuGetPackageRejectsNumericLeadingZeros(t *testing.T) {
 	}
 }
 
-// TestNuGetPackageFilenameOmitsBuildMetadata proves release.sh names the package with its normalized version while preserving build metadata in the NuGet manifest.
+// TestNuGetPackageFilenameOmitsBuildMetadata proves the release build command names the package with its normalized version while preserving build metadata in the NuGet manifest.
 func TestNuGetPackageFilenameOmitsBuildMetadata(t *testing.T) {
 	checkout := createReleaseRepository(t, releaseRepositoryOrSkip(t))
 	version := "1.2.3-preview.1+build.01"
 	runGit(t, checkout, "tag", "v"+version)
 	output := t.TempDir()
-	command := exec.Command(releaseBash(t), filepath.ToSlash(filepath.Join(checkout, "scripts/release.sh")), version, filepath.ToSlash(output))
-	setReleaseTestDirectoryAndEnvironment(command, checkout)
-	if result, err := command.CombinedOutput(); err != nil {
+	if result, err := releaseCommandForVersion(t, checkout, version, output).CombinedOutput(); err != nil {
 		t.Fatalf("release build: %v\n%s", err, result)
 	}
 	archive, err := zip.OpenReader(filepath.Join(output, "SandboxedAgents.1.2.3-preview.1.nupkg"))
@@ -294,12 +290,11 @@ func TestNuGetCommandPackage(t *testing.T) {
 	}
 }
 
-// TestWindowsNuGetCommandPackageLifecycle proves a NuGet command package built with configured Git for Windows Bash installs and removes its command through the extracted PowerShell scripts, and reports its version through the real Windows executable, with a custom directory and no PATH update.
+// TestWindowsNuGetCommandPackageLifecycle proves a NuGet command package built by the release build command on Windows installs and removes its command through the extracted PowerShell scripts, and reports its version through the real Windows executable, with a custom directory and no PATH update.
 func TestWindowsNuGetCommandPackageLifecycle(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("NuGet command package executable lifecycle requires Windows")
 	}
-	releaseBash(t)
 	pwsh, err := exec.LookPath("pwsh")
 	if err != nil {
 		t.Fatal("NuGet command package lifecycle requires PowerShell 7 (pwsh)")

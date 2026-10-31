@@ -76,7 +76,7 @@ func publish(args []string) error {
 	flags.StringVar(&p.tag, "tag", "", "immutable vX.Y.Z[-preview.YYYYMMDD.N] tag")
 	flags.StringVar(&p.repository, "repository", "", "GitHub owner/repository")
 	flags.StringVar(&p.commit, "commit", "", "full tagged commit SHA")
-	flags.StringVar(&p.directory, "directory", "", "release.sh output directory")
+	flags.StringVar(&p.directory, "directory", "", "build-release output directory")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
