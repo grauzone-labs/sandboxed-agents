@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -99,23 +100,56 @@ func (host liveHost) assertSSHServer(t *testing.T, name, hostKey string) {
 	t.Fatalf("no completed Ed25519 key exchange for %s on recorded port %s:\n%s", name, port, diagnostics)
 }
 
-// sshHostKey exercises the same administrative query used by SSH setup immediately after startup.
+// Bounds of the live host-key query. The manager waits up to two seconds for the
+// entrypoint's ssh-keygen to publish the key, and podman exec start-up comes on
+// top of that wait. The bounds match the CLI's first read-only manager attempt
+// (a 10 s budget with 1 s of it kept for draining output), so the helper waits
+// for the manager's own answer instead of killing the query first.
+const (
+	liveHostKeyTimeout   = 9 * time.Second
+	liveHostKeyWaitDelay = time.Second
+)
+
+// sshHostKey exercises the same administrative query used by SSH setup immediately after startup
+// and fails the test with readSSHHostKey's diagnostics when the query does not return a key.
 func (host liveHost) sshHostKey(t *testing.T, name string) string {
 	t.Helper()
-	args, err := cli.ManagerQueryArgs(cli.DerivedNames(host.group, name).Container, "/usr/local/bin/sandboxed-agents-manager", "ssh-host-key")
+	key, err := host.readSSHHostKey(name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	return key
+}
+
+// readSSHHostKey runs the manager's ssh-host-key query in sandbox name within liveHostKeyTimeout,
+// keeping liveHostKeyWaitDelay after the process ends or is killed to drain its output, and
+// returns the single Ed25519 key line from stdout. A failure names the elapsed time, the process
+// result, and the manager's stdout and stderr, so a manager error is not mistaken for a timeout.
+func (host liveHost) readSSHHostKey(name string) (string, error) {
+	args, err := cli.ManagerQueryArgs(cli.DerivedNames(host.group, name).Container, "/usr/local/bin/sandboxed-agents-manager", "ssh-host-key")
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), liveHostKeyTimeout)
 	defer cancel()
 	command := host.podmanCommand(ctx, args...)
-	command.WaitDelay = time.Second
-	output, err := command.CombinedOutput()
-	key := strings.TrimSpace(string(output))
-	if err != nil || !strings.HasPrefix(key, "ssh-ed25519 ") {
-		t.Fatalf("read live SSH host key for %s: %v\n%s", name, err, output)
+	command.WaitDelay = liveHostKeyWaitDelay
+	var stdout, stderr bytes.Buffer
+	started := time.Now()
+	err = capture.Run(command, &stdout, &stderr)
+	elapsed := time.Since(started).Round(time.Millisecond)
+	if err != nil && ctx.Err() != nil {
+		err = fmt.Errorf("%w (%v)", ctx.Err(), err)
 	}
-	return key
+	key := strings.TrimSpace(stdout.String())
+	if err == nil && strings.HasPrefix(key, "ssh-ed25519 ") && !strings.ContainsAny(key, "\r\n") {
+		return key, nil
+	}
+	if err == nil {
+		err = errors.New("manager printed no single Ed25519 public key")
+	}
+	return "", fmt.Errorf("read live SSH host key for %s after %s (deadline %s, output drain %s): %w\nmanager stdout: %q\nmanager stderr: %q",
+		name, elapsed, liveHostKeyTimeout, liveHostKeyWaitDelay, err, stdout.String(), stderr.String())
 }
 
 // buildLiveExecutable compiles the host executable with the embedded manager
