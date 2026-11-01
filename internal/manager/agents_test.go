@@ -456,6 +456,7 @@ func TestAgentStatusUsesOnlyUsableWorkerProbe(t *testing.T) {
 		{`{"other":true}`, nil, "unknown"},
 		{`not json`, nil, "unknown"},
 		{`{"loggedIn":true}`, fmt.Errorf("probe failed"), "unknown"},
+		{`{"loggedIn":false}`, childExit(1), "unknown"},
 	} {
 		calls := 0
 		e.Start = func(p manager.Process) error { return nil }
@@ -1027,9 +1028,10 @@ func TestAgentStatusBoundsHangingProbe(t *testing.T) {
 	t.Cleanup(func() { catalog.Default.Agents["codex"] = original })
 	home, version, installs := t.TempDir(), "1.0.0", 0
 	e := agentEffects(t, home, &version, &installs)
-	runAgents(t, e, 0, "enable", "codex")
+	runAgents(t, e, 0, "enable", "codex", "--version", "1.0.0")
 	e.Start = func(p manager.Process) error {
 		if p.Program == "tmux" {
+			fmt.Fprintln(p.Stdout, "codex")
 			return nil
 		}
 		return fmt.Errorf("probe must use cancellable spawn")
@@ -1054,7 +1056,7 @@ func TestAgentStatusBoundsHangingProbe(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &status); err != nil {
 		t.Fatal(err)
 	}
-	if status.SignedIn != "unknown" || !status.Enabled || status.InstalledVersion != "1.0.0" || diagnostic.Len() != 0 || strings.Contains(out.String(), "private") {
+	if status.SignedIn != "unknown" || !status.Enabled || !status.Session || status.Pin != "1.0.0" || status.InstalledVersion != "1.0.0" || diagnostic.Len() != 0 || strings.Contains(out.String(), "private") {
 		t.Fatalf("status=%+v output=%s diagnostics=%s", status, out.String(), diagnostic.String())
 	}
 }
