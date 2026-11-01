@@ -20,10 +20,12 @@ type Install struct {
 	Package string
 }
 
-// Probe declares a boolean field in an agent command's JSON authentication status.
+// Probe declares a read-only JSON authentication query and any documented signed-out exit.
 type Probe struct {
 	Args         []string
 	BooleanField string
+	// SignedOutExitCode permits this nonzero exit only with an explicit false BooleanField; zero accepts only successful probes.
+	SignedOutExitCode int
 }
 
 // Agent is shared installation and workflow data. Undelivered entries are unknown.

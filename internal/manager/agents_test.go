@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -446,23 +447,28 @@ func TestAgentStatusUsesOnlyUsableWorkerProbe(t *testing.T) {
 	}{
 		{`{"loggedIn":true}`, nil, "yes"},
 		{`{"loggedIn":false}`, nil, "no"},
+		{`{"loggedIn":true,"loggedIn":false}`, nil, "unknown"},
+		{`null`, nil, "unknown"},
+		{`{"loggedIn":null}`, nil, "unknown"},
+		{`{"loggedIn":false} trailing`, nil, "unknown"},
+		{`{"loggedIn":true,"private":"` + strings.Repeat("x", 65536) + `"}`, nil, "unknown"},
 		{`{"loggedIn":"true"}`, nil, "unknown"},
 		{`{"other":true}`, nil, "unknown"},
 		{`not json`, nil, "unknown"},
 		{`{"loggedIn":true}`, fmt.Errorf("probe failed"), "unknown"},
 	} {
 		calls := 0
-		e.Start = func(p manager.Process) error {
-			if p.Program == "tmux" {
-				return nil
-			}
+		e.Start = func(p manager.Process) error { return nil }
+		e.Spawn = func(p manager.Process) (manager.Child, error) {
 			calls++
 			if p.Program != filepath.Join(home, ".local", "bin", "codex") || p.Identity != (manager.Identity{UID: 1000, GID: 1000}) || strings.Join(p.Args, " ") != "auth status --json" {
 				t.Fatalf("probe process=%+v", p)
 			}
 			fmt.Fprint(p.Stdout, tc.output)
 			fmt.Fprint(p.Stderr, "ignored authentication diagnostics")
-			return tc.failure
+			c := &fakeChild{exited: make(chan struct{})}
+			c.end(tc.failure)
+			return c, nil
 		}
 		root := noProcesses(t, manager.Identity{UID: 0, GID: 0})
 		root.Reexec = func(p manager.Process) error {
@@ -477,6 +483,22 @@ func TestAgentStatusUsesOnlyUsableWorkerProbe(t *testing.T) {
 		}
 	}
 
+	e.Spawn = func(p manager.Process) (manager.Child, error) { return nil, fmt.Errorf("private start failure token") }
+	if got := readAgentStatus(t, e, "codex"); got.SignedIn != "unknown" {
+		t.Fatalf("failed start status=%+v", got)
+	}
+	definition.StatusProbe = nil
+	catalog.Default.Agents["codex"] = definition
+	e.Spawn = func(p manager.Process) (manager.Child, error) {
+		t.Error("missing probe started")
+		return nil, fmt.Errorf("missing")
+	}
+	if got := readAgentStatus(t, e, "codex"); got.SignedIn != "unknown" {
+		t.Fatalf("missing probe status=%+v", got)
+	}
+	definition.StatusProbe = &catalog.Probe{Args: []string{"auth", "status", "--json"}, BooleanField: "loggedIn"}
+	catalog.Default.Agents["codex"] = definition
+
 	command := filepath.Join(home, ".local", "bin", "codex")
 	previous, err := os.Readlink(command)
 	if err != nil {
@@ -488,11 +510,9 @@ func TestAgentStatusUsesOnlyUsableWorkerProbe(t *testing.T) {
 	if err := os.WriteFile(command, []byte("unmanaged command"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	e.Start = func(p manager.Process) error {
-		if p.Program != "tmux" {
-			t.Error("unmanaged probe started")
-		}
-		return nil
+	e.Spawn = func(p manager.Process) (manager.Child, error) {
+		t.Error("unmanaged probe started")
+		return nil, fmt.Errorf("unmanaged")
 	}
 	if got := readAgentStatus(t, e, "codex"); got.SignedIn != "unknown" {
 		t.Fatalf("unmanaged sign-in=%+v", got)
@@ -503,11 +523,9 @@ func TestAgentStatusUsesOnlyUsableWorkerProbe(t *testing.T) {
 	if err := os.Symlink(previous, command); err != nil {
 		t.Fatal(err)
 	}
-	e.Start = func(p manager.Process) error {
-		if p.Program != "tmux" {
-			t.Error("disabled probe started")
-		}
-		return nil
+	e.Spawn = func(p manager.Process) (manager.Child, error) {
+		t.Error("disabled probe started")
+		return nil, fmt.Errorf("disabled")
 	}
 	runAgents(t, e, 0, "disable", "codex")
 	if got := readAgentStatus(t, e, "codex"); got.SignedIn != "unknown" {
@@ -979,5 +997,99 @@ func TestFailedSelectionCommitPreservesRecoveredPrefix(t *testing.T) {
 				t.Fatalf("failed publication changed selection: %+v", got)
 			}
 		})
+	}
+}
+
+// authProbeChild simulates a hanging OS process until its process group is killed.
+type authProbeChild struct{ done chan struct{} }
+
+// PID returns the fake probe's process identifier.
+func (c authProbeChild) PID() int { return 123 }
+
+// Wait blocks until the probe is killed.
+func (c authProbeChild) Wait() error { <-c.done; return fmt.Errorf("probe killed") }
+
+// Signal terminates the fake probe and verifies group cleanup uses SIGKILL.
+func (c authProbeChild) Signal(signal os.Signal) error {
+	if signal != syscall.SIGKILL {
+		return fmt.Errorf("unexpected signal")
+	}
+	close(c.done)
+	return nil
+}
+
+// TestAgentStatusBoundsHangingProbe proves a hanging probe returns unknown privately before the host deadline at RunWithEffects.
+func TestAgentStatusBoundsHangingProbe(t *testing.T) {
+	original := catalog.Default.Agents["codex"]
+	definition := original
+	definition.StatusProbe = &catalog.Probe{Args: []string{"auth", "status", "--json"}, BooleanField: "loggedIn"}
+	catalog.Default.Agents["codex"] = definition
+	t.Cleanup(func() { catalog.Default.Agents["codex"] = original })
+	home, version, installs := t.TempDir(), "1.0.0", 0
+	e := agentEffects(t, home, &version, &installs)
+	runAgents(t, e, 0, "enable", "codex")
+	e.Start = func(p manager.Process) error {
+		if p.Program == "tmux" {
+			return nil
+		}
+		return fmt.Errorf("probe must use cancellable spawn")
+	}
+	calls := 0
+	e.Spawn = func(p manager.Process) (manager.Child, error) {
+		calls++
+		if !p.ProcessGroup || p.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
+			t.Errorf("probe must be an agent process group")
+		}
+		fmt.Fprint(p.Stdout, `{"loggedIn":true,"secret":"private-token"}`)
+		fmt.Fprint(p.Stderr, "private diagnostics")
+		return authProbeChild{done: make(chan struct{})}, nil
+	}
+	started := time.Now()
+	var out, diagnostic bytes.Buffer
+	code := manager.RunWithEffects([]string{"agents", "status", "codex"}, &out, &diagnostic, e)
+	if code != 0 || calls != 1 || time.Since(started) >= 2500*time.Millisecond {
+		t.Fatalf("status=%d calls=%d duration=%s diagnostics=%s", code, calls, time.Since(started), diagnostic.String())
+	}
+	var status manager.AgentStatus
+	if err := json.Unmarshal(out.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.SignedIn != "unknown" || !status.Enabled || status.InstalledVersion != "1.0.0" || diagnostic.Len() != 0 || strings.Contains(out.String(), "private") {
+		t.Fatalf("status=%+v output=%s diagnostics=%s", status, out.String(), diagnostic.String())
+	}
+}
+
+// TestClaudeStatusRecognizesDocumentedSignedOutExit proves only Claude's explicit false result with exit 1 means signed out at RunWithEffects.
+func TestClaudeStatusRecognizesDocumentedSignedOutExit(t *testing.T) {
+	home, version, installs := t.TempDir(), "2.1.316", 0
+	e := agentEffects(t, home, &version, &installs)
+	runAgents(t, e, 0, "enable", "claude")
+	e.Start = func(p manager.Process) error { return nil }
+	for _, tc := range []struct {
+		output string
+		err    error
+		want   string
+	}{
+		{`{"loggedIn":true}`, nil, "yes"},
+		{`{"loggedIn":false}`, childExit(1), "no"},
+		{`{"loggedIn":false}`, nil, "unknown"},
+		{`{"loggedIn":true}`, childExit(1), "unknown"},
+		{`{"loggedIn":false}`, childExit(2), "unknown"},
+		{`{"loggedIn":false}`, fmt.Errorf("private failure"), "unknown"},
+		{`not json`, childExit(1), "unknown"},
+	} {
+		e.Spawn = func(p manager.Process) (manager.Child, error) {
+			if strings.Join(p.Args, " ") != "auth status --json" {
+				t.Fatalf("probe args=%q", p.Args)
+			}
+			fmt.Fprint(p.Stdout, tc.output)
+			fmt.Fprint(p.Stderr, "private account details")
+			c := &fakeChild{exited: make(chan struct{})}
+			c.end(tc.err)
+			return c, nil
+		}
+		if got := readAgentStatus(t, e, "claude"); got.SignedIn != tc.want {
+			t.Fatalf("result=%s err=%v signed_in=%s want=%s", tc.output, tc.err, got.SignedIn, tc.want)
+		}
 	}
 }

@@ -1,7 +1,6 @@
 package manager
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -160,18 +159,7 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 		command := commandPath(home, r.definition)
 		previous, linkError := managedCommandLink(command, installationCommand(root, current, r.definition))
 		if enabled && r.definition.StatusProbe != nil && linkError == nil && previous != "" {
-			probe := r.definition.StatusProbe
-			var output bytes.Buffer
-			err := effects.Start(Process{Program: command, Args: probe.Args, Identity: agentIdentity, Stdout: &output, Stderr: io.Discard})
-			var fields map[string]any
-			if err == nil && json.Unmarshal(output.Bytes(), &fields) == nil {
-				if signedIn, valid := fields[probe.BooleanField].(bool); valid {
-					status.SignedIn = "no"
-					if signedIn {
-						status.SignedIn = "yes"
-					}
-				}
-			}
+			status.SignedIn = probeAgentStatus(command, r.definition.StatusProbe, effects)
 		}
 		return exitStatus(json.NewEncoder(stdout).Encode(status), stderr)
 	case "disable":
