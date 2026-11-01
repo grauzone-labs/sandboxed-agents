@@ -12,7 +12,7 @@ The manager installs and works on agents as `agent` (UID and GID 1000), never as
 
 Installation changes (`enable`, `update`, `disable`) and session changes (starting or stopping an agent session) take the manager lock, so only one runs at a time in a sandbox. The lock is exclusive and nonblocking, the same rule [ADR 0007](adr/0007-serialize-sandbox-lifecycle-commands.md) sets for lifecycle commands. A change that finds another agent or Tool change in progress does not wait. It exits non-zero, says that another agent or tool change is in progress, and tells you to retry. Nothing retries automatically: run the command again once the first one has finished, and scripts that change agents in parallel must retry themselves. Attaching to a running session, `agents run`, and `agents login` do not take the lock.
 
-`agents status` and `list` do not take the lock. They read the agent selection as one consistent snapshot and stay responsive while an npm install runs (`status` may also run the status probe). The snapshot only contains committed installations. While a first `enable` is still running, the agent is not in the snapshot yet: `status` reports it as not enabled and `list` omits it until the installation finishes. While an `update` or other replacement is running, the snapshot still shows the previously committed installation and version, not an absence, until the replacement commits.
+`agents status` and `list` do not take the lock. They read the agent selection as one consistent snapshot and stay responsive while an npm install runs (`status` may also run the status probe, which ends after one second at most). The snapshot only contains committed installations. While a first `enable` is still running, the agent is not in the snapshot yet: `status` reports it as not enabled and `list` omits it until the installation finishes. While an `update` or other replacement is running, the snapshot still shows the previously committed installation and version, not an absence, until the replacement commits.
 
 The agent selection and its pins live in the sandbox's home data. They survive `stop` and `start`, and the host keeps no copy.
 
@@ -38,7 +38,16 @@ If an enabled agent's command is missing or does not match its selection entry, 
 sandboxed-agents agents status agent01 claude
 ```
 
-This reports whether the agent is enabled, its installed version, its pin, whether an [agent session](#keep-an-agent-running-in-a-session) of the agent is running, and, for agents whose catalog entry has a status probe, whether it is signed in. None of the four delivered agents declares a status probe today, so `signed in` shows `unknown` for all of them; use the agent's own status command in `shell NAME` to confirm a login. The probe runs as `agent` in the same worker as installation, so the agent's command never starts as container root. The probe runs only when the agent's command link is the one the selection records; if the command is missing, mismatched, or not a managed link, `status` still reports the selection and shows signed in as `unknown`. See [Recover from an interrupted change](#recover-from-an-interrupted-change).
+This reports whether the agent is enabled, its installed version, its pin, whether an [agent session](#keep-an-agent-running-in-a-session) of the agent is running, and whether it is signed in:
+
+| Agent | `signed in` |
+| --- | --- |
+| `claude` | `yes` when Claude Code reports a login, `no` when it reports that it is signed out, `unknown` otherwise |
+| `codex`, `copilot`, `opencode` | Always `unknown`; use the agent's own command in `shell NAME` to confirm a login |
+
+`signed in` says that authentication is configured in the sandbox, not that the credential still works: a revoked or expired token can still show `yes`. Claude's answer comes from `claude auth status --json`, run as `agent` in the same worker as installation, so the agent's command never starts as container root. The check reads stored state only. It starts no login and refreshes no token, and it never prints the account details it reads. If the command does not answer within one second, the status is `unknown`. A pin that selects a Claude Code version without the command or with a different output also gives `unknown`, never `no`. The other three agents offer no command that is both documented and read-only, which [Agent status probes](agent-status-probes.md) shows with the version and documentation of each.
+
+The probe runs only when the agent's command link is the one the selection records; if the command is missing, mismatched, or not a managed link, `status` still reports the selection and shows signed in as `unknown`. See [Recover from an interrupted change](#recover-from-an-interrupted-change).
 
 ## Update an agent
 
@@ -187,7 +196,8 @@ sandboxed-agents list
 ## Limits
 
 - `agents login` runs only the workflows the catalog records; it cannot pass options to an agent's login command. Use `agents run NAME AGENT ...` to start any other command of the agent, including other authentication commands, but `agents run` does not guard a running session or take the manager lock.
-- No delivered agent has a status probe, so `agents status` cannot tell whether an agent is signed in.
+- Only `claude` has a status probe. `agents status` shows `signed in unknown` for `codex`, `copilot`, and `opencode`, and for `claude` when its command is unavailable, slow, or older than the documented output ([why](agent-status-probes.md)).
+- `signed in yes` means that the agent reports configured authentication; it does not show that the token is still valid or that the account can use the agent.
 - The sandbox publishes no port beyond SSH, so a login that waits for a browser callback inside the sandbox needs a port forward over SSH ([SSH access](ssh.md)).
 - Installation changes are not crash-consistent. `--force` repairs a missing or mismatched managed command link as described under [Recover from an interrupted change](#recover-from-an-interrupted-change), but the manager has no complete recovery protocol for interrupted changes.
-- Sign-ins are checked by hand only: the live suite enables an agent, starts, detaches, and stops its session, but signs in nowhere ([releases](releases.md#live-suite)), and the logins are items of the [manual checklist](manual-checklist.md).
+- Sign-ins are checked by hand only: the live suite enables an agent, starts, detaches, and stops its session, but signs in nowhere ([releases](releases.md#live-suite)), and the logins are items of the [manual checklist](manual-checklist.md), which also holds the pending live check of Claude's `signed in` answers.

@@ -103,7 +103,7 @@ sandboxed-agents agents enable agent01 claude
 sandboxed-agents agents status agent01 claude
 ```
 
-**Expected:** `enable` prints `claude enabled: version ...`, and `status` prints `claude: enabled; version ...; pin none; session false; signed in unknown`.
+**Expected:** `enable` prints `claude enabled: version ...`, and `status` prints `claude: enabled; version ...; pin none; session false; signed in no`, because you have not signed in yet. `signed in unknown` instead means that Claude Code could not answer in time or offers no status command in this version; continue with step 8 either way.
 
 **If it fails:** the output names the cause and, when the manager does not answer, `check agent01` for diagnosis; then run `restart agent01 --force`, because `restart` cannot rule out running sessions while the manager is silent. Fix the cause, for example missing network access in the sandbox, and run the `enable` command again.
 
@@ -115,7 +115,7 @@ The command needs an interactive terminal. It prints a URL; open it in a browser
 sandboxed-agents agents login agent01 claude
 ```
 
-**Expected:** the agent confirms the sign-in, and the command exits without `agents login failed`.
+**Expected:** the agent confirms the sign-in, and the command exits without `agents login failed`. Then `sandboxed-agents agents status agent01 claude` shows `signed in yes`; `unknown` means that Claude Code did not answer in time, and a second `status` usually answers. The status reports that a login is configured, not that it is valid; the session in step 9 shows that it works.
 
 **If it fails:** the command prints `agents login failed` after the agent's own output. Read that output, then run the command again.
 
