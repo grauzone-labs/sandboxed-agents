@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
 	"io"
 	"os"
 	"os/exec"
@@ -17,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
 )
 
 // TestAzureBrowserRequiresSSHSetup proves missing host setup refuses before any login or terminal check through the host CLI seam.

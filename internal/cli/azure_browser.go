@@ -206,12 +206,7 @@ func runAzureBrowser(request Request, p podmanTarget, stdin io.Reader, stdout, s
 		return 1, output.err
 	}
 	if len(output.pending) > 0 {
-		if callbackPrefix(output.pending) {
-			return 1, fmt.Errorf("incomplete Azure browser callback record")
-		}
-		if _, writeErr := stdout.Write(output.pending); writeErr != nil {
-			return 1, writeErr
-		}
+		return 1, fmt.Errorf("incomplete Azure browser callback record")
 	}
 	if tunnel != nil {
 		select {
