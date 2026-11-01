@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -117,6 +118,14 @@ func TestHelperProcess(t *testing.T) {
 		os.Exit(0)
 	case "wait":
 		waitForRelease()
+		os.Exit(0)
+	case "input-handle-mode":
+		fmt.Fprint(os.Stdout, inputHandleMode())
+		os.Exit(0)
+	case "echo-input":
+		if _, err := io.Copy(os.Stdout, os.Stdin); err != nil {
+			os.Exit(125)
+		}
 		os.Exit(0)
 	case "handle-modes":
 		fmt.Fprint(os.Stdout, handleModes())
@@ -437,5 +446,33 @@ func TestRunOwnedNormalExitLeavesDetachedWork(t *testing.T) {
 	last, _ := os.ReadFile(release + ".heartbeat")
 	if string(first) == string(last) {
 		t.Fatal("normal completion killed detached work")
+	}
+}
+
+// TestInputPipeDeliversDataAndEOF proves a child receives bytes and input closure through the capture process seam.
+func TestInputPipeDeliversDataAndEOF(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	command := helper(ctx, t, "echo-input")
+	reader, writer, err := capture.InputPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	command.Stdin = reader
+	var out bytes.Buffer
+	wait, err := capture.Start(command, &out, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader.Close()
+	_, writeErr := io.WriteString(writer, "callback session input")
+	writer.Close()
+	if err := wait(); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if writeErr != nil || out.String() != "callback session input" {
+		t.Fatalf("write=%v output=%q", writeErr, &out)
 	}
 }

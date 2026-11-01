@@ -29,3 +29,6 @@ func newCapturePipe() (*outputPipe, error) {
 	}
 	return &outputPipe{parent: parent, child: child}, nil
 }
+
+// newInputPipe supplies an ordinary child input pipe on hosts without Windows handle requirements.
+func newInputPipe() (*os.File, *os.File, error) { return os.Pipe() }

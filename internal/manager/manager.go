@@ -114,8 +114,8 @@ type Effects struct {
 // RunWithEffects returns the manager command's exit status at injected OS seams.
 // Version answers without identity checks. Root session queries re-exec a
 // trusted agent worker; only a verified agent identity may reach tmux.
-// The internal __azure-browser callback verifies agent identity and prints the
-// SSH tunnel and browser URL without starting another process.
+// The internal __azure-browser callback verifies agent identity and emits the
+// callback record that lets the host establish forwarding before showing the URL.
 func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) int {
 	if len(args) == 3 && args[0] == "__azure-browser" {
 		return azureBrowser(args[1], args[2], stdout, stderr, effects)

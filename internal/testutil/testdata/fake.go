@@ -24,6 +24,7 @@ type scriptedResponse struct {
 	Stderr             string
 	Exit               int
 	ReadyFile, WaitFor string
+	PIDFile            string
 	HoldOutputUntil    string
 	ExpectedStdin      string
 	EchoStdin          bool
@@ -189,6 +190,12 @@ func main() {
 				os.Exit(125)
 			}
 			if err := child.Process.Release(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(125)
+			}
+		}
+		if response.PIDFile != "" {
+			if err := os.WriteFile(response.PIDFile, []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(125)
 			}

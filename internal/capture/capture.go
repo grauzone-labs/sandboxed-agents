@@ -14,6 +14,7 @@ package capture
 
 import (
 	"io"
+	"os"
 	"os/exec"
 )
 
@@ -25,3 +26,8 @@ func Run(command *exec.Cmd, stdout, stderr io.Writer) error {
 	}
 	return wait()
 }
+
+// InputPipe returns a child input reader and parent writer whose handles support asynchronous
+// completion on Windows. The caller assigns reader to command.Stdin, closes its copy after
+// starting the command, and closes writer when the child should receive EOF.
+func InputPipe() (reader, writer *os.File, err error) { return newInputPipe() }

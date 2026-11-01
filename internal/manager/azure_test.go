@@ -2,6 +2,7 @@ package manager_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -44,14 +45,16 @@ func TestAzureBrowserLoginUsesBrowserFlow(t *testing.T) {
 	}
 }
 
-// TestAzureBrowserCallbackPrintsTunnelBeforeURL proves the browser adapter derives the redirect port and shows the tunnel before the URL at the manager command seam.
-func TestAzureBrowserCallbackPrintsTunnelBeforeURL(t *testing.T) {
-	for _, url := range []string{"https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A43123&state=example", "http://localhost:43123?welcome=true"} {
+// TestAzureBrowserCallbackEmitsForwardingRequest proves the adapter supplies the actual authorization URL to the host without manual instructions through the manager command seam.
+func TestAzureBrowserCallbackEmitsForwardingRequest(t *testing.T) {
+	for _, address := range []string{"https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A43123&state=example", "http://localhost:43123?welcome=true"} {
 		var out bytes.Buffer
-		status := manager.RunWithEffects([]string{"__azure-browser", "agent01.team", url}, &out, &out, noProcesses(t, manager.Identity{UID: 1000, GID: 1000}))
-		tunnel := "ssh -N -L 127.0.0.1:43123:127.0.0.1:43123 -o ExitOnForwardFailure=yes agent01.team"
-		if status != 0 || !strings.Contains(out.String(), tunnel) || strings.Index(out.String(), tunnel) > strings.Index(out.String(), url) {
-			t.Fatalf("status=%d output=%s", status, &out)
+		status := manager.RunWithEffects([]string{"__azure-browser", "agent01.team", address}, &out, &out, noProcesses(t, manager.Identity{UID: 1000, GID: 1000}))
+		var got string
+		record, ok := strings.CutPrefix(out.String(), "\x1eSANDBOXED_AGENTS_AZURE_BROWSER ")
+		err := json.Unmarshal([]byte(record), &got)
+		if status != 0 || !ok || err != nil || got != address {
+			t.Fatalf("status=%d output=%q parsed=%q err=%v", status, &out, got, err)
 		}
 	}
 }
