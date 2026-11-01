@@ -148,7 +148,7 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 		slices.Sort(names)
 		return exitStatus(json.NewEncoder(stdout).Encode(names), stderr)
 	case "status":
-		status := AgentStatus{Name: r.name, Enabled: enabled, InstalledVersion: current.Version, Pin: current.Pin, SignedIn: "unknown"}
+		status := AgentStatus{Name: r.name, Enabled: enabled, InstalledVersion: current.Version, Pin: current.Pin, SignedIn: signedInUnknown}
 		if enabled {
 			names, err := readSessionNames(effects)
 			if err != nil {
