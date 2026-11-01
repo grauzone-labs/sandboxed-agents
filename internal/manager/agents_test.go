@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -1001,24 +1000,6 @@ func TestFailedSelectionCommitPreservesRecoveredPrefix(t *testing.T) {
 	}
 }
 
-// authProbeChild simulates a hanging OS process until its process group is killed.
-type authProbeChild struct{ done chan struct{} }
-
-// PID returns the fake probe's process identifier.
-func (c authProbeChild) PID() int { return 123 }
-
-// Wait blocks until the probe is killed.
-func (c authProbeChild) Wait() error { <-c.done; return fmt.Errorf("probe killed") }
-
-// Signal terminates the fake probe and verifies group cleanup uses SIGKILL.
-func (c authProbeChild) Signal(signal os.Signal) error {
-	if signal != syscall.SIGKILL {
-		return fmt.Errorf("unexpected signal")
-	}
-	close(c.done)
-	return nil
-}
-
 // TestAgentStatusBoundsHangingProbe proves a hanging probe returns unknown privately before the host deadline at RunWithEffects.
 func TestAgentStatusBoundsHangingProbe(t *testing.T) {
 	original := catalog.Default.Agents["codex"]
@@ -1037,6 +1018,7 @@ func TestAgentStatusBoundsHangingProbe(t *testing.T) {
 		return fmt.Errorf("probe must use cancellable spawn")
 	}
 	calls := 0
+	child := &fakeChild{exited: make(chan struct{}), ignoreTerm: true}
 	e.Spawn = func(p manager.Process) (manager.Child, error) {
 		calls++
 		if !p.ProcessGroup || p.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
@@ -1044,13 +1026,18 @@ func TestAgentStatusBoundsHangingProbe(t *testing.T) {
 		}
 		fmt.Fprint(p.Stdout, `{"loggedIn":true,"secret":"private-token"}`)
 		fmt.Fprint(p.Stderr, "private diagnostics")
-		return authProbeChild{done: make(chan struct{})}, nil
+		return child, nil
 	}
 	started := time.Now()
 	var out, diagnostic bytes.Buffer
 	code := manager.RunWithEffects([]string{"agents", "status", "codex"}, &out, &diagnostic, e)
 	if code != 0 || calls != 1 || time.Since(started) >= 2500*time.Millisecond {
 		t.Fatalf("status=%d calls=%d duration=%s diagnostics=%s", code, calls, time.Since(started), diagnostic.String())
+	}
+	select {
+	case <-child.exited:
+	default:
+		t.Error("timed-out probe was not killed")
 	}
 	var status manager.AgentStatus
 	if err := json.Unmarshal(out.Bytes(), &status); err != nil {
@@ -1072,8 +1059,8 @@ func TestClaudeStatusRecognizesDocumentedSignedOutExit(t *testing.T) {
 		err    error
 		want   string
 	}{
-		{`{"loggedIn":true}`, nil, "yes"},
-		{`{"loggedIn":false}`, childExit(1), "no"},
+		{`{"loggedIn":true,"account":"private@example.test","token":"private-token"}`, nil, "yes"},
+		{`{"loggedIn":false,"account":"private@example.test"}`, childExit(1), "no"},
 		{`{"loggedIn":false}`, nil, "unknown"},
 		{`{"loggedIn":true}`, childExit(1), "unknown"},
 		{`{"loggedIn":false}`, childExit(2), "unknown"},
@@ -1090,7 +1077,16 @@ func TestClaudeStatusRecognizesDocumentedSignedOutExit(t *testing.T) {
 			c.end(tc.err)
 			return c, nil
 		}
-		if got := readAgentStatus(t, e, "claude"); got.SignedIn != tc.want {
+		var out, diagnostic bytes.Buffer
+		code := manager.RunWithEffects([]string{"agents", "status", "claude"}, &out, &diagnostic, e)
+		if code != 0 || diagnostic.Len() != 0 || strings.Contains(out.String(), "private") {
+			t.Fatalf("status=%d output=%s diagnostics=%s", code, &out, &diagnostic)
+		}
+		var got manager.AgentStatus
+		if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.SignedIn != tc.want {
 			t.Fatalf("result=%s err=%v signed_in=%s want=%s", tc.output, tc.err, got.SignedIn, tc.want)
 		}
 	}

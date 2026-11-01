@@ -173,7 +173,7 @@ Part of `agent-login-claude`. `agents status` runs `claude auth status --json` a
 
 1. Right after step 1 of the Claude login and before any login, run `sandboxed-agents agents status chk-persist claude`. **Expected:** `signed in no`. Run it again after the cancelled login of step 2. **Expected:** still `signed in no`.
 2. After the completed login of step 3, run the same command. **Expected:** `signed in yes`. The output shows no account name, email address, or token.
-3. If either answer is `signed in unknown`, run the command once more. The probe ends after one second, so a busy host can give `unknown` once: that is the safe answer, never a failure of the sandbox. `unknown` on repeated runs fails the item, and so does `yes` before the login or `no` after it.
+3. If either answer is `signed in unknown`, run the command once more. The probe gives Claude one second to answer, plus up to 100 ms to end it, so a busy host can give `unknown` once: that is the safe answer, never a failure of the sandbox. `unknown` on repeated runs fails the item, and so does `yes` before the login or `no` after it.
 4. For a signed-out answer without touching `chk-persist`, use a disposable sandbox: `sandboxed-agents up chk-signout --with none`, `sandboxed-agents agents enable chk-signout claude`, `sandboxed-agents agents status chk-signout claude`. **Expected:** `signed in no`. Then `sandboxed-agents remove chk-signout --volumes`.
 
 A failure here is recorded under `agent-login-claude`.

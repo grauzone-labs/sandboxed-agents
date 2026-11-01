@@ -11,6 +11,13 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
+// Sign-in values preserve the manager and host status contract.
+const (
+	signedInUnknown = "unknown"
+	signedInYes     = "yes"
+	signedInNo      = "no"
+)
+
 // agentProbeTimeout leaves room for worker startup and transport within the host's three-second manager deadline.
 const agentProbeTimeout = time.Second
 
@@ -36,12 +43,12 @@ func (b *probeOutput) Write(p []byte) (int, error) {
 func probeAgentStatus(command string, probe *catalog.Probe, effects Effects) string {
 	deadline := time.Now().Add(agentProbeTimeout)
 	if effects.Spawn == nil {
-		return "unknown"
+		return signedInUnknown
 	}
 	var output probeOutput
 	child, err := effects.Spawn(Process{Program: command, Args: probe.Args, Identity: agentIdentity, ProcessGroup: true, Stdout: &output, Stderr: io.Discard})
 	if err != nil {
-		return "unknown"
+		return signedInUnknown
 	}
 	done := make(chan error, 1)
 	go func() { done <- child.Wait() }()
@@ -55,57 +62,57 @@ func probeAgentStatus(command string, probe *catalog.Probe, effects Effects) str
 		case <-done:
 		case <-time.After(100 * time.Millisecond):
 		}
-		return "unknown"
+		return signedInUnknown
 	}
 	probeError := err
 	if output.overflow || !time.Now().Before(deadline) {
-		return "unknown"
+		return signedInUnknown
 	}
 	fields := make(map[string]any)
 	decoder := json.NewDecoder(bytes.NewReader(output.buffer.Bytes()))
 	token, err := decoder.Token()
 	if err != nil || token != json.Delim('{') {
-		return "unknown"
+		return signedInUnknown
 	}
 	for decoder.More() {
 		token, err := decoder.Token()
 		if err != nil {
-			return "unknown"
+			return signedInUnknown
 		}
 		key, ok := token.(string)
 		if !ok {
-			return "unknown"
+			return signedInUnknown
 		}
 		if _, duplicate := fields[key]; duplicate {
-			return "unknown"
+			return signedInUnknown
 		}
 		var value any
 		if decoder.Decode(&value) != nil {
-			return "unknown"
+			return signedInUnknown
 		}
 		fields[key] = value
 	}
 	if _, err := decoder.Token(); err != nil {
-		return "unknown"
+		return signedInUnknown
 	}
 	if _, err := decoder.Token(); err != io.EOF {
-		return "unknown"
+		return signedInUnknown
 	}
 	signedIn, valid := fields[probe.BooleanField].(bool)
 	if !valid {
-		return "unknown"
+		return signedInUnknown
 	}
 	if !signedIn && probe.SignedOutExitCode != 0 && probeError == nil {
-		return "unknown"
+		return signedInUnknown
 	}
 	if probeError != nil {
 		var exit interface{ ExitCode() int }
 		if signedIn || probe.SignedOutExitCode == 0 || !errors.As(probeError, &exit) || exit.ExitCode() != probe.SignedOutExitCode {
-			return "unknown"
+			return signedInUnknown
 		}
 	}
 	if signedIn {
-		return "yes"
+		return signedInYes
 	}
-	return "no"
+	return signedInNo
 }
