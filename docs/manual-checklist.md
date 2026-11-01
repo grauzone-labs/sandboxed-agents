@@ -116,7 +116,7 @@ Every identifier maps to one runner command, or to none, and to the steps a pers
 | Identifier | Runner | A person |
 |---|---|---|
 | `agent-login-*` | none | the cancelled and the completed login, the answered prompt in a session |
-| `github-login`, `azure-login-device-code`, `azure-login-browser`, `azdo-token` | none; `persistence setup` records the Azure account by hash afterwards | the logins and the tunnel |
+| `github-login`, `azure-login-device-code`, `azure-login-browser`, `azdo-token` | none; `persistence setup` records the Azure account by hash afterwards | the logins and the browser |
 | `t3-connect-link`, `t3-qr-pair` | none | the T3 Connect login, link, unlink, and logout with the phone; the tailnet login, the QR pairing, and the second sandbox |
 | `vscode-remote-ssh` | `vscode prepare`, `vscode verify --file NAME`, `vscode cleanup` | the editor connection, the file, `whoami` |
 | `npm-install-clean` | `npm-clean --tarball FILE` | provides the clean machine |
@@ -201,12 +201,13 @@ Do not run `az logout` here; the login must still exist for the persistence obse
 
 ### Azure login, browser
 
-Identifier `azure-login-browser`. Follow steps 5 to 7 of [Manual Azure login check](integrations.md#manual-azure-login-check). The earlier device-code login is a valid login, so start by removing it, and keep the sandbox without an SSH setup until step 2.
+Identifier `azure-login-browser`. Follow steps 5 to 7 of [Manual Azure login check](integrations.md#manual-azure-login-check); the browser must run on the machine that runs the command, and the command opens and closes the SSH tunnel itself. The earlier device-code login is a valid login, so start by removing it, and keep the sandbox without an SSH setup until step 2.
 
 1. In `shell chk-persist`, run `az logout`; `az account show` must report no login. Then, with no SSH setup installed, run `sandboxed-agents integrations login chk-persist azure browser`. **Expected:** it fails, names `ssh-config chk-persist --install`, and `az account show` still reports no login.
-2. Run `sandboxed-agents ssh-config chk-persist --install`, then the browser workflow again. **Expected:** an `ssh -N -L ...` line and a URL appear before anything waits; the alias matches the host entry `chk-persist.manual-check`.
-3. Open the URL but stop the tunnel before signing in, then press `Ctrl+C` in the first terminal. **Expected:** non-zero status, no account printed, and `az account show` reports no login (there was none to begin with).
-4. Run the workflow once more, run the tunnel on the machine whose browser you use, open the URL, and sign in. **Expected:** exit status zero and the account is printed. Stop the tunnel; `az account show` still works in the shell.
+2. Run `sandboxed-agents ssh-config chk-persist --install`, then the browser workflow again. **Expected:** the URL appears once the tunnel is ready, and no `ssh` command is printed for you to run. In a second terminal, one `ssh` forward for the callback port listens on the loopback address and uses the host entry `chk-persist.manual-check`.
+3. Open the URL but do not sign in, then press `Ctrl+C`. **Expected:** non-zero status, no account printed, the tunnel's `ssh` process and listening port are gone, and `az account show` reports no login (there was none to begin with).
+4. Run the workflow once more, open the URL in the browser on the same machine, and sign in. **Expected:** exit status zero and the account is printed. The tunnel's `ssh` process and port are gone without your stopping anything, and `az account show` still works in the shell.
+5. In the managed SSH configuration that your `Include` line points to, change the `Port` of the host entry `chk-persist.manual-check` to an unused port, and run the workflow. **Expected:** it fails with a message, prints no URL, and leaves no `ssh` process behind. Restore the entry with `sandboxed-agents ssh-config chk-persist --install` before continuing.
 
 The SSH setup and the Azure login stay until [Final cleanup](#final-cleanup).
 

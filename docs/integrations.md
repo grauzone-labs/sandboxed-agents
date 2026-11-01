@@ -92,7 +92,7 @@ sandboxed-agents integrations login agent01 azure device-code
 sandboxed-agents integrations login agent01 azure browser
 ```
 
-Both store an Azure CLI login for `agent` in the home volume. `device-code` works from any terminal and needs no connection back into the sandbox. `browser` completes the login in a browser on your machine and needs an SSH tunnel to the sandbox while it runs, so it works only with an installed [SSH setup](ssh.md). When in doubt, use `device-code`.
+Both store an Azure CLI login for `agent` in the home volume. `device-code` works from any terminal and needs no connection back into the sandbox. `browser` completes the login in a browser on the machine that runs the command and opens an SSH tunnel to the sandbox for you while it runs, so it works only with an installed [SSH setup](ssh.md) and a browser on that same machine. When in doubt, or when you run the command on a machine without a browser, use `device-code`.
 
 ### What both workflows need
 
@@ -123,28 +123,22 @@ Both commands run with `HOME=/home/agent` and `AZURE_CONFIG_DIR=/home/agent/.azu
 
 ### Browser workflow
 
-`az login` without options is the Azure CLI's interactive login: it opens a browser and starts a listener inside the sandbox on a port chosen when the login starts, waiting for the redirect that completes the sign-in. The redirect URL addresses `localhost` on that port. The listener stays inside the sandbox's network, the sandbox has no browser, and it publishes no port beyond SSH, so the manager stands in for the browser: it sets `BROWSER` so that the Azure CLI, once it knows the redirect port and before it waits for the reply, runs the manager's callback instead of a browser. The callback prints instructions in this form, with the port filled in:
+`az login` without options is the Azure CLI's interactive login: it opens a browser and starts a listener inside the sandbox on a port chosen when the login starts, waiting for the redirect that completes the sign-in. The redirect URL addresses `localhost` on that port. The listener stays inside the sandbox's network, the sandbox has no browser, and it publishes no port beyond SSH, so the manager stands in for the browser: it sets `BROWSER` so that the Azure CLI, once it knows the redirect port and before it waits for the reply, runs the manager's callback instead of a browser. The callback reports the port to the command on your machine, which opens an SSH tunnel for that port through the sandbox's installed [host entry](ssh.md#host-entry-names-and-controller-groups) (`agent01` in the `default` controller group, `agent01.GROUP` in any other). This is why the workflow requires an installed SSH setup. The tunnel binds that one port on your machine's loopback address only, forwards it to the same port on the sandbox's loopback address. Over that connection the command runs a short readiness check as `agent` and keeps the connection open for the login. The command does not change your SSH configuration, takes no tunnel options, and does not open a browser.
 
-```text
-On the machine with your browser, run this in another terminal and leave it running:
-ssh -N -L 127.0.0.1:PORT:127.0.0.1:PORT -o ExitOnForwardFailure=yes agent01
-Then open this URL in that browser:
-https://login.microsoftonline.com/...
-```
+Once the tunnel is ready, the command prints the login URL. To complete the login:
 
-The alias in the `ssh` command is the sandbox's installed [host entry](ssh.md#host-entry-names-and-controller-groups): `agent01` in the `default` controller group, `agent01.GROUP` in any other. This is why the workflow requires an installed SSH setup. To complete the login:
+1. Open the printed URL in a browser on the machine that runs the command, and sign in. Microsoft then redirects the browser to `http://localhost:PORT/...`, and the tunnel carries that request to the listener waiting in the sandbox.
+2. Leave the command running until it prints the account check. You start and stop nothing else.
 
-1. On the machine with your browser, run the printed `ssh` command in a second terminal and leave it running. It binds that one port on your machine's loopback address only, forwards it to the same port on the sandbox's loopback address, and runs no remote command. With `ExitOnForwardFailure=yes`, it exits at once if the port is already in use on your machine; free the port or cancel and retry.
-2. Open the printed URL in that browser and sign in. Microsoft then redirects the browser to `http://localhost:PORT/...`, and the tunnel carries that request to the listener waiting in the sandbox.
-3. Keep the tunnel open until the command in the first terminal prints the account check, then stop the tunnel with Ctrl+C. The login is stored; the tunnel is not needed afterwards.
+The command closes the tunnel when it exits, whether the login succeeded, failed, or was cancelled with Ctrl+C. The login is stored in the sandbox; the tunnel is not needed afterwards. If the tunnel cannot be opened, for example because the port is already in use on your machine, the command fails with a message and no URL is printed; free the port and run it again.
 
-The printed `ssh` command assumes the alias resolves on the machine where you run it. That is the case when your browser runs on the sandbox host, where `ssh-config NAME --install` wrote the entry. When the sandbox runs on a remote host, your browser machine needs an SSH configuration of its own under which that alias reaches the sandbox's SSH server through that host, for example a `ProxyJump` through the host with the sandbox's dedicated key and pinned host key. The executable installs the SSH setup only on the sandbox host and provisions nothing on other machines; if no such configuration exists, use the `device-code` workflow instead.
+The browser must run on the same machine as the command, because the tunnel binds that machine's loopback address. The command's tunnel uses the host entry that `ssh-config NAME --install` wrote on the sandbox host. When you run the command on a remote host, or your browser runs elsewhere, the redirect cannot reach the tunnel; use the `device-code` workflow, or arrange your own tunnel and SSH configuration outside this command, which the executable neither provisions nor manages.
 
-The tunnel is the browser's only path to the listener: the executable forwards no host credential, configuration, or environment value through it, and the sandbox still publishes nothing beyond SSH. The callback prints the login URL once; it contains no password or token, but it is tied to this login attempt, so do not record it. If the callback cannot find a loopback redirect port in the URL the Azure CLI hands it, it reports that and asks you to cancel; press Ctrl+C in the first terminal and use `device-code`.
+The tunnel is the browser's only path to the listener: the executable forwards no host credential, configuration, or environment value through it, and the sandbox still publishes nothing beyond SSH. The command prints the login URL once, after the tunnel is ready; it contains no password or token, but it is tied to this login attempt, so do not record it. If the callback cannot find a loopback redirect port in the URL the Azure CLI hands it, it reports that and asks you to cancel; press Ctrl+C and use `device-code`.
 
 ### Result and failure
 
-The command exits zero only when both commands succeed. If `az login` fails or is cancelled, for example with Ctrl+C, when a device code expires, or when the tunnel is closed before the redirect arrives, the account check does not run. `az login` may already have written configuration under `/home/agent/.azure` before it failed. If `az account show` fails, for example because the account has no subscription the CLI can select, the command fails even though the login is stored.
+The command exits zero only when both commands succeed. If `az login` fails or is cancelled, for example with Ctrl+C, when a device code expires, or when the tunnel cannot be opened or fails before the redirect arrives, the account check does not run. The tunnel is closed in every one of these cases. `az login` may already have written configuration under `/home/agent/.azure` before it failed. If `az account show` fails, for example because the account has no subscription the CLI can select, the command fails even though the login is stored.
 
 A reported workflow or runtime failure, including a missing terminal, exits with status 1 and a short message; the exit code of `az` is not passed through. A usage error (such as an unknown workflow name) exits non-zero, and a process stopped by an outside signal may report a different non-zero status. After a failure, re-run the command, or inspect the stored state with `az account show` in a `shell NAME` session.
 
@@ -154,15 +148,15 @@ The Azure CLI keeps its configuration and its token cache under `/home/agent/.az
 
 ### Manual Azure login check
 
-The offline tests run no real `az`, open no tunnel, and contact no Microsoft server, so a working login is proven only by this check. Run it once for each change to the workflows, on a real sandbox built with the `azure` toolchain, with a browser and an Azure account that can select a subscription; steps 6 and 7 need an installed SSH setup. The [manual checklist](manual-checklist.md#azure-login-device-code) runs it before a stable release.
+The offline tests run no real `az`, open no real tunnel, and contact no Microsoft server, so a working login is proven only by this check. Run it once for each change to the workflows, on a real sandbox built with the `azure` toolchain, with a browser and an Azure account that can select a subscription; steps 6 and 7 need an installed SSH setup and a browser on the machine that runs the command. The [manual checklist](manual-checklist.md#azure-login-device-code) runs it before a stable release.
 
 1. Use a new, clean test sandbox. Run `sandboxed-agents integrations login agent01 azure device-code`, wait for the code, and press Ctrl+C. Confirm the status is non-zero, that no account was printed, and that, in `shell agent01`, `az account show` reports no login.
 2. Run the command again and complete the device flow in your browser. Confirm it exits zero and ends by printing the selected account and subscription.
 3. In `shell agent01`, run `az account show`; it must print the same account.
 4. Run `stop` and `start`, open a new shell, and run `az account show` again. Confirm the login persisted in the home volume. Then run `az logout`.
 5. On a sandbox without an installed SSH setup, run `sandboxed-agents integrations login agent01 azure browser`. Confirm it fails naming `ssh-config agent01 --install` and starts no `az`.
-6. Run `ssh-config agent01 --install` and run the browser workflow again. Confirm the `ssh -N -L ...` line and the URL appear before anything waits on you, that the alias matches the installed host entry, and that `az` is still waiting. Run the tunnel on your browser machine, open the URL, sign in, and confirm the command exits zero and prints the account. Stop the tunnel and confirm `az account show` still works in `shell agent01`.
-7. Run the browser workflow once more, open the URL, but stop the tunnel before signing in, then press Ctrl+C in the first terminal. Confirm the status is non-zero and no account was printed.
+6. Run `ssh-config agent01 --install` and run the browser workflow again from the machine whose browser you use. Confirm the URL appears only after the tunnel is ready, that no tunnel command is printed for you to run, and that `az` is still waiting. While it waits, confirm from a second terminal that exactly one `ssh` forward for the callback port listens on the loopback address and that it uses the installed host entry. Open the URL, sign in, and confirm the command exits zero and prints the account. Confirm the forward is gone and `az account show` still works in `shell agent01`.
+7. Run the browser workflow once more and open the URL, but do not sign in; press Ctrl+C. Confirm the status is non-zero, no account was printed, and the tunnel process and its listening port are gone. Then break SSH to the sandbox on purpose: in the managed SSH configuration that your `Include` line points to, change the `Port` of the host entry to an unused port. Run the browser workflow and confirm it fails with a message, prints no URL, and leaves no `ssh` process behind. Restore the entry with `sandboxed-agents ssh-config agent01 --install`.
 8. On a sandbox built without the `azure` toolchain, run either workflow. Confirm it fails naming `update agent01 --with ...` with the sandbox's recorded set plus `azure`, and runs nothing in the sandbox.
 9. Run a workflow without a terminal, for example `sandboxed-agents integrations login agent01 azure device-code </dev/null`. Confirm it fails with a terminal error and a non-zero status, and starts no `az`.
 
