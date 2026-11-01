@@ -1,13 +1,12 @@
 package manager
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
 	"regexp"
-	"strconv"
-	"strings"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/azurebrowser"
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
@@ -48,25 +47,16 @@ func azureBrowser(sshHost, address string, stdout, stderr io.Writer, effects Eff
 	if !verifyAgent(effects, stderr) {
 		return 1
 	}
-	u, err := url.Parse(address)
-	if err != nil || !sshAliasPattern.MatchString(sshHost) || strings.ContainsAny(address, "\r\n\t\x1b") || u.User != nil || (u.Scheme != "https" && u.Scheme != "http") {
+	if !sshAliasPattern.MatchString(sshHost) {
 		fmt.Fprintln(stderr, "invalid Azure browser callback")
 		return 1
 	}
-	redirect := u
-	if u.Scheme == "https" {
-		redirect, err = url.Parse(u.Query().Get("redirect_uri"))
-	}
-	if err != nil || redirect.Scheme != "http" || (redirect.Hostname() != "localhost" && redirect.Hostname() != "127.0.0.1") || redirect.User != nil {
-		fmt.Fprintln(stderr, "Azure browser callback has no loopback redirect; cancel login and retry with device-code")
+	if _, err := azurebrowser.Port(address); err != nil {
+		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	port, err := strconv.Atoi(redirect.Port())
-	if err != nil || port < 1 || port > 65535 {
-		fmt.Fprintln(stderr, "Azure browser callback has an invalid redirect port")
-		return 1
-	}
-	_, err = fmt.Fprintf(stdout, "On the machine with your browser, run this in another terminal and leave it running:\nssh -N -L 127.0.0.1:%d:127.0.0.1:%d -o ExitOnForwardFailure=yes %s\nThen open this URL in that browser:\n%s\n", port, port, sshHost, address)
+	data, _ := json.Marshal(address)
+	_, err := fmt.Fprintf(stdout, "%s%s\n", azurebrowser.Prefix, data)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1

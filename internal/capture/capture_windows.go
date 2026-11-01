@@ -32,6 +32,20 @@ func Start(command *exec.Cmd, stdout, stderr io.Writer) (func() error, error) {
 // server can take over (FILE_FLAG_FIRST_PIPE_INSTANCE) and connects the child end to it, so a
 // connected child end proves the parent end is this process's own.
 func newCapturePipe() (*outputPipe, error) {
+	return newWindowsPipe(windows.PIPE_ACCESS_INBOUND, windows.GENERIC_WRITE)
+}
+
+// newInputPipe gives the child an asynchronous read handle and the parent its writer.
+func newInputPipe() (*os.File, *os.File, error) {
+	pipe, err := newWindowsPipe(windows.PIPE_ACCESS_OUTBOUND, windows.GENERIC_READ)
+	if err != nil {
+		return nil, nil, err
+	}
+	return pipe.child, pipe.parent, nil
+}
+
+// newWindowsPipe connects asynchronous parent and child handles with the requested direction.
+func newWindowsPipe(direction, access uint32) (*outputPipe, error) {
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return nil, err
@@ -42,12 +56,12 @@ func newCapturePipe() (*outputPipe, error) {
 		return nil, err
 	}
 	server, err := windows.CreateNamedPipe(namePointer,
-		windows.PIPE_ACCESS_INBOUND|windows.FILE_FLAG_OVERLAPPED|windows.FILE_FLAG_FIRST_PIPE_INSTANCE,
+		direction|windows.FILE_FLAG_OVERLAPPED|windows.FILE_FLAG_FIRST_PIPE_INSTANCE,
 		windows.PIPE_TYPE_BYTE|windows.PIPE_WAIT|windows.PIPE_REJECT_REMOTE_CLIENTS, 1, 65536, 65536, 0, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create named pipe: %w", err)
 	}
-	client, err := windows.CreateFile(namePointer, windows.GENERIC_WRITE, 0, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OVERLAPPED, 0)
+	client, err := windows.CreateFile(namePointer, access, 0, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OVERLAPPED, 0)
 	if err != nil {
 		windows.CloseHandle(server)
 		return nil, fmt.Errorf("open named pipe: %w", err)

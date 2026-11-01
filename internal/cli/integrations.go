@@ -27,6 +27,7 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 	}
 	integrationLogin := request.Command == "integrations login"
 	azdoLogin := integrationLogin && request.Args[1] == catalog.AzureDevOpsIntegration
+	browser := integrationLogin && request.Args[1] == catalog.AzureIntegration && loginWorkflow(request.Args) == catalog.BrowserWorkflow
 	if integrationLogin && (request.Args[1] == catalog.AzureIntegration || azdoLogin) {
 		set, err := sandboxToolchains(objects.container)
 		if err != nil {
@@ -57,7 +58,6 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 		// Credential subprocess diagnostics are untrusted and may contain the PAT.
 		stdout, stderr = io.Discard, io.Discard
 	} else if integrationLogin {
-		browser := request.Args[1] == catalog.AzureIntegration && loginWorkflow(request.Args) == catalog.BrowserWorkflow
 		if browser {
 			setup, err := sshSetupPaths(request, p.host.Platform)
 			if err != nil {
@@ -90,7 +90,12 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 			args = append(args, "--"+catalog.GitNameOption, identity.Name, "--"+catalog.GitEmailOption, identity.Email)
 		}
 	}
-	status, err := p.run(stdin, stdout, stderr, args...)
+	var status int
+	if browser {
+		status, err = runAzureBrowser(request, p, stdin, stdout, stderr, args)
+	} else {
+		status, err = p.run(stdin, stdout, stderr, args...)
+	}
 	if azdoLogin && (err != nil || status != 0) {
 		return fmt.Errorf("Azure DevOps login failed; credentials may be partially configured")
 	}

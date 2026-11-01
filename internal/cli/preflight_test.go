@@ -46,6 +46,7 @@ type response struct {
 	ExpectedStdin      string
 	EchoStdin          bool
 	ReadyFile          string
+	PIDFile            string
 	WaitFor            string
 }
 type fixture struct {
