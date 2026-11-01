@@ -46,6 +46,7 @@ var Default = Catalog{
 			LoginWorkflows: map[string][]string{"browser": {"auth", "login"}},
 			LoginMessage:   "Open the URL shown by Claude on your host and follow its authentication instructions.",
 			Documentation:  "https://code.claude.com/docs/en/overview",
+			StatusProbe:    &Probe{Args: []string{"auth", "status", "--json"}, BooleanField: "loggedIn", SignedOutExitCode: 1},
 		},
 		"codex": {
 			Delivered: true, Install: Install{Kind: NPM, Package: "@openai/codex"}, Command: "codex",
