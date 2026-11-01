@@ -33,7 +33,7 @@ These steps create, update, and delete sandboxes, install software, and edit SSH
 
    The group's containers are named `sandboxed-agents.manual-check.NAME`, and its SSH host entries `NAME.manual-check`.
 3. **Images are shared.** An image name contains no controller group, so every group of the same executable uses the same images. Run `build` only where an item calls for it (once, in [Persistence and update](#persistence-and-update)), and do not use the machine for other work that depends on `sandboxed-agents` images.
-4. **Name sandboxes as the items do** (`chk-persist`, `chk-vs`, `chk-base`, `chk-native`, `chk-int`, and the guide's `agent01`). Each item says when its sandbox is removed with `remove NAME --volumes`. `chk-persist` lives through several items and is removed last.
+4. **Name sandboxes as the items do** (`chk-persist`, `chk-vs`, `chk-base`, `chk-native`, `chk-int`, `chk-signout`, and the guide's `agent01`). Each item says when its sandbox is removed with `remove NAME --volumes`. `chk-persist` lives through several items and is removed last.
 5. **Use accounts you can revoke.** Revoke what you granted only at the end, in [Final cleanup](#final-cleanup), because the earlier items need the logins to still exist.
 6. **Never write a token, one-time code, login URL, or account secret into notes or the record.** The record has no field for them, and nothing may be added. The runner's files hold command output and exit statuses, readable by the operator only; they never leave the host.
 7. **Create no release tag and publish nothing.** This checklist only reads a preview that already exists. Uploading the record is a separate maintainer step ([Upload](#upload)).
@@ -162,10 +162,21 @@ For each `AGENT` and its workflow (`opencode` is already enabled):
 1. `sandboxed-agents agents enable chk-persist AGENT`
 2. Start `sandboxed-agents agents login chk-persist AGENT WORKFLOW` in an interactive terminal, and cancel it once with `Ctrl+C`. **Expected:** non-zero status and `agents login failed`.
 3. Run the same command again, open the URL or enter the code that the agent shows in a browser on your machine, and sign in. **Expected:** the agent's own success message and exit status zero.
-4. Run `sandboxed-agents agents session chk-persist AGENT`, send a short prompt such as `say hello`, and detach with `Ctrl+b` then `d`. **Expected:** an answer to the prompt and no sign-in prompt. `agents status chk-persist AGENT` shows `signed in unknown`, because no delivered agent has a status probe; the answer is the evidence of the login.
+4. Run `sandboxed-agents agents session chk-persist AGENT`, send a short prompt such as `say hello`, and detach with `Ctrl+b` then `d`. **Expected:** an answer to the prompt and no sign-in prompt. For `copilot`, `codex`, and `opencode`, `agents status chk-persist AGENT` shows `signed in unknown`, because they have no status probe ([why](agent-status-probes.md)); the answer is the evidence of the login. For `claude`, see [the Claude status check](#claude-signed-in-status) below.
 5. End the session: `sandboxed-agents agents session chk-persist AGENT --stop`.
 
 Record the result per agent. If one agent passes and another fails, record the failure for the failing identifier only.
+
+#### Claude signed-in status
+
+Part of `agent-login-claude`. `agents status` runs `claude auth status --json` and reads a login that is configured, not a token that is valid ([Agent status probes](agent-status-probes.md)). Nothing here signs out `chk-persist`: its Claude login is needed until the final cleanup. This check is not yet passed on any host; the record is the first evidence.
+
+1. Right after step 1 of the Claude login and before any login, run `sandboxed-agents agents status chk-persist claude`. **Expected:** `signed in no`. Run it again after the cancelled login of step 2. **Expected:** still `signed in no`.
+2. After the completed login of step 3, run the same command. **Expected:** `signed in yes`. The output shows no account name, email address, or token.
+3. If either answer is `signed in unknown`, run the command once more. The probe ends after one second, so a busy host can give `unknown` once: that is the safe answer, never a failure of the sandbox. `unknown` on repeated runs fails the item, and so does `yes` before the login or `no` after it.
+4. For a signed-out answer without touching `chk-persist`, use a disposable sandbox: `sandboxed-agents up chk-signout --with none`, `sandboxed-agents agents enable chk-signout claude`, `sandboxed-agents agents status chk-signout claude`. **Expected:** `signed in no`. Then `sandboxed-agents remove chk-signout --volumes`.
+
+A failure here is recorded under `agent-login-claude`.
 
 ### GitHub login
 

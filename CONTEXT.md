@@ -23,7 +23,7 @@ A persistent terminal session running one agent in a sandbox, which the user can
 _Avoid_: Agent run (a run is a one-shot command that ends with its terminal)
 
 **Agent catalog**:
-The agent data embedded in the executable: per agent its install method, command, login workflows, and an optional status probe that reports whether the agent is signed in. During development it may hold entries not delivered yet; those count as unknown, and only delivered entries can be enabled.
+The agent data embedded in the executable: per agent its install method, command, login workflows, and an optional status probe that reports whether the agent is signed in: a read-only JSON query of the agent's own command, which permits at most one documented nonzero signed-out exit, and only together with an explicit false in its JSON. During development it may hold entries not delivered yet; those count as unknown, and only delivered entries can be enabled.
 _Avoid_: Agent registry, agent list
 
 **Agent selection**:
