@@ -37,7 +37,7 @@ func TestAgentSessionDrawsFullScreenThroughLocalTmux(t *testing.T) {
 	// The agent clears its screen and draws a logo of block glyphs in a grey 24-bit colour, as full-screen agents do,
 	// redraws it with each line of input it reads, and records each size its terminal reports.
 	script := `#!/bin/sh
-trap 'stty size > size' WINCH
+trap 'stty size > size; draw "resize $(cat size)"' WINCH
 draw() { printf '\033[H\033[2J\033[38;2;128;128;128m\342\226\210\342\226\200 logo\033[0m\n%s\n' "$1"; }
 draw ready
 stty size > size
@@ -128,7 +128,10 @@ func attachThroughTerminal(t *testing.T, tmux privateTmux, managerArgs []string,
 	if err := unix.IoctlSetWinsize(int(master.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: 30, Col: 100}); err != nil {
 		t.Fatal(err)
 	}
-	waitForTerminal(t, func() bool { return agentSize(home) == "29 100" && strings.Contains(drawn()[beforeResize:], logo) }, drawn, "redraw at 100 by 30")
+	// The agent's own draw after the resize carries the size it reports, so the check cannot pass on tmux repainting the logo it already drew.
+	waitForTerminal(t, func() bool {
+		return agentSize(home) == "29 100" && strings.Contains(drawn()[beforeResize:], "resize 29 100")
+	}, drawn, "redraw at 100 by 30")
 	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
 		t.Fatalf("attached client ended before detach: %v", err)
 	}
