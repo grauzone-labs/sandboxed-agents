@@ -169,7 +169,7 @@ func TestAzureBrowserSuccessEndsRemoteDescendants(t *testing.T) {
 // TestAzureBrowserMissingManagerCompletionReportsCleanupFailure proves unavailable remote cleanup cannot silently succeed at the host CLI seam.
 func TestAzureBrowserMissingManagerCompletionReportsCleanupFailure(t *testing.T) {
 	f := azureBrowserFixture(t, response{Output: "\x1eSANDBOXED_AGENTS_AZURE_BROWSER \"http://localhost:43123\"\n", DelayAfterOutputMS: 10000})
-	f.responses["exec --user=1000:1000 --env HOME=/home/agent -it "+shellContainer+" "+integrationManager+" __azure-login * agent01"] = response{Output: "\x1eSANDBOXED_AGENTS_AZURE_SESSION \"ready\"\n\x1eSANDBOXED_AGENTS_AZURE_BROWSER \"http://localhost:43123\"\n", DelayAfterOutputMS: 10000}
+	f.responses["exec -it --user=1000:1000 --env HOME=/home/agent "+shellContainer+" "+integrationManager+" __azure-login * agent01"] = response{Output: "\x1eSANDBOXED_AGENTS_AZURE_SESSION \"ready\"\n\x1eSANDBOXED_AGENTS_AZURE_BROWSER \"http://localhost:43123\"\n", DelayAfterOutputMS: 10000}
 	f.responses["exec --user=1000:1000 --env HOME=/home/agent "+shellContainer+" "+integrationManager+" __azure-control * cancel"] = response{Exit: 1}
 	f.sshResponses = map[string]response{"*": {Exit: 255}}
 	status, output, _ := f.run(t, "integrations", "login", "agent01", "azure", "browser")
@@ -181,89 +181,96 @@ func TestAzureBrowserMissingManagerCompletionReportsCleanupFailure(t *testing.T)
 // TestAzureBrowserOldManagerRequiresUpdate proves an incompatible manager refuses before any sign-in through the host CLI seam.
 func TestAzureBrowserOldManagerRequiresUpdate(t *testing.T) {
 	f := azureBrowserFixture(t, response{})
-	f.responses["exec --user=1000:1000 --env HOME=/home/agent -it "+shellContainer+" "+integrationManager+" __azure-login * agent01"] = response{Exit: 2}
+	f.responses["exec -it --user=1000:1000 --env HOME=/home/agent "+shellContainer+" "+integrationManager+" __azure-login * agent01"] = response{Exit: 2}
 	status, output, calls := f.run(t, "integrations", "login", "agent01", "azure", "browser")
 	if status != 1 || !strings.Contains(output, "update agent01") || len(calls) != len(sandboxQueryCalls())+2 {
 		t.Fatal("incompatible manager did not refuse with update guidance")
 	}
 }
 
-// TestAzureBrowserInterruptEndsRemoteLogin proves interrupts during SSH startup and ready forwarding terminate the real remote process group at the executable CLI seam.
+// TestAzureBrowserInterruptEndsRemoteLogin proves interruption, hangup and termination during startup or ready forwarding reap the real remote process group at the executable CLI seam.
 func TestAzureBrowserInterruptEndsRemoteLogin(t *testing.T) {
-	for _, phase := range []string{"startup", "ready"} {
-		t.Run(phase, func(t *testing.T) {
-			f, dir := azureRemoteFixture(t)
-			marker := ""
-			if phase == "ready" {
-				marker = "sandboxed-agents-azure-ready\n"
-			}
-			sshReady := filepath.Join(dir, "ssh-ready")
-			f.sshResponses = map[string]response{"*": {Output: marker, EchoStdin: true, ReadyFile: sshReady}}
-			data, _ := json.Marshal(f.responses)
-			t.Setenv("TEST_PODMAN_RESPONSES", string(data))
-			data, _ = json.Marshal(f.sshResponses)
-			t.Setenv("TEST_SSH_RESPONSES", string(data))
-			t.Setenv("TEST_UP_EXECUTABLE", "1")
-			t.Setenv("TEST_AZURE_BROWSER_EXECUTABLE", "1")
-			executable, err := os.Executable()
-			if err != nil {
-				t.Fatal(err)
-			}
-			outputPath := filepath.Join(dir, "output")
-			output, err := os.Create(outputPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer output.Close()
-			command := exec.Command(executable, "-test.run=^TestAzureBrowserExecutableBoundary$")
-			command.Stdout, command.Stderr = output, output
-			if err := command.Start(); err != nil {
-				t.Fatal(err)
-			}
-			done := make(chan error, 1)
-			go func() { done <- command.Wait() }()
-			deadline := time.Now().Add(5 * time.Second)
-			for {
-				_, readyErr := os.Stat(sshReady)
-				data, _ := os.ReadFile(outputPath)
-				if readyErr == nil && (phase == "startup" || strings.Contains(string(data), "SSH tunnel ready")) {
-					break
-				}
-				if time.Now().After(deadline) {
-					command.Process.Kill()
-					<-done
-					t.Fatal("SSH did not reach interrupt phase")
-				}
-				time.Sleep(10 * time.Millisecond)
-			}
-			if err := command.Process.Signal(os.Interrupt); err != nil {
-				command.Process.Kill()
-				<-done
-				t.Fatal(err)
-			}
-			select {
-			case err := <-done:
-				if err == nil {
-					t.Fatal("cancelled workflow succeeded")
-				}
-			case <-time.After(5 * time.Second):
-				command.Process.Kill()
-				<-done
-				t.Fatal("interrupted workflow did not return")
-			}
-			data, err = os.ReadFile(outputPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(string(data), "Azure browser login cancelled") || strings.Contains(string(data), "cleanup failed") {
-				for _, line := range strings.Split(string(data), "\n") {
-					if strings.Contains(line, "Azure browser") && !strings.Contains(line, "://") {
-						t.Log(line)
+	for _, signalCase := range []struct {
+		name  string
+		value os.Signal
+	}{{"interrupt", os.Interrupt}, {"hangup", syscall.SIGHUP}, {"terminate", syscall.SIGTERM}} {
+		t.Run(signalCase.name, func(t *testing.T) {
+			for _, phase := range []string{"startup", "ready"} {
+				t.Run(phase, func(t *testing.T) {
+					f, dir := azureRemoteFixture(t)
+					marker := ""
+					if phase == "ready" {
+						marker = "sandboxed-agents-azure-ready\n"
 					}
-				}
-				t.Fatal("interrupt did not report clean cancellation")
+					sshReady := filepath.Join(dir, "ssh-ready")
+					f.sshResponses = map[string]response{"*": {Output: marker, EchoStdin: true, ReadyFile: sshReady}}
+					data, _ := json.Marshal(f.responses)
+					t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+					data, _ = json.Marshal(f.sshResponses)
+					t.Setenv("TEST_SSH_RESPONSES", string(data))
+					t.Setenv("TEST_UP_EXECUTABLE", "1")
+					t.Setenv("TEST_AZURE_BROWSER_EXECUTABLE", "1")
+					executable, err := os.Executable()
+					if err != nil {
+						t.Fatal(err)
+					}
+					outputPath := filepath.Join(dir, "output")
+					output, err := os.Create(outputPath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer output.Close()
+					command := exec.Command(executable, "-test.run=^TestAzureBrowserExecutableBoundary$")
+					command.Stdout, command.Stderr = output, output
+					if err := command.Start(); err != nil {
+						t.Fatal(err)
+					}
+					done := make(chan error, 1)
+					go func() { done <- command.Wait() }()
+					deadline := time.Now().Add(5 * time.Second)
+					for {
+						_, readyErr := os.Stat(sshReady)
+						data, _ := os.ReadFile(outputPath)
+						if readyErr == nil && (phase == "startup" || strings.Contains(string(data), "SSH tunnel ready")) {
+							break
+						}
+						if time.Now().After(deadline) {
+							command.Process.Kill()
+							<-done
+							t.Fatal("SSH did not reach interrupt phase")
+						}
+						time.Sleep(10 * time.Millisecond)
+					}
+					if err := command.Process.Signal(signalCase.value); err != nil {
+						command.Process.Kill()
+						<-done
+						t.Fatal(err)
+					}
+					select {
+					case err := <-done:
+						if err == nil {
+							t.Fatal("cancelled workflow succeeded")
+						}
+					case <-time.After(5 * time.Second):
+						command.Process.Kill()
+						<-done
+						t.Fatal("interrupted workflow did not return")
+					}
+					data, err = os.ReadFile(outputPath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !strings.Contains(string(data), "Azure browser login cancelled") || strings.Contains(string(data), "cleanup failed") {
+						for _, line := range strings.Split(string(data), "\n") {
+							if strings.Contains(line, "Azure browser") && !strings.Contains(line, "://") {
+								t.Log(line)
+							}
+						}
+						t.Fatal("interrupt did not report clean cancellation")
+					}
+					assertAzureRemoteEnded(t, dir, false)
+				})
 			}
-			assertAzureRemoteEnded(t, dir, false)
 		})
 	}
 }

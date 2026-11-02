@@ -173,8 +173,8 @@ func startAzureTunnel(ctx context.Context, alias string, port int) (*azureTunnel
 	return nil, fmt.Errorf("Azure browser SSH tunnel could not establish forwarding; check SSH setup and callback port, or use device-code")
 }
 
-// runAzureBrowser streams login while opening each requested tunnel before exposing its URL.
-func runAzureBrowser(request Request, p podmanTarget, stdin io.Reader, stdout, stderr io.Writer, args []string) (status int, resultErr error) {
+// runAzureBrowser builds private session and control commands from a nonterminal Podman exec prefix and streams login, establishing each tunnel before exposing its URL.
+func runAzureBrowser(request Request, p podmanTarget, stdin io.Reader, stdout, stderr io.Writer, execPrefix []string) (status int, resultErr error) {
 	restore := snapshotAzureTerminal(stdin, stdout, stderr)
 	defer restore()
 	signalCtx, stopSignals := azureLoginContext()
@@ -192,22 +192,11 @@ func runAzureBrowser(request Request, p podmanTarget, stdin io.Reader, stdout, s
 		return 1, fmt.Errorf("cannot initialize Azure browser session")
 	}
 	token := fmt.Sprintf("%x", tokenBytes)
-	// The private verb prevents an older manager from starting an uncontrolled login.
-	managerIndex := slices.Index(args, managerPath)
-	if managerIndex < 0 {
-		return 1, fmt.Errorf("cannot initialize Azure browser manager command")
-	}
-	managerArgs := args[:managerIndex+1]
-	args = append(slices.Clone(managerArgs), "__azure-login", token, sshHostName(request))
+	// The prefix ends at the manager executable and contains no terminal or workflow options.
+	// Only the session allocates a terminal; control preserves the same Podman target and agent identity.
+	sessionArgs := append(slices.Insert(slices.Clone(execPrefix), 1, "-it"), "__azure-login", token, sshHostName(request))
 	control := func(operation string, controlCtx context.Context) error {
-		controlArgs := append(slices.Clone(managerArgs), "__azure-control", token, operation)
-		// Control has no terminal and no stdin; preserve the selected Podman target and agent identity.
-		for i, arg := range controlArgs {
-			if arg == "-it" {
-				controlArgs = append(controlArgs[:i], controlArgs[i+1:]...)
-				break
-			}
-		}
+		controlArgs := append(slices.Clone(execPrefix), "__azure-control", token, operation)
 		command := p.command(controlCtx, time.Second, controlArgs...)
 		if err := capture.Run(command, io.Discard, io.Discard); err != nil {
 			return fmt.Errorf("integration workflow failed: Azure browser session %s was not acknowledged", operation)
@@ -279,7 +268,7 @@ func runAzureBrowser(request Request, p podmanTarget, stdin io.Reader, stdout, s
 		}
 		return err
 	}
-	command := p.command(ctx, 2*time.Second, args...)
+	command := p.command(ctx, 2*time.Second, sessionArgs...)
 	command.Stdin = stdin
 	err := capture.Run(command, output, azureStderr{output: output, writer: stderr})
 	if !ready && ctx.Err() != nil && signalCtx.Err() == nil {

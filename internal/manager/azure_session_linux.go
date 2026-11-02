@@ -68,7 +68,7 @@ func azureAgentPeer(connection *net.UnixConn) bool {
 	err = raw.Control(func(fd uintptr) {
 		credentials, readErr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
 	})
-	return err == nil && readErr == nil && credentials != nil && credentials.Uid == 1000 && credentials.Gid == 1000
+	return err == nil && readErr == nil && credentials != nil && credentials.Uid == uint32(agentIdentity.UID) && credentials.Gid == uint32(agentIdentity.GID)
 }
 
 // azureSession owns one browser workflow and acknowledges cancellation only after killing and waiting for its owned children.
