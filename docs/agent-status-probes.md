@@ -37,7 +37,7 @@ Checked on 2026-11-01 against the newest npm release of each package. An unpinne
 
 Output that is not one JSON object, a missing or non-boolean `loggedIn`, a repeated key, more than 64 KiB of output, a command that cannot start, and a command that has not finished after one second are all `unknown`. After the timeout the sandbox ends the command's whole process group and waits at most another 100 ms for it to exit: the timeout is one second, the total at most about 1.1 seconds. The probe runs as `agent`, and its output and errors are never printed or stored, because the signed-in output names the account.
 
-The version 2.1.316 handler reads the stored credential sources and exits; it starts no login and refreshes nothing. On a home without a login the command exits 1 with `loggedIn` false, which is what the `no` row relies on. A sandbox on Linux has reported `signed in yes` after a human login; see [Live acceptance](#live-acceptance).
+The version 2.1.316 handler reads the stored credential sources and exits; it starts no login and refreshes nothing. On a home without a login the command exits 1 with `loggedIn` false, which is what the `no` row relies on. A sandbox on a Linux host has reported `signed in yes` after a human login; see [Live acceptance](#live-acceptance).
 
 ### Codex
 
