@@ -169,7 +169,7 @@ Record the result per agent. If one agent passes and another fails, record the f
 
 #### Claude signed-in status
 
-Part of `agent-login-claude`. `agents status` runs `claude auth status --json` and reads a login that is configured, not a token that is valid ([Agent status probes](agent-status-probes.md)). Nothing here signs out `chk-persist`: its Claude login is needed until the final cleanup. This check is not yet passed on any host; the record is the first evidence.
+Part of `agent-login-claude`. `agents status` runs `claude auth status --json` and reads a login that is configured, not a token that is valid ([Agent status probes](agent-status-probes.md)). Nothing here signs out `chk-persist`: its Claude login is needed until the final cleanup. Earlier observations ([Agent status probes](agent-status-probes.md#live-acceptance)) do not replace the record of the commit under test.
 
 1. Right after step 1 of the Claude login and before any login, run `sandboxed-agents agents status chk-persist claude`. **Expected:** `signed in no`. Run it again after the cancelled login of step 2. **Expected:** still `signed in no`.
 2. After the completed login of step 3, run the same command. **Expected:** `signed in yes`. The output shows no account name, email address, or token.
