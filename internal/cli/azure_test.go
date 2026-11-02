@@ -1,7 +1,6 @@
 package cli_test
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -191,61 +190,83 @@ func assertAzureSSHExited(t *testing.T, pidFile string) {
 	}
 }
 
-// TestAzureBrowserCancellationReapsTunnel proves Ctrl+C cancels login and reaps its forwarding process through the executable CLI seam.
+// TestAzureBrowserCancellationReapsTunnel proves Ctrl+C reports cancellation and reaps SSH during startup and after readiness through the executable CLI seam.
 func TestAzureBrowserCancellationReapsTunnel(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("subprocess interrupt assertion requires Unix signals")
 	}
-	f := azureBrowserFixture(t, response{Output: "\x1eSANDBOXED_AGENTS_AZURE_BROWSER \"http://localhost:43123\"\n", DelayAfterOutputMS: 10000})
-	dir := t.TempDir()
-	pidFile, ready := filepath.Join(dir, "ssh.pid"), filepath.Join(dir, "ready")
-	f.sshResponses = map[string]response{"*": {Output: "sandboxed-agents-azure-ready\n", EchoStdin: true, PIDFile: pidFile, ReadyFile: ready}}
-	podmanData, _ := json.Marshal(f.responses)
-	sshData, _ := json.Marshal(f.sshResponses)
-	t.Setenv("TEST_PODMAN_RESPONSES", string(podmanData))
-	t.Setenv("TEST_SSH_RESPONSES", string(sshData))
-	t.Setenv("TEST_UP_EXECUTABLE", "1")
-	t.Setenv("TEST_AZURE_BROWSER_EXECUTABLE", "1")
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
+	for _, phase := range []string{"startup", "ready"} {
+		t.Run(phase, func(t *testing.T) {
+			f := azureBrowserFixture(t, response{Output: "\x1eSANDBOXED_AGENTS_AZURE_BROWSER \"http://localhost:43123\"\n", DelayAfterOutputMS: 10000})
+			dir := t.TempDir()
+			pidFile, ready := filepath.Join(dir, "ssh.pid"), filepath.Join(dir, "ready")
+			sshOutput := ""
+			if phase == "ready" {
+				sshOutput = "sandboxed-agents-azure-ready\n"
+			}
+			f.sshResponses = map[string]response{"*": {Output: sshOutput, EchoStdin: true, PIDFile: pidFile, ReadyFile: ready}}
+			podmanData, _ := json.Marshal(f.responses)
+			sshData, _ := json.Marshal(f.sshResponses)
+			t.Setenv("TEST_PODMAN_RESPONSES", string(podmanData))
+			t.Setenv("TEST_SSH_RESPONSES", string(sshData))
+			t.Setenv("TEST_UP_EXECUTABLE", "1")
+			t.Setenv("TEST_AZURE_BROWSER_EXECUTABLE", "1")
+			executable, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			outputPath := filepath.Join(dir, "output")
+			output, err := os.Create(outputPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer output.Close()
+			command := exec.Command(executable, "-test.run=^TestAzureBrowserExecutableBoundary$")
+			command.Stdout, command.Stderr = output, output
+			if err := command.Start(); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- command.Wait() }()
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				_, readyErr := os.Stat(ready)
+				data, _ := os.ReadFile(outputPath)
+				if readyErr == nil && (phase == "startup" || strings.Contains(string(data), "SSH tunnel ready")) {
+					break
+				}
+				if time.Now().After(deadline) {
+					command.Process.Kill()
+					<-done
+					t.Fatalf("SSH did not reach %s: %s", phase, data)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if err := command.Process.Signal(os.Interrupt); err != nil {
+				command.Process.Kill()
+				<-done
+				t.Fatal(err)
+			}
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("cancelled login succeeded")
+				}
+			case <-time.After(5 * time.Second):
+				command.Process.Kill()
+				<-done
+				t.Fatal("cancelled login did not exit")
+			}
+			data, err := os.ReadFile(outputPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), "Azure browser login cancelled") || strings.Contains(string(data), "SSH tunnel ended") || strings.Contains(string(data), "could not establish forwarding") {
+				t.Fatalf("wrong cancellation diagnostic: %s", data)
+			}
+			assertAzureSSHExited(t, pidFile)
+		})
 	}
-	command := exec.Command(executable, "-test.run=^TestAzureBrowserExecutableBoundary$")
-	var output bytes.Buffer
-	command.Stdout, command.Stderr = &output, &output
-	if err := command.Start(); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- command.Wait() }()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, err := os.Stat(ready); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			command.Process.Kill()
-			<-done
-			t.Fatalf("SSH not ready: %s", &output)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if err := command.Process.Signal(os.Interrupt); err != nil {
-		command.Process.Kill()
-		<-done
-		t.Fatal(err)
-	}
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatalf("cancelled login succeeded: %s", &output)
-		}
-	case <-time.After(5 * time.Second):
-		command.Process.Kill()
-		<-done
-		t.Fatal("cancelled login did not exit")
-	}
-	assertAzureSSHExited(t, pidFile)
 }
 
 // TestAzureBrowserExecutableBoundary drives an interactive browser login in a child process for cancellation checks.
