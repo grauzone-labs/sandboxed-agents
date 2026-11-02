@@ -161,7 +161,9 @@ func startAzureTunnel(ctx context.Context, alias string, port int) (*azureTunnel
 func runAzureBrowser(request Request, p podmanTarget, stdin io.Reader, stdout, stderr io.Writer, args []string) (int, error) {
 	restore := snapshotAzureTerminal(stdin, stdout, stderr)
 	defer restore()
-	ctx, cancel := azureLoginContext()
+	signalCtx, stopSignals := azureLoginContext()
+	defer stopSignals()
+	ctx, cancel := context.WithCancel(signalCtx)
 	defer cancel()
 	var tunnel *azureTunnel
 	defer func() {
@@ -202,6 +204,9 @@ func runAzureBrowser(request Request, p podmanTarget, stdin io.Reader, stdout, s
 	command := p.command(ctx, 2*time.Second, args...)
 	command.Stdin = stdin
 	err := capture.Run(command, output, azureStderr{output: output, writer: stderr})
+	if signalCtx.Err() != nil {
+		return 1, fmt.Errorf("Azure browser login cancelled")
+	}
 	if output.err != nil {
 		return 1, output.err
 	}
