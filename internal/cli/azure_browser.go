@@ -221,7 +221,7 @@ func runAzureBrowser(request Request, p podmanTarget, stdin io.Reader, stdout, s
 		}
 	}
 	if ctx.Err() != nil {
-		return 1, fmt.Errorf("Azure browser login cancelled")
+		return 1, fmt.Errorf("integration workflow failed")
 	}
 	if err != nil {
 		return 1, fmt.Errorf("integration workflow failed")

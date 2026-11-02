@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -286,5 +287,35 @@ func TestAzureBrowserReplacesCallbackTunnel(t *testing.T) {
 	status, output, _ := f.run(t, "integrations", "login", "agent01", "azure", "browser")
 	if status != 0 || len(f.sshCalls(t)) != 2 {
 		t.Fatalf("status=%d output=%q ssh=%v", status, output, f.sshCalls(t))
+	}
+}
+
+// azureFailOnceWriter fails the first diagnostic write and captures the CLI's final failure message.
+type azureFailOnceWriter struct {
+	bytes.Buffer
+	failed bool
+}
+
+// Write rejects one diagnostic before accepting the terminal workflow error.
+func (w *azureFailOnceWriter) Write(data []byte) (int, error) {
+	if !w.failed {
+		w.failed = true
+		return 0, io.ErrClosedPipe
+	}
+	return w.Buffer.Write(data)
+}
+
+// TestAzureBrowserOutputFailureIsNotCancellation proves a failed diagnostic stream reports workflow failure rather than user cancellation through the host CLI seam.
+func TestAzureBrowserOutputFailureIsNotCancellation(t *testing.T) {
+	f := azureBrowserFixture(t, response{Stderr: "login diagnostic\n", DelayAfterOutputMS: 10000})
+	data, err := json.Marshal(f.responses)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+	var diagnostics azureFailOnceWriter
+	status := cli.RunWithHost([]string{"integrations", "login", "agent01", "azure", "browser"}, io.Discard, &diagnostics, f.host)
+	if status != 1 || !strings.Contains(diagnostics.String(), "integration workflow failed") || strings.Contains(diagnostics.String(), "login cancelled") {
+		t.Fatalf("status=%d output=%q", status, diagnostics.String())
 	}
 }
