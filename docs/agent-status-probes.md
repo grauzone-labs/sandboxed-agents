@@ -37,7 +37,7 @@ Checked on 2026-11-01 against the newest npm release of each package. An unpinne
 
 Output that is not one JSON object, a missing or non-boolean `loggedIn`, a repeated key, more than 64 KiB of output, a command that cannot start, and a command that has not finished after one second are all `unknown`. After the timeout the sandbox ends the command's whole process group and waits at most another 100 ms for it to exit: the timeout is one second, the total at most about 1.1 seconds. The probe runs as `agent`, and its output and errors are never printed or stored, because the signed-in output names the account.
 
-The version 2.1.316 handler reads the stored credential sources and exits; it starts no login and refreshes nothing. On a home without a login the command exits 1 with `loggedIn` false, which is what the `no` row relies on. Signed-in output has not been observed in a sandbox yet; see [Live acceptance](#live-acceptance).
+The version 2.1.316 handler reads the stored credential sources and exits; it starts no login and refreshes nothing. On a home without a login the command exits 1 with `loggedIn` false, which is what the `no` row relies on. A sandbox on Linux has reported `signed in yes` after a human login; see [Live acceptance](#live-acceptance).
 
 ### Codex
 
@@ -57,4 +57,11 @@ A pin can select a version older than the one checked. If its command does not e
 
 ## Live acceptance
 
-The decisions above come from the vendors' documentation, the published source of the versions named, and runs of those versions in disposable directories without any real account. Nothing here has been run against a signed-in account or in a sandbox on a Linux or Windows host. Acceptance on both hosts is still to be done by following the Claude steps of the [manual checklist](manual-checklist.md#agent-logins), and until a record says it passed, treat `signed in yes` as unconfirmed.
+The decisions above come from the vendors' documentation, the published source of the versions named, and runs of those versions in disposable directories without any real account. They were then checked on the two supported hosts with the executable built from commit `c675982101bdf302963ae86954a41e1b00f29184`, on 2026-11-02:
+
+- **Live suite:** all six checks passed on both hosts, including full image coverage and the T3 Code records.
+- **Signed out, both hosts:** a fresh sandbox with Claude Code 2.1.316 enabled and no login showed `signed in no`.
+- **Signed in, Linux:** after a person logged in to Claude Code 2.1.316 in a browser, `agents status` showed `signed in yes` at 17:24:02 UTC, exit status zero in 824 ms, session false. The same sandbox had shown `signed in no` before the login.
+- **Signed in, Windows:** `signed in yes` has not been observed.
+
+No agent prompt was run, and no revoked or expired token was tried, so `yes` still shows only that authentication is configured. The evidence is also posted as comments on [issue 88](https://github.com/grauzone-labs/sandboxed-agents/issues/88). The same steps repeat on every preview in the Claude status check of the [manual checklist](manual-checklist.md#claude-signed-in-status).
