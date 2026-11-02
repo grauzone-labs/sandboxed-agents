@@ -2,12 +2,15 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -43,7 +46,16 @@ func newEffects(calls systemCalls) Effects {
 			// Root clears supplementary groups on the way to the worker. An
 			// unprivileged worker cannot call setgroups when spawning its peers.
 			NoSetGroups: calls.Identity().UID != 0,
-		}, Setpgid: process.ProcessGroup}
+		}, Setpgid: process.ProcessGroup || process.OwnProcessGroup}
+		if process.OwnProcessGroup {
+			if input, ok := process.Stdin.(*os.File); ok {
+				if _, err := unix.IoctlGetInt(int(input.Fd()), unix.TIOCGPGRP); err == nil {
+					// Foreground is established in the child before exec, with SIGTTOU blocked by Go's fork adapter.
+					command.SysProcAttr.Foreground = true
+					command.SysProcAttr.Ctty = int(input.Fd())
+				}
+			}
+		}
 		if process.EnvironmentPolicy == SSHEnvironment {
 			// Local SSH key and configuration processes and the outbound connection test accept neither ambient variables
 			// nor Process.Environment overrides.
@@ -103,10 +115,18 @@ func newEffects(calls systemCalls) Effects {
 			if err != nil {
 				return nil, err
 			}
+			var restoreTerminal func() error
+			if command.SysProcAttr.Foreground {
+				fd, group := command.SysProcAttr.Ctty, unix.Getpgrp()
+				restoreTerminal = func() error { return restoreProcessTerminal(fd, group) }
+			}
 			if err := command.Start(); err != nil {
+				if restoreTerminal != nil {
+					err = errors.Join(err, restoreTerminal())
+				}
 				return nil, err
 			}
-			return startedChild{command: command, group: process.ProcessGroup}, nil
+			return &startedChild{command: command, group: process.ProcessGroup || process.OwnProcessGroup, owned: process.OwnProcessGroup, restoreTerminal: restoreTerminal}, nil
 		},
 		Detach: func(process Process) error {
 			path, err := calls.Executable()
@@ -159,23 +179,73 @@ func newEffects(calls systemCalls) Effects {
 		}}
 }
 
-// startedChild is a spawned service process that the supervisor waits for and signals as a group.
+// errProcessGroupCleanup marks failure to establish or complete owned process-group cleanup.
+var errProcessGroupCleanup = errors.New("owned process group cleanup failed")
+
+// startedChild is a spawned process with serialized signalling and group-leader ownership through cleanup.
 type startedChild struct {
-	command *exec.Cmd
-	group   bool
+	command         *exec.Cmd
+	group           bool
+	owned           bool
+	restoreTerminal func() error
+	mu              sync.Mutex
+	finished        bool
 }
 
 // PID returns the process ID of the spawned process.
-func (c startedChild) PID() int { return c.command.Process.Pid }
+func (c *startedChild) PID() int { return c.command.Process.Pid }
 
-// Wait waits for the spawned process and returns its exit error.
-func (c startedChild) Wait() error { return c.command.Wait() }
+// Wait kills remaining group descendants while retaining the leader PID, reaps the child, and returns its exit or cleanup error.
+func (c *startedChild) Wait() error {
+	if !c.owned {
+		return c.command.Wait()
+	}
+	// Leave the group leader unreaped until its descendants have been killed. Its PID cannot
+	// be reused during either normal completion or concurrent cancellation.
+	var info unix.Siginfo
+	var err error
+	for {
+		err = unix.Waitid(unix.P_PID, c.PID(), &info, unix.WEXITED|unix.WNOWAIT, nil)
+		if !errors.Is(err, unix.EINTR) {
+			break
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.finished = true
+	if err != nil {
+		if !errors.Is(err, unix.ECHILD) {
+			syscall.Kill(-c.PID(), syscall.SIGKILL)
+		}
+		c.command.Wait()
+		if c.restoreTerminal != nil {
+			c.restoreTerminal()
+		}
+		return fmt.Errorf("%w: cannot retain group leader: %v", errProcessGroupCleanup, err)
+	}
+	killErr := syscall.Kill(-c.PID(), syscall.SIGKILL)
+	waitErr := c.command.Wait()
+	if c.restoreTerminal != nil {
+		if err := c.restoreTerminal(); err != nil {
+			return errors.Join(err, waitErr)
+		}
+	}
+	if killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
+		return fmt.Errorf("%w: %v", errProcessGroupCleanup, killErr)
+	}
+	return waitErr
+}
 
 // Signal sends the signal to the process; SIGKILL goes to the process group the service leads, so no descendant survives.
-func (c startedChild) Signal(sig os.Signal) error {
+func (c *startedChild) Signal(sig os.Signal) error {
 	signal, ok := sig.(syscall.Signal)
 	if !ok {
 		return fmt.Errorf("unsupported signal %v", sig)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.finished {
+		return os.ErrProcessDone
 	}
 	pid := c.command.Process.Pid
 	if c.group && signal == syscall.SIGKILL {
@@ -268,4 +338,20 @@ func azureDevOpsEnvironment(environment []string) []string {
 		result = append(result, entry)
 	}
 	return append(result, "AZURE_CONFIG_DIR=/home/agent/.azure", "AZURE_CORE_COLLECT_TELEMETRY=0", "AZURE_CORE_LOG_LEVEL=critical", "AZURE_LOGGING_ENABLE_LOG_FILE=false", "GIT_TERMINAL_PROMPT=0")
+}
+
+// restoreProcessTerminal returns foreground ownership to the manager while blocking SIGTTOU on the calling OS thread.
+func restoreProcessTerminal(fd, group int) error {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	var blocked, previous unix.Sigset_t
+	blocked.Val[0] = 1 << (unix.SIGTTOU - 1)
+	if err := unix.PthreadSigmask(unix.SIG_BLOCK, &blocked, &previous); err != nil {
+		return fmt.Errorf("%w: cannot protect terminal restoration: %v", errProcessGroupCleanup, err)
+	}
+	defer unix.PthreadSigmask(unix.SIG_SETMASK, &previous, nil)
+	if err := unix.IoctlSetPointerInt(fd, unix.TIOCSPGRP, group); err != nil {
+		return fmt.Errorf("%w: cannot restore terminal foreground: %v", errProcessGroupCleanup, err)
+	}
+	return nil
 }

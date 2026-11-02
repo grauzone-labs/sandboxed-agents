@@ -30,3 +30,19 @@ func Port(address string) (int, error) {
 	}
 	return port, nil
 }
+
+// SessionPrefix introduces private startup and completed-cleanup records; older managers reject the private session verb before starting Azure.
+const SessionPrefix = "\x1eSANDBOXED_AGENTS_AZURE_SESSION "
+
+// ValidToken accepts only 256-bit lowercase hexadecimal session capabilities.
+func ValidToken(token string) bool {
+	if len(token) != 64 {
+		return false
+	}
+	for _, c := range token {
+		if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}

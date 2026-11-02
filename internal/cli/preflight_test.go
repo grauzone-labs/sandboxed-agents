@@ -41,6 +41,7 @@ type response struct {
 	DelayAfterOutputMS int
 	FailOnce           bool
 	Output             string
+	FinalOutput        string
 	Stderr             string
 	Exit               int
 	ExpectedStdin      string

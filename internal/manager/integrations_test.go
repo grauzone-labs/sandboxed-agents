@@ -181,6 +181,8 @@ func TestIntegrationWorkflowsRejectUnsafeIdentity(t *testing.T) {
 		{"integrations", "login", "azure", "device-code"},
 		{"integrations", "login", "azure", "browser", "--ssh-host", "agent01"},
 		{"__azure-browser", "agent01", "http://localhost:43123"},
+		{"__azure-login", strings.Repeat("a", 64), "agent01"},
+		{"__azure-control", strings.Repeat("a", 64), "cancel"},
 		{"integrations", "config", "git", "credentials"},
 		{"integrations", "config", "git", "identity", "--name", "N", "--email", "E"},
 	} {
