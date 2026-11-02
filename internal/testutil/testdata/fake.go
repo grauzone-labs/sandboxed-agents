@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
 // scriptedResponse is one scripted answer of the fake for an argv key.
@@ -21,6 +24,7 @@ type scriptedResponse struct {
 	DelayAfterOutputMS int
 	FailOnce           bool
 	Output             string
+	FinalOutput        string
 	Stderr             string
 	Exit               int
 	ReadyFile, WaitFor string
@@ -55,6 +59,22 @@ func priorInvocations(prefix string) int {
 
 // main records process arguments and serves scripted responses for external-command tests.
 func main() {
+	if os.Getenv("TEST_AZURE_REMOTE_DIR") != "" {
+		if len(os.Args) > 1 && os.Args[1] == "--test-azure-manager" {
+			if len(os.Args) > 2 && os.Args[2] != "__azure-control" {
+				os.WriteFile(filepath.Join(os.Getenv("TEST_AZURE_REMOTE_DIR"), "manager.pid"), []byte(strconv.Itoa(os.Getpid())), 0600)
+			}
+			os.Exit(manager.Run(os.Args[2:], os.Stdout, os.Stderr))
+		}
+		if len(os.Args) > 1 && os.Args[1] == "__azure-browser" {
+			os.Exit(manager.Run(os.Args[1:], os.Stdout, os.Stderr))
+		}
+		if strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe") == "az" {
+			azureLoginFixture()
+			return
+		}
+	}
+
 	// A bounded child deliberately keeps the parent's inherited output open.
 	if len(os.Args) == 3 && os.Args[1] == "--test-hold-output" {
 		defer os.WriteFile(os.Args[2]+".done", nil, 0600)
@@ -79,6 +99,23 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(125)
+	}
+	if prefix == "TEST_PODMAN" && os.Getenv("TEST_AZURE_REMOTE_DIR") != "" {
+		for i, arg := range os.Args {
+			if arg != "/usr/local/bin/sandboxed-agents-manager" || i+1 >= len(os.Args) {
+				continue
+			}
+			args := os.Args[i+1:]
+			if args[0] != "__azure-login" && args[0] != "__azure-control" && strings.Join(args, " ") != "integrations login azure browser --ssh-host agent01" {
+				break
+			}
+			command := exec.Command(os.Getenv("TEST_AZURE_REMOTE_MANAGER"), append([]string{"--test-azure-manager"}, args...)...)
+			command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+			if err := command.Run(); err != nil {
+				os.Exit(1)
+			}
+			return
+		}
 	}
 	// Tests that care where a process ran, such as a private known_hosts directory, read one
 	// working directory per call from the optional working-directory log.
@@ -222,6 +259,7 @@ func main() {
 		fmt.Fprint(os.Stdout, response.Output)
 		fmt.Fprint(os.Stderr, response.Stderr)
 		time.Sleep(time.Duration(response.DelayAfterOutputMS) * time.Millisecond)
+		fmt.Fprint(os.Stdout, response.FinalOutput)
 		if response.ExpectedStdin != "" {
 			data, err := io.ReadAll(os.Stdin)
 			if err != nil || string(data) != response.ExpectedStdin {
@@ -296,4 +334,59 @@ func main() {
 		}
 	}
 	os.Exit(code)
+}
+
+// azureLoginFixture supplies a real callback listener and descendant at the external Azure CLI seam.
+func azureLoginFixture() {
+	dir := os.Getenv("TEST_AZURE_REMOTE_DIR")
+	if len(os.Args) > 1 && os.Args[1] == "account" {
+		os.WriteFile(filepath.Join(dir, "account"), nil, 0600)
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "login" {
+		os.WriteFile(filepath.Join(dir, "az.pid"), []byte(strconv.Itoa(os.Getpid())), 0600)
+		child := exec.Command(os.Args[0], "--test-azure-listener")
+		child.Stdout, child.Stderr = os.Stdout, os.Stderr
+		if err := child.Start(); err != nil {
+			panic(err)
+		}
+		if os.Getenv("TEST_AZURE_REMOTE_MODE") == "success" {
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				if _, err := os.Stat(filepath.Join(dir, "callback-emitted")); err == nil {
+					child.Process.Release()
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			child.Process.Kill()
+			child.Wait()
+			os.Exit(1)
+		}
+		if err := child.Wait(); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	defer listener.Close()
+	os.WriteFile(filepath.Join(dir, "listener.pid"), []byte(strconv.Itoa(os.Getpid())), 0600)
+	address := "http://localhost:" + strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+	os.WriteFile(filepath.Join(dir, "callback"), []byte(listener.Addr().String()), 0600)
+	command := exec.Command(os.Getenv("TEST_AZURE_REMOTE_MANAGER"), "__azure-browser", "agent01", address)
+	command.Stdout, command.Stderr = os.Stdout, os.Stderr
+	if err := command.Run(); err != nil {
+		os.Exit(1)
+	}
+	os.WriteFile(filepath.Join(dir, "callback-emitted"), nil, 0600)
+	for {
+		connection, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		connection.Close()
+	}
 }

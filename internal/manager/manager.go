@@ -58,13 +58,16 @@ type Process struct {
 	Environment []string
 	// ProcessGroup starts the process as the leader of its own process group, so a supervisor can end every descendant.
 	ProcessGroup bool
+	// OwnProcessGroup owns every descendant through completion and gives an attached terminal to the group while it runs.
+	// Unlike ProcessGroup, it cleans the group before reaping its leader and restores terminal foreground ownership afterward.
+	OwnProcessGroup bool
 }
 
 // Child is a started process that a supervisor waits for and signals.
 type Child interface {
 	// PID is the process ID of the started process.
 	PID() int
-	// Wait blocks until the process exits and returns its exit error.
+	// Wait blocks until the process exits and its owned group is cleaned up, returning an exit or cleanup error.
 	Wait() error
 	// Signal sends the signal to the process; SIGKILL reaches its whole process group when it leads one.
 	Signal(os.Signal) error
@@ -117,6 +120,13 @@ type Effects struct {
 // The internal __azure-browser callback verifies agent identity and emits the
 // callback record that lets the host establish forwarding before showing the URL.
 func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) int {
+	if len(args) == 3 && args[0] == "__azure-login" {
+		return azureSession(args[1], args[2], stdout, stderr, effects)
+	}
+	if len(args) == 3 && args[0] == "__azure-control" {
+		return azureControl(args[1], args[2], stderr, effects)
+	}
+
 	if len(args) == 3 && args[0] == "__azure-browser" {
 		return azureBrowser(args[1], args[2], stdout, stderr, effects)
 	}

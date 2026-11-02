@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/azurebrowser"
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
 )
 
@@ -74,15 +75,32 @@ func TestAzureLoginDispatchesAgentWithTerminal(t *testing.T) {
 					if err := os.WriteFile(filepath.Join(dir, "entry"), []byte("Host agent01\n"), 0600); err != nil {
 						t.Fatal(err)
 					}
-					execution = append(execution, "--ssh-host", "agent01")
+					execution = append(execution[:len(execution)-4], "__azure-login", "*", "agent01")
+					f.responses["exec --user=1000:1000 --env HOME=/home/agent "+shellContainer+" "+integrationManager+" __azure-control * start"] = response{}
+					f.responses["exec --user=1000:1000 --env HOME=/home/agent "+shellContainer+" "+integrationManager+" __azure-control * cancel"] = response{}
 				}
-				f.responses[strings.Join(execution, " ")] = response{Exit: code, EchoStdin: true}
+				answer := response{Exit: code, EchoStdin: true}
+				if workflow == "browser" {
+					answer.Output = "\x1eSANDBOXED_AGENTS_AZURE_SESSION \"ready\"\n\x1eSANDBOXED_AGENTS_AZURE_SESSION \"done\"\n"
+				}
+				f.responses[strings.Join(execution, " ")] = answer
 				status, output, calls := f.run(t, "integrations", "login", "agent01", "azure", workflow)
 				wantStatus := 0
 				if code != 0 {
 					wantStatus = 1
 				}
-				if status != wantStatus || !strings.Contains(output, "azure-terminal-input") || !reflect.DeepEqual(calls, append(sandboxQueryCalls(), strings.Fields(integrationProbe), execution)) {
+				expected := append(sandboxQueryCalls(), strings.Fields(integrationProbe))
+				if workflow == "browser" {
+					token := calls[len(expected)][len(execution)-2]
+					if !azurebrowser.ValidToken(token) {
+						t.Fatalf("invalid session token")
+					}
+					execution[len(execution)-2] = token
+					expected = append(expected, execution, strings.Fields("exec --user=1000:1000 --env HOME=/home/agent "+shellContainer+" "+integrationManager+" __azure-control "+token+" start"))
+				} else {
+					expected = append(expected, execution)
+				}
+				if status != wantStatus || !strings.Contains(output, "azure-terminal-input") || !reflect.DeepEqual(calls, expected) {
 					t.Fatalf("status=%d output=%s calls=%v", status, output, calls)
 				}
 			})
@@ -108,7 +126,11 @@ func azureBrowserFixture(t *testing.T, login response) *fixture {
 	}
 	f.host.IsInputTerminal = func(io.Reader) bool { return true }
 	f.host.IsOutputTerminal = func(io.Writer) bool { return true }
-	f.responses["exec --user=1000:1000 --env HOME=/home/agent -it "+shellContainer+" "+integrationManager+" integrations login azure browser --ssh-host agent01"] = login
+	login.Output = "\x1eSANDBOXED_AGENTS_AZURE_SESSION \"ready\"\n" + login.Output
+	login.FinalOutput = "\x1eSANDBOXED_AGENTS_AZURE_SESSION \"done\"\n"
+	f.responses["exec --user=1000:1000 --env HOME=/home/agent -it "+shellContainer+" "+integrationManager+" __azure-login * agent01"] = login
+	f.responses["exec --user=1000:1000 --env HOME=/home/agent "+shellContainer+" "+integrationManager+" __azure-control * start"] = response{}
+	f.responses["exec --user=1000:1000 --env HOME=/home/agent "+shellContainer+" "+integrationManager+" __azure-control * cancel"] = response{}
 	return f
 }
 

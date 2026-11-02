@@ -3,10 +3,13 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +27,7 @@ type azureOutput struct {
 	output   io.Writer
 	pending  []byte
 	callback func(string) error
+	session  func(string) error
 	cancel   context.CancelFunc
 	err      error
 }
@@ -56,7 +60,11 @@ func (w *azureOutput) Write(data []byte) (int, error) {
 			w.pending = w.pending[start:]
 		}
 		prefix := []byte(azurebrowser.Prefix)
-		if len(w.pending) < len(prefix) && callbackPrefix(w.pending) {
+		sessionRecord := bytes.HasPrefix(w.pending, []byte(azurebrowser.SessionPrefix))
+		if sessionRecord {
+			prefix = []byte(azurebrowser.SessionPrefix)
+		}
+		if callbackPrefix(w.pending) && !bytes.HasPrefix(w.pending, []byte(azurebrowser.Prefix)) && !sessionRecord {
 			break
 		}
 		if !bytes.HasPrefix(w.pending, prefix) {
@@ -80,7 +88,15 @@ func (w *azureOutput) Write(data []byte) (int, error) {
 			w.err = fmt.Errorf("invalid Azure browser callback record")
 			break
 		}
-		if w.err = w.callback(address); w.err != nil {
+		handle := w.callback
+		if sessionRecord {
+			handle = w.session
+		}
+		if handle == nil {
+			w.err = fmt.Errorf("unexpected Azure browser session record")
+			break
+		}
+		if w.err = handle(address); w.err != nil {
 			break
 		}
 		w.pending = w.pending[end+1:]
@@ -158,7 +174,7 @@ func startAzureTunnel(ctx context.Context, alias string, port int) (*azureTunnel
 }
 
 // runAzureBrowser streams login while opening each requested tunnel before exposing its URL.
-func runAzureBrowser(request Request, p podmanTarget, stdin io.Reader, stdout, stderr io.Writer, args []string) (int, error) {
+func runAzureBrowser(request Request, p podmanTarget, stdin io.Reader, stdout, stderr io.Writer, args []string) (status int, resultErr error) {
 	restore := snapshotAzureTerminal(stdin, stdout, stderr)
 	defer restore()
 	signalCtx, stopSignals := azureLoginContext()
@@ -171,7 +187,65 @@ func runAzureBrowser(request Request, p podmanTarget, stdin io.Reader, stdout, s
 			tunnel.close()
 		}
 	}()
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return 1, fmt.Errorf("cannot initialize Azure browser session")
+	}
+	token := fmt.Sprintf("%x", tokenBytes)
+	// The private verb prevents an older manager from starting an uncontrolled login.
+	managerIndex := slices.Index(args, managerPath)
+	if managerIndex < 0 {
+		return 1, fmt.Errorf("cannot initialize Azure browser manager command")
+	}
+	managerArgs := args[:managerIndex+1]
+	args = append(slices.Clone(managerArgs), "__azure-login", token, sshHostName(request))
+	control := func(operation string, controlCtx context.Context) error {
+		controlArgs := append(slices.Clone(managerArgs), "__azure-control", token, operation)
+		// Control has no terminal and no stdin; preserve the selected Podman target and agent identity.
+		for i, arg := range controlArgs {
+			if arg == "-it" {
+				controlArgs = append(controlArgs[:i], controlArgs[i+1:]...)
+				break
+			}
+		}
+		command := p.command(controlCtx, time.Second, controlArgs...)
+		if err := capture.Run(command, io.Discard, io.Discard); err != nil {
+			return fmt.Errorf("integration workflow failed: Azure browser session %s was not acknowledged", operation)
+		}
+		return nil
+	}
+	ready, completed := false, false
+	defer func() {
+		if ready && !completed {
+			cleanupCtx, stop := context.WithTimeout(context.Background(), 8*time.Second)
+			defer stop()
+			if err := control("cancel", cleanupCtx); err != nil {
+				status = 1
+				resultErr = errors.Join(resultErr, fmt.Errorf("Azure browser remote cleanup failed; retry after checking the sandbox"))
+			}
+		}
+	}()
 	output := &azureOutput{output: stdout, cancel: cancel}
+	output.session = func(event string) error {
+		switch event {
+		case "ready":
+			if ready {
+				return fmt.Errorf("duplicate Azure browser session readiness")
+			}
+			ready = true
+			startCtx, stop := context.WithTimeout(ctx, 8*time.Second)
+			defer stop()
+			return control("start", startCtx)
+		case "done":
+			if !ready || completed {
+				return fmt.Errorf("invalid Azure browser session completion")
+			}
+			completed = true
+			return nil
+		default:
+			return fmt.Errorf("invalid Azure browser session record")
+		}
+	}
 	output.callback = func(address string) error {
 		port, err := azurebrowser.Port(address)
 		if err != nil {
@@ -192,7 +266,11 @@ func runAzureBrowser(request Request, p podmanTarget, stdin io.Reader, stdout, s
 			select {
 			case <-current.stopping:
 			default:
-				cancel()
+				output.mu.Lock()
+				if !completed {
+					cancel()
+				}
+				output.mu.Unlock()
 			}
 		}()
 		_, err = fmt.Fprintf(stdout, "SSH tunnel ready. Open this URL in a browser on this machine:\r\n%s\r\n", address)
@@ -204,6 +282,12 @@ func runAzureBrowser(request Request, p podmanTarget, stdin io.Reader, stdout, s
 	command := p.command(ctx, 2*time.Second, args...)
 	command.Stdin = stdin
 	err := capture.Run(command, output, azureStderr{output: output, writer: stderr})
+	if !ready && ctx.Err() != nil && signalCtx.Err() == nil {
+		return 1, fmt.Errorf("integration workflow failed")
+	}
+	if !ready && signalCtx.Err() == nil && output.err == nil {
+		return 1, fmt.Errorf("Azure browser session did not initialize; update %s to refresh its manager and retry", request.Name)
+	}
 	if signalCtx.Err() != nil {
 		return 1, fmt.Errorf("Azure browser login cancelled")
 	}
@@ -213,7 +297,7 @@ func runAzureBrowser(request Request, p podmanTarget, stdin io.Reader, stdout, s
 	if len(output.pending) > 0 {
 		return 1, fmt.Errorf("incomplete Azure browser callback record")
 	}
-	if tunnel != nil {
+	if tunnel != nil && !completed {
 		select {
 		case <-tunnel.done:
 			return 1, fmt.Errorf("Azure browser SSH tunnel ended before login completed; retry login or use device-code")
@@ -225,6 +309,9 @@ func runAzureBrowser(request Request, p podmanTarget, stdin io.Reader, stdout, s
 	}
 	if err != nil {
 		return 1, fmt.Errorf("integration workflow failed")
+	}
+	if !completed {
+		return 1, fmt.Errorf("Azure browser session ended without cleanup confirmation")
 	}
 	return 0, nil
 }
@@ -249,5 +336,5 @@ func (w azureStderr) Write(data []byte) (int, error) {
 // callbackPrefix recognizes either a complete private record prefix or its incomplete start.
 func callbackPrefix(data []byte) bool {
 	prefix := []byte(azurebrowser.Prefix)
-	return bytes.HasPrefix(data, prefix) || bytes.HasPrefix(prefix, data)
+	return bytes.HasPrefix(data, prefix) || bytes.HasPrefix(prefix, data) || bytes.HasPrefix(data, []byte(azurebrowser.SessionPrefix)) || bytes.HasPrefix([]byte(azurebrowser.SessionPrefix), data)
 }
