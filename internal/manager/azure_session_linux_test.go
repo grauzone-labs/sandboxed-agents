@@ -275,7 +275,7 @@ func TestAzureSessionReadsInteractiveTerminal(t *testing.T) {
 	}
 }
 
-// TestAzureSessionTerminalBoundary runs the production manager inside a child session with a real controlling terminal.
+// TestAzureSessionTerminalBoundary proves the production manager restores its foreground process group through the executable and real controlling-terminal seam.
 func TestAzureSessionTerminalBoundary(t *testing.T) {
 	token := os.Getenv("TEST_AZURE_TTY_TOKEN")
 	if token == "" {

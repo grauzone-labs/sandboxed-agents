@@ -75,7 +75,7 @@ func TestAzureLoginDispatchesAgentWithTerminal(t *testing.T) {
 					if err := os.WriteFile(filepath.Join(dir, "entry"), []byte("Host agent01\n"), 0600); err != nil {
 						t.Fatal(err)
 					}
-					execution = append(execution[:len(execution)-4], "__azure-login", "*", "agent01")
+					execution = strings.Fields("exec -it --user=1000:1000 --env HOME=/home/agent " + shellContainer + " " + integrationManager + " __azure-login * agent01")
 					f.responses["exec --user=1000:1000 --env HOME=/home/agent "+shellContainer+" "+integrationManager+" __azure-control * start"] = response{}
 					f.responses["exec --user=1000:1000 --env HOME=/home/agent "+shellContainer+" "+integrationManager+" __azure-control * cancel"] = response{}
 				}
@@ -128,7 +128,7 @@ func azureBrowserFixture(t *testing.T, login response) *fixture {
 	f.host.IsOutputTerminal = func(io.Writer) bool { return true }
 	login.Output = "\x1eSANDBOXED_AGENTS_AZURE_SESSION \"ready\"\n" + login.Output
 	login.FinalOutput = "\x1eSANDBOXED_AGENTS_AZURE_SESSION \"done\"\n"
-	f.responses["exec --user=1000:1000 --env HOME=/home/agent -it "+shellContainer+" "+integrationManager+" __azure-login * agent01"] = login
+	f.responses["exec -it --user=1000:1000 --env HOME=/home/agent "+shellContainer+" "+integrationManager+" __azure-login * agent01"] = login
 	f.responses["exec --user=1000:1000 --env HOME=/home/agent "+shellContainer+" "+integrationManager+" __azure-control * start"] = response{}
 	f.responses["exec --user=1000:1000 --env HOME=/home/agent "+shellContainer+" "+integrationManager+" __azure-control * cancel"] = response{}
 	return f

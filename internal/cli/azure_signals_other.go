@@ -9,7 +9,7 @@ import (
 	"syscall"
 )
 
-// azureLoginContext cancels login and its SSH tunnel on terminal interruption or host termination.
+// azureLoginContext cancels login and its SSH tunnel on interruption, terminal hangup or host termination.
 func azureLoginContext() (context.Context, context.CancelFunc) {
-	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGHUP, syscall.SIGTERM)
 }

@@ -74,9 +74,11 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 		if err != nil {
 			return err
 		}
-		args = append(args, "-it", names.Container, managerPath, "integrations", "login", request.Args[1], workflow)
 		if browser {
-			args = append(args, "--ssh-host", sshHostName(request))
+			// Browser login owns its private session and control verbs, including terminal allocation.
+			args = append(args, names.Container, managerPath)
+		} else {
+			args = append(args, "-it", names.Container, managerPath, "integrations", "login", request.Args[1], workflow)
 		}
 		stdin = p.host.Stdin
 	} else {
