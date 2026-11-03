@@ -96,8 +96,8 @@
   },
   "not_claimed": [
     "No provider prompt or answer check was recorded and no authentication was verified.",
-    "The original fragments did not appear at this revision, but no before-fix baseline ran, so this neither reproduces the report nor closes it as not reproducible. A comparison baseline without -u -2 was requested of the user and has no result; it is pending, not tested.",
-    "No root cause is established.",
+    "At this recording, the original fragments did not appear at this revision and no before-fix baseline had run, so this record neither reproduces the report nor closes it as not reproducible. Historical for this time slice; see tmux-cause-comparison.json for the later comparison.",
+    "No root cause was established at this recording. Historical for this time slice; see tmux-cause-comparison.json for the later comparison.",
     "TERM, rows, columns, locale, and the emulator are not recorded for this run and are not inferred from the screenshots.",
     "Nothing here covers Linux; see manual-linux-screens.json."
   ],

@@ -1,0 +1,139 @@
+{
+  "kind": "issue-114-tmux-cause-comparison",
+  "note": "Human-observed A/B/A/B comparison with read-only tmux metadata. Supplementary record, not a release manual-check record and not read by the release gate. It supersedes the pending-baseline and unestablished-cause statements of manual-linux-screens.json and manual-windows-screens.json. Those earlier dated observations are retained; their not_claimed limits were annotated as historical with a pointer to this record.",
+  "issue": 114,
+  "release_manual_check_record": false,
+  "criteria_addressed": [
+    "issue 114 acceptance criterion 1 (reproduction)",
+    "issue 114 acceptance criterion 2 (cause named, fix confirmed, working configuration documented)"
+  ],
+  "observed_date_utc": "2026-11-03",
+  "commit": "6ed41e7235f4702474592d2c912bb294729fa6a1",
+  "platform": "windows",
+  "host": "winpodman01",
+  "sandbox": {
+    "controller_group": "screenshot-114",
+    "name": "capture",
+    "toolchain": "azure",
+    "container": "sandboxed-agents.screenshot-114.capture"
+  },
+  "agent": {
+    "name": "opencode",
+    "version": "1.19.4"
+  },
+  "chain": "Omarchy default terminal (executable and version not identified; the user confirmed it is not Windows Terminal) -> SSH to winpodman01 -> Windows PowerShell -> Podman, selected rootless WSL machine -> the agent user's tmux server, socket sandboxed-agents, session opencode",
+  "scope": "This reproduces the behaviour of the attach before the fix by running tmux directly, without the two flags. It did not rebuild or retest the originally released preview, and it does not show that every historical report had the same cause.",
+  "commands": {
+    "A_without_flags": "podman exec -it --user agent sandboxed-agents.screenshot-114.capture tmux -L sandboxed-agents -f /dev/null attach-session -t '=opencode'",
+    "B_with_flags": "podman exec -it --user agent sandboxed-agents.screenshot-114.capture tmux -L sandboxed-agents -f /dev/null -u -2 attach-session -t '=opencode'",
+    "difference": "B inserts the tmux global options -u and -2 before attach-session and nothing else."
+  },
+  "trials": [
+    {
+      "id": "A1",
+      "command": "A",
+      "result": "fragments",
+      "user_report": "fragments",
+      "attachment_id": "c6a352e2-688a-4510-91be-a517b2ae4284",
+      "screenshot_shows": "Sparse horizontal glyph fragments where the logo is drawn, an isolated /update, an input bar with little text, isolated tab and ctrl+p labels and Tip, the original phenotype of issue 114.",
+      "tmux_status_clock": "08:53 03-Nov-26",
+      "metadata": "not measured"
+    },
+    {
+      "id": "B-invalid",
+      "command": "not recorded",
+      "result": "invalid trial",
+      "detail": "The first attempt at B failed. The user reported \"Unknown flag -u\" with no command line, so the attempted command, the position of -u, and the parser's reason are not established. The trial is excluded and is not a result for B.",
+      "user_report": "Unknown flag -u"
+    },
+    {
+      "id": "B1",
+      "command": "B",
+      "result": "correct",
+      "user_report": "with -u -2 drawing is correct",
+      "attachment_id": "3441034e-0b86-4869-bb8c-aa94225e415c",
+      "screenshot_shows": "The complete OpenCode start screen: logo, input box, model line, key hints, tip, and version.",
+      "tmux_status_clock": "08:58 03-Nov-26",
+      "metadata": "not measured"
+    },
+    {
+      "id": "A2",
+      "command": "A, then left attached",
+      "result": "fragments",
+      "user_report": "fragments return",
+      "metadata_utc": "2026-11-03T11:42:20.5732100Z",
+      "client": "name=/dev/pts/0|session=opencode|term=xterm|features=bpaste,ccolour,clipboard,cstyle,focus,margins,rectfill,title|utf8=0|width=172|height=80|flags=attached,focused",
+      "pane": "session=opencode|width=172|height=79|tty=/dev/pts/1"
+    },
+    {
+      "id": "B2",
+      "command": "B, then left attached",
+      "result": "correct",
+      "user_report": "screen is fixed",
+      "metadata_utc": "2026-11-03T11:44:09.1108639Z",
+      "client": "name=/dev/pts/0|session=opencode|term=xterm|features=256,bpaste,ccolour,clipboard,cstyle,focus,margins,rectfill,title|utf8=1|width=172|height=80|flags=attached,focused,UTF-8",
+      "pane": "session=opencode|width=172|height=79|tty=/dev/pts/1"
+    }
+  ],
+  "metadata": {
+    "queries": {
+      "clients": "tmux -L sandboxed-agents -f /dev/null list-clients -F 'name=#{client_name}|session=#{client_session}|term=#{client_termname}|features=#{client_termfeatures}|utf8=#{client_utf8}|width=#{client_width}|height=#{client_height}|flags=#{client_flags}'",
+      "panes": "tmux -L sandboxed-agents -f /dev/null list-panes -t opencode -F 'session=#{session_name}|width=#{pane_width}|height=#{pane_height}|tty=#{pane_tty}'",
+      "sessions": "tmux -L sandboxed-agents -f /dev/null list-sessions",
+      "tmux_version": "tmux -V",
+      "terminfo_colours": "tput -T xterm colors"
+    },
+    "run_as": "podman --connection podman-machine-default exec --user agent sandboxed-agents.screenshot-114.capture, read-only, from the Windows host's PowerShell while the client stayed attached",
+    "tmux_version": "tmux 3.5a",
+    "terminfo_colours_xterm": 8,
+    "query_exit_codes": "all 0 in both captures",
+    "opencode_session": "opencode: 1 windows (created Tue Nov  3 08:58:03 2026) (attached), the same in the A2 and B2 captures",
+    "excluded": "A capture taken after the user detached had no active client and blank pane fields; it is not matched metadata and is not used."
+  },
+  "observed": {
+    "client_term_unchanged": "The client's TERM as tmux saw it was xterm in both A2 and B2.",
+    "differences_a2_to_b2": [
+      "utf8 0 -> 1",
+      "client features gain 256",
+      "client flags gain UTF-8"
+    ],
+    "unchanged_a2_to_b2": [
+      "client width and height 172x80",
+      "pane 172x79",
+      "pane tty /dev/pts/1",
+      "session opencode and its creation time"
+    ],
+    "terminfo_vs_features": "The xterm terminfo entry reports 8 colours while B2's client features list 256, so the flag-supplied capability overrides the terminfo detection."
+  },
+  "controls": {
+    "second_pair": "A2 and B2 were measured with identical client dimensions (172x80), pane dimensions (172x79), pane tty, tmux session name and session creation time. Only detaching and reattaching were requested between the two captures; whatever else happened between them was not independently observed.",
+    "resize": "The equal sizes at both captures show a resize is not needed to explain the difference between A2 and B2. This record does not infer the outer terminal's resize history.",
+    "first_pair": "Dimensions were not measured for A1 and B1 (the screenshots are cropped to different pixel widths), so this record does not claim all four runs were measured. The tmux status clocks of A1 (08:53) and B1 (08:58) are both recorded; A1's clock precedes the session creation time of 08:58:03 that the A2 and B2 captures report, so this record does not establish that A1 ran in the same session instance as A2 and B2."
+  },
+  "regression": {
+    "test": "TestAgentSessionDrawsFullScreenThroughLocalTmux in internal/manager, a real local tmux with a stand-in agent, beside TestAgentSessionStartsOnceAndAttachesWithoutLock",
+    "command": "go test ./internal/manager -run '^(TestAgentSessionDrawsFullScreenThroughLocalTmux|TestAgentSessionStartsOnceAndAttachesWithoutLock)$' -count=1 -v",
+    "with_flags": "Both tests passed in two separate runs.",
+    "without_flags": "A temporary Go overlay removed only -u -2 from the attach arguments. TestAgentSessionDrawsFullScreenThroughLocalTmux then failed: first screen lacks the logo glyphs in grey, and the drawn screen carried the logo as underscores (\"__ logo\"). The overlay was deleted and the maintained source was unchanged.",
+    "fix": "94a8662073d140d98d50ceed69cabf58c82e9307 (fix(manager): attach agent sessions as a UTF-8 client with 256 colours), an ancestor of main",
+    "without_flags_observed_process_exit_code": 1,
+    "exit_code_method": "A rerun of the same overlay removal captured the process return code directly (subprocess return code appended to the captured output). This is verification provenance, not an extra human trial."
+  },
+  "conclusion": {
+    "cause": "tmux's client capability detection. Through this PTY chain the client appeared to tmux as a non-UTF-8 xterm without 256 colours (utf8=0, no 256 feature); with -u and -2 it was a UTF-8 client with 256 colours (utf8=1, features include 256), and the same pane drew correctly.",
+    "fix_confirmed": "The attach options -u -2, already in the manager, turn the failing run into the working one; the existing real-tmux regression test is red without them and green with them.",
+    "hypothesis": "The client-capability hypothesis predicted the flag pair would restore the display. The measured tmux session creation time, pane tty, and client and pane dimensions match across A2 and B2. The agent's internal state was not measured.",
+    "limit": "The two flags were tested together, never individually, so no claim is made about which flag accounts for which missing element."
+  },
+  "not_claimed": [
+    "The outer TERM and locale on the Windows side, the terminal emulator's executable and version, and the first pair's dimensions were not measured.",
+    "No claim that every historical report, or the originally released preview as a whole, had this cause.",
+    "No provider prompt or authentication was checked."
+  ],
+  "screenshots": {
+    "count": 2,
+    "retained_in": "the originating conversation only; not copied into the repository"
+  },
+  "retained": "The sandbox and images stay retained for the user's captures; no cleanup was performed and the user requested no removal.",
+  "evidence_kinds": "A1 and B1: screenshots, no metadata. A2 and B2: tmux metadata plus the user's words, no screenshot. Same session instance is measured for A2 and B2 only; A1 and B1 may be other instances."
+}
