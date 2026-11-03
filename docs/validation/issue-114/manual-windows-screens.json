@@ -1,0 +1,126 @@
+{
+  "kind": "issue-114-human-windows-screen-observation",
+  "note": "Human-observed supplementary record for the Windows half of acceptance criterion 3 of issue 114. Not a release manual-check record and not read by the release gate. Criterion 3 is shown by this record together with manual-linux-screens.json and docs/maintainers.md; neither alone covers both platforms.",
+  "issue": 114,
+  "release_manual_check_record": false,
+  "criterion_portion": "issue 114 acceptance criterion 3, Windows only",
+  "observed_date_utc": "2026-11-03",
+  "exact_times_recorded": false,
+  "preparation_ready_utc": "2026-11-03T00:16:18Z",
+  "commit": "6ed41e7235f4702474592d2c912bb294729fa6a1",
+  "platform": "windows",
+  "host": "winpodman01",
+  "host_system": "Windows 11; remote shell PowerShell 5.1 over SSH",
+  "authorization": "User requested Windows screenshot preparation, answered Yes at the live-validation start checkpoint for this revision, and confirmed winpodman01 separately.",
+  "setup": {
+    "controller_group": "screenshot-114",
+    "sandbox": "capture",
+    "toolchain": "azure",
+    "go": "go1.27.3 windows/amd64",
+    "executable_sha256": "ad0baa55bfb38a8e613f74fe7847d771be989c08e2b2b598a3b56edeb2374608",
+    "embedded_asset_sha256": "d3c465ef3ccbdd9615d7895e856015070028b8c345e6de09baded856a4a0decb",
+    "embedded_linux_manager_sha256": "b1ede32ecca3a4d97b1feb42192f94af3a2c681f537e04378dfdf98aab2a940a",
+    "note_on_hashes": "Built from the same source commit as the Linux run. The compilers and platforms differ and so do the asset hashes; no common image hash is claimed and no cause of the difference was investigated.",
+    "agent_pins": {
+      "opencode": "1.19.4",
+      "claude": "2.1.308",
+      "copilot": "1.0.103",
+      "codex": "0.163.0"
+    },
+    "attach": "ssh -t winpodman01 powershell -NoLogo -NoProfile, then the prepared executable's agents session capture AGENT with SANDBOXED_AGENTS_GROUP set to screenshot-114",
+    "preparation": "No live suite ran, no automated step signed in, and preparation started no agent session. TERM, locale, and console size were not set by preparation. The user advanced only the onboarding needed to reach each main interface."
+  },
+  "terminal": {
+    "emulator": "not confirmed for this run; an earlier historical report named Windows Terminal, which is not carried over",
+    "term": "not recorded",
+    "rows_columns": "not recorded",
+    "locale": "not recorded"
+  },
+  "observations": [
+    {
+      "agent": "opencode",
+      "version": "1.19.4",
+      "screens": [
+        "main interface"
+      ],
+      "main_interface_shown_complete": true,
+      "after_resize": "User reported \"works after resize\".",
+      "attachment_ids": [
+        "acf7cccd-ff92-4b98-8466-54d06a55baf2"
+      ]
+    },
+    {
+      "agent": "claude",
+      "version": "2.1.308",
+      "screens": [
+        "main interface"
+      ],
+      "main_interface_shown_complete": true,
+      "after_resize": "User reported \"Works after resize\".",
+      "note": "The main interface appears signed in; no login or prompt response was independently verified.",
+      "attachment_ids": [
+        "ea6a689d-0591-4dc5-a878-19d27c598a13"
+      ]
+    },
+    {
+      "agent": "codex",
+      "version": "0.163.0",
+      "screens": [
+        "main interface"
+      ],
+      "main_interface_shown_complete": true,
+      "after_resize": "User reported \"Works after resize\".",
+      "attachment_ids": [
+        "0f9e069b-2765-405b-89b4-33dcd63b5c91"
+      ]
+    },
+    {
+      "agent": "copilot",
+      "version": "1.0.103",
+      "screens": [
+        "main interface"
+      ],
+      "main_interface_shown_complete": true,
+      "after_resize": "User reported \"Works after resize\".",
+      "note": "The main interface still asks for /login; account authentication is not needed for rendering evidence.",
+      "attachment_ids": [
+        "b02e8c93-c48f-4637-9acc-a95479153e4b"
+      ]
+    }
+  ],
+  "screenshots": {
+    "count": 4,
+    "retained_in": "the originating conversation only",
+    "reason_not_published": "Retained with the user's confirmations in the originating conversation; not published in the repository.",
+    "note": "attachment_ids are opaque IDs of the originating conversation's attachments; the images are not in this repository."
+  },
+  "not_claimed": [
+    "No provider prompt or answer check was recorded and no authentication was verified.",
+    "The original fragments did not appear at this revision, but no before-fix baseline ran, so this neither reproduces the report nor closes it as not reproducible. A comparison baseline without -u -2 was requested of the user and has no result; it is pending, not tested.",
+    "No root cause is established.",
+    "TERM, rows, columns, locale, and the emulator are not recorded for this run and are not inferred from the screenshots.",
+    "Nothing here covers Linux; see manual-linux-screens.json."
+  ],
+  "retained": {
+    "sandbox": "capture, running, with three volumes (workspace, home, ssh)",
+    "container_id": "83db283f97020a2c70a9070b4a2423398ecb60e0316ff5e85d5009b196f06069",
+    "images": {
+      "base": {
+        "id": "sha256:81bb0e28b3b04f77b4a490d5fbe9c6d5f66a0dfb166b948b4c8d9aa3bcd6d2d1"
+      },
+      "azure": {
+        "id": "sha256:864d8d403e1f2abd856cf75db8c167708fe91ae86463675238211c0834a0e8f3"
+      },
+      "new_images_total": 22,
+      "new_images_provenance": "all 22 new images, including base and azure, are resolved from the full build output in build-image-provenance.json on the host; all retained",
+      "preexisting_debian_image": "sha256:394ffa2d2ac8f5c9f45148f22bad3587429bceb19c93b88e8595f1e3f7892853, unchanged and retained"
+    },
+    "c_drive_free_bytes_before": 104218771456,
+    "c_drive_free_bytes_after": 101970591744,
+    "machine_filesystem_free_bytes_before": 1025045073920,
+    "machine_filesystem_free_bytes_after": 1020217327616,
+    "podman_system_df_after": "23 images (1.268 GB), one running container, three volumes (2.19 GB); different storage views, not additive",
+    "host_evidence_directory": "C:\\Users\\agent\\screenshot-114-evidence",
+    "cleanup": "pending under the live-validation image-cleanup rules; nothing removed. Cleanup must recheck every container's actual image ID and the user's retention; asset labels alone do not prove eligibility."
+  }
+}
