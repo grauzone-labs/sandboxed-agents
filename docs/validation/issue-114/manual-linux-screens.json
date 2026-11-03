@@ -1,0 +1,132 @@
+{
+  "kind": "issue-114-human-linux-screen-observation",
+  "note": "Human-observed supplementary record for the Linux half of acceptance criterion 3 of issue 114. Not a release manual-check record and not read by the release gate. Criterion 3 is shown by this record together with manual-windows-screens.json and docs/maintainers.md; neither alone covers both platforms.",
+  "issue": 114,
+  "release_manual_check_record": false,
+  "criterion_portion": "issue 114 acceptance criterion 3, Linux only",
+  "observed_date_utc": "2026-11-02",
+  "exact_times_recorded": false,
+  "commit": "6ed41e7235f4702474592d2c912bb294729fa6a1",
+  "platform": "linux",
+  "host": "linpodman01",
+  "authorization": "User requested screenshot preparation, answered Yes at the live-validation start checkpoint for this revision, and confirmed Linux only.",
+  "setup": {
+    "controller_group": "screenshot-114",
+    "sandbox": "capture",
+    "toolchain": "azure",
+    "go": "1.27.2",
+    "executable_sha256": "75032b2c9be7fbb9bc5877a892c1ae3033d8fda83badfbc2c178ef9ac8f03ebf",
+    "embedded_asset_sha256": "c0f4f94edbca81fa02a17760116b90c5793e50ada70c84ddb56630c5090c1293",
+    "agent_pins": {
+      "opencode": "1.19.4",
+      "claude": "2.1.308",
+      "copilot": "1.0.103",
+      "codex": "0.163.0"
+    },
+    "preparation": "No live suite ran, no automated step signed in, and preparation started no agent session. The user attached over SSH from their ordinary terminal and advanced only the onboarding needed to reach each main interface. TERM, locale, and window size were not set by preparation."
+  },
+  "terminal": {
+    "emulator": "default terminal of the user's Omarchy desktop; executable and version not identified",
+    "term": "xterm-256color",
+    "stty_size": {
+      "rows": 38,
+      "columns": 172
+    },
+    "measured": "once, in the host shell; timing relative to the resizing not established; not a per-agent trace",
+    "resized_dimensions": "unknown",
+    "locale": "not reported"
+  },
+  "observations": [
+    {
+      "agent": "opencode",
+      "version": "1.19.4",
+      "screens": [
+        "main interface"
+      ],
+      "after_resize": "User confirmed the main interface stayed correct.",
+      "attachment_ids": [
+        "8be82de3-9dec-4c0e-9f12-24a701b24de5"
+      ],
+      "main_interface_shown_complete": true
+    },
+    {
+      "agent": "claude",
+      "version": "2.1.308",
+      "screens": [
+        "theme chooser",
+        "login",
+        "main interface"
+      ],
+      "after_resize": "User reported \"everything displays fine after resize\".",
+      "incidental": "Main interface showed an auto-update failure for lack of write permission on the npm prefix; not a display defect, and no fix or scope is claimed.",
+      "attachment_ids": [
+        "12901733-1609-406b-bfed-75c8c879ba7d",
+        "d20bf7b8-2130-4453-906d-a68f24de6026",
+        "c35d1439-bb3a-46ef-a03b-2d52795784b9"
+      ],
+      "main_interface_shown_complete": true
+    },
+    {
+      "agent": "codex",
+      "version": "0.163.0",
+      "screens": [
+        "main interface"
+      ],
+      "after_resize": "User reported \"looks fine after resize\".",
+      "attachment_ids": [
+        "9e20063d-6683-4443-a06e-7ff6424bef40"
+      ],
+      "main_interface_shown_complete": true
+    },
+    {
+      "agent": "copilot",
+      "version": "1.0.103",
+      "screens": [
+        "main interface"
+      ],
+      "after_resize": "User reported \"also here all good after resize\".",
+      "incidental": "Main interface still asked for /login; account authentication was not needed for rendering evidence.",
+      "attachment_ids": [
+        "3aaa3a75-150a-496d-acab-83bed25c3c92"
+      ],
+      "main_interface_shown_complete": true
+    }
+  ],
+  "screenshots": {
+    "count": 6,
+    "retained_in": "the originating conversation only",
+    "reason_not_published": "Some captures include the whole desktop with unrelated conversation and workspace windows, others only the terminal; none is copied into the repository.",
+    "note": "attachment_ids are opaque IDs of the originating conversation's attachments; the images are not in this repository."
+  },
+  "not_claimed": [
+    "No provider prompt or answer check was recorded and no authentication was verified.",
+    "The original fragments did not appear at this revision, but no before-fix baseline ran, so this neither reproduces the report nor closes it as not reproducible. A comparison baseline without -u -2 was requested of the user and has no result; it is pending, not tested.",
+    "No root cause is established.",
+    "The terminal measurement does not describe the original report.",
+    "Nothing here covers Windows; see manual-windows-screens.json."
+  ],
+  "retained": {
+    "sandbox": "capture, with three volumes",
+    "images": {
+      "base": {
+        "id": "0f5b5154afce323e8d1043c4b419643de0736e337e4aabddf2e17cf6dc0b7fdd",
+        "bytes": 603175632
+      },
+      "azure": {
+        "id": "14edfbc480743eaf4ffd08d368b54da3cc485720508ae768806e8a581fecb80c",
+        "bytes": 1267426428
+      }
+    },
+    "free_bytes_before": 119319838720,
+    "free_bytes_after": 115016183808,
+    "cleanup": "pending under the live-validation image-cleanup rules; nothing removed. Before cleanup every Linux ID must be proven against the original build output and the whole-engine before inventory; an ID without that trace stays unverified and is not deletable.",
+    "images_reported_after": "Podman df after preparation, as reported: 26 images (1.272 GB), one active container, three active volumes (2.19 GB); 13 images reported as preexisting, plus a separately mentioned preexisting dangling image. No exact count of new images is derived here.",
+    "images_not_itemized": "Only the two final image IDs are itemized. Any other new image is retained but unitemized, and no build-output provenance for other Linux IDs is recorded in this record.",
+    "host_evidence": [
+      "/tmp/issue114-screenshot-images-before.json",
+      "/tmp/issue114-screenshot-images-after.json",
+      "/tmp/issue114-screenshot-containers-before.json"
+    ],
+    "host_evidence_note": "Plain paths on the host, not links."
+  }
+}
