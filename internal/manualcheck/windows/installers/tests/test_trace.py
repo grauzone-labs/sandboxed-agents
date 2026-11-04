@@ -77,6 +77,117 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(report['unknown_rows'],1)
         self.assertEqual(report['verdict'],'INCOMPLETE')
 
+    def test_documented_queries_and_directory_type_rejections_are_nonmutating(self):
+        specs = [
+            ('DeviceIoControl', 'FAST IO DISALLOWED', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME'),
+            ('DeviceIoControl', 'INVALID PARAMETER', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME'),
+            ('CreateFile', 'NOT A DIRECTORY', ''),
+            ('CreateFile', 'IS DIRECTORY', ''),
+            ('FileSystemControl', 'NOT REPARSE POINT', 'Control: FSCTL_GET_REPARSE_POINT'),
+        ]
+        rows = [{'Process Name': 'pwsh.exe', 'PID': 10, 'Operation': op,
+                 'Path': r'C:\outside', 'Result': result, 'Detail': detail}
+                for op, result, detail in specs]
+        result, report = self.run_trace(rows, '-BookkeepingCriterion', 'windows-bookkeeping-v1', '-CriterionSha256', 'a' * 64)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(report['unknown_rows'], 0)
+        self.assertEqual(report['outside_changes'], 0)
+        self.assertEqual(report['verdict'], 'NO_FINDINGS')
+
+    def test_query_classification_does_not_accept_other_controls_or_changes(self):
+        specs = [
+            ('DeviceIoControl', 'INVALID PARAMETER', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME_EX'),
+            ('DeviceIoControl', 'INVALID PARAMETER', 'Control: IOCTL_MOUNTDEV_LINK_CREATED'),
+            ('FileSystemControl', 'NOT REPARSE POINT', 'Control: FSCTL_SET_REPARSE_POINT'),
+            ('FileSystemControl', 'SUCCESS', 'Control: FSCTL_GET_REPARSE_POINT_EXTRA'),
+            ('CreateFile', 'SUCCESS', 'OpenResult: Created'),
+            ('SetEAFile', 'IS DIRECTORY', ''),
+        ]
+        rows = [{'Process Name': 'pwsh.exe', 'PID': 10, 'Operation': op,
+                 'Path': r'C:\outside', 'Result': result, 'Detail': detail}
+                for op, result, detail in specs]
+        result, report = self.run_trace(rows, '-BookkeepingCriterion', 'windows-bookkeeping-v1', '-CriterionSha256', 'a' * 64)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(report['unknown_rows'], 5)
+        self.assertEqual(report['outside_changes'], 1)
+        self.assertEqual(report['verdict'], 'FAIL')
+
+    def test_documented_query_exceptions_require_the_recognized_results(self):
+        specs = [
+            ('DeviceIoControl', 'SUCCESS', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME'),
+            ('DeviceIoControl', 'ACCESS DENIED', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME'),
+            ('FileSystemControl', 'SUCCESS', 'Control: FSCTL_GET_REPARSE_POINT'),
+            ('FileSystemControl', 'INVALID PARAMETER', 'Control: FSCTL_GET_REPARSE_POINT'),
+            ('DeviceIoControl', 'NOT REPARSE POINT', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME'),
+        ]
+        rows = [{'Process Name': 'pwsh.exe', 'PID': 10, 'Operation': op,
+                 'Path': r'C:\outside', 'Result': result, 'Detail': detail}
+                for op, result, detail in specs]
+        result, report = self.run_trace(rows, '-BookkeepingCriterion', 'windows-bookkeeping-v1', '-CriterionSha256', 'a' * 64)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        # ACCESS DENIED is already an explicit plain failure, independently of these query rules.
+        self.assertEqual(report['unknown_rows'], 4)
+        self.assertEqual(report['verdict'], 'INCOMPLETE')
+
+    def test_literal_mode_keeps_documented_query_exceptions_unresolved(self):
+        specs = [
+            ('DeviceIoControl', 'FAST IO DISALLOWED', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME'),
+            ('DeviceIoControl', 'INVALID PARAMETER', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME'),
+            ('FileSystemControl', 'NOT REPARSE POINT', 'Control: FSCTL_GET_REPARSE_POINT'),
+            ('CreateFile', 'NOT A DIRECTORY', ''),
+            ('CreateFile', 'IS DIRECTORY', ''),
+        ]
+        rows = [{'Process Name': 'pwsh.exe', 'PID': 10, 'Operation': op,
+                 'Path': r'C:\outside', 'Result': result, 'Detail': detail}
+                for op, result, detail in specs]
+        result, report = self.run_trace(rows)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(report['unknown_rows'], 5)
+        self.assertEqual(report['verdict'], 'INCOMPLETE')
+
+    def test_filesystem_queries_do_not_override_the_pipe_control_rules(self):
+        specs = [
+            ('DeviceIoControl', 'INVALID PARAMETER', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME'),
+            ('FileSystemControl', 'NOT REPARSE POINT', 'Control: FSCTL_GET_REPARSE_POINT'),
+            ('FileSystemControl', 'SUCCESS', 'Control: FSCTL_QUERY_FILE_REGIONS'),
+            ('FileSystemControl', 'SUCCESS', 'Control: FSCTL_QUERY_USN_JOURNAL'),
+            ('FileSystemControl', 'INVALID DEVICE REQUEST', 'Control: 0x90390 (Device:0x9 Function:228 Method: 0)'),
+            ('DeviceIoControl', 'ACCESS DENIED', 'Control: IOCTL_UNRESOLVED_CONTROL'),
+        ]
+        rows = [{'Process Name': 'pwsh.exe', 'PID': 10, 'Operation': op,
+                 'Path': path, 'Result': result, 'Detail': detail}
+                for path in [r'\Device\NamedPipe\test', r'\Device\NamedPipe', r'\\.\pipe\test', r'\\?\pipe\test', r'\??\pipe\test', '/Device/NamedPipe/test']
+                for op, result, detail in specs]
+        result, report = self.run_trace(rows, '-BookkeepingCriterion', 'windows-bookkeeping-v1', '-CriterionSha256', 'a' * 64)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(report['unknown_rows'], 36)
+        self.assertEqual(report['named_pipe_rows'], 0)
+        self.assertEqual(report['verdict'], 'INCOMPLETE')
+
+    def test_literal_mode_preserves_existing_pipe_query_classification(self):
+        rows = [{'Process Name': 'pwsh.exe', 'PID': 10, 'Operation': 'FileSystemControl',
+                 'Path': r'\Device\NamedPipe\test', 'Result': 'SUCCESS',
+                 'Detail': 'Control: FSCTL_QUERY_USN_JOURNAL'},
+                {'Process Name': 'pwsh.exe', 'PID': 10, 'Operation': 'DeviceIoControl',
+                 'Path': r'\Device\NamedPipe\test', 'Result': 'ACCESS DENIED',
+                 'Detail': 'Control: IOCTL_UNRESOLVED_CONTROL'}]
+        result, report = self.run_trace(rows)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(report['unknown_rows'], 0)
+        self.assertEqual(report['verdict'], 'NO_FINDINGS')
+
+    def test_named_query_exceptions_require_exact_detail_text(self):
+        details = ['Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME ',
+                   'control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME',
+                   'Control:IOCTL_MOUNTDEV_QUERY_DEVICE_NAME']
+        rows = [{'Process Name': 'pwsh.exe', 'PID': 10, 'Operation': 'DeviceIoControl',
+                 'Path': r'C:\outside', 'Result': 'INVALID PARAMETER', 'Detail': detail}
+                for detail in details]
+        result, report = self.run_trace(rows, '-BookkeepingCriterion', 'windows-bookkeeping-v1', '-CriterionSha256', 'a' * 64)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(report['unknown_rows'], 3)
+        self.assertEqual(report['verdict'], 'INCOMPLETE')
+
     def test_named_pipe_communication_does_not_hide_unknown_operations(self):
         specs=[('CreatePipe',r'\Device\NamedPipe','SUCCESS',''),('SetPipeInformation',r'\Device\NamedPipe','SUCCESS',''),('WriteFile',r'\Device\NamedPipe','SUCCESS','Length: 57'),('FileSystemControl',r'\Device\NamedPipe\known','PIPE CONNECTED','Control: FSCTL_PIPE_LISTEN'),('<Unknown>',r'\Device\NamedPipe\known','SUCCESS',''),('CreatePipe',r'C:\outside','SUCCESS',''),('<Unknown>',r'\Device\NamedPipe','SUCCESS','')]
         rows=[{'Process Name':'node.exe','PID':10,'Operation':op,'Path':path,'Result':result,'Detail':detail} for op,path,result,detail in specs]
