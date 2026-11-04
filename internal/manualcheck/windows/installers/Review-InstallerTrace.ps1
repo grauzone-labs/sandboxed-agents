@@ -136,8 +136,8 @@ $CreatedDefaultParent = $Method -eq 'nuget-default' -and @($Rows | Where-Object 
     $_.Detail -match '\bOptions:.*?\bDirectory\b'
 }).Count -gt 0
 
-# Get-LocationClass checks Windows directory boundaries without resolving files.
-function Get-LocationClass([string]$EventPath) {
+# Get-NormalizedTracePath removes the supported Win32/NT prefixes without resolving files.
+function Get-NormalizedTracePath([string]$EventPath) {
     $Value = $EventPath.Replace('/', '\')
     if ($Value.StartsWith('\\?\', [StringComparison]::Ordinal)) {
         $Value = $Value.Substring(4)
@@ -145,6 +145,18 @@ function Get-LocationClass([string]$EventPath) {
     if ($Value.StartsWith('\??\', [StringComparison]::Ordinal)) {
         $Value = $Value.Substring(4)
     }
+    return $Value
+}
+
+# Test-PipeNamespace recognizes named and bare pipes using the same normalization as path scope.
+function Test-PipeNamespace([string]$EventPath) {
+    $Value = Get-NormalizedTracePath $EventPath
+    return $Value -match '^(\\Device\\NamedPipe|\\\\\.\\pipe|pipe)(\\|$)'
+}
+
+# Get-LocationClass checks Windows directory boundaries without resolving files.
+function Get-LocationClass([string]$EventPath) {
+    $Value = Get-NormalizedTracePath $EventPath
     if ($Value -match '(^|\\)\.\.?($|\\)') { return 'UnresolvedPath' }
     if ($Value -match '^(\\Device\\NamedPipe\\|\\\\\.\\pipe\\)') { return 'NamedPipe' }
     if ($Value.Equals($Root, [StringComparison]::OrdinalIgnoreCase) -or
@@ -294,6 +306,7 @@ $Classified = for ($Index = 0; $Index -lt $Rows.Count; $Index++) {
     $Result = ([string]$Row.Result).Trim()
     $Detail = [string]$Row.Detail
     $Location = Get-LocationClass ([string]$Row.Path)
+    $IsPipeNamespace = Test-PipeNamespace ([string]$Row.Path)
     $BareCreate = $Op -eq 'CreatePipe' -and $Result -eq 'SUCCESS' -and $Row.Path -ieq '\Device\NamedPipe'
     if($BookkeepingCriterion -ne 'literal' -and $Row.Path -ieq '\Device\NamedPipe' -and ($BareCreate -or (Test-InheritedBarePipe $EventPid ([long]$Row.FullOrdinal)))) { $Location='NamedPipe' }
     if($BareCreate) { $BarePipeCreates+=@{Pid=$EventPid;Ordinal=[long]$Row.FullOrdinal} }
@@ -305,12 +318,22 @@ $Classified = for ($Index = 0; $Index -lt $Rows.Count; $Index++) {
     $KnownMutation = ($SingleTargetChanges -contains $Op) -or ($ComplexChanges -contains $Op) -or ($Conditional -contains $Op)
 
     # These exact FSCTLs query/read the source; never infer other control codes are reads.
-    $IsReadControl = $Op -eq 'FileSystemControl' -and $Detail -match '\bControl:\s*(FSCTL_QUERY_USN_JOURNAL|FSCTL_READ_FILE_USN_DATA|FSCTL_OFFLOAD_READ)\b'
-    if($BookkeepingCriterion -ne 'literal' -and $Op -eq 'FileSystemControl' -and $Result -eq 'INVALID DEVICE REQUEST' -and
+    $IsReadControl = ($BookkeepingCriterion -eq 'literal' -or -not $IsPipeNamespace) -and $Op -eq 'FileSystemControl' -and $Detail -match '\bControl:\s*(FSCTL_QUERY_USN_JOURNAL|FSCTL_READ_FILE_USN_DATA|FSCTL_OFFLOAD_READ)\b'
+    if($BookkeepingCriterion -ne 'literal' -and -not $IsPipeNamespace -and $Op -eq 'FileSystemControl' -and $Result -eq 'INVALID DEVICE REQUEST' -and
        $Detail -ceq 'Control: 0x90390 (Device:0x9 Function:228 Method: 0)') {
         $Category='FailedNoChange';$Reason='Exact 0x90390 = FSCTL_QUERY_VOLUME_CONTAINER_STATE (Microsoft binding590736); target rejected this request'
-    } elseif($BookkeepingCriterion -ne 'literal' -and $Op -eq 'FileSystemControl' -and $Detail -match '^Control:\s*FSCTL_QUERY_FILE_REGIONS(?:,|$)') {
+    } elseif($BookkeepingCriterion -ne 'literal' -and -not $IsPipeNamespace -and $Op -eq 'FileSystemControl' -and $Detail -match '^Control:\s*FSCTL_QUERY_FILE_REGIONS(?:,|$)') {
         $Category='ReadQueryClose';$Reason='Exact MS-FSCC file-region query; no generic query-name/control wildcard'
+    } elseif($BookkeepingCriterion -ne 'literal' -and -not $IsPipeNamespace -and (
+        ($Op -eq 'DeviceIoControl' -and $Result -in @('FAST IO DISALLOWED','INVALID PARAMETER') -and
+         $Detail -ceq 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME') -or
+        ($Op -eq 'FileSystemControl' -and $Result -eq 'NOT REPARSE POINT' -and
+         $Detail -ceq 'Control: FSCTL_GET_REPARSE_POINT'))) {
+        # Microsoft documents these exact controls as output-only queries. Restrict the observed
+        # results as well; neither a similar name nor an unknown control inherits this classification.
+        # https://learn.microsoft.com/windows-hardware/drivers/ddi/mountmgr/ni-mountmgr-ioctl_mountdev_query_device_name
+        # https://learn.microsoft.com/windows-hardware/drivers/ifs/fsctl-get-reparse-point
+        $Category='ReadQueryClose';$Reason='Exact documented device-name or reparse-data query with an explicitly recognized result'
     } elseif ($BookkeepingCriterion -ne 'literal' -and $Op -eq 'RegSetInfoKey'  -and $Result -eq 'SUCCESS' -and
         $Detail -match '^KeySetInformationClass:\s*KeySetHandleTagsInformation,\s*Length:\s*0$' -and
         [string]$Row.Path -match '^(HKLM|HKCU|HKU|HKCR|HKCC|HKEY_LOCAL_MACHINE|HKEY_CURRENT_USER|HKEY_USERS|HKEY_CLASSES_ROOT|HKEY_CURRENT_CONFIG)(\\|$)') {
@@ -328,8 +351,10 @@ $Classified = for ($Index = 0; $Index -lt $Rows.Count; $Index++) {
             $Category='AllowedWritableMapping';$Reason='Potential mapped writes target an allowed file; not counted as actual WriteFile rows'
         } else { $Reason='Writable or unresolved section outside allowed files; absence of attributed WriteFile does not prove unchanged data' }
     } elseif($BookkeepingCriterion -ne 'literal' -and (
-        ($Op -eq 'CreateFile' -and $Result -in @('NAME INVALID','DELETE PENDING')) -or
+        ($Op -eq 'CreateFile' -and $Result -in @('NAME INVALID','DELETE PENDING','NOT A DIRECTORY','IS DIRECTORY')) -or
         ($Op -in @('SetDispositionInformationEx','SetDispositionInformationFile') -and $Result -eq 'NOT EMPTY'))) {
+        # MS-FSA open processing rejects mismatched file/directory types before creation/overwrite.
+        # https://learn.microsoft.com/openspecs/windows_protocols/ms-fsa/8ada5fbe-db4e-49fd-aef6-20d54b748e40
         $Category='FailedNoChange';$Reason='Specific rejected open/delete/unsupported request; successful or different requests remain reviewed'
     } elseif($BookkeepingCriterion -ne 'literal' -and $Location -eq 'NamedPipe' -and $Row.Path -ine '\Device\NamedPipe' -and (
         ($Op -eq 'CreatePipe' -and $Result -in @('SUCCESS','INSTANCE NOT AVAILABLE')) -or
@@ -365,7 +390,8 @@ $Classified = for ($Index = 0; $Index -lt $Rows.Count; $Index++) {
     } elseif ($ReadOperations -contains $Op -or $Op -match '^Query[A-Za-z0-9]+$' -or $IsReadControl) {
         $Category = 'ReadQueryClose'
         $Reason = 'Read/query/close class from the checklist'
-    } elseif ($KnownMutation -and $PlainFailures -contains $Result) {
+    } elseif ($KnownMutation -and $PlainFailures -contains $Result -and
+        ($BookkeepingCriterion -eq 'literal' -or -not $IsPipeNamespace -or $Op -notin @('FileSystemControl','DeviceIoControl'))) {
         $Category = 'FailedNoChange'
         $Reason = 'Explicit plain failure'
     } elseif ($Op -in @('CreateFile', 'RegCreateKey') -and $Result -in @('REPARSE', 'REPARSE GLOBAL')) {
