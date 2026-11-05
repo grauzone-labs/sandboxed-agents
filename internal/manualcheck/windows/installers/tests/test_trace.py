@@ -78,6 +78,7 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(report['verdict'],'INCOMPLETE')
 
     def test_documented_queries_and_directory_type_rejections_are_nonmutating(self):
+        """Prove the revised trace mode resolves only documented nonmutating pairs."""
         specs = [
             ('DeviceIoControl', 'FAST IO DISALLOWED', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME'),
             ('DeviceIoControl', 'INVALID PARAMETER', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME'),
@@ -95,6 +96,7 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(report['verdict'], 'NO_FINDINGS')
 
     def test_query_classification_does_not_accept_other_controls_or_changes(self):
+        """Keep unrelated controls unresolved and outside writes classified as changes."""
         specs = [
             ('DeviceIoControl', 'INVALID PARAMETER', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME_EX'),
             ('DeviceIoControl', 'INVALID PARAMETER', 'Control: IOCTL_MOUNTDEV_LINK_CREATED'),
@@ -113,6 +115,7 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(report['verdict'], 'FAIL')
 
     def test_documented_query_exceptions_require_the_recognized_results(self):
+        """Reject unrecognized results while retaining independent plain-failure rules."""
         specs = [
             ('DeviceIoControl', 'SUCCESS', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME'),
             ('DeviceIoControl', 'ACCESS DENIED', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME'),
@@ -130,6 +133,7 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(report['verdict'], 'INCOMPLETE')
 
     def test_literal_mode_keeps_documented_query_exceptions_unresolved(self):
+        """Preserve the literal review mode when revised query rules are not selected."""
         specs = [
             ('DeviceIoControl', 'FAST IO DISALLOWED', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME'),
             ('DeviceIoControl', 'INVALID PARAMETER', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME'),
@@ -146,6 +150,7 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(report['verdict'], 'INCOMPLETE')
 
     def test_filesystem_queries_do_not_override_the_pipe_control_rules(self):
+        """Keep filesystem query resolutions from accepting named or aliased pipe rows."""
         specs = [
             ('DeviceIoControl', 'INVALID PARAMETER', 'Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME'),
             ('FileSystemControl', 'NOT REPARSE POINT', 'Control: FSCTL_GET_REPARSE_POINT'),
@@ -165,6 +170,7 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(report['verdict'], 'INCOMPLETE')
 
     def test_literal_mode_preserves_existing_pipe_query_classification(self):
+        """Retain the original pipe-query verdicts in the literal review mode."""
         rows = [{'Process Name': 'pwsh.exe', 'PID': 10, 'Operation': 'FileSystemControl',
                  'Path': r'\Device\NamedPipe\test', 'Result': 'SUCCESS',
                  'Detail': 'Control: FSCTL_QUERY_USN_JOURNAL'},
@@ -177,6 +183,7 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(report['verdict'], 'NO_FINDINGS')
 
     def test_named_query_exceptions_require_exact_detail_text(self):
+        """Require exact control spelling and spacing for revised named-query exceptions."""
         details = ['Control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME ',
                    'control: IOCTL_MOUNTDEV_QUERY_DEVICE_NAME',
                    'Control:IOCTL_MOUNTDEV_QUERY_DEVICE_NAME']
