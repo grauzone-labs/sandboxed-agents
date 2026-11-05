@@ -149,6 +149,8 @@ function Get-NormalizedTracePath([string]$EventPath) {
 }
 
 # Test-PipeNamespace recognizes named and bare pipes using the same normalization as path scope.
+# Its refusal guard is broader than Get-LocationClass so pipe aliases cannot gain filesystem
+# resolutions; Get-LocationClass retains the literal location classification and row counts.
 function Test-PipeNamespace([string]$EventPath) {
     $Value = Get-NormalizedTracePath $EventPath
     return $Value -match '^(\\Device\\NamedPipe|\\\\\.\\pipe|pipe)(\\|$)'
