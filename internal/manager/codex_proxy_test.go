@@ -46,6 +46,49 @@ func TestCodexProxyRejectsOldVersion(t *testing.T) {
 	}
 }
 
+// TestCodexProxyRemoveAfterDowngrade proves removal clears an owned proxy after a downgrade and unblocks native login while setup stays version-gated through RunWithEffects.
+func TestCodexProxyRemoveAfterDowngrade(t *testing.T) {
+	e, dir := codexPublicationEffects(t)
+	runAgents(t, e, 0, "login", "codex", "proxy", "--url", "https://proxy.example", "--model", "chosen")
+	version, installs := "0.1.0", 0
+	installer := agentEffects(t, filepath.Dir(dir), &version, &installs)
+	runAgents(t, installer, 0, "enable", "codex", "--version", version, "--force")
+	e.Stdin = forbiddenProxyInput{t}
+	if out := runAgents(t, e, 1, "login", "codex", "proxy", "--url", "https://proxy.example", "--model", "chosen"); !strings.Contains(out, "agents update") {
+		t.Fatalf("older setup lost its version gate: %s", out)
+	}
+	starts := 0
+	e.Start = func(p manager.Process) error {
+		if p.Program == "tmux" {
+			return nil
+		}
+		starts++
+		return nil
+	}
+	for _, workflow := range []string{"browser", "device-code"} {
+		if out := runAgents(t, e, 1, "login", "codex", workflow); !strings.Contains(out, "proxy --remove") {
+			t.Fatalf("proxy guard did not explain removal: %s", out)
+		}
+	}
+	runAgents(t, e, 0, "login", "codex", "proxy", "--remove")
+	if starts != 0 {
+		t.Fatal("removal or guarded login started Codex")
+	}
+	config, err := os.ReadFile(filepath.Join(dir, "config.toml"))
+	if err != nil || !strings.Contains(string(config), "original") || strings.Contains(string(config), "cliproxyapi") {
+		t.Fatal("removal did not restore the original model and remove the owned provider")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "auth.json")); !os.IsNotExist(err) {
+		t.Fatalf("owned proxy credential remains: %v", err)
+	}
+	for _, workflow := range []string{"browser", "device-code"} {
+		runAgents(t, e, 0, "login", "codex", workflow)
+	}
+	if starts != 2 {
+		t.Fatalf("native login did not resume: starts=%d", starts)
+	}
+}
+
 // TestCodexProxyWritesNativeConfig proves managed configuration and private credentials are published through RunWithEffects.
 func TestCodexProxyWritesNativeConfig(t *testing.T) {
 	home, version, installs := t.TempDir(), "0.166.0", 0
