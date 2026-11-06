@@ -37,7 +37,7 @@ var Default = Catalog{
 	Agents: map[string]Agent{
 		"copilot": {
 			Delivered: true, Install: Install{Kind: NPM, Package: "@github/copilot"}, Command: "copilot",
-			LoginWorkflows: map[string][]string{"device-code": {"login", "--device-code"}},
+			LoginWorkflows: map[string][]string{"device-code": {"login", "--device-code"}, "proxy": {}},
 			LoginMessage:   "Open the URL shown by Copilot on your host and enter its device code.",
 			Documentation:  "https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli",
 		},

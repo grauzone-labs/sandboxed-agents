@@ -43,6 +43,11 @@ func runAgentWork(request Request, p podmanTarget, stdout, stderr io.Writer) (in
 		return 1, agentNotEnabledError(request)
 	}
 	if request.Command == "agents login" && request.AgentWorkflow == "proxy" {
+		if request.Args[1] == "copilot" && request.Options["remove"] == "" {
+			if err := catalog.CopilotProxyVersion(status.InstalledVersion); err != nil {
+				return 1, err
+			}
+		}
 		if request.Args[1] == "codex" && request.Options["remove"] == "" {
 			if err := catalog.CodexProxyVersion(status.InstalledVersion); err != nil {
 				return 1, err
