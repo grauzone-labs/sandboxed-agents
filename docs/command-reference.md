@@ -28,7 +28,7 @@ sandboxed-agents fingerprint NAME
 sandboxed-agents agents enable NAME AGENT [--version X] [--force]
 sandboxed-agents agents disable NAME AGENT [--force]
 sandboxed-agents agents update NAME AGENT [--unpin] [--force]
-sandboxed-agents agents login NAME AGENT [WORKFLOW]
+sandboxed-agents agents login NAME AGENT [WORKFLOW] [--url URL] [--model ID] [--remove]
 sandboxed-agents agents status NAME AGENT
 sandboxed-agents agents run NAME AGENT [ARG...]
 sandboxed-agents agents session NAME AGENT [--stop]
@@ -150,12 +150,13 @@ Running `ssh-config NAME --install` again with a matching host key changes no ho
 | `agents enable NAME AGENT` | Installs the agent into the sandbox's home data and enables it. `--version X` installs exactly that npm package version and pins the agent to it. `--force` repairs an interrupted managed installation. |
 | `agents disable NAME AGENT` | Removes the agent's command, selection entry, and pin. It leaves credentials alone. |
 | `agents update NAME AGENT` | Reinstalls a pinned agent at its pin, or updates an unpinned one. `--unpin` installs the newest version and clears the pin. |
-| `agents login NAME AGENT [WORKFLOW]` | Runs one of the agent's login workflows. It needs an interactive terminal. |
+| `agents login NAME AGENT [WORKFLOW]` | Runs one of the agent's login workflows. Every workflow except `claude proxy` needs an interactive terminal. `WORKFLOW` may be omitted only when the agent has exactly one; `claude` has `browser` and `proxy`, so it needs the name. |
+| `agents login NAME claude proxy --url URL` | Points Claude Code at a CLIProxyAPI server you already run: it writes the URL and a client key, read from standard input only, into Claude Code's user settings in the home data. `--model ID` also sets Claude Code's model. `--remove` deletes the managed entries and reads no key. The key is checked against nothing; the documented check is `agents run NAME claude -p ...`. See [Sign Claude Code in to a CLIProxyAPI server](agents.md#sign-claude-code-in-to-a-cliproxyapi-server). |
 | `agents status NAME AGENT` | Reports whether the agent is enabled, its version, its pin, whether a session runs, and whether it is signed in when a status probe exists. |
 | `agents run NAME AGENT [ARG...]` | Runs the agent once in `/workspace`. Every argument after the agent name is passed on unchanged. The exit status is the agent's. |
 | `agents session NAME AGENT` | Starts or attaches to the agent's persistent terminal session. `--stop` ends the session and needs no terminal. |
 
-All `agents` commands need a running sandbox with an answering manager; see [Agents](agents.md).
+`--url`, `--model`, and `--remove` belong to the `claude proxy` workflow. Any of them on another agent or workflow, a missing or invalid `--url`, and `--remove` together with `--url` or `--model` are usage errors that exit 2 before Podman is called. All `agents` commands need a running sandbox with an answering manager; see [Agents](agents.md).
 
 ## Integration commands
 

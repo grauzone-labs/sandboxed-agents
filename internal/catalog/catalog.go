@@ -43,7 +43,7 @@ var Default = Catalog{
 		},
 		"claude": {
 			Delivered: true, Install: Install{Kind: NPM, Package: "@anthropic-ai/claude-code"}, Command: "claude",
-			LoginWorkflows: map[string][]string{"browser": {"auth", "login"}},
+			LoginWorkflows: map[string][]string{"browser": {"auth", "login"}, "proxy": {}},
 			LoginMessage:   "Open the URL shown by Claude on your host and follow its authentication instructions.",
 			Documentation:  "https://code.claude.com/docs/en/overview",
 			StatusProbe:    &Probe{Args: []string{"auth", "status", "--json"}, BooleanField: "loggedIn", SignedOutExitCode: 1},

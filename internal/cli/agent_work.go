@@ -40,6 +40,9 @@ func runAgentWork(request Request, p podmanTarget, stdout, stderr io.Writer) (in
 	if !status.Enabled && !stopping {
 		return 1, agentNotEnabledError(request)
 	}
+	if request.Command == "agents login" && request.AgentWorkflow == "proxy" {
+		return runProxyLogin(request, p, names.Container, stdout, stderr)
+	}
 	interactive := !stopping && p.host.IsInputTerminal(p.host.Stdin) && p.host.IsOutputTerminal(stdout)
 	if needsTerminal && !interactive {
 		return 1, fmt.Errorf("%s %s needs an interactive terminal", request.Args[1], verb)

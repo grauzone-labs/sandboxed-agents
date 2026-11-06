@@ -8,6 +8,11 @@ import (
 
 // readTerminalSecret disables echo before reading and restores terminal settings on every return path.
 func readTerminalSecret(input io.Reader, prompt io.Writer) (token []byte, err error) {
+	return readTerminalSecretPrompt(input, prompt, "Token: ")
+}
+
+// readTerminalSecretPrompt hides terminal input while displaying the caller’s credential label.
+func readTerminalSecretPrompt(input io.Reader, prompt io.Writer, label string) (token []byte, err error) {
 	file, ok := input.(*os.File)
 	if !ok {
 		return nil, fmt.Errorf("token input is not a terminal")
@@ -22,7 +27,7 @@ func readTerminalSecret(input io.Reader, prompt io.Writer) (token []byte, err er
 			err = restoreErr
 		}
 	}()
-	if _, err := fmt.Fprint(prompt, "Token: "); err != nil {
+	if _, err := fmt.Fprint(prompt, label); err != nil {
 		return nil, err
 	}
 	defer fmt.Fprintln(prompt)

@@ -109,10 +109,10 @@ sandboxed-agents agents status agent01 claude
 
 ## 8. Sign in
 
-The command needs an interactive terminal. It prints a URL; open it in a browser on your machine, sign in, and follow the agent's prompts, because the sandbox has no browser. The login is stored in the sandbox's home data and survives `stop`, `start`, and `update` ([agents](agents.md#sign-in-to-an-agent) lists the workflows of the other agents).
+The command needs an interactive terminal. It prints a URL; open it in a browser on your machine, sign in, and follow the agent's prompts, because the sandbox has no browser. The login is stored in the sandbox's home data and survives `stop`, `start`, and `update` ([agents](agents.md#sign-in-to-an-agent) lists the workflows of the other agents). `browser` is the workflow name: `claude` has a second one, `proxy`, for a CLIProxyAPI server you already run, so the name is required.
 
 ```text
-sandboxed-agents agents login agent01 claude
+sandboxed-agents agents login agent01 claude browser
 ```
 
 **Expected:** the agent confirms the sign-in, and the command exits without `agents login failed`. Then `sandboxed-agents agents status agent01 claude` shows `signed in yes`; `unknown` means that Claude Code did not answer in time, and a second `status` usually answers. The status reports that a login is configured, not that it is valid; the session in step 9 shows that it works.
