@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -61,8 +62,11 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 		t.Run(fmt.Sprintf("%s/auth=%s", wire, scenario.auth), func(t *testing.T) {
 			var calls, accountQueries, catalogQueries atomic.Int64
 			metadata, metadataCA := copilotMetadataServer(t, &accountQueries, &catalogQueries)
+			var handlers sync.WaitGroup
 			var server *httptest.Server
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				handlers.Add(1)
+				defer handlers.Done()
 				b, err := io.ReadAll(r.Body)
 				if err != nil {
 					t.Error(err)
@@ -77,7 +81,7 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 				}
 				// Terminate only the two observed GitHub hosts locally, then inspect the encrypted HTTP request.
 				if r.Method == "CONNECT" && (r.Host == "api.github.com:443" || r.Host == "api.githubcopilot.com:443") {
-					copilotMetadataTunnel(t, w, metadata.Listener.Addr().String())
+					copilotMetadataTunnel(t, r.Context(), w, metadata.Listener.Addr().String())
 					return
 				}
 				if r.Method != http.MethodPost || r.Host != server.Listener.Addr().String() || r.URL.Path != expected || r.URL.RawQuery != "" {
@@ -116,7 +120,11 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 					}
 				}
 			}))
-			defer server.Close()
+			defer func() {
+				// Close waits for non-hijacked connections, so no handler can register after it returns.
+				server.Close()
+				handlers.Wait()
+			}()
 			home, version, installs := t.TempDir(), "1.0.106", 0
 			var storedAccountQueries atomic.Int64
 			var certPath string
@@ -299,9 +307,10 @@ func copilotMetadataServer(t *testing.T, accountQueries, catalogQueries *atomic.
 }
 
 // copilotMetadataTunnel forwards an allowed CONNECT to the local TLS fixture, preserving buffered bytes and closing both directions when the client disconnects.
-func copilotMetadataTunnel(t *testing.T, w http.ResponseWriter, address string) {
+func copilotMetadataTunnel(t *testing.T, ctx context.Context, w http.ResponseWriter, address string) {
 	t.Helper()
-	upstream, err := net.DialTimeout("tcp", address, 5*time.Second)
+	dialer := net.Dialer{Timeout: 5 * time.Second}
+	upstream, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
 		t.Error(err)
 		return
