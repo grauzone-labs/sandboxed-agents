@@ -30,13 +30,14 @@ type Probe struct {
 
 // Agent is shared installation and workflow data. Undelivered entries are unknown.
 type Agent struct {
-	Delivered      bool
-	Install        Install
-	Command        string
-	LoginWorkflows map[string][]string
-	LoginMessage   string
-	StatusProbe    *Probe
-	Documentation  string
+	Delivered          bool
+	Install            Install
+	Command            string
+	LoginWorkflows     map[string][]string
+	ProxyModelRequired bool
+	LoginMessage       string
+	StatusProbe        *Probe
+	Documentation      string
 }
 
 // AgentNames returns delivered agents in stable display order.

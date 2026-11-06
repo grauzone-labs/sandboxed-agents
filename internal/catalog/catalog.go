@@ -56,9 +56,10 @@ var Default = Catalog{
 		},
 		"opencode": {
 			Delivered: true, Install: Install{Kind: NPM, Package: "opencode-ai"}, Command: "opencode",
-			LoginWorkflows: map[string][]string{"provider": {"auth", "login"}, "proxy": nil},
-			LoginMessage:   "Select your provider and follow the OpenCode login instructions.",
-			Documentation:  "https://opencode.ai/docs/",
+			LoginWorkflows:     map[string][]string{"provider": {"auth", "login"}, "proxy": {}},
+			ProxyModelRequired: true,
+			LoginMessage:       "Select your provider and follow the OpenCode login instructions.",
+			Documentation:      "https://opencode.ai/docs/",
 		},
 	},
 	Toolchains: []string{"dotnet", "playwright", "azure", "native"},

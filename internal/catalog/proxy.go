@@ -82,8 +82,12 @@ func ReadProxyKey(input io.Reader) (string, error) {
 
 // AgentProxyOptions applies the agent-specific required model before shared proxy validation.
 func AgentProxyOptions(agent string, options map[string]string) (string, error) {
-	if agent == "opencode" && options["remove"] == "" && options["model"] == "" {
-		return "", fmt.Errorf("OpenCode proxy requires --model")
+	definition, err := Default.ResolveAgent(agent)
+	if err != nil {
+		return "", err
+	}
+	if definition.ProxyModelRequired && options["remove"] == "" && options["model"] == "" {
+		return "", fmt.Errorf("%s proxy requires --model", agent)
 	}
 	return ProxyOptions(options)
 }

@@ -3,7 +3,6 @@ package manager_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -65,5 +64,5 @@ func TestOpenCodeProxyNativeClientReachesOnlyFakeUpstream(t *testing.T) {
 	if err != nil || requests.Load() == 0 || !strings.Contains(string(output), "OK") {
 		t.Fatalf("native client: %v requests=%d output=%s", err, requests.Load(), output)
 	}
-	fmt.Printf("OpenCode native contract: %d authenticated chat requests; %d denied registry checks; no provider-host requests\n", requests.Load(), registryChecks.Load())
+	t.Logf("OpenCode native contract: %d authenticated chat requests; %d denied registry checks; no provider-host requests", requests.Load(), registryChecks.Load())
 }

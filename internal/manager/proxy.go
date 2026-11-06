@@ -65,6 +65,15 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 	return r, true
 }
 
+// proxyClients associates each native configuration writer with its user-facing login and check command.
+var proxyClients = map[string]struct {
+	write              func(string, map[string]string, string) error
+	name, login, check string
+}{
+	"claude":   {writeClaudeProxy, "Claude", "browser", "claude -p 'Reply OK'"},
+	"opencode": {writeOpenCodeProxy, "OpenCode", "provider", "opencode run 'Reply OK'"},
+}
+
 // proxyWorkflow serializes native configuration changes as the verified agent without spawning a credential-bearing process.
 func (w agentWork) proxyWorkflow() int {
 	unlock, err := lockAgentData(w.root)
@@ -82,26 +91,20 @@ func (w agentWork) proxyWorkflow() int {
 			return exitStatus(err, w.stderr)
 		}
 	}
-	writer := writeClaudeProxy
-	if w.request.name == "opencode" {
-		writer = writeOpenCodeProxy
+
+	client, ok := proxyClients[w.request.name]
+	if !ok {
+		return exitStatus(errors.New("unsupported proxy workflow"), w.stderr)
 	}
-	if err = writer(w.home, w.request.proxyOptions, key); err != nil {
+	if err = client.write(w.home, w.request.proxyOptions, key); err != nil {
 		return exitStatus(err, w.stderr)
 	}
-	if w.request.name == "opencode" {
-		if w.request.proxyOptions["remove"] != "" {
-			fmt.Fprintln(w.stdout, "OpenCode proxy configuration removed; provider login is unchanged.")
-		} else {
-			fmt.Fprintln(w.stdout, "OpenCode proxy configuration written; the key was not checked against the server. Check with: sandboxed-agents agents run NAME opencode run 'Reply OK'. Restart existing sessions to load changed configuration.")
-		}
-		return 0
-	}
 	if w.request.proxyOptions["remove"] != "" {
-		fmt.Fprintln(w.stdout, "Claude proxy configuration removed; browser login is unchanged.")
+		fmt.Fprintf(w.stdout, "%s proxy configuration removed; %s login is unchanged.\n", client.name, client.login)
 		return 0
 	}
-	fmt.Fprintln(w.stdout, "Claude proxy configuration written; the key was not checked against the server. Check with: sandboxed-agents agents run NAME claude -p 'Reply OK'. Restart existing sessions to load changed configuration.")
+	fmt.Fprintf(w.stdout, "%s proxy configuration written; the key was not checked against the server. Check with: sandboxed-agents agents run NAME %s. Restart existing sessions to load changed configuration.\n", client.name, client.check)
+
 	return 0
 }
 
