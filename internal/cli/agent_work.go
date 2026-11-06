@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 	"io"
 )
 
@@ -41,6 +42,11 @@ func runAgentWork(request Request, p podmanTarget, stdout, stderr io.Writer) (in
 		return 1, agentNotEnabledError(request)
 	}
 	if request.Command == "agents login" && request.AgentWorkflow == "proxy" {
+		if request.Args[1] == "codex" {
+			if err := catalog.CodexProxyVersion(status.InstalledVersion); err != nil {
+				return 1, err
+			}
+		}
 		return runProxyWorkflow(request, p, names.Container, stdout, stderr)
 	}
 	interactive := !stopping && p.host.IsInputTerminal(p.host.Stdin) && p.host.IsOutputTerminal(stdout)
