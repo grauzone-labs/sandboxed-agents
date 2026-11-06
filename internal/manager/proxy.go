@@ -103,8 +103,10 @@ func (w agentWork) proxyWorkflow() int {
 		if err != nil {
 			return exitStatus(err, w.stderr)
 		}
-		if err = catalog.CodexProxyVersion(selection["codex"].Version); err != nil {
-			return exitStatus(err, w.stderr)
+		if w.request.proxyOptions["remove"] == "" {
+			if err = catalog.CodexProxyVersion(selection["codex"].Version); err != nil {
+				return exitStatus(err, w.stderr)
+			}
 		}
 		if err := w.codexProxyWorkflow(); err != nil {
 			return exitStatus(err, w.stderr)
