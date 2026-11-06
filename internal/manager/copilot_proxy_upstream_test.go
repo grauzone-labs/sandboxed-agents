@@ -3,14 +3,17 @@ package manager_test
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -31,18 +34,28 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 	}
 	t.Log("native client: GitHub Copilot CLI 1.0.106")
 	for _, scenario := range []struct {
-		wire   string
-		github bool
+		wire string
+		auth string
 	}{
-		{"completions", false}, {"responses", false}, {"completions", true}, {"responses", true},
+		{"completions", "none"}, {"responses", "none"},
+		{"completions", "environment"}, {"responses", "environment"},
+		{"completions", "device-code"}, {"responses", "device-code"},
 	} {
 		wire := scenario.wire
-		t.Run(fmt.Sprintf("%s/github-token=%t", wire, scenario.github), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s/auth=%s", wire, scenario.auth), func(t *testing.T) {
 			var mu sync.Mutex
 			calls, accountQueries := 0, 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				mu.Lock()
 				defer mu.Unlock()
+				b, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if strings.Contains(string(b), "github-sentinel") || strings.Contains(fmt.Sprint(r.Header), "github-sentinel") || strings.Contains(r.URL.String(), "github-sentinel") {
+					t.Error("GitHub token leaked")
+				}
 				expected := "/prefix/v1/chat/completions"
 				if wire == "responses" {
 					expected = "/prefix/v1/responses"
@@ -51,21 +64,13 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 				// Block that query locally; inference hosts are never permitted.
 				if r.Method == "CONNECT" && r.Host == "api.github.com:443" {
 					accountQueries++
-					http.Error(w, "account metadata blocked", 403)
+					http.Error(w, "account metadata blocked", http.StatusForbidden)
 					return
 				}
 				if r.Method != "POST" || r.URL.Path != expected {
 					t.Errorf("unexpected outbound request: %s %s", r.Method, r.URL)
-					http.Error(w, "blocked", 403)
+					http.Error(w, "blocked", http.StatusForbidden)
 					return
-				}
-				b, err := io.ReadAll(r.Body)
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				if strings.Contains(string(b), "github-sentinel") || strings.Contains(fmt.Sprint(r.Header), "github-sentinel") || strings.Contains(r.URL.String(), "github-sentinel") {
-					t.Error("GitHub token leaked")
 				}
 				if r.Header.Get("Authorization") != "Bearer local-test-secret" {
 					t.Error("wrong bearer key")
@@ -100,6 +105,11 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 			}))
 			defer server.Close()
 			home, version, installs := t.TempDir(), "1.0.106", 0
+			var storedAccountQueries atomic.Int64
+			var certPath string
+			if scenario.auth == "device-code" {
+				certPath = copilotDeviceCodeLogin(t, binary, home, &storedAccountQueries)
+			}
 			e := agentEffects(t, home, &version, &installs)
 			runAgents(t, e, 0, "enable", "copilot")
 			e.Stdin = strings.NewReader("local-test-secret\n")
@@ -109,8 +119,11 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 			cmd := exec.CommandContext(ctx, binary, "-p", "Reply OK", "--model", "cliproxyapi/chosen", "--disable-client-telemetry", "--disable-builtin-mcps", "--no-auto-update", "--stream", "on")
 			cmd.Dir = home
 			cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "CI=true", "HTTP_PROXY=" + server.URL, "HTTPS_PROXY=" + server.URL, "ALL_PROXY=" + server.URL, "NO_PROXY=127.0.0.1,localhost"}
-			if scenario.github {
+			if scenario.auth == "environment" {
 				cmd.Env = append(cmd.Env, "GH_TOKEN=github-sentinel")
+			}
+			if certPath != "" {
+				cmd.Env = append(cmd.Env, "NODE_EXTRA_CA_CERTS="+certPath, "SSL_CERT_FILE="+certPath)
 			}
 			output, err := cmd.CombinedOutput()
 			if err != nil {
@@ -121,10 +134,69 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 			if calls == 0 || !strings.Contains(string(output), "OK") {
 				t.Fatalf("no successful inference: calls=%d output=%s", calls, output)
 			}
-			if (accountQueries > 0) != scenario.github {
-				t.Fatalf("GitHub credential use not observed as expected: token=%t account queries=%d", scenario.github, accountQueries)
+			if (accountQueries+int(storedAccountQueries.Load()) > 0) != (scenario.auth != "none") {
+				t.Fatalf("GitHub credential use not observed as expected: auth=%s account queries=%d stored account queries=%d", scenario.auth, accountQueries, storedAccountQueries.Load())
 			}
-			t.Logf("Copilot completed %s with %d streaming tool-enabled request(s), %d blocked GitHub account queries", wire, calls, accountQueries)
+			t.Logf("Copilot completed %s with %d streaming tool-enabled request(s), %d blocked GitHub account queries, %d stored-credential account queries", wire, calls, accountQueries, storedAccountQueries.Load())
 		})
 	}
+}
+
+// copilotDeviceCodeLogin runs the native device-code flow against a local TLS identity fixture and counts subsequent uses of its stored dummy credential.
+func copilotDeviceCodeLogin(t *testing.T, binary, home string, accountQueries *atomic.Int64) string {
+	t.Helper()
+	var loginComplete atomic.Bool
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/login/device/code":
+			io.WriteString(w, `{"device_code":"local-device","user_code":"LOCAL","verification_uri":"https://127.0.0.1/local-only","expires_in":900,"interval":1}`)
+		case "/login/oauth/access_token":
+			io.WriteString(w, `{"access_token":"github-sentinel","token_type":"bearer","scope":"read:user"}`)
+		case "/copilot_internal/user", "/copilot_internal/managed_settings":
+			if !strings.Contains(r.Header.Get("Authorization"), "github-sentinel") {
+				t.Error("native client did not send its stored credential to the identity fixture")
+			}
+			accountQueries.Add(1)
+			if loginComplete.Load() {
+				http.Error(w, "account metadata blocked", http.StatusForbidden)
+				return
+			}
+			io.WriteString(w, `{"login":"local-fixture","id":123}`)
+		default:
+			t.Errorf("unexpected identity request: %s %s", r.Method, r.URL)
+			http.Error(w, "blocked", http.StatusForbidden)
+		}
+	}))
+	t.Cleanup(server.Close)
+	certPath := filepath.Join(home, "identity-ca.pem")
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".copilot"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".copilot", "settings.json"), []byte(`{"storeTokenPlaintext":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, "login", "--device-code", "--host", server.URL)
+	cmd.Dir = home
+	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "CI=true", "COPILOT_AUTO_UPDATE=false", "NODE_EXTRA_CA_CERTS=" + certPath, "SSL_CERT_FILE=" + certPath}
+	cmd.Stdin = strings.NewReader("y\n")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("local native device-code login failed: %v\n%s", err, output)
+	}
+	config, err := os.ReadFile(filepath.Join(home, ".copilot", "config.json"))
+	if err != nil || !strings.Contains(string(config), "github-sentinel") {
+		t.Fatalf("native device-code login did not store the dummy token: %v", err)
+	}
+	// Force the next process to read and use the stored token instead of cached account metadata.
+	if err := os.RemoveAll(filepath.Join(home, ".cache", "copilot")); err != nil {
+		t.Fatal(err)
+	}
+	loginComplete.Store(true)
+	accountQueries.Store(0)
+	return certPath
 }
