@@ -98,7 +98,7 @@ A change that inspects an agent's command checks it before it runs npm or change
 ## Sign in to an agent
 
 ```text
-sandboxed-agents agents login agent01 claude
+sandboxed-agents agents login agent01 claude browser
 sandboxed-agents agents login agent01 codex device-code
 ```
 
