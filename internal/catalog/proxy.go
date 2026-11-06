@@ -90,6 +90,14 @@ func (a Agent) ProxyOptions(options map[string]string) (string, error) {
 
 // AgentProxyOptions checks the agent-specific proxy grammar without accessing a sandbox.
 func AgentProxyOptions(agent string, options map[string]string) error {
+	if wire, present := options["wire-api"]; present {
+		if agent != "copilot" || (wire != "completions" && wire != "responses") || options["remove"] != "" {
+			return fmt.Errorf("--wire-api requires copilot proxy and completions or responses, without --remove")
+		}
+	}
+	if agent == "copilot" && options["remove"] == "" && strings.TrimSpace(options["model"]) == "" {
+		return fmt.Errorf("copilot proxy requires --model")
+	}
 	if options["replace-login"] != "" && (agent != "codex" || options["remove"] != "") {
 		return fmt.Errorf("--replace-login requires Codex proxy setup")
 	}
@@ -111,4 +119,25 @@ func CodexProxyVersion(version string) error {
 		return fmt.Errorf("Codex proxy requires Codex 0.%d.0 or newer; run agents update or agents enable --version", codexProxyMinimumMinor)
 	}
 	return nil
+}
+
+// CopilotProxyVersion refuses versions below the tested stable native-provider registry floor.
+func CopilotProxyVersion(version string) error {
+	base, _, _ := strings.Cut(version, "+")
+	if ValidateVersion(version) == nil && !strings.Contains(base, "-") {
+		parts := strings.Split(base, ".")
+		floor := []string{"1", "0", "106"}
+		for i, part := range parts {
+			if len(part) > len(floor[i]) || (len(part) == len(floor[i]) && part > floor[i]) {
+				return nil
+			}
+			if len(part) < len(floor[i]) || (len(part) == len(floor[i]) && part < floor[i]) {
+				break
+			}
+			if i == 2 {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("Copilot proxy requires version 1.0.106 or newer (stable); use agents update NAME copilot --unpin or agents enable NAME copilot --version 1.0.106")
 }

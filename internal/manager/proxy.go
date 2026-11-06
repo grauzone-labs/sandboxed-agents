@@ -33,7 +33,7 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 	options := map[string]string{}
 	for i := 0; i < len(args); i++ {
 		name, value, inline := strings.Cut(strings.TrimPrefix(args[i], "--"), "=")
-		if !strings.HasPrefix(args[i], "--") || (name != "url" && name != "model" && name != "remove" && name != "replace-login") {
+		if !strings.HasPrefix(args[i], "--") || (name != "url" && name != "model" && name != "remove" && name != "replace-login" && name != "wire-api") {
 			fmt.Fprintln(stderr, "unexpected proxy arguments")
 			return r, false
 		}
@@ -77,7 +77,8 @@ var proxyClients = map[string]struct {
 	write              func(string, map[string]string, string) error
 	name, login, check string
 }{
-	"claude": {writeClaudeProxy, "Claude", "browser", "Check with: sandboxed-agents agents run NAME claude -p 'Reply OK'"},
+	"copilot": {writeCopilotProxy, "Copilot", "device-code", ""},
+	"claude":  {writeClaudeProxy, "Claude", "browser", "Check with: sandboxed-agents agents run NAME claude -p 'Reply OK'"},
 	"opencode": {writeOpenCodeProxy, "OpenCode", "provider",
 		"Check with (POSIX shell): sandboxed-agents agents run NAME opencode run 'Reply OK' < /dev/null\n" +
 			"Check with (PowerShell): '' | sandboxed-agents agents run NAME opencode run 'Reply OK'"},
@@ -133,6 +134,15 @@ func (w agentWork) proxyWorkflow() int {
 		}
 		return 0
 	}
+	if w.request.name == "copilot" && w.request.proxyOptions["remove"] == "" {
+		selection, err := readSelection(w.root)
+		if err != nil {
+			return exitStatus(err, w.stderr)
+		}
+		if err := catalog.CopilotProxyVersion(selection[w.request.name].Version); err != nil {
+			return exitStatus(err, w.stderr)
+		}
+	}
 	key := ""
 	if w.request.proxyOptions["remove"] == "" {
 		key, err = catalog.ReadProxyKey(w.effects.Stdin)
@@ -147,6 +157,14 @@ func (w agentWork) proxyWorkflow() int {
 	}
 	if err = client.write(w.home, w.request.proxyOptions, key); err != nil {
 		return exitStatus(err, w.stderr)
+	}
+	if w.request.name == "copilot" {
+		if w.request.proxyOptions["remove"] != "" {
+			fmt.Fprintln(w.stdout, "Copilot proxy configuration removed; device-code login is unchanged.")
+		} else {
+			fmt.Fprintf(w.stdout, "Copilot proxy configuration written; the key was not checked against the server. Select with --model cliproxyapi/%s. GitHub features still need device-code login. Restart existing sessions to load changed configuration.\n", w.request.proxyOptions["model"])
+		}
+		return 0
 	}
 	if w.request.proxyOptions["remove"] != "" {
 		fmt.Fprintf(w.stdout, "%s proxy configuration removed; %s login is unchanged.\n", client.name, client.login)
