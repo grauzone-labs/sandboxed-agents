@@ -79,6 +79,9 @@ func (w agentWork) proxyWorkflow() int {
 		return exitStatus(err, w.stderr)
 	}
 	if w.request.name == "codex" {
+		if err := checkCodexProxyRecovery(w.home); err != nil {
+			return exitStatus(err, w.stderr)
+		}
 		selection, err := readSelection(w.root)
 		if err != nil {
 			return exitStatus(err, w.stderr)

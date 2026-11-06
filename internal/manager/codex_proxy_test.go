@@ -343,8 +343,8 @@ func TestCodexProxyPublicationRollback(t *testing.T) {
 				return fmt.Errorf("missing staged home")
 			}
 			configPublished, authAttempted := false, false
-			e.RenameFile = func(from, to string) error {
-				if to == authPath {
+			e.LinkFile = func(from, to string) error {
+				if to == authPath && !authAttempted {
 					published, err := os.ReadFile(configPath)
 					if err != nil || !strings.Contains(string(published), `model_provider = 'cliproxyapi'`) {
 						t.Fatalf("configuration was not published before login: %s (%v)", published, err)
@@ -355,7 +355,7 @@ func TestCodexProxyPublicationRollback(t *testing.T) {
 				if to == configPath && configPublished && restoreFails {
 					return fmt.Errorf("private-key: injected restoration failure")
 				}
-				err := os.Rename(from, to)
+				err := os.Link(from, to)
 				if to == configPath && err == nil {
 					configPublished = true
 				}
@@ -383,16 +383,433 @@ func TestCodexProxyPublicationRollback(t *testing.T) {
 					t.Fatalf("configuration mode not restored: %v", info.Mode())
 				}
 			}
-			got, err := os.ReadFile(authPath)
+			authCheckPath := authPath
+			if restoreFails {
+				if _, err := os.Stat(authPath); !os.IsNotExist(err) {
+					t.Fatalf("login remains active after failed configuration restoration: %v", err)
+				}
+				authCheckPath = filepath.Join(dir, ".sandboxed-agents-proxy", "auth.json.prev")
+			}
+			got, err := os.ReadFile(authCheckPath)
 			if err != nil || string(got) != auth {
 				t.Fatalf("prior login changed: %q (%v)", got, err)
 			}
-			info, err := os.Stat(authPath)
+			info, err := os.Stat(authCheckPath)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if info.Mode().Perm() != 0644 {
 				t.Fatalf("prior login mode changed: %v", info.Mode())
+			}
+		})
+	}
+}
+
+// TestCodexProxyGuardsNativeLogin proves browser and device-code login cannot replace credentials while the proxy is selected through RunWithEffects.
+func TestCodexProxyGuardsNativeLogin(t *testing.T) {
+	for _, tc := range []struct {
+		name, config, remedy string
+	}{
+		{"managed", "model_provider = 'cliproxyapi'\n[_sandboxedAgentsProxy]\n", "proxy --remove"},
+		{"unmanaged", "model_provider = 'cliproxyapi'\n", "manually remove the top-level model_provider selection"},
+	} {
+		for _, workflow := range []string{"browser", "device-code"} {
+			t.Run(tc.name+"/"+workflow, func(t *testing.T) {
+				home, version, installs := t.TempDir(), "0.166.0", 0
+				e := agentEffects(t, home, &version, &installs)
+				runAgents(t, e, 0, "enable", "codex")
+				dir := filepath.Join(home, ".codex")
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				originals := map[string]string{"config.toml": tc.config, "auth.json": `{"OPENAI_API_KEY":"private-key"}`}
+				for name, data := range originals {
+					if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				started := false
+				e.Start = func(p manager.Process) error { started = true; return nil }
+				e.Stdin = forbiddenProxyInput{t}
+				out := runAgents(t, e, 1, "login", "codex", workflow)
+				if started || !strings.Contains(out, tc.remedy) || strings.Contains(out, "private-key") {
+					t.Fatalf("unsafe native login: started=%t output=%s", started, out)
+				}
+				for name, want := range originals {
+					got, err := os.ReadFile(filepath.Join(dir, name))
+					if err != nil || string(got) != want {
+						t.Fatalf("changed %s: %q (%v)", name, got, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestCodexNativeLoginHoldsManagerLock proves proxy mutation cannot overlap a native login through RunWithEffects.
+func TestCodexNativeLoginHoldsManagerLock(t *testing.T) {
+	home, version, installs := t.TempDir(), "0.166.0", 0
+	e := agentEffects(t, home, &version, &installs)
+	runAgents(t, e, 0, "enable", "codex")
+	started := false
+	e.Start = func(p manager.Process) error {
+		started = true
+		competing := e
+		competing.Stdin = forbiddenProxyInput{t}
+		out := runAgents(t, competing, 1, "login", "codex", "proxy", "--url", "https://proxy.example", "--model", "chosen")
+		if !strings.Contains(out, "another agent or tool change is in progress; retry") {
+			t.Fatalf("proxy mutation did not encounter manager lock: %s", out)
+		}
+		return nil
+	}
+	runAgents(t, e, 0, "login", "codex", "browser")
+	if !started {
+		t.Fatal("native login did not start")
+	}
+	e.Start = func(p manager.Process) error { return nil }
+	runAgents(t, e, 0, "login", "codex", "device-code")
+}
+
+// TestCodexProxyPreservesEditsDuringLogin proves edits made while native login is staged are not overwritten by publication through RunWithEffects.
+func TestCodexProxyPreservesEditsDuringLogin(t *testing.T) {
+	home, version, installs := t.TempDir(), "0.166.0", 0
+	e := agentEffects(t, home, &version, &installs)
+	runAgents(t, e, 0, "enable", "codex")
+	dir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	configPath, authPath := filepath.Join(dir, "config.toml"), filepath.Join(dir, "auth.json")
+	if err := os.WriteFile(configPath, []byte("model = 'original'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(authPath, []byte(`{"OPENAI_API_KEY":"original-key"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	laterConfig, laterAuth := "model = 'later'\n", `{"OPENAI_API_KEY":"later-private-key"}`
+	e.Start = func(p manager.Process) error {
+		if err := os.WriteFile(configPath, []byte(laterConfig), 0600); err != nil {
+			return err
+		}
+		if err := os.WriteFile(authPath, []byte(laterAuth), 0600); err != nil {
+			return err
+		}
+		for _, env := range p.Environment {
+			if stage, ok := strings.CutPrefix(env, "CODEX_HOME="); ok {
+				return os.WriteFile(filepath.Join(stage, "auth.json"), []byte(`{"OPENAI_API_KEY":"proxy-private-key"}`), 0600)
+			}
+		}
+		return fmt.Errorf("missing staged home")
+	}
+	e.Stdin = strings.NewReader("proxy-private-key")
+	out := runAgents(t, e, 1, "login", "codex", "proxy", "--url", "https://proxy.example", "--model", "chosen")
+	if strings.Contains(out, "private-key") {
+		t.Fatal("credential leaked")
+	}
+	for path, want := range map[string]string{configPath: laterConfig, authPath: laterAuth} {
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != want {
+			t.Fatalf("later edit overwritten: %s = %q (%v)", path, got, err)
+		}
+	}
+}
+
+// TestCodexProxyInterruptedPublicationFailsClosed proves interruption after destination publication leaves no old login and blocks managed Codex work through RunWithEffects.
+func TestCodexProxyInterruptedPublicationFailsClosed(t *testing.T) {
+	home, version, installs := t.TempDir(), "0.166.0", 0
+	e := agentEffects(t, home, &version, &installs)
+	runAgents(t, e, 0, "enable", "codex")
+	dir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	configPath, authPath := filepath.Join(dir, "config.toml"), filepath.Join(dir, "auth.json")
+	original := "model = 'original'\n"
+	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(authPath, []byte(`{"OPENAI_API_KEY":"old-private-key"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	e.Start = func(p manager.Process) error {
+		for _, env := range p.Environment {
+			if stage, ok := strings.CutPrefix(env, "CODEX_HOME="); ok {
+				return os.WriteFile(filepath.Join(stage, "auth.json"), []byte(`{"OPENAI_API_KEY":"proxy-key"}`), 0600)
+			}
+		}
+		return fmt.Errorf("missing staged home")
+	}
+	interrupted := false
+	e.RenameFile = func(from, to string) error {
+		if err := os.Rename(from, to); err != nil {
+			return err
+		}
+		if to == configPath {
+			panic("publication interrupted")
+		}
+		return nil
+	}
+	e.LinkFile = func(from, to string) error {
+		if err := os.Link(from, to); err != nil {
+			return err
+		}
+		if to == configPath {
+			panic("publication interrupted")
+		}
+		return nil
+	}
+	e.Stdin = strings.NewReader("proxy-key")
+	func() {
+		defer func() {
+			if recover() != nil {
+				interrupted = true
+			}
+		}()
+		runAgents(t, e, 0, "login", "codex", "proxy", "--url", "https://proxy.example", "--model", "chosen")
+	}()
+	if !interrupted {
+		t.Fatal("publication was not interrupted")
+	}
+	if _, err := os.Stat(authPath); !os.IsNotExist(err) {
+		t.Fatalf("old login remains beside changed destination: %v", err)
+	}
+	e.Start = func(p manager.Process) error { t.Fatal("Codex started with interrupted publication"); return nil }
+	e.Stdin = forbiddenProxyInput{t}
+	for _, args := range [][]string{{"run", "codex"}, {"session", "codex"}, {"login", "codex", "browser"}, {"login", "codex", "proxy", "--remove"}} {
+		out := runAgents(t, e, 1, args...)
+		if !strings.Contains(out, "recovery") || strings.Contains(out, "private-key") {
+			t.Fatalf("missing safe recovery refusal: %s", out)
+		}
+	}
+}
+
+// codexPublicationEffects prepares real Codex files and a staged-login process effect for publication tests at RunWithEffects.
+func codexPublicationEffects(t *testing.T) (manager.Effects, string) {
+	t.Helper()
+	home, version, installs := t.TempDir(), "0.166.0", 0
+	e := agentEffects(t, home, &version, &installs)
+	runAgents(t, e, 0, "enable", "codex")
+	dir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{"config.toml": "model = 'original'\n", "auth.json": `{"OPENAI_API_KEY":"old-key"}`} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.Start = func(p manager.Process) error {
+		for _, env := range p.Environment {
+			if stage, ok := strings.CutPrefix(env, "CODEX_HOME="); ok {
+				return os.WriteFile(filepath.Join(stage, "auth.json"), []byte(`{"OPENAI_API_KEY":"proxy-key"}`), 0600)
+			}
+		}
+		return fmt.Errorf("missing staged home")
+	}
+	e.Stdin = strings.NewReader("proxy-key")
+	return e, dir
+}
+
+// TestCodexProxyPublicationPreservesRacingEdits proves capture, no-clobber publication, and rollback retain direct edits through RunWithEffects.
+func TestCodexProxyPublicationPreservesRacingEdits(t *testing.T) {
+	for _, phase := range []string{"capture", "config publication", "auth publication", "rollback"} {
+		t.Run(phase, func(t *testing.T) {
+			e, dir := codexPublicationEffects(t)
+			configPath, authPath := filepath.Join(dir, "config.toml"), filepath.Join(dir, "auth.json")
+			later := "model = 'later-editor'\n"
+			if phase == "capture" || phase == "auth publication" {
+				later = `{"OPENAI_API_KEY":"later-private-key"}`
+			}
+			injected := false
+			e.RenameFile = func(from, to string) error {
+				if !injected && phase == "capture" && from == authPath {
+					injected = true
+					if err := os.WriteFile(from, []byte(later), 0600); err != nil {
+						return err
+					}
+				}
+				return os.Rename(from, to)
+			}
+			e.LinkFile = func(from, to string) error {
+				if !injected && ((phase == "config publication" && to == configPath) || (phase == "auth publication" && to == authPath)) {
+					injected = true
+					if err := os.WriteFile(to, []byte(later), 0600); err != nil {
+						return err
+					}
+				}
+				if !injected && phase == "rollback" && to == authPath {
+					injected = true
+					if err := os.WriteFile(configPath, []byte(later), 0600); err != nil {
+						return err
+					}
+					return fmt.Errorf("injected publication failure")
+				}
+				return os.Link(from, to)
+			}
+			out := runAgents(t, e, 1, "login", "codex", "proxy", "--url", "https://proxy.example", "--model", "chosen")
+			if !injected || strings.Contains(out, "later-private-key") {
+				t.Fatalf("unsafe result: injected=%t output=%s", injected, out)
+			}
+			preserved := false
+			err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				if entry.IsDir() {
+					return nil
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				if string(data) == later {
+					preserved = true
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !preserved {
+				t.Fatal("concurrent edit lost from active and recovery files")
+			}
+		})
+	}
+}
+
+// TestCodexProxyInterruptedUpdateAndRemovalKeepCredentialsInactive proves a changed or restored destination is never left with the old key after interrupted update or removal through RunWithEffects.
+func TestCodexProxyInterruptedUpdateAndRemovalKeepCredentialsInactive(t *testing.T) {
+	for _, operation := range []string{"update", "remove"} {
+		t.Run(operation, func(t *testing.T) {
+			e, dir := codexPublicationEffects(t)
+			runAgents(t, e, 0, "login", "codex", "proxy", "--url", "https://old-proxy.example", "--model", "old-model")
+			before, err := os.ReadFile(filepath.Join(dir, "config.toml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			e.LinkFile = func(from, to string) error {
+				if err := os.Link(from, to); err != nil {
+					return err
+				}
+				if to == filepath.Join(dir, "config.toml") {
+					panic("publication interrupted")
+				}
+				return nil
+			}
+			e.Stdin = strings.NewReader("proxy-key")
+			args := []string{"login", "codex", "proxy", "--url", "https://new-proxy.example", "--model", "new-model"}
+			if operation == "remove" {
+				args = []string{"login", "codex", "proxy", "--remove"}
+				e.Stdin = forbiddenProxyInput{t}
+			}
+			interrupted := false
+			func() {
+				defer func() {
+					if recover() != nil {
+						interrupted = true
+					}
+				}()
+				runAgents(t, e, 0, args...)
+			}()
+			if !interrupted {
+				t.Fatal("publication not interrupted")
+			}
+			if _, err := os.Stat(filepath.Join(dir, "auth.json")); !os.IsNotExist(err) {
+				t.Fatalf("old key active at changed destination: %v", err)
+			}
+			got, err := os.ReadFile(filepath.Join(dir, ".sandboxed-agents-proxy", "config.toml.prev"))
+			if err != nil || string(got) != string(before) {
+				t.Fatal("immediate prior proxy configuration not preserved")
+			}
+			got, err = os.ReadFile(filepath.Join(dir, ".sandboxed-agents-proxy", "auth.json.prev"))
+			if err != nil || !strings.Contains(string(got), "proxy-key") {
+				t.Fatal("previous proxy login not preserved")
+			}
+			out := runAgents(t, e, 1, "login", "codex", "proxy", "--remove")
+			if !strings.Contains(out, "recovery") {
+				t.Fatalf("stale removal did not refuse: %s", out)
+			}
+		})
+	}
+}
+
+// TestCodexProxyFirstPublicationFailureRestoresAbsence proves an authentication publication error leaves initially absent native files absent through RunWithEffects.
+func TestCodexProxyFirstPublicationFailureRestoresAbsence(t *testing.T) {
+	e, dir := codexPublicationEffects(t)
+	for _, name := range []string{"config.toml", "auth.json"} {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.LinkFile = func(from, to string) error {
+		if to == filepath.Join(dir, "auth.json") {
+			return fmt.Errorf("injected auth failure")
+		}
+		return os.Link(from, to)
+	}
+	out := runAgents(t, e, 1, "login", "codex", "proxy", "--url", "https://proxy.example", "--model", "chosen")
+	if !strings.Contains(out, "previous configuration restored") {
+		t.Fatal(out)
+	}
+	for _, name := range []string{"config.toml", "auth.json", ".sandboxed-agents-proxy"} {
+		if _, err := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("unexpected file after successful rollback: %s (%v)", name, err)
+		}
+	}
+}
+
+// TestCodexProxyCaptureAndAuthInterruptionsRetainRecovery proves interruption at either capture boundary or after auth publication retains safe files and refuses new runs through RunWithEffects.
+func TestCodexProxyCaptureAndAuthInterruptionsRetainRecovery(t *testing.T) {
+	for _, point := range []string{"auth capture", "config capture", "auth publication"} {
+		t.Run(point, func(t *testing.T) {
+			e, dir := codexPublicationEffects(t)
+			configPath, authPath := filepath.Join(dir, "config.toml"), filepath.Join(dir, "auth.json")
+			e.RenameFile = func(from, to string) error {
+				if err := os.Rename(from, to); err != nil {
+					return err
+				}
+				if point == "auth capture" && from == authPath || point == "config capture" && from == configPath {
+					panic("interrupted capture")
+				}
+				return nil
+			}
+			e.LinkFile = func(from, to string) error {
+				if err := os.Link(from, to); err != nil {
+					return err
+				}
+				if point == "auth publication" && to == authPath {
+					panic("interrupted auth publication")
+				}
+				return nil
+			}
+			interrupted := false
+			func() {
+				defer func() {
+					if recover() != nil {
+						interrupted = true
+					}
+				}()
+				runAgents(t, e, 0, "login", "codex", "proxy", "--url", "https://proxy.example", "--model", "chosen")
+			}()
+			if !interrupted {
+				t.Fatal("interruption point not reached")
+			}
+			if point == "auth publication" {
+				auth, err := os.ReadFile(authPath)
+				if err != nil || string(auth) != `{"OPENAI_API_KEY":"proxy-key"}` {
+					t.Fatal("published login differs from intended proxy key")
+				}
+				config, err := os.ReadFile(configPath)
+				if err != nil || !strings.Contains(string(config), "https://proxy.example/v1") {
+					t.Fatal("published login lacks matching destination")
+				}
+			} else if _, err := os.Stat(authPath); !os.IsNotExist(err) {
+				t.Fatalf("captured old login remains active: %v", err)
+			}
+			e.Start = func(p manager.Process) error { t.Fatal("Codex started with incomplete publication"); return nil }
+			out := runAgents(t, e, 1, "run", "codex")
+			if !strings.Contains(out, "recovery") {
+				t.Fatal(out)
 			}
 		})
 	}

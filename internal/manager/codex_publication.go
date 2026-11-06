@@ -1,0 +1,251 @@
+package manager
+
+import (
+	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
+)
+
+// codexProxyRecoveryDir names the private recovery directory and interruption marker.
+const codexProxyRecoveryDir = ".sandboxed-agents-proxy"
+
+// codexRecovery directs manual recovery without exposing paths or errors supplied by callers.
+const codexRecovery = "Codex publication requires recovery; see docs/codex-proxy.md for ~/.codex/.sandboxed-agents-proxy"
+
+// checkCodexProxyRecovery refuses every existing marker, including dangling symlinks.
+func checkCodexProxyRecovery(home string) error {
+	if _, err := os.Lstat(filepath.Join(home, ".codex", codexProxyRecoveryDir)); os.IsNotExist(err) {
+		return nil
+	}
+	return errors.New(codexRecovery)
+}
+
+// codexPublicationFile tracks one moved original and its proposed active replacement.
+type codexPublicationFile struct {
+	active, previous, staged string
+	old, next                []byte
+	captured, published      bool
+}
+
+// publishCodexFiles moves auth out before changing destinations and publishes without clobbering.
+// The manager lock serializes manager writers; observed direct-writer conflicts require
+// manual recovery. This is not a filesystem CAS or a power-loss durability protocol.
+func publishCodexFiles(configPath, authPath string, before, oldAuth, after, newAuth []byte, effects Effects) error {
+	rename, link := effects.RenameFile, effects.LinkFile
+	if rename == nil {
+		rename = os.Rename
+	}
+	if link == nil {
+		link = os.Link
+	}
+	recoveryDir := filepath.Join(filepath.Dir(configPath), codexProxyRecoveryDir)
+	recovery := errors.New(codexRecovery)
+	if _, err := os.Lstat(recoveryDir); !os.IsNotExist(err) {
+		return recovery
+	}
+	if !codexFileMatches(configPath, before) || !codexFileMatches(authPath, oldAuth) {
+		return errors.New("Codex files changed during staging; previous configuration and login unchanged")
+	}
+	if err := os.Mkdir(recoveryDir, 0700); err != nil {
+		return recovery
+	}
+	// No deferred recovery directory removal: an interruption must leave the marker intact.
+	config := &codexPublicationFile{active: configPath, previous: filepath.Join(recoveryDir, "config.toml.prev"), old: before, next: after}
+	auth := &codexPublicationFile{active: authPath, previous: filepath.Join(recoveryDir, "auth.json.prev"), old: oldAuth, next: newAuth}
+	artifacts := map[string][]byte{}
+	cleanup := func() bool {
+		// Verify every retained artifact before removing any of them.
+		for path, expected := range artifacts {
+			if !codexFileMatches(path, expected) {
+				return false
+			}
+		}
+		for path := range artifacts {
+			if os.Remove(path) != nil {
+				return false
+			}
+		}
+		return os.Remove(recoveryDir) == nil
+	}
+	rollback := func(message string) error {
+		// Quarantine auth first, so interrupted rollback cannot pair it with a restored destination.
+		known := true
+		for _, file := range []*codexPublicationFile{auth, config} {
+			if !file.captured && file.old != nil {
+				if !codexFileMatches(file.active, file.old) {
+					known = false
+				}
+				// Auth was never captured, so no destination change is safe.
+				if file == auth {
+					break
+				}
+				continue
+			}
+			expected := []byte(nil)
+			if file.published {
+				expected = file.next
+			}
+			if _, err := os.Lstat(file.active); os.IsNotExist(err) {
+				if file.published {
+					known = false
+				}
+				continue
+			} else if err != nil {
+				return errors.New("Codex publication failed and configuration restore failed; " + codexRecovery)
+			}
+			// A fresh private subdirectory makes the failed name unique without replacing anything.
+			failedDir, err := os.MkdirTemp(recoveryDir, ".failed-")
+			if err != nil {
+				return errors.New("Codex publication failed and configuration restore failed; " + codexRecovery)
+			}
+			failed := filepath.Join(failedDir, filepath.Base(file.active)+".failed")
+			if rename(file.active, failed) != nil {
+				return errors.New("Codex publication failed and configuration restore failed; " + codexRecovery)
+			}
+			if expected == nil || !codexFileMatches(failed, expected) {
+				known = false
+			} else {
+				artifacts[failed] = expected
+			}
+		}
+		if !known {
+			return recovery
+		}
+		// Restore the destination first and auth last, always through no-clobber links.
+		for _, file := range []*codexPublicationFile{config, auth} {
+			if file.captured {
+				if !codexFileMatches(file.previous, file.old) || !codexFileMatches(file.active, nil) || link(file.previous, file.active) != nil {
+					return errors.New("Codex publication failed and configuration restore failed; " + codexRecovery)
+				}
+			}
+			if !codexFileMatches(file.active, file.old) {
+				return recovery
+			}
+		}
+		// Remove only empty quarantine directories after their verified contents are removed.
+		for path, expected := range artifacts {
+			if !codexFileMatches(path, expected) {
+				return recovery
+			}
+		}
+		for path := range artifacts {
+			if os.Remove(path) != nil {
+				return recovery
+			}
+			if filepath.Dir(path) != recoveryDir && os.Remove(filepath.Dir(path)) != nil {
+				return recovery
+			}
+		}
+		if os.Remove(recoveryDir) != nil {
+			return recovery
+		}
+		return errors.New(message)
+	}
+	// Stage only new bytes. An unchanged login is later linked from its moved original,
+	// retaining its exact bytes and mode without making a credential copy.
+	for _, file := range []*codexPublicationFile{config, auth} {
+		if file.next == nil || (file == auth && file.old != nil && bytes.Equal(file.old, file.next)) {
+			continue
+		}
+		path, err := stageCodexPublication(recoveryDir, file.next)
+		if err != nil {
+			if !cleanup() {
+				return recovery
+			}
+			return errors.New("cannot publish Codex configuration; previous configuration and login unchanged")
+		}
+		file.staged = path
+		artifacts[path] = file.next
+	}
+	if !codexFileMatches(configPath, before) || !codexFileMatches(authPath, oldAuth) {
+		if !cleanup() {
+			return recovery
+		}
+		return errors.New("Codex files changed during staging; previous configuration and login unchanged")
+	}
+	for _, file := range []*codexPublicationFile{auth, config} {
+		if file.old == nil {
+			if !codexFileMatches(file.active, nil) {
+				return recovery
+			}
+			continue
+		}
+		if rename(file.active, file.previous) != nil {
+			return rollback("cannot publish Codex configuration; previous configuration and login unchanged")
+		}
+		file.captured = true
+		// A raced replacement is preserved in the recovery directory, never discarded or overwritten.
+		if !codexFileMatches(file.previous, file.old) {
+			return recovery
+		}
+		artifacts[file.previous] = file.old
+	}
+	if !codexFileMatches(authPath, nil) {
+		return rollback("cannot publish Codex configuration")
+	}
+	for _, file := range []*codexPublicationFile{config, auth} {
+		message := "cannot publish Codex configuration; previous configuration and login unchanged"
+		if file == auth {
+			message = "cannot publish Codex login; previous configuration restored"
+		}
+		if file.next == nil {
+			continue
+		}
+		source := file.staged
+		if source == "" {
+			source = file.previous
+		}
+		if link(source, file.active) != nil {
+			return rollback(message)
+		}
+		file.published = true
+		if file.staged != "" {
+			if os.Remove(file.staged) != nil {
+				return rollback(message)
+			}
+			delete(artifacts, file.staged)
+		}
+	}
+	if !codexFileMatches(configPath, after) || !codexFileMatches(authPath, newAuth) {
+		return rollback("cannot publish Codex login; previous configuration restored")
+	}
+	if !cleanup() {
+		return recovery
+	}
+	return nil
+}
+
+// codexFileMatches checks absence or exact regular-file bytes without following symlinks.
+func codexFileMatches(path string, expected []byte) bool {
+	info, err := os.Lstat(path)
+	if expected == nil {
+		return os.IsNotExist(err)
+	}
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	actual, err := os.ReadFile(path)
+	return err == nil && bytes.Equal(actual, expected)
+}
+
+// stageCodexPublication writes and syncs a private candidate within the recovery directory.
+func stageCodexPublication(recoveryDir string, data []byte) (string, error) {
+	file, err := os.CreateTemp(recoveryDir, ".publish-")
+	if err != nil {
+		return "", err
+	}
+	path := file.Name()
+	if _, err = file.Write(data); err == nil {
+		err = file.Sync()
+	}
+	closeErr := file.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
+}

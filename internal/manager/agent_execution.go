@@ -29,11 +29,32 @@ func executeAgent(r agentRequest, stdout, stderr io.Writer, effects Effects) int
 	if !enabled {
 		return 0
 	}
+	if r.name == "codex" && !(r.operation == "session" && r.stop) {
+		if err := checkCodexProxyRecovery(home); err != nil {
+			return exitStatus(err, stderr)
+		}
+	}
 	if r.proxyOptions != nil {
 		return work.proxyWorkflow()
 	}
 	if r.operation == "session" {
 		return work.session()
+	}
+	if r.operation == "login" && r.name == "codex" {
+		unlock, err := lockAgentData(root)
+		if err != nil {
+			return exitStatus(err, stderr)
+		}
+		defer unlock()
+		if _, err := work.requireEnabled(); err != nil {
+			return exitStatus(err, stderr)
+		}
+		if err := checkCodexProxyRecovery(home); err != nil {
+			return exitStatus(err, stderr)
+		}
+		if err := work.guardCodexNativeLogin(); err != nil {
+			return exitStatus(err, stderr)
+		}
 	}
 	if r.operation == "login" {
 		fmt.Fprintln(stdout, r.definition.LoginMessage)
