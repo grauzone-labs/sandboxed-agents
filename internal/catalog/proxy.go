@@ -108,7 +108,7 @@ func CodexProxyVersion(version string) error {
 	n, err := fmt.Sscanf(version, "%d.%d.%d", &major, &minor, &patch)
 	validRelease := ValidateVersion(version) == nil && !strings.Contains(version, "-") && err == nil && n == 3
 	if !validRelease || major == 0 && minor < codexProxyMinimumMinor {
-		return fmt.Errorf("Codex proxy requires Codex 0.166.0 or newer; run agents update or agents enable --version")
+		return fmt.Errorf("Codex proxy requires Codex 0.%d.0 or newer; run agents update or agents enable --version", codexProxyMinimumMinor)
 	}
 	return nil
 }
