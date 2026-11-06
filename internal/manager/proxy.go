@@ -26,6 +26,10 @@ const proxyMetadata = "_sandboxedAgentsProxy"
 
 // parseProxyWorkflow validates proxy options without echoing caller-provided values in errors.
 func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentRequest, bool) {
+	if _, ok := proxyClients[r.name]; !ok {
+		fmt.Fprintln(stderr, "unsupported proxy workflow")
+		return r, false
+	}
 	options := map[string]string{}
 	for i := 0; i < len(args); i++ {
 		name, value, inline := strings.Cut(strings.TrimPrefix(args[i], "--"), "=")
@@ -53,7 +57,7 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 		}
 		options[name] = value
 	}
-	url, err := catalog.AgentProxyOptions(r.name, options)
+	url, err := r.definition.ProxyOptions(options)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return r, false

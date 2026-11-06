@@ -80,14 +80,10 @@ func ReadProxyKey(input io.Reader) (string, error) {
 	return raw, nil
 }
 
-// AgentProxyOptions applies the agent-specific required model before shared proxy validation.
-func AgentProxyOptions(agent string, options map[string]string) (string, error) {
-	definition, err := Default.ResolveAgent(agent)
-	if err != nil {
-		return "", err
-	}
-	if definition.ProxyModelRequired && options["remove"] == "" && options["model"] == "" {
-		return "", fmt.Errorf("%s proxy requires --model", agent)
+// ProxyOptions applies this agent's required model policy before shared proxy validation.
+func (a Agent) ProxyOptions(options map[string]string) (string, error) {
+	if a.ProxyModelRequired && options["remove"] == "" && options["model"] == "" {
+		return "", fmt.Errorf("proxy requires --model")
 	}
 	return ProxyOptions(options)
 }

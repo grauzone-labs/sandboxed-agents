@@ -240,7 +240,7 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 		}
 		request.AgentWorkflow = workflow
 		if workflow == "proxy" {
-			normalized, err := catalog.AgentProxyOptions(request.Args[1], request.Options)
+			normalized, err := catalog.Default.Agents[request.Args[1]].ProxyOptions(request.Options)
 			if err != nil {
 				return request, err
 			}

@@ -29,7 +29,7 @@ func TestOpenCodeProxyNativeClientReachesOnlyFakeUpstream(t *testing.T) {
 			http.Error(w, "registry deliberately unavailable in isolated test", http.StatusForbidden)
 			return
 		}
-		if r.Method != "POST" || r.URL.Path != "/prefix/v1/chat/completions" {
+		if r.Method != "POST" || !r.URL.IsAbs() || r.URL.Host != "upstream.invalid" || r.URL.Path != "/prefix/v1/chat/completions" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected endpoint", 403)
 			return
@@ -54,12 +54,12 @@ func TestOpenCodeProxyNativeClientReachesOnlyFakeUpstream(t *testing.T) {
 	e := agentEffects(t, home, &version, &installs)
 	runAgents(t, e, 0, "enable", "opencode")
 	e.Stdin = strings.NewReader("local-test-secret")
-	runAgents(t, e, 0, "login", "opencode", "proxy", "--url", server.URL+"/prefix", "--model", "chosen")
+	runAgents(t, e, 0, "login", "opencode", "proxy", "--url", "http://upstream.invalid/prefix", "--model", "chosen")
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "run", "Reply OK")
 	cmd.Dir = home
-	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "XDG_CONFIG_HOME=" + filepath.Join(home, ".config"), "XDG_DATA_HOME=" + filepath.Join(home, ".local", "share"), "XDG_CACHE_HOME=" + filepath.Join(home, ".cache"), "HTTP_PROXY=" + server.URL, "HTTPS_PROXY=" + server.URL, "NO_PROXY=127.0.0.1,localhost", "OPENCODE_DISABLE_MODELS_FETCH=1", "OPENCODE_DISABLE_AUTOUPDATE=1", "OPENCODE_DISABLE_DEFAULT_PLUGINS=1"}
+	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "XDG_CONFIG_HOME=" + filepath.Join(home, ".config"), "XDG_DATA_HOME=" + filepath.Join(home, ".local", "share"), "XDG_CACHE_HOME=" + filepath.Join(home, ".cache"), "HTTP_PROXY=" + server.URL, "HTTPS_PROXY=" + server.URL, "OPENCODE_DISABLE_MODELS_FETCH=1", "OPENCODE_DISABLE_AUTOUPDATE=1", "OPENCODE_DISABLE_DEFAULT_PLUGINS=1"}
 	output, err := cmd.CombinedOutput()
 	if err != nil || requests.Load() == 0 || !strings.Contains(string(output), "OK") {
 		t.Fatalf("native client: %v requests=%d output=%s", err, requests.Load(), output)
