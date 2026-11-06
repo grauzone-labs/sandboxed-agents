@@ -2,7 +2,7 @@
 
 A Tool is a program or managed service that runs beside agents in a sandbox, installed into the sandbox's home data after the sandbox exists ([`CONTEXT.md`](../CONTEXT.md), [ADR 0009](adr/0009-tools-run-as-manager-supervised-services.md)). The first version ships one Tool, **T3 Code**, tool name `t3code`. It runs there as a background service, so that you can follow and steer the sandbox's agents from the T3 mobile app on your phone, without a change to the sandbox's containment. This page tells you how to enable it, how it updates and what a failed update keeps, what runs and what it reaches, how to link your phone, and how to remove it. The commands and their options are in the [command reference](command-reference.md#tool-commands).
 
-Read [Logins and pairing](#logins-and-pairing) before you link a phone. The **T3 Connect login is a T3 account login**, **QR pairing is a device pairing**, and **agent provider sign-in stays `agents login NAME AGENT`**; a T3 account, a Tailscale tailnet, and your agents' providers are three unrelated accounts.
+Read [Logins and pairing](#logins-and-pairing) before you link a phone. The **T3 Connect login is a T3 account login**, **QR pairing is a device pairing**, and **agent provider sign-in stays `agents login NAME AGENT [WORKFLOW]`**; a T3 account, a Tailscale tailnet, and your agents' providers are three unrelated accounts.
 
 ## What is verified and how
 
@@ -66,9 +66,9 @@ Five different things carry a login or a pairing name in T3 Code's setup. Only t
 | **T3 Connect link** | `tools connect NAME t3code link` | Authorizes this sandbox's service as an **environment of your T3 account**. On the phone, you sign in to the same account and pick the sandbox. It shows **no QR code**. It restarts the service so the link takes effect. | The account's list of environments. |
 | **QR pairing** | `tools pair NAME t3code` | A **device pairing**: one-time code for one device, shown as a QR code and a URL for the tailnet origin. It is not a login to any account. | A device session on the service. |
 | **Tailscale node login** | `tools tailscale NAME t3code login` | Signs the sandbox's own tailnet node in to **your tailnet**. | Your tailnet's device list. |
-| **Agent provider sign-in** | `agents login NAME AGENT` | Codex, Claude, Copilot, or OpenCode sign-in. | The agent's credentials in the sandbox. |
+| **Agent provider sign-in** | `agents login NAME AGENT [WORKFLOW]` | Codex, Claude, Copilot, or OpenCode sign-in. | The agent's credentials in the sandbox. |
 
-T3 Connect, QR pairing, and the Tailscale node authenticate **no agent provider**: sign in to an agent with `agents login NAME AGENT` ([agents](agents.md#sign-in-to-an-agent)), whether or not T3 Code is enabled. `tools connect … unlink` and `logout` never touch an agent or integration login.
+T3 Connect, QR pairing, and the Tailscale node authenticate **no agent provider**: sign in to an agent with `agents login NAME AGENT [WORKFLOW]`, whether or not T3 Code is enabled. The workflow name is optional only for an agent with exactly one workflow; `claude` and `codex` have two each and require it. [Sign in to an agent](agents.md#sign-in-to-an-agent) lists each agent's workflows and the options of `claude proxy`. `tools connect … unlink` and `logout` never touch an agent or integration login.
 
 ## Enable T3 Code
 

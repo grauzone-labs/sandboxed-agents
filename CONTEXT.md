@@ -94,7 +94,7 @@ The detached manager process, one per supervised process of a Tool (its service 
 _Avoid_: Init system, daemon manager, watchdog
 
 **T3 Connect**:
-T3 Code's account and managed-connection service, driven with `tools connect NAME t3code login|link|unlink|logout`, whose login is a T3 account login with a device code, and whose connections then run over an outbound relay. It is not an agent provider login: provider sign-in stays `agents login NAME AGENT`, and T3 Connect authenticates no provider.
+T3 Code's account and managed-connection service, driven with `tools connect NAME t3code login|link|unlink|logout`, whose login is a T3 account login with a device code, and whose connections then run over an outbound relay. It is not an agent provider login: provider sign-in stays `agents login NAME AGENT [WORKFLOW]`, and T3 Connect authenticates no provider.
 _Avoid_: Provider login, cloud login, remote access (ambiguous with QR pairing)
 
 **T3 Connect link**:
