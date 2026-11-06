@@ -2,17 +2,23 @@ package manager_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -23,6 +29,15 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 	binary := os.Getenv("SANDBOXED_AGENTS_TEST_COPILOT")
 	if binary == "" {
 		t.Skip("set SANDBOXED_AGENTS_TEST_COPILOT to Copilot 1.0.106 for the native contract test")
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, device := range interfaces {
+		if device.Flags&net.FlagLoopback == 0 {
+			t.Fatal("native contract test requires loopback-only networking; run python3 scripts/test-copilot-proxy.py")
+		}
 	}
 	versionContext, versionCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer versionCancel()
@@ -40,14 +55,14 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 		{"completions", "none"}, {"responses", "none"},
 		{"completions", "environment"}, {"responses", "environment"},
 		{"completions", "device-code"}, {"responses", "device-code"},
+		{"completions", "cached-account"}, {"responses", "cached-account"},
 	} {
 		wire := scenario.wire
 		t.Run(fmt.Sprintf("%s/auth=%s", wire, scenario.auth), func(t *testing.T) {
-			var mu sync.Mutex
-			calls, accountQueries := 0, 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				mu.Lock()
-				defer mu.Unlock()
+			var calls, accountQueries, catalogQueries atomic.Int64
+			metadata, metadataCA := copilotMetadataServer(t, &accountQueries, &catalogQueries)
+			var server *httptest.Server
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				b, err := io.ReadAll(r.Body)
 				if err != nil {
 					t.Error(err)
@@ -60,14 +75,12 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 				if wire == "responses" {
 					expected = "/prefix/v1/responses"
 				}
-				// A signed-in CLI probes GitHub account metadata even with a BYOK model.
-				// Block that query locally; inference hosts are never permitted.
-				if r.Method == "CONNECT" && r.Host == "api.github.com:443" {
-					accountQueries++
-					http.Error(w, "account metadata blocked", http.StatusForbidden)
+				// Terminate only the two observed GitHub hosts locally, then inspect the encrypted HTTP request.
+				if r.Method == "CONNECT" && (r.Host == "api.github.com:443" || r.Host == "api.githubcopilot.com:443") {
+					copilotMetadataTunnel(t, w, metadata.Listener.Addr().String())
 					return
 				}
-				if r.Method != "POST" || r.URL.Path != expected {
+				if r.Method != http.MethodPost || r.Host != server.Listener.Addr().String() || r.URL.Path != expected || r.URL.RawQuery != "" {
 					t.Errorf("unexpected outbound request: %s %s", r.Method, r.URL)
 					http.Error(w, "blocked", http.StatusForbidden)
 					return
@@ -83,7 +96,7 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 				if json.Unmarshal(b, &request) != nil || request.Model != "chosen" || !request.Stream || len(request.Tools) == 0 {
 					t.Errorf("invalid request: %s", b)
 				}
-				calls++
+				calls.Add(1)
 				w.Header().Set("Content-Type", "text/event-stream")
 				if wire == "completions" {
 					io.WriteString(w, "data: {\"id\":\"chatcmpl_fake\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"chosen\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"OK\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl_fake\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"chosen\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
@@ -107,8 +120,19 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 			home, version, installs := t.TempDir(), "1.0.106", 0
 			var storedAccountQueries atomic.Int64
 			var certPath string
-			if scenario.auth == "device-code" {
-				certPath = copilotDeviceCodeLogin(t, binary, home, &storedAccountQueries)
+			if scenario.auth == "device-code" || scenario.auth == "cached-account" {
+				certPath = copilotDeviceCodeLogin(t, binary, home, &storedAccountQueries, scenario.auth == "cached-account")
+			}
+			var trust []byte
+			if certPath != "" {
+				trust, err = os.ReadFile(certPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			certPath = filepath.Join(home, "native-ca.pem")
+			if err := os.WriteFile(certPath, append(trust, metadataCA...), 0600); err != nil {
+				t.Fatal(err)
 			}
 			e := agentEffects(t, home, &version, &installs)
 			runAgents(t, e, 0, "enable", "copilot")
@@ -129,36 +153,54 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 			if err != nil {
 				t.Fatalf("native Copilot failed: %v\n%s", err, output)
 			}
-			mu.Lock()
-			defer mu.Unlock()
-			if calls == 0 || !strings.Contains(string(output), "OK") {
-				t.Fatalf("no successful inference: calls=%d output=%s", calls, output)
+			if calls.Load() != 1 || !strings.Contains(string(output), "OK") {
+				t.Fatalf("no successful inference: calls=%d output=%s", calls.Load(), output)
 			}
-			if (accountQueries+int(storedAccountQueries.Load()) > 0) != (scenario.auth != "none") {
-				t.Fatalf("GitHub credential use not observed as expected: auth=%s account queries=%d stored account queries=%d", scenario.auth, accountQueries, storedAccountQueries.Load())
+			if (accountQueries.Load()+storedAccountQueries.Load() > 0) != (scenario.auth != "none") {
+				t.Fatalf("GitHub credential use not observed as expected: auth=%s account queries=%d stored account queries=%d", scenario.auth, accountQueries.Load(), storedAccountQueries.Load())
 			}
-			t.Logf("Copilot completed %s with %d streaming tool-enabled request(s), %d blocked GitHub account queries, %d stored-credential account queries", wire, calls, accountQueries, storedAccountQueries.Load())
+			if (catalogQueries.Load() > 0) != (scenario.auth == "cached-account") {
+				t.Fatalf("catalog discovery not observed as expected: auth=%s catalog queries=%d", scenario.auth, catalogQueries.Load())
+			}
+			t.Logf("Copilot completed %s with %d streaming tool-enabled request(s), %d blocked GitHub account queries, %d stored-credential account queries, %d catalog GETs", wire, calls.Load(), accountQueries.Load(), storedAccountQueries.Load(), catalogQueries.Load())
 		})
 	}
 }
 
-// copilotDeviceCodeLogin runs the native device-code flow against a local TLS identity fixture and counts subsequent uses of its stored dummy credential.
-func copilotDeviceCodeLogin(t *testing.T, binary, home string, accountQueries *atomic.Int64) string {
+// copilotDeviceCodeLogin returns the local identity CA path after native device-code login, resets the credential-use counter, and optionally retains successful account metadata.
+func copilotDeviceCodeLogin(t *testing.T, binary, home string, accountQueries *atomic.Int64, cached bool) string {
 	t.Helper()
 	var loginComplete atomic.Bool
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if strings.Contains(fmt.Sprint(r.Header)+r.URL.String()+string(body), "local-test-secret") {
+			t.Error("provider key leaked to the identity fixture")
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/login/device/code":
+			if r.Method != http.MethodPost {
+				t.Error("device-code request must be POST")
+			}
 			io.WriteString(w, `{"device_code":"local-device","user_code":"LOCAL","verification_uri":"https://127.0.0.1/local-only","expires_in":900,"interval":1}`)
 		case "/login/oauth/access_token":
+			if r.Method != http.MethodPost {
+				t.Error("token request must be POST")
+			}
 			io.WriteString(w, `{"access_token":"github-sentinel","token_type":"bearer","scope":"read:user"}`)
-		case "/copilot_internal/user", "/copilot_internal/managed_settings":
+		case "/copilot_internal/user", "/copilot_internal/managed_settings", "/copilot_internal/team_customizations":
+			if r.Method != http.MethodGet {
+				t.Error("identity metadata request must be GET")
+			}
 			if !strings.Contains(r.Header.Get("Authorization"), "github-sentinel") {
 				t.Error("native client did not send its stored credential to the identity fixture")
 			}
 			accountQueries.Add(1)
-			if loginComplete.Load() {
+			if loginComplete.Load() && !cached {
 				http.Error(w, "account metadata blocked", http.StatusForbidden)
 				return
 			}
@@ -193,10 +235,101 @@ func copilotDeviceCodeLogin(t *testing.T, binary, home string, accountQueries *a
 		t.Fatalf("native device-code login did not store the dummy token: %v", err)
 	}
 	// Force the next process to read and use the stored token instead of cached account metadata.
-	if err := os.RemoveAll(filepath.Join(home, ".cache", "copilot")); err != nil {
-		t.Fatal(err)
+	if !cached {
+		if err := os.RemoveAll(filepath.Join(home, ".cache", "copilot")); err != nil {
+			t.Fatal(err)
+		}
 	}
 	loginComplete.Store(true)
 	accountQueries.Store(0)
 	return certPath
+}
+
+// copilotMetadataServer returns a local TLS endpoint and its CA, accepting authenticated metadata GETs only and rejecting inference or provider credentials on GitHub destinations.
+func copilotMetadataServer(t *testing.T, accountQueries, catalogQueries *atomic.Int64) (*httptest.Server, []byte) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate := x509.Certificate{
+		SerialNumber: big.NewInt(1), DNSNames: []string{"api.github.com", "api.githubcopilot.com"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, IsCA: true, BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &certificate, &certificate, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if strings.Contains(fmt.Sprint(r.Header)+r.URL.String()+string(body), "local-test-secret") {
+			t.Error("provider key leaked to GitHub metadata")
+		}
+		if !strings.Contains(r.Header.Get("Authorization"), "github-sentinel") || strings.Contains(r.URL.String()+string(body), "github-sentinel") {
+			t.Error("GitHub metadata credential missing or outside Authorization")
+		}
+		if r.Method != http.MethodGet || len(body) != 0 || r.URL.RawQuery != "" {
+			t.Errorf("unexpected GitHub request: %s %s", r.Method, r.URL)
+			http.Error(w, "inference and unknown metadata forbidden", http.StatusForbidden)
+			return
+		}
+		switch {
+		case r.Host == "api.githubcopilot.com" && r.URL.Path == "/models":
+			catalogQueries.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"data":[]}`)
+		case r.Host == "api.github.com" && r.URL.Path == "/copilot_internal/user":
+			accountQueries.Add(1)
+			http.Error(w, "account metadata blocked", http.StatusForbidden)
+		default:
+			t.Errorf("unexpected GitHub destination: %s %s", r.Host, r.URL)
+			http.Error(w, "blocked", http.StatusForbidden)
+		}
+	}))
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	return server, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+// copilotMetadataTunnel forwards an allowed CONNECT to the local TLS fixture, preserving buffered bytes and closing both directions when the client disconnects.
+func copilotMetadataTunnel(t *testing.T, w http.ResponseWriter, address string) {
+	t.Helper()
+	upstream, err := net.DialTimeout("tcp", address, 5*time.Second)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer upstream.Close()
+	client, buffered, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer client.Close()
+	client.SetDeadline(time.Now().Add(45 * time.Second))
+	upstream.SetDeadline(time.Now().Add(45 * time.Second))
+	if _, err := buffered.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+		t.Error(err)
+		return
+	}
+	if err := buffered.Flush(); err != nil {
+		t.Error(err)
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		io.Copy(upstream, buffered)
+		upstream.Close()
+		close(done)
+	}()
+	io.Copy(client, upstream)
+	client.Close()
+	<-done
 }
