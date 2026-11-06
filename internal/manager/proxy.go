@@ -29,7 +29,7 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 	options := map[string]string{}
 	for i := 0; i < len(args); i++ {
 		name, value, inline := strings.Cut(strings.TrimPrefix(args[i], "--"), "=")
-		if !strings.HasPrefix(args[i], "--") || (name != "url" && name != "model" && name != "remove") {
+		if !strings.HasPrefix(args[i], "--") || (name != "url" && name != "model" && name != "remove" && name != "wire-api") {
 			fmt.Fprintln(stderr, "unexpected proxy arguments")
 			return r, false
 		}
@@ -53,7 +53,7 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 		}
 		options[name] = value
 	}
-	url, err := catalog.ProxyOptions(options)
+	url, err := catalog.AgentProxyOptions(r.name, options)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return r, false
@@ -75,6 +75,15 @@ func (w agentWork) proxyWorkflow() int {
 	if _, err = w.requireEnabled(); err != nil {
 		return exitStatus(err, w.stderr)
 	}
+	if w.request.name == "copilot" && w.request.proxyOptions["remove"] == "" {
+		selection, err := readSelection(w.root)
+		if err != nil {
+			return exitStatus(err, w.stderr)
+		}
+		if err := catalog.CopilotProxyVersion(selection[w.request.name].Version); err != nil {
+			return exitStatus(err, w.stderr)
+		}
+	}
 	key := ""
 	if w.request.proxyOptions["remove"] == "" {
 		key, err = catalog.ReadProxyKey(w.effects.Stdin)
@@ -82,8 +91,20 @@ func (w agentWork) proxyWorkflow() int {
 			return exitStatus(err, w.stderr)
 		}
 	}
-	if err = writeClaudeProxy(w.home, w.request.proxyOptions, key); err != nil {
+	writer := writeClaudeProxy
+	if w.request.name == "copilot" {
+		writer = writeCopilotProxy
+	}
+	if err = writer(w.home, w.request.proxyOptions, key); err != nil {
 		return exitStatus(err, w.stderr)
+	}
+	if w.request.name == "copilot" {
+		if w.request.proxyOptions["remove"] != "" {
+			fmt.Fprintln(w.stdout, "Copilot proxy configuration removed; device-code login is unchanged.")
+		} else {
+			fmt.Fprintf(w.stdout, "Copilot proxy configuration written; the key was not checked against the server. Select with --model cliproxyapi/%s. GitHub features still need device-code login. Restart existing sessions to load changed configuration.\n", w.request.proxyOptions["model"])
+		}
+		return 0
 	}
 	if w.request.proxyOptions["remove"] != "" {
 		fmt.Fprintln(w.stdout, "Claude proxy configuration removed; browser login is unchanged.")

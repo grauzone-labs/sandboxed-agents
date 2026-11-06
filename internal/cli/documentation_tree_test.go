@@ -111,8 +111,8 @@ func commandReferenceError(document string) error {
 			case "NAME":
 				example[index] = "agent01"
 			case "AGENT":
-				// Copilot has a sole login workflow, so its workflow may be omitted.
-				example[index] = "copilot"
+				// OpenCode has a sole login workflow, so its workflow may be omitted.
+				example[index] = "opencode"
 			case "TOOL":
 				example[index] = "t3code"
 			case "ACTION":

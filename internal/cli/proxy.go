@@ -21,6 +21,9 @@ func runProxyWorkflow(request Request, p podmanTarget, container string, stdout,
 		if model, ok := request.Options["model"]; ok {
 			args = append(args, "--model", model)
 		}
+		if wire, ok := request.Options["wire-api"]; ok {
+			args = append(args, "--wire-api", wire)
+		}
 		var err error
 		if p.host.IsInputTerminal(p.host.Stdin) {
 			var data []byte
