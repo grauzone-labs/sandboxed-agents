@@ -29,7 +29,7 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 	options := map[string]string{}
 	for i := 0; i < len(args); i++ {
 		name, value, inline := strings.Cut(strings.TrimPrefix(args[i], "--"), "=")
-		if !strings.HasPrefix(args[i], "--") || (name != "url" && name != "model" && name != "remove") {
+		if !strings.HasPrefix(args[i], "--") || (name != "url" && name != "model" && name != "remove" && name != "replace-login") {
 			fmt.Fprintln(stderr, "unexpected proxy arguments")
 			return r, false
 		}
@@ -37,7 +37,7 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 			fmt.Fprintln(stderr, "duplicate proxy option")
 			return r, false
 		}
-		if name == "remove" {
+		if name == "remove" || name == "replace-login" {
 			if inline {
 				fmt.Fprintln(stderr, "--remove takes no value")
 				return r, false
@@ -54,6 +54,9 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 		options[name] = value
 	}
 	url, err := catalog.ProxyOptions(options)
+	if err == nil {
+		err = catalog.AgentProxyOptions(r.name, options)
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return r, false
@@ -74,6 +77,26 @@ func (w agentWork) proxyWorkflow() int {
 	defer unlock()
 	if _, err = w.requireEnabled(); err != nil {
 		return exitStatus(err, w.stderr)
+	}
+	if w.request.name == "codex" {
+		selection, err := readSelection(w.root)
+		if err != nil {
+			return exitStatus(err, w.stderr)
+		}
+		if err = catalog.CodexProxyVersion(selection["codex"].Version); err != nil {
+			return exitStatus(err, w.stderr)
+		}
+	}
+	if w.request.name == "codex" {
+		if err := w.codexProxyWorkflow(); err != nil {
+			return exitStatus(err, w.stderr)
+		}
+		if w.request.proxyOptions["remove"] != "" {
+			fmt.Fprintln(w.stdout, "Codex proxy configuration removed; browser and device-code login are available.")
+		} else {
+			fmt.Fprintln(w.stdout, "Codex proxy configuration written; the key was not checked against the server. Restart existing sessions to load changed configuration.")
+		}
+		return 0
 	}
 	key := ""
 	if w.request.proxyOptions["remove"] == "" {
