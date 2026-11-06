@@ -20,7 +20,7 @@ func TestAgentLoginUsesTerminalAndResolvesWorkflow(t *testing.T) {
 	for _, tc := range []struct {
 		agent, supplied, resolved string
 	}{
-		{"copilot", "", "device-code"}, {"claude", "browser", "browser"}, {"opencode", "", "provider"},
+		{"copilot", "device-code", "device-code"}, {"claude", "browser", "browser"}, {"opencode", "", "provider"},
 		{"codex", "browser", "browser"}, {"codex", "device-code", "device-code"},
 	} {
 		for _, exit := range []int{0, 23} {
