@@ -39,7 +39,7 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 		wire := scenario.wire
 		t.Run(fmt.Sprintf("%s/github-token=%t", wire, scenario.github), func(t *testing.T) {
 			var mu sync.Mutex
-			calls := 0
+			calls, accountQueries := 0, 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				mu.Lock()
 				defer mu.Unlock()
@@ -50,6 +50,7 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 				// A signed-in CLI probes GitHub account metadata even with a BYOK model.
 				// Block that query locally; inference hosts are never permitted.
 				if r.Method == "CONNECT" && r.Host == "api.github.com:443" {
+					accountQueries++
 					http.Error(w, "account metadata blocked", 403)
 					return
 				}
@@ -120,7 +121,10 @@ func TestCopilotProxyNativeClient(t *testing.T) {
 			if calls == 0 || !strings.Contains(string(output), "OK") {
 				t.Fatalf("no successful inference: calls=%d output=%s", calls, output)
 			}
-			t.Logf("Copilot completed %s with %d streaming tool-enabled request(s)", wire, calls)
+			if (accountQueries > 0) != scenario.github {
+				t.Fatalf("GitHub credential use not observed as expected: token=%t account queries=%d", scenario.github, accountQueries)
+			}
+			t.Logf("Copilot completed %s with %d streaming tool-enabled request(s), %d blocked GitHub account queries", wire, calls, accountQueries)
 		})
 	}
 }
