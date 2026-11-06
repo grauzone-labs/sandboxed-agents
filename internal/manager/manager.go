@@ -94,6 +94,8 @@ type Effects struct {
 	LinkFile func(string, string) error
 	// RemoveFile removes Codex publication artifacts; nil uses os.Remove.
 	RemoveFile func(string) error
+	// Mkdir creates the Codex publication recovery directory; nil uses os.Mkdir.
+	Mkdir func(string, os.FileMode) error
 	// LookPath resolves a program on PATH; record-versions probes optional toolchains with it.
 	LookPath func(string) (string, error)
 	// WriteFile writes a whole file with a mode; record-versions writes the versions manifest with it.

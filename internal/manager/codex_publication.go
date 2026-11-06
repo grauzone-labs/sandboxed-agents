@@ -13,10 +13,19 @@ const codexProxyRecoveryDir = ".sandboxed-agents-proxy"
 // codexRecovery directs manual recovery without exposing paths or errors supplied by callers.
 const codexRecovery = "Codex publication requires recovery; see docs/codex-proxy.md for ~/.codex/.sandboxed-agents-proxy"
 
-// checkCodexProxyRecovery refuses every existing marker, including dangling symlinks.
+// checkCodexProxyRecovery refuses existing or uninspectable markers in the Codex home.
 func checkCodexProxyRecovery(home string) error {
-	if _, err := os.Lstat(filepath.Join(home, ".codex", codexProxyRecoveryDir)); os.IsNotExist(err) {
+	return checkCodexRecoveryDirectory(filepath.Join(home, ".codex", codexProxyRecoveryDir))
+}
+
+// checkCodexRecoveryDirectory distinguishes existing markers, including dangling symlinks, from inspection failures.
+func checkCodexRecoveryDirectory(path string) error {
+	_, err := os.Lstat(path)
+	if os.IsNotExist(err) {
 		return nil
+	}
+	if err != nil {
+		return errors.New("cannot inspect Codex publication recovery state; operation refused")
 	}
 	return errors.New(codexRecovery)
 }
@@ -34,6 +43,10 @@ type codexPublicationFile struct {
 // The manager lock serializes manager writers; observed direct-writer conflicts require
 // manual recovery. This is not a filesystem CAS or a power-loss durability protocol.
 func publishCodexFiles(configPath, authPath string, before, oldAuth, after, newAuth []byte, effects Effects) error {
+	mkdir := effects.Mkdir
+	if mkdir == nil {
+		mkdir = os.Mkdir
+	}
 	rename, link, remove := effects.RenameFile, effects.LinkFile, effects.RemoveFile
 	if rename == nil {
 		rename = os.Rename
@@ -46,14 +59,17 @@ func publishCodexFiles(configPath, authPath string, before, oldAuth, after, newA
 	}
 	recoveryDir := filepath.Join(filepath.Dir(configPath), codexProxyRecoveryDir)
 	recovery := errors.New(codexRecovery)
-	if _, err := os.Lstat(recoveryDir); !os.IsNotExist(err) {
-		return recovery
+	if err := checkCodexRecoveryDirectory(recoveryDir); err != nil {
+		return err
 	}
 	if !codexFileMatches(configPath, before) || !codexFileMatches(authPath, oldAuth) {
 		return errors.New("Codex files changed during staging; previous configuration and login unchanged")
 	}
-	if err := os.Mkdir(recoveryDir, 0700); err != nil {
-		return recovery
+	if err := mkdir(recoveryDir, 0700); err != nil {
+		if os.IsExist(err) {
+			return recovery
+		}
+		return errors.New("cannot prepare Codex publication; previous configuration and login unchanged")
 	}
 	// No deferred recovery directory removal: an interruption must leave the marker intact.
 	config := &codexPublicationFile{active: configPath, previous: filepath.Join(recoveryDir, "config.toml.prev"), old: before, next: after}
