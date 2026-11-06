@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -127,6 +128,89 @@ func TestClaudeProxyRemovalRestoresOnlyOwnedSettings(t *testing.T) {
 			}
 			if !bytes.Equal(b, after) {
 				t.Fatal("repeated removal changed native settings")
+			}
+		})
+	}
+}
+
+// TestClaudeProxyRemovalRefusesToDetachEditedKey proves removal preserves the complete settings file when deleting its managed endpoint would detach a user-edited token through RunWithEffects.
+func TestClaudeProxyRemovalRefusesToDetachEditedKey(t *testing.T) {
+	home, version, installs := t.TempDir(), "1.2.3", 0
+	e := agentEffects(t, home, &version, &installs)
+	runAgents(t, e, 0, "enable", "claude")
+	e.Stdin = strings.NewReader("managed-secret")
+	runAgents(t, e, 0, "login", "claude", "proxy", "--url", "https://proxy.example", "--model", "managed-model")
+	path := filepath.Join(home, ".claude", "settings.json")
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := bytes.Replace(original, []byte("managed-secret"), []byte("user-edited-secret"), 1)
+	if bytes.Equal(edited, original) {
+		t.Fatal("managed token missing from native settings")
+	}
+	if err := os.WriteFile(path, edited, 0600); err != nil {
+		t.Fatal(err)
+	}
+	e.Stdin = forbiddenProxyInput{t}
+	out := runAgents(t, e, 1, "login", "claude", "proxy", "--remove")
+	if !strings.Contains(out, "edited") || !strings.Contains(out, "together") || strings.Contains(out, "user-edited-secret") {
+		t.Fatalf("unsafe or unclear refusal: %s", out)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, edited) {
+		t.Fatal("refusal changed the endpoint, token, model or ownership metadata")
+	}
+}
+
+// TestClaudeProxyRemovalAfterOtherEnvEdits proves removal clears remaining owned env entries and preserves user-edited pairs through RunWithEffects.
+func TestClaudeProxyRemovalAfterOtherEnvEdits(t *testing.T) {
+	for _, tc := range []struct{ name, env, wantEnv string }{
+		{"edited-endpoint", `{"ANTHROPIC_BASE_URL":"https://edited.example","ANTHROPIC_AUTH_TOKEN":"managed-secret"}`, `{"ANTHROPIC_BASE_URL":"https://edited.example"}`},
+		{"deleted-token", `{"ANTHROPIC_BASE_URL":"https://proxy.example"}`, `{}`},
+		{"both-edited", `{"ANTHROPIC_BASE_URL":"https://edited.example","ANTHROPIC_AUTH_TOKEN":"edited-secret"}`, `{"ANTHROPIC_BASE_URL":"https://edited.example","ANTHROPIC_AUTH_TOKEN":"edited-secret"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, version, installs := t.TempDir(), "1.2.3", 0
+			e := agentEffects(t, home, &version, &installs)
+			runAgents(t, e, 0, "enable", "claude")
+			e.Stdin = strings.NewReader("managed-secret")
+			runAgents(t, e, 0, "login", "claude", "proxy", "--url", "https://proxy.example")
+			path := filepath.Join(home, ".claude", "settings.json")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var settings map[string]json.RawMessage
+			if err := json.Unmarshal(data, &settings); err != nil {
+				t.Fatal(err)
+			}
+			settings["env"] = json.RawMessage(tc.env)
+			data, err = json.Marshal(settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			e.Stdin = forbiddenProxyInput{t}
+			runAgents(t, e, 0, "login", "claude", "proxy", "--remove")
+			data, err = os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got, want any
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(`{"env":`+tc.wantEnv+`}`), &want); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatal("removal did not preserve edited env values or left ownership metadata")
 			}
 		})
 	}
