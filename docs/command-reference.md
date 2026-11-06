@@ -28,7 +28,7 @@ sandboxed-agents fingerprint NAME
 sandboxed-agents agents enable NAME AGENT [--version X] [--force]
 sandboxed-agents agents disable NAME AGENT [--force]
 sandboxed-agents agents update NAME AGENT [--unpin] [--force]
-sandboxed-agents agents login NAME AGENT [WORKFLOW] [--url URL] [--model ID] [--remove]
+sandboxed-agents agents login NAME AGENT [WORKFLOW] [--url URL] [--model ID] [--wire-api API] [--remove]
 sandboxed-agents agents status NAME AGENT
 sandboxed-agents agents run NAME AGENT [ARG...]
 sandboxed-agents agents session NAME AGENT [--stop]
@@ -54,6 +54,7 @@ Names:
 - **Controller group.** The environment variable `SANDBOXED_AGENTS_GROUP` selects the controller group. It defaults to `default` and must match `^[a-z0-9][a-z0-9-]*$`. Each controller group is its own namespace; see [Ownership and names](#ownership-and-names).
 - **`TOOL` and `ACTION`.** `TOOL` is a Tool of the Tool catalog: `t3code`. `ACTION` is a T3 Connect account action of `tools connect`: `login`, `link`, `unlink`, or `logout`; or a tailnet node action of `tools tailscale`: `login` or `logout`. An unknown name fails before Podman is called and lists the valid names. `DURATION` of `tools pair --ttl` is a number with one of `ms`, `s`, `m`, `h`, `d`, or `w`.
 - **`SET` and `LIST`.** Both are comma-separated names. `--with SET` names toolchains: `dotnet`, `playwright`, `azure`, and `native`, or `none` alone for the base image without toolchains. `--agents LIST` names agents of the catalog: `copilot`, `claude`, `codex`, and `opencode`. An unknown name fails before Podman is called and lists the valid names.
+- **`API`.** `--wire-api API` of the `copilot proxy` login workflow is `completions` or `responses`. Any other value fails before Podman is called.
 - **Parsing.** An unknown option, a duplicate option, a missing value, and a value on a switch are usage errors. After `--`, every argument is a positional argument.
 
 ### Help
@@ -150,13 +151,14 @@ Running `ssh-config NAME --install` again with a matching host key changes no ho
 | `agents enable NAME AGENT` | Installs the agent into the sandbox's home data and enables it. `--version X` installs exactly that npm package version and pins the agent to it. `--force` repairs an interrupted managed installation. |
 | `agents disable NAME AGENT` | Removes the agent's command, selection entry, and pin. It leaves credentials alone. |
 | `agents update NAME AGENT` | Reinstalls a pinned agent at its pin, or updates an unpinned one. `--unpin` installs the newest version and clears the pin. |
-| `agents login NAME AGENT [WORKFLOW]` | Runs one of the agent's login workflows. Every workflow except `claude proxy` needs an interactive terminal. `WORKFLOW` may be omitted only when the agent has exactly one; `claude` has `browser` and `proxy`, so it needs the name. |
+| `agents login NAME AGENT [WORKFLOW]` | Runs one of the agent's login workflows. Every workflow except the `proxy` workflows needs an interactive terminal. `WORKFLOW` may be omitted only when the agent has exactly one; `claude` has `browser` and `proxy`, and `copilot` has `device-code` and `proxy`, so both need the name. |
 | `agents login NAME claude proxy --url URL` | Points Claude Code at a CLIProxyAPI server you already run: it writes the URL and a client key, read from standard input only, into Claude Code's user settings in the home data. `--model ID` also sets Claude Code's model. `--remove` deletes the managed entries and reads no key. The key is checked against nothing; the documented check is `agents run NAME claude -p ...`. See [Claude proxy workflow](agents.md#claude-proxy-workflow). |
+| `agents login NAME copilot proxy --url URL --model ID [--wire-api API]` | Points Copilot CLI at a CLIProxyAPI server you already run: it writes a `cliproxyapi` provider with the URL and a client key, read from standard input only, and a model entry for `ID` into Copilot's provider registry in the home data. `--model ID` is required and makes the model no default: select it with `--model cliproxyapi/ID`. `--wire-api` chooses `completions` (default) or `responses`. `--remove` deletes the managed provider and the models that point to it and reads no key. The key is checked against nothing; the documented check is `agents run NAME copilot -p ... --model cliproxyapi/ID`. GitHub-hosted features still need `device-code`. Copilot CLI 1.0.106 or newer is required. See [Copilot proxy workflow](agents.md#copilot-proxy-workflow). |
 | `agents status NAME AGENT` | Reports whether the agent is enabled, its version, its pin, whether a session runs, and whether it is signed in when a status probe exists. |
 | `agents run NAME AGENT [ARG...]` | Runs the agent once in `/workspace`. Every argument after the agent name is passed on unchanged. The exit status is the agent's. |
 | `agents session NAME AGENT` | Starts or attaches to the agent's persistent terminal session. `--stop` ends the session and needs no terminal. |
 
-`--url`, `--model`, and `--remove` belong to the `claude proxy` workflow. Any of them on another agent or workflow, a missing or invalid `--url`, and `--remove` together with `--url` or `--model` are usage errors that exit 2 before Podman is called. All `agents` commands need a running sandbox with an answering manager; see [Agents](agents.md).
+`--url`, `--model`, and `--remove` belong to the `proxy` workflows of `claude` and `copilot`, and `--wire-api` to `copilot proxy` alone. Any of them on another agent or workflow, a missing or invalid `--url`, `copilot proxy` without `--model`, an invalid `--wire-api`, and `--remove` together with `--url`, `--model`, or `--wire-api` are usage errors that exit 2 before Podman is called. All `agents` commands need a running sandbox with an answering manager; see [Agents](agents.md).
 
 ## Integration commands
 
