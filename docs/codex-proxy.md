@@ -36,9 +36,9 @@ Revisit this if a CLIProxyAPI release starts to require the header, which would 
 
 ## Ownership record
 
-`[_sandboxedAgentsProxy]` in `config.toml` holds `Provider`, a copy of the provider table the workflow wrote; `TokenHash`, the SHA-256 of the key; and `PreviousProvider` and `PreviousModel`, the top-level `model_provider` and `model` values the first setup replaced, each omitted when there was none. The key itself appears only in `auth.json`.
+`[_sandboxedAgentsProxy]` in `config.toml` holds `Provider`, a copy of the provider table the workflow wrote; `TokenHash`, the SHA-256 of the key; `ProvidersExisted`, whether `config.toml` already had a `model_providers` table before the first setup; and `PreviousProvider` and `PreviousModel`, the top-level `model_provider` and `model` values the first setup replaced, each omitted when there was none. The key itself appears only in `auth.json`.
 
-The record is what makes `--remove` safe without a second copy of the key: the provider table is compared to `Provider` as a whole, so an edited table is refused rather than deleted; the stored login is deleted only when its `OPENAI_API_KEY` hashes to `TokenHash` and no `tokens` are present; and `model_provider` and `model` are restored only while `model_provider` still names `cliproxyapi`. A ChatGPT login that `--replace-login` replaced is not recorded and not restored: Codex keeps one login, and keeping a copy of its tokens would put a second credential into the home data.
+The record is what makes `--remove` safe without a second copy of the key: the provider table is compared to `Provider` as a whole, so an edited table is refused rather than deleted; the stored login is deleted only when its `OPENAI_API_KEY` hashes to `TokenHash` and no `tokens` are present; `model_provider` and `model` are restored only while `model_provider` still names `cliproxyapi`; and an emptied `model_providers` table is dropped when `ProvidersExisted` is false, because the workflow created it, and kept when the table was there before. A ChatGPT login that `--replace-login` replaced is not recorded and not restored: Codex keeps one login, and keeping a copy of its tokens would put a second credential into the home data.
 
 ## TOML round trip
 

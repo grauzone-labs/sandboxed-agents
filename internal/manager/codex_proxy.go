@@ -21,20 +21,15 @@ type codexProxyOwnership struct {
 	PreviousProvider any
 	PreviousModel    any
 	TokenHash        string
+	ProvidersExisted bool
 }
 
 // codexProxyWorkflow stages native login before publishing configuration and credentials under the manager lock.
 func (w agentWork) codexProxyWorkflow() error {
 	dir := filepath.Join(w.home, ".codex")
 	configPath, authPath := filepath.Join(dir, "config.toml"), filepath.Join(dir, "auth.json")
-	for _, path := range []string{dir, configPath, authPath} {
-		info, err := os.Lstat(path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil || !agentFileOwned(info) || (path == dir && !info.IsDir()) || (path != dir && !info.Mode().IsRegular()) {
-			return errors.New("Codex proxy requires agent-owned directory and regular unlinked files")
-		}
+	if err := validateProxyFiles("Codex", dir, configPath, authPath); err != nil {
+		return err
 	}
 	before, err := os.ReadFile(configPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -53,6 +48,7 @@ func (w agentWork) codexProxyWorkflow() error {
 	if store, ok := config["cli_auth_credentials_store"]; ok && store != "file" {
 		return errors.New("Codex proxy requires cli_auth_credentials_store = file")
 	}
+	_, providersExisted := config["model_providers"]
 	providers := map[string]any{}
 	if value, exists := config["model_providers"]; exists {
 		var ok bool
@@ -122,6 +118,9 @@ func (w agentWork) codexProxyWorkflow() error {
 			return errors.New("Codex stored an unexpected login")
 		}
 		if owned.Provider == nil || config["model_provider"] != "cliproxyapi" {
+			if owned.Provider == nil {
+				owned.ProvidersExisted = providersExisted
+			}
 			owned.PreviousProvider = config["model_provider"]
 			owned.PreviousModel = config["model"]
 		}
@@ -131,7 +130,7 @@ func (w agentWork) codexProxyWorkflow() error {
 		config["model_provider"] = "cliproxyapi"
 		config["model"] = w.request.proxyOptions["model"]
 		// JSON round-tripping omits absent previous fields before TOML serialization.
-		metadata := map[string]any{"Provider": owned.Provider, "TokenHash": owned.TokenHash}
+		metadata := map[string]any{"Provider": owned.Provider, "TokenHash": owned.TokenHash, "ProvidersExisted": owned.ProvidersExisted}
 		if owned.PreviousProvider != nil {
 			metadata["PreviousProvider"] = owned.PreviousProvider
 		}
@@ -140,7 +139,11 @@ func (w agentWork) codexProxyWorkflow() error {
 		}
 		config[proxyMetadata] = metadata
 	}
-	config["model_providers"] = providers
+	if remove && len(providers) == 0 && !owned.ProvidersExisted {
+		delete(config, "model_providers")
+	} else {
+		config["model_providers"] = providers
+	}
 	after, err := toml.Marshal(config)
 	if err != nil {
 		return errors.New("cannot encode Codex configuration")
@@ -166,44 +169,17 @@ func restoreCodexValue(config map[string]any, key string, value any) {
 // codexKeyHash identifies the credential still owned by the workflow.
 func codexKeyHash(key string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(key))) }
 
-// atomicCodexFile syncs a private sibling before replacing a native file, or removes an absent value.
-func atomicCodexFile(path string, data []byte) error {
-	if data == nil {
-		err := os.Remove(path)
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".proxy-")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	defer file.Close()
-	if _, err = file.Write(data); err != nil {
-		return err
-	}
-	if err = file.Sync(); err != nil {
-		return err
-	}
-	if err = file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
-}
-
 // publishCodexFiles rolls back both native files when either publication fails.
 func publishCodexFiles(configPath, authPath string, before, after, newAuth []byte) error {
 	originalMode := os.FileMode(0600)
 	if info, err := os.Stat(configPath); err == nil {
 		originalMode = info.Mode().Perm()
 	}
-	if err := atomicCodexFile(configPath, after); err != nil {
+	if err := writePrivateFile(configPath, ".proxy-", after); err != nil {
 		return errors.New("cannot publish Codex configuration")
 	}
-	if err := atomicCodexFile(authPath, newAuth); err != nil {
-		restore := atomicCodexFile(configPath, before)
+	if err := writePrivateFile(authPath, ".proxy-", newAuth); err != nil {
+		restore := writePrivateFile(configPath, ".proxy-", before)
 		if restore == nil && before != nil {
 			restore = os.Chmod(configPath, originalMode)
 		}
