@@ -10,6 +10,57 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
+// TestCodexProxyConfigCaptureFailureRestoresFiles proves a failed config capture after auth capture restores both originals and modes and removes recovery state through RunWithEffects.
+func TestCodexProxyConfigCaptureFailureRestoresFiles(t *testing.T) {
+	e, dir := codexPublicationEffects(t)
+	originals := map[string][]byte{}
+	modes := map[string]os.FileMode{"config.toml": 0640, "auth.json": 0644}
+	for name, mode := range modes {
+		path := filepath.Join(dir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		originals[name] = data
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	injected := false
+	e.RenameFile = func(from, to string) error {
+		if from == filepath.Join(dir, "config.toml") {
+			if _, err := os.Lstat(filepath.Join(dir, "auth.json")); !os.IsNotExist(err) {
+				t.Fatal("config capture did not follow auth deactivation")
+			}
+			captured, err := os.ReadFile(filepath.Join(dir, ".sandboxed-agents-proxy", "auth.json.prev"))
+			if err != nil || string(captured) != string(originals["auth.json"]) {
+				t.Fatal("original auth was not captured before config failure")
+			}
+			injected = true
+			return fmt.Errorf("private-key: injected config capture failure")
+		}
+		return os.Rename(from, to)
+	}
+	out := runAgents(t, e, 1, "login", "codex", "proxy", "--url", "https://proxy.example", "--model", "chosen")
+	if !injected || strings.Contains(out, "private-key") {
+		t.Fatalf("config capture failure was not exercised safely: %s", out)
+	}
+	for name, want := range originals {
+		path := filepath.Join(dir, name)
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != string(want) {
+			t.Fatalf("%s was not restored: %v", name, err)
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != modes[name] {
+			t.Fatalf("%s mode was not restored: %v", name, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(dir, ".sandboxed-agents-proxy")); !os.IsNotExist(err) {
+		t.Fatalf("restored capture failure left recovery state: %v", err)
+	}
+}
+
 // TestCodexProxyCleanupFailureRestoresPreviousFiles proves failed cleanup after publication restores both prior files and modes through RunWithEffects.
 func TestCodexProxyCleanupFailureRestoresPreviousFiles(t *testing.T) {
 	for _, removeWorkflow := range []bool{false, true} {
