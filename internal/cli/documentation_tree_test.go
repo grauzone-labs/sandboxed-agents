@@ -12,6 +12,23 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
+// TestDocumentedAgentSignInExamplesParse proves the sign-in guide's runnable login examples select valid workflows through Parse.
+func TestDocumentedAgentSignInExamplesParse(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "agents.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	examples := regexp.MustCompile(`(?m)^sandboxed-agents agents login agent01 [a-z-]+(?: [a-z-]+)?$`).FindAllString(string(data), -1)
+	if len(examples) == 0 {
+		t.Fatal("no agent sign-in examples found")
+	}
+	for _, example := range examples {
+		if _, err := Parse(strings.Fields(strings.TrimPrefix(example, "sandboxed-agents ")), "default"); err != nil {
+			t.Errorf("documented sign-in %q: %v", example, err)
+		}
+	}
+}
+
 // TestCommandReferenceMatchesCommandTree proves documented commands, positional ranges, and value/switch options match the executable grammar at the parser definition and Parse seams.
 func TestCommandReferenceMatchesCommandTree(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "command-reference.md"))

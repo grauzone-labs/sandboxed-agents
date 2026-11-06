@@ -31,11 +31,11 @@ func TestClaudeProxyNativeClientReachesOnlyFakeUpstream(t *testing.T) {
 		requests = append(requests, r.Method+" "+r.Host+r.URL.Path)
 		if r.Method == "CONNECT" || (r.URL.IsAbs() && r.URL.Host != r.Host) || strings.Contains(r.Host, "anthropic") {
 			t.Errorf("external request blocked: %s %s", r.Method, r.Host)
-			http.Error(w, "external requests forbidden", 403)
+			http.Error(w, "external requests forbidden", http.StatusForbidden)
 			return
 		}
 		if r.URL.Path != "/prefix/v1/messages" {
-			http.Error(w, "unsupported fake endpoint", 404)
+			http.Error(w, "unsupported fake endpoint", http.StatusNotFound)
 			return
 		}
 		if r.Header.Get("Authorization") != "Bearer local-test-secret" {
