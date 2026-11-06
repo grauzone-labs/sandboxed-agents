@@ -151,7 +151,7 @@ func (w agentWork) codexProxyWorkflow() error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return errors.New("cannot prepare Codex directory")
 	}
-	if err := publishCodexFiles(configPath, authPath, before, after, newAuth); err != nil {
+	if err := publishCodexFiles(configPath, authPath, before, after, newAuth, w.effects.RenameFile); err != nil {
 		return err
 	}
 	return nil
@@ -170,16 +170,19 @@ func restoreCodexValue(config map[string]any, key string, value any) {
 func codexKeyHash(key string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(key))) }
 
 // publishCodexFiles rolls back both native files when either publication fails.
-func publishCodexFiles(configPath, authPath string, before, after, newAuth []byte) error {
+func publishCodexFiles(configPath, authPath string, before, after, newAuth []byte, rename func(string, string) error) error {
+	if rename == nil {
+		rename = os.Rename
+	}
 	originalMode := os.FileMode(0600)
 	if info, err := os.Stat(configPath); err == nil {
 		originalMode = info.Mode().Perm()
 	}
-	if err := writePrivateFile(configPath, ".proxy-", after); err != nil {
+	if err := writePrivateFileWithRename(configPath, ".proxy-", after, rename); err != nil {
 		return errors.New("cannot publish Codex configuration")
 	}
-	if err := writePrivateFile(authPath, ".proxy-", newAuth); err != nil {
-		restore := writePrivateFile(configPath, ".proxy-", before)
+	if err := writePrivateFileWithRename(authPath, ".proxy-", newAuth, rename); err != nil {
+		restore := writePrivateFileWithRename(configPath, ".proxy-", before, rename)
 		if restore == nil && before != nil {
 			restore = os.Chmod(configPath, originalMode)
 		}
