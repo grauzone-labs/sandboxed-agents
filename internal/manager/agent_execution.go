@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 )
 
@@ -28,6 +29,13 @@ func executeAgent(r agentRequest, stdout, stderr io.Writer, effects Effects) int
 	}
 	if !enabled {
 		return 0
+	}
+	if r.name == "codex" && r.operation == "run" {
+		lock, err := lockCodexConfiguration(root, false)
+		if err != nil {
+			return exitStatus(err, stderr)
+		}
+		defer lock.Close()
 	}
 	if r.name == "codex" && !(r.operation == "session" && r.stop) {
 		if err := checkCodexProxyRecovery(home); err != nil {
@@ -59,7 +67,27 @@ func executeAgent(r agentRequest, stdout, stderr io.Writer, effects Effects) int
 	if r.operation == "login" {
 		fmt.Fprintln(stdout, r.definition.LoginMessage)
 	}
+	marker := ""
+	if r.name == "codex" && r.operation == "run" {
+		marker, err = recordCodexRun(root)
+		if err != nil {
+			return exitStatus(err, stderr)
+		}
+	}
 	err = effects.Start(Process{Program: commandPath(home, r.definition), Args: r.arguments, Directory: "/workspace", Identity: agentIdentity, Stdin: effects.Stdin, Stdout: stdout, Stderr: stderr})
+	if marker != "" {
+		var child interface{ ExitCode() int }
+		if err == nil || errors.As(err, &child) && child.ExitCode() > 0 {
+			if os.Remove(marker) != nil {
+				fmt.Fprintln(stderr, codexRunRecovery)
+				if err == nil {
+					return 1
+				}
+			}
+		} else {
+			fmt.Fprintln(stderr, codexRunRecovery)
+		}
+	}
 	if err == nil {
 		return 0
 	}
@@ -120,6 +148,11 @@ func (w agentWork) changeSession() error {
 	enabled, err := w.requireEnabled()
 	if err != nil || !enabled {
 		return err
+	}
+	if w.request.name == "codex" && !w.request.stop {
+		if err := checkCodexProxyRecovery(w.home); err != nil {
+			return err
+		}
 	}
 	names, err := readSessionNames(w.effects)
 	if err != nil {
