@@ -8,6 +8,12 @@ import (
 	"strings"
 )
 
+// openCodeProxyOwnership identifies the managed provider and remembers the model selected before it.
+type openCodeProxyOwnership struct {
+	Version       int             `json:"version"`
+	PreviousModel json.RawMessage `json:"previousModel,omitempty"`
+}
+
 // writeOpenCodeProxy atomically merges a dedicated provider, keeping its nonsecret ownership marker in extensible provider options.
 func writeOpenCodeProxy(home string, options map[string]string, key string) error {
 	directory := filepath.Join(home, ".config", "opencode")
@@ -40,7 +46,7 @@ func writeOpenCodeProxy(home string, options map[string]string, key string) erro
 			return fail("provider must be a JSON object")
 		}
 	}
-	var owned proxyOwnership
+	var owned openCodeProxyOwnership
 	if raw, ok := providers["cliproxyapi"]; ok {
 		var provider struct {
 			Options map[string]json.RawMessage `json:"options"`
