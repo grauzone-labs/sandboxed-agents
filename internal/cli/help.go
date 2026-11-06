@@ -213,7 +213,7 @@ func helpTopics() map[string]helpEntry {
 			arguments: []helpRow{sandboxArgument, agentArgument,
 				{"WORKFLOW", "A login workflow of the agent; see Login workflows. It may be omitted when the agent has one."}},
 			sections: []helpSection{agentLoginWorkflows()},
-			options:  []helpOption{{name: "url", value: "URL", text: "Proxy server base URL."}, {name: "model", value: "ID", text: "Proxy model selection."}, {name: "remove", text: "Remove managed proxy settings without reading a key."}},
+			options:  []helpOption{{name: "url", value: "URL", text: "Proxy server base URL."}, {name: "model", value: "ID", text: "Proxy model selection."}, {name: "replace-login", text: "Allow Codex proxy setup to replace its ChatGPT login."}, {name: "remove", text: "Remove managed proxy settings without reading a key."}},
 			examples: []string{"agents login agent01 claude browser", "agents login agent01 codex device-code"},
 		},
 		"agents status": {
