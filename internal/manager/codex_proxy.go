@@ -151,7 +151,7 @@ func (w agentWork) codexProxyWorkflow() error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return errors.New("cannot prepare Codex directory")
 	}
-	if err := publishCodexFiles(configPath, authPath, before, after, newAuth, w.effects.RenameFile); err != nil {
+	if err := publishCodexFiles(configPath, authPath, before, auth, after, newAuth, w.effects); err != nil {
 		return err
 	}
 	return nil
@@ -169,27 +169,29 @@ func restoreCodexValue(config map[string]any, key string, value any) {
 // codexKeyHash identifies the credential still owned by the workflow.
 func codexKeyHash(key string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(key))) }
 
-// publishCodexFiles rolls back both native files when either publication fails.
-func publishCodexFiles(configPath, authPath string, before, after, newAuth []byte, rename func(string, string) error) error {
-	if rename == nil {
-		rename = os.Rename
+// guardCodexNativeLogin refuses account login while the proxy destination is selected, or its configuration cannot be safely read.
+func (w agentWork) guardCodexNativeLogin() error {
+	dir := filepath.Join(w.home, ".codex")
+	path := filepath.Join(dir, "config.toml")
+	if err := validateProxyFiles("Codex", dir, path); err != nil {
+		return err
 	}
-	originalMode := os.FileMode(0600)
-	if info, err := os.Stat(configPath); err == nil {
-		originalMode = info.Mode().Perm()
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
 	}
-	if err := writePrivateFileWithRename(configPath, ".proxy-", after, rename); err != nil {
-		return errors.New("cannot publish Codex configuration")
+	if err != nil {
+		return errors.New("cannot read Codex config")
 	}
-	if err := writePrivateFileWithRename(authPath, ".proxy-", newAuth, rename); err != nil {
-		restore := writePrivateFileWithRename(configPath, ".proxy-", before, rename)
-		if restore == nil && before != nil {
-			restore = os.Chmod(configPath, originalMode)
-		}
-		if restore != nil {
-			return errors.New("Codex publication failed and configuration restore failed")
-		}
-		return errors.New("cannot publish Codex login; previous configuration restored")
+	config := map[string]any{}
+	if toml.Unmarshal(data, &config) != nil {
+		return errors.New("malformed Codex config.toml")
+	}
+	if _, owned := config[proxyMetadata]; owned {
+		return errors.New("Codex proxy is configured; run agents login NAME codex proxy --remove before browser or device-code login")
+	}
+	if config["model_provider"] == "cliproxyapi" {
+		return errors.New("Codex cliproxyapi selection is unmanaged; manually remove the top-level model_provider selection from ~/.codex/config.toml before browser or device-code login")
 	}
 	return nil
 }
