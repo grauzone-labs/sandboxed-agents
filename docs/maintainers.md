@@ -1,6 +1,6 @@
 # Maintainer notes
 
-This page is for the maintainers of `sandboxed-agents`. Here you find how the Podman version floors were confirmed, the live runs and source checks on record, the provenance and rotation of the NodeSource, Tailscale and Azure CLI signing keys, how release builds and CI work, what the stable release publication relies on, what the first one showed, and how to recover an interrupted one, and how to build a development executable whose images work. The user pages link here wherever a statement rests on this evidence.
+This page is for the maintainers of `sandboxed-agents`. Here you find how the Podman version floors were confirmed, how the Copilot CLI floor of the proxy workflow was tested, the live runs and source checks on record, the provenance and rotation of the NodeSource, Tailscale and Azure CLI signing keys, how release builds and CI work, what the stable release publication relies on, what the first one showed, and how to recover an interrupted one, and how to build a development executable whose images work. The user pages link here wherever a statement rests on this evidence.
 
 ## How the version floors were confirmed
 
@@ -40,6 +40,20 @@ Epic #1 sets client and machine 4.7.0 as the supported minimum. The confirmation
 - **Engine version query.** The `Server.Version` query reported the machine's Podman 5.8.9 in the Windows live runs recorded with that machine version; nothing confirms it at 4.7.0.
 - **Automount root query.** The Windows live runs exercised the read of an existing `wsl.conf` without an `[automount]` section, so the default root, not an absent file or a custom root. The two commands now run through the host's `ssh` with the machine's inspected SSH configuration; the automount setting itself does not depend on the Podman version.
 - **Remote Podman on Linux.** On Linux the executable calls the local Podman without a connection. A remote setting there, such as `CONTAINER_HOST`, is a documented limit of the preflight ([ADR 0006](adr/0006-podman-target-and-execution-identity.md)).
+
+## Copilot CLI floor of the proxy workflow
+
+The [Copilot proxy workflow](agents.md#copilot-proxy-workflow) refuses Copilot CLI versions below 1.0.106 and every prerelease before it reads the key. The floor is a tested stable floor: 1.0.106 is the version the offline contract test ran against, and nothing here claims that it is the earliest upstream release whose `providers.json` has the fields the workflow writes. [Adding LLM models to Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-llm-models), read on 2026-11-06, documents the file, its `name`, `type`, `baseUrl`, `apiKey`, and `wireApi` provider fields with `completions` as the default wire API, the `id` and `provider` model fields, the `PROVIDER/MODEL` selection, the absence of environment interpolation in the file, and the precedence of the file over environment settings; it names no minimum version.
+
+The evidence is the contract test, run with a real Copilot CLI 1.0.106 executable on the machine that runs it:
+
+```text
+SANDBOXED_AGENTS_TEST_COPILOT=/absolute/copilot go test ./internal/manager -run TestCopilotProxyNativeClient -count=1 -v
+```
+
+The test first runs the executable's `--version` and fails unless it reports `GitHub Copilot CLI 1.0.106`. It then enables `copilot` against a stub installation that reports 1.0.106, writes the proxy configuration through the workflow with a local fake upstream as the URL, and runs the executable noninteractively with `--model cliproxyapi/ID` in four scenarios: each wire API, once without a GitHub token and once with a dummy `GH_TOKEN`. The command's `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY` point at the fake server, which rejects every proxied destination it does not expect; that is a local proxy setting the CLI honours, not operating-system network isolation, so the test shows what the CLI sent through the proxy, not what the operating system would have allowed. Each scenario asserts a streaming `POST` with tool definitions to `/v1/chat/completions` or `/v1/responses` under the URL prefix with the configured bearer key and model ID, that the dummy token reaches no request to the server, and that the fake server saw no other request: it refuses a signed-in Copilot's account-metadata request to `api.github.com` locally with a 403, because the CLI still asks GitHub for its account while it uses a bring-your-own-key model, and it permits no Copilot inference traffic. All four scenarios passed against 1.0.106 on 2026-11-06. Without the variable the test skips, so the ordinary `go test ./...` run and CI do not cover it; it is a local opt-in test behind the page.
+
+To move the floor to a candidate version, the test must pass against that version first, and it cannot simply be rerun against another executable: its version guard fails before any inference, so change the guard's expected version and the stub installation's version in the test to the candidate, run it with the candidate executable, and only once all four scenarios pass change the floor in `internal/catalog/proxy.go`, the refusal message, the test's skip message, and the version named on the [Agents page](agents.md#copilot-proxy-workflow) and here together. A new floor rests on that evidence and on nothing else. The [manual checklist](manual-checklist.md#copilot-proxy-workflow) holds the live checks against a real server, not yet run.
 
 ## Live runs on record
 
