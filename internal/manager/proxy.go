@@ -79,8 +79,25 @@ func (w agentWork) proxyWorkflow() int {
 		return exitStatus(err, w.stderr)
 	}
 	if w.request.name == "codex" {
+		lock, err := lockCodexConfiguration(w.root, true)
+		if err != nil {
+			return exitStatus(err, w.stderr)
+		}
+		defer lock.Close()
+		if err := checkCodexRunMarkers(w.root); err != nil {
+			return exitStatus(err, w.stderr)
+		}
 		if err := checkCodexProxyRecovery(w.home); err != nil {
 			return exitStatus(err, w.stderr)
+		}
+		names, err := readSessionNames(w.effects)
+		if err != nil {
+			return exitStatus(err, w.stderr)
+		}
+		for _, name := range names {
+			if name == "codex" {
+				return exitStatus(errors.New("Codex session is running; run agents session NAME codex --stop before changing the proxy"), w.stderr)
+			}
 		}
 		selection, err := readSelection(w.root)
 		if err != nil {
