@@ -1,6 +1,6 @@
 # OpenCode proxy workflow: first use inside a sandbox
 
-Human-observed supplementary record for the open acceptance criterion of [issue #146](https://github.com/grauzone-labs/sandboxed-agents/issues/146), the eighth of its ten: "any network fetch the provider package needs on first use inside the sandbox is verified and documented". It is not a release manual-check record and no gate reads it. It records the parts of checks 1 and 2 of the [OpenCode proxy workflow item](../../manual-checklist.md#opencode-proxy-workflow) of the manual checklist that were run, and the full live suites run at the same commit. Command output, inventories, and logs stay with the operator's private evidence and are not in the repository.
+Supplementary record for the open acceptance criterion of [issue #146](https://github.com/grauzone-labs/sandboxed-agents/issues/146), the eighth of its ten: "any network fetch the provider package needs on first use inside the sandbox is verified and documented". It is not a release manual-check record and no gate reads it. It records the parts of checks 1 and 2 of the [OpenCode proxy workflow item](../../manual-checklist.md#opencode-proxy-workflow) of the manual checklist that were run, and the full live suites run at the same commit. Command output, inventories, and logs stay with the operator's private evidence and are not in the repository.
 
 ## Scope
 
