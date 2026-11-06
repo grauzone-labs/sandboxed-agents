@@ -53,7 +53,7 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 		}
 		options[name] = value
 	}
-	url, err := catalog.ProxyOptions(options)
+	url, err := catalog.AgentProxyOptions(r.name, options)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return r, false
@@ -82,8 +82,20 @@ func (w agentWork) proxyWorkflow() int {
 			return exitStatus(err, w.stderr)
 		}
 	}
-	if err = writeClaudeProxy(w.home, w.request.proxyOptions, key); err != nil {
+	writer := writeClaudeProxy
+	if w.request.name == "opencode" {
+		writer = writeOpenCodeProxy
+	}
+	if err = writer(w.home, w.request.proxyOptions, key); err != nil {
 		return exitStatus(err, w.stderr)
+	}
+	if w.request.name == "opencode" {
+		if w.request.proxyOptions["remove"] != "" {
+			fmt.Fprintln(w.stdout, "OpenCode proxy configuration removed; provider login is unchanged.")
+		} else {
+			fmt.Fprintln(w.stdout, "OpenCode proxy configuration written; the key was not checked against the server. Check with: sandboxed-agents agents run NAME opencode run 'Reply OK'. Restart existing sessions to load changed configuration.")
+		}
+		return 0
 	}
 	if w.request.proxyOptions["remove"] != "" {
 		fmt.Fprintln(w.stdout, "Claude proxy configuration removed; browser login is unchanged.")
