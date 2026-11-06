@@ -13,15 +13,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// TestProxyTerminalHidesKey proves the real terminal adapter disables echo for proxy key input and restores terminal settings through the host CLI and a Linux pseudo-terminal.
+// TestProxyTerminalHidesKey proves the real terminal adapter disables echo for proxy key input after fast or delayed preflight and restores terminal settings through the host CLI and a Linux pseudo-terminal.
 func TestProxyTerminalHidesKey(t *testing.T) {
 	for _, tc := range []struct {
-		name, input string
-		status      int
+		name, input          string
+		status, probeDelayMS int
 	}{
-		{"success", "terminal-proxy-key-sentinel\n", 0},
-		{"cancel", "terminal-proxy-key-sentinel\x03", 1},
-		{"empty", "\n", 1},
+		{"success", "terminal-proxy-key-sentinel\n", 0, 0},
+		{"slow-probe", "terminal-proxy-key-sentinel\n", 0, 1500},
+		{"cancel", "terminal-proxy-key-sentinel\x03", 1, 0},
+		{"empty", "\n", 1, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY, 0600)
@@ -49,13 +50,13 @@ func TestProxyTerminalHidesKey(t *testing.T) {
 			f.host.Stdin = slave
 			f.host.IsInputTerminal = nil
 			f.host.IsOutputTerminal = func(io.Writer) bool { return false }
-			f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+			f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n", DelayAfterOutputMS: tc.probeDelayMS}
 			f.responses[agentWorkStatus+"claude"] = response{Output: `{"name":"claude","enabled":true,"installed_version":"1.2.3"}`}
 			f.responses["exec --user=1000:1000 --env HOME=/home/agent -i "+shellContainer+" "+integrationManager+" agents login claude proxy --url https://proxy.example"] = response{}
 			echoDisabled := make(chan bool, 1)
 			go func() {
 				hidden := false
-				deadline := time.Now().Add(time.Second)
+				deadline := time.Now().Add(10 * time.Second)
 				for time.Now().Before(deadline) {
 					state, e := unix.IoctlGetTermios(int(slave.Fd()), unix.TCGETS)
 					if e == nil && state.Lflag&unix.ECHO == 0 {
@@ -64,7 +65,12 @@ func TestProxyTerminalHidesKey(t *testing.T) {
 					}
 					time.Sleep(time.Millisecond)
 				}
-				_, _ = master.Write([]byte(tc.input))
+				if hidden {
+					_, _ = master.Write([]byte(tc.input))
+				} else {
+					// Unblock terminal reads without sending a key while echo is enabled.
+					_ = master.Close()
+				}
 				echoDisabled <- hidden
 			}()
 			status, output, _ := f.run(t, "agents", "login", "agent01", "claude", "proxy", "--url", "https://proxy.example")

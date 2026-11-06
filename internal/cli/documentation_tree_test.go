@@ -12,20 +12,34 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
-// TestDocumentedAgentSignInExamplesParse proves the sign-in guide's runnable login examples select valid workflows through Parse.
+// TestDocumentedAgentSignInExamplesParse proves argument-only login examples in the README and guides select valid workflows with LF or CRLF line endings through Parse.
 func TestDocumentedAgentSignInExamplesParse(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "agents.md"))
+	paths, err := filepath.Glob(filepath.Join("..", "..", "docs", "*.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	examples := regexp.MustCompile(`(?m)^sandboxed-agents agents login agent01 [a-z-]+(?: [a-z-]+)?$`).FindAllString(string(data), -1)
-	if len(examples) == 0 {
-		t.Fatal("no agent sign-in examples found")
-	}
-	for _, example := range examples {
-		if _, err := Parse(strings.Fields(strings.TrimPrefix(example, "sandboxed-agents ")), "default"); err != nil {
-			t.Errorf("documented sign-in %q: %v", example, err)
-		}
+	paths = append(paths, filepath.Join("..", "..", "README.md"))
+	pattern := regexp.MustCompile(`(?m)^sandboxed-agents agents login agent01 [a-z-]+(?: [a-z-]+)?\r?$`)
+	for name, ending := range map[string]string{"LF": "\n", "CRLF": "\r\n"} {
+		t.Run(name, func(t *testing.T) {
+			count := 0
+			for _, path := range paths {
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				document := strings.ReplaceAll(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n", ending)
+				for _, example := range pattern.FindAllString(document, -1) {
+					count++
+					if _, err := Parse(strings.Fields(strings.TrimPrefix(example, "sandboxed-agents ")), "default"); err != nil {
+						t.Errorf("%s: documented sign-in %q: %v", path, example, err)
+					}
+				}
+			}
+			if count == 0 {
+				t.Fatal("no agent sign-in examples found")
+			}
+		})
 	}
 }
 
