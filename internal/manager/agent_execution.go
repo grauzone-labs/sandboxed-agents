@@ -30,7 +30,7 @@ func executeAgent(r agentRequest, stdout, stderr io.Writer, effects Effects) int
 		return 0
 	}
 	if r.proxyOptions != nil {
-		return work.proxyLogin()
+		return work.proxyWorkflow()
 	}
 	if r.operation == "session" {
 		return work.session()

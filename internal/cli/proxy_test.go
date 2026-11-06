@@ -12,8 +12,8 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
 )
 
-// TestProxyLoginGrammar proves proxy options normalize URLs and reject invalid combinations at cli.Parse.
-func TestProxyLoginGrammar(t *testing.T) {
+// TestProxyWorkflowGrammar proves proxy options normalize URLs and reject invalid combinations at cli.Parse.
+func TestProxyWorkflowGrammar(t *testing.T) {
 	r, err := cli.Parse([]string{"agents", "login", "demo", "claude", "proxy", "--url", "http://proxy.example:8317/prefix///", "--model", "example-model"}, "default")
 	if err != nil || r.Options["url"] != "http://proxy.example:8317/prefix" {
 		t.Fatalf("request=%+v error=%v", r, err)
@@ -34,8 +34,8 @@ func TestProxyLoginGrammar(t *testing.T) {
 	}
 }
 
-// TestProxyLoginReadsKeyOnlyOnStdin proves first-line input reaches only manager stdin without a terminal through RunWithHost.
-func TestProxyLoginReadsKeyOnlyOnStdin(t *testing.T) {
+// TestProxyWorkflowReadsKeyOnlyOnStdin proves first-line input reaches only manager stdin without a terminal through RunWithHost.
+func TestProxyWorkflowReadsKeyOnlyOnStdin(t *testing.T) {
 	f := sandboxStateFixture(t)
 	envLog := filepath.Join(t.TempDir(), "podman-environment.json")
 	t.Setenv("TEST_PODMAN_ENV_LOG", envLog)
@@ -72,8 +72,8 @@ func TestProxyLoginReadsKeyOnlyOnStdin(t *testing.T) {
 	}
 }
 
-// TestProxyLoginRejectsBadKeys proves invalid input never reaches the manager mutation through RunWithHost.
-func TestProxyLoginRejectsBadKeys(t *testing.T) {
+// TestProxyWorkflowRejectsBadKeys proves invalid input never reaches the manager mutation through RunWithHost.
+func TestProxyWorkflowRejectsBadKeys(t *testing.T) {
 	for _, key := range []string{"", "\n", "a b\n", "a\tb\n", "a\rb\n", "key\r\n", "a\x00b\n", "a\x1bb\n"} {
 		t.Run(fmt.Sprintf("%q", key), func(t *testing.T) {
 			f := sandboxStateFixture(t)

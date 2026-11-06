@@ -61,7 +61,7 @@ func parseAgents(args []string, stderr io.Writer) (agentRequest, bool) {
 	}
 	if r.operation == "login" {
 		if len(args) >= 3 && args[2] == "proxy" && r.name == "claude" {
-			return parseProxyLogin(r, args[3:], stderr)
+			return parseProxyWorkflow(r, args[3:], stderr)
 		}
 		if len(args) > 3 {
 			fmt.Fprintln(stderr, "agents login requires AGENT [WORKFLOW]")

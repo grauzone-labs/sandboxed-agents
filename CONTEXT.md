@@ -39,7 +39,7 @@ The trusted Go program in a sandbox's image that handles the executable's admini
 _Avoid_: Daemon, agent (for the manager itself)
 
 **Manager lock**:
-The one lock with which a sandbox's manager serializes installation changes (enabling, updating, or disabling an agent; enabling, updating, or deleting a Tool), session changes (starting or ending an agent session), and Tool service, tailnet node, and T3 Connect changes (starting or stopping a service or node, `tools tailscale … login` and `logout`, `link`, `unlink`, `logout`). Attaching to a running agent session, `tools status`, `tools pair`, and `tools connect … login` do not take it; the login holds the Tool's connect lock instead (ADR-0009, ADR-0010).
+The one lock with which a sandbox's manager serializes installation changes (enabling, updating, or disabling an agent; enabling, updating, or deleting a Tool), session changes (starting or ending an agent session), Tool service, tailnet node, and T3 Connect changes (starting or stopping a service or node, `tools tailscale … login` and `logout`, `link`, `unlink`, `logout`), and the proxy workflow's settings write and removal, so that no two writes of the agent's configuration file overlap. Attaching to a running agent session, `tools status`, `tools pair`, and `tools connect … login` do not take it; the login holds the Tool's connect lock instead (ADR-0009, ADR-0010).
 _Avoid_: Install lock, session lock
 
 **Integration**:

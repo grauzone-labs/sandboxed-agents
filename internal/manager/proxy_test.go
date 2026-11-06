@@ -4,16 +4,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
-// TestClaudeProxyMergesNativeSettings proves proxy login merges private native settings and leaves OAuth untouched through RunWithEffects.
+// TestClaudeProxyMergesNativeSettings proves the proxy workflow merges private native settings and leaves OAuth untouched through RunWithEffects.
 func TestClaudeProxyMergesNativeSettings(t *testing.T) {
 	home, version, installs := t.TempDir(), "1.2.3", 0
 	e := agentEffects(t, home, &version, &installs)
@@ -51,7 +52,9 @@ func TestClaudeProxyMergesNativeSettings(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("settings mode: %v %v", info, err)
 	}
-	if b, _ := os.ReadFile(oauth); string(b) != "browser-credential" {
+	if b, err := os.ReadFile(oauth); err != nil {
+		t.Fatal(err)
+	} else if string(b) != "browser-credential" {
 		t.Fatal("OAuth changed")
 	}
 	if strings.Count(string(data), "proxy-secret") != 1 {
@@ -79,13 +82,19 @@ func TestClaudeProxyRemovalRestoresOnlyOwnedSettings(t *testing.T) {
 				runAgents(t, e, 0, "login", "claude", "proxy", "--url", "https://proxy.example", "--model", model)
 			}
 			if edited {
-				b, _ := os.ReadFile(path)
+				b, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
 				var editedSettings map[string]json.RawMessage
 				if err := json.Unmarshal(b, &editedSettings); err != nil {
 					t.Fatal(err)
 				}
 				editedSettings["model"] = json.RawMessage(`"user-edited"`)
-				b, _ = json.Marshal(editedSettings)
+				b, err = json.Marshal(editedSettings)
+				if err != nil {
+					t.Fatal(err)
+				}
 				if err := os.WriteFile(path, b, 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -112,7 +121,10 @@ func TestClaudeProxyRemovalRestoresOnlyOwnedSettings(t *testing.T) {
 				t.Fatalf("unrelated settings lost or managed entries remain")
 			}
 			runAgents(t, e, 0, "login", "claude", "proxy", "--remove")
-			after, _ := os.ReadFile(path)
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if !bytes.Equal(b, after) {
 				t.Fatal("repeated removal changed native settings")
 			}
@@ -159,13 +171,40 @@ func TestClaudeProxyRefusesUnsafeInput(t *testing.T) {
 			if !strings.Contains(out, tc.cause) || strings.Contains(out, "private-existing") || strings.Contains(out, "new-secret") {
 				t.Fatalf("unsafe or unclear error %s", out)
 			}
-			b, _ := os.ReadFile(path)
+			b, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if string(b) != tc.settings {
 				t.Fatal("refusal changed native settings")
 			}
-			info, _ := os.Stat(path)
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if info.Mode().Perm() != 0644 {
 				t.Fatal("refusal changed permissions")
+			}
+			if tc.name == "api-key" || tc.name == "helper" {
+				e.Stdin = forbiddenProxyInput{t}
+				out = runAgents(t, e, 1, "login", "claude", "proxy", "--remove")
+				if !strings.Contains(out, tc.cause) || strings.Contains(out, "private-existing") {
+					t.Fatalf("unsafe or unclear removal error %s", out)
+				}
+				after, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(b, after) {
+					t.Fatal("conflicting removal changed native settings")
+				}
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if info.Mode().Perm() != 0644 {
+					t.Fatal("conflicting removal changed permissions")
+				}
 			}
 		})
 	}
@@ -200,7 +239,10 @@ func TestClaudeProxyUsesManagerLockAndSurvivesAgentLifecycle(t *testing.T) {
 	e.Stdin = strings.NewReader("secret")
 	runAgents(t, e, 0, "login", "claude", "proxy", "--url", "https://proxy.example", "--model", "chosen")
 	path := filepath.Join(home, ".claude", "settings.json")
-	before, _ := os.ReadFile(path)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	unlock, held, err := lockFor(t, home)
 	if err != nil || !held {
 		t.Fatalf("lock: %v %v", held, err)
@@ -212,7 +254,10 @@ func TestClaudeProxyUsesManagerLockAndSurvivesAgentLifecycle(t *testing.T) {
 	runAgents(t, e, 0, "update", "claude")
 	runAgents(t, e, 0, "disable", "claude")
 	runAgents(t, e, 0, "enable", "claude")
-	after, _ := os.ReadFile(path)
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !bytes.Equal(before, after) {
 		t.Fatal("lifecycle changed settings")
 	}
@@ -244,17 +289,32 @@ func TestClaudeProxyRestoresEquivalentModelJSON(t *testing.T) {
 	e.Stdin = strings.NewReader("secret")
 	runAgents(t, e, 0, "login", "claude", "proxy", "--url", "https://proxy.example", "--model", "chosen")
 	path := filepath.Join(home, ".claude", "settings.json")
-	b, _ := os.ReadFile(path)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var settings map[string]json.RawMessage
-	json.Unmarshal(b, &settings)
+	if err := json.Unmarshal(b, &settings); err != nil {
+		t.Fatal(err)
+	}
 	settings["model"] = json.RawMessage(`"\u0063hosen"`)
 	settings["env"] = json.RawMessage(`{"ANTHROPIC_BASE_URL":"https:\/\/proxy.example","ANTHROPIC_AUTH_TOKEN":"\u0073ecret"}`)
-	b, _ = json.MarshalIndent(settings, "", "  ")
-	os.WriteFile(path, b, 0600)
+	b, err = json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0600); err != nil {
+		t.Fatal(err)
+	}
 	runAgents(t, e, 0, "login", "claude", "proxy", "--remove")
-	b, _ = os.ReadFile(path)
+	b, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	settings = nil
-	json.Unmarshal(b, &settings)
+	if err := json.Unmarshal(b, &settings); err != nil {
+		t.Fatal(err)
+	}
 	if _, exists := settings["model"]; exists {
 		t.Fatal("equivalent model was not restored to absent")
 	}
@@ -272,14 +332,18 @@ func TestClaudeProxyRejectsLinkedSettings(t *testing.T) {
 			runAgents(t, e, 0, "enable", "claude")
 			outside := t.TempDir()
 			target := filepath.Join(outside, "settings.json")
-			os.WriteFile(target, []byte(`{}`), 0600)
+			if err := os.WriteFile(target, []byte(`{}`), 0600); err != nil {
+				t.Fatal(err)
+			}
 			dir := filepath.Join(home, ".claude")
 			path := filepath.Join(dir, "settings.json")
 			var err error
 			if kind == "directory-symlink" {
 				err = os.Symlink(outside, dir)
 			} else {
-				os.MkdirAll(dir, 0700)
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
 				if kind == "symlink" {
 					err = os.Symlink(target, path)
 				} else {
@@ -291,7 +355,10 @@ func TestClaudeProxyRejectsLinkedSettings(t *testing.T) {
 			}
 			e.Stdin = strings.NewReader("secret")
 			runAgents(t, e, 1, "login", "claude", "proxy", "--url", "https://proxy.example")
-			b, _ := os.ReadFile(target)
+			b, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if string(b) != `{}` {
 				t.Fatal("linked settings changed")
 			}
@@ -319,14 +386,21 @@ func TestClaudeProxyFailedPublicationPreservesBytes(t *testing.T) {
 	if err := os.Chmod(dir, 0500); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(dir, 0700)
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0700); err != nil {
+			t.Error(err)
+		}
+	})
 	e.Stdin = strings.NewReader("secret")
 	runAgents(t, e, 1, "login", "claude", "proxy", "--url", "https://proxy.example")
 	b, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(b, original) {
 		t.Fatalf("failure altered original: %v", err)
 	}
-	info, _ := os.Stat(path)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if info.Mode().Perm() != 0644 {
 		t.Fatal("failure changed mode")
 	}
@@ -342,13 +416,20 @@ func TestClaudeProxyUnownedRemovalIsBytePreserving(t *testing.T) {
 	e := agentEffects(t, home, &version, &installs)
 	runAgents(t, e, 0, "enable", "claude")
 	dir := filepath.Join(home, ".claude")
-	os.MkdirAll(dir, 0700)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(dir, "settings.json")
 	original := []byte("{ \"env\": {\"ANTHROPIC_AUTH_TOKEN\": \"user-owned\"} }\n")
-	os.WriteFile(path, original, 0644)
+	if err := os.WriteFile(path, original, 0644); err != nil {
+		t.Fatal(err)
+	}
 	e.Stdin = forbiddenProxyInput{t}
 	runAgents(t, e, 0, "login", "claude", "proxy", "--remove")
-	b, _ := os.ReadFile(path)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !bytes.Equal(b, original) {
 		t.Fatal("unowned removal rewrote settings")
 	}

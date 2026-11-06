@@ -19,8 +19,8 @@ func TestProxyTerminalHidesKey(t *testing.T) {
 		name, input string
 		status      int
 	}{
-		{"success", "terminal-pat-sentinel\n", 0},
-		{"cancel", "terminal-pat-sentinel\x03", 1},
+		{"success", "terminal-proxy-key-sentinel\n", 0},
+		{"cancel", "terminal-proxy-key-sentinel\x03", 1},
 		{"empty", "\n", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -78,7 +78,7 @@ func TestProxyTerminalHidesKey(t *testing.T) {
 			if *restored != *original {
 				t.Error("terminal settings were not restored")
 			}
-			if status != tc.status || !strings.Contains(output, "Key:") || strings.Contains(output, "terminal-pat-sentinel") {
+			if status != tc.status || !strings.Contains(output, "Key:") || strings.Contains(output, "terminal-proxy-key-sentinel") {
 				t.Fatalf("status=%d output=%s", status, output)
 			}
 
