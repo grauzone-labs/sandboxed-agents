@@ -137,3 +137,21 @@ func TestProxyPreservesEncodedPathPrefix(t *testing.T) {
 		t.Fatalf("url=%q err=%v", r.Options["url"], err)
 	}
 }
+
+// TestOpenCodeProxyGrammar proves explicit workflow and model requirements at cli.Parse.
+func TestOpenCodeProxyGrammar(t *testing.T) {
+	for _, tail := range [][]string{{}, {"proxy", "--url", "https://proxy.example"}, {"provider", "--model", "chosen"}} {
+		_, err := cli.Parse(append([]string{"agents", "login", "demo", "opencode"}, tail...), "default")
+		if err == nil {
+			t.Fatalf("accepted %v", tail)
+		}
+		if len(tail) == 0 && (!strings.Contains(err.Error(), "provider") || !strings.Contains(err.Error(), "proxy")) {
+			t.Fatal(err)
+		}
+	}
+	for _, tail := range [][]string{{"provider"}, {"proxy", "--url", "https://proxy.example", "--model", "chosen"}, {"proxy", "--remove"}} {
+		if _, err := cli.Parse(append([]string{"agents", "login", "demo", "opencode"}, tail...), "default"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
