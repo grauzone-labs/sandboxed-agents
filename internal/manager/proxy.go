@@ -43,7 +43,7 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 		}
 		if name == "remove" || name == "replace-login" {
 			if inline {
-				fmt.Fprintln(stderr, "--remove takes no value")
+				fmt.Fprintf(stderr, "--%s takes no value\n", name)
 				return r, false
 			}
 			value = "true"
@@ -83,7 +83,7 @@ var proxyClients = map[string]struct {
 			"Check with (PowerShell): '' | sandboxed-agents agents run NAME opencode run 'Reply OK'"},
 }
 
-// proxyWorkflow serializes native configuration changes as the verified agent without spawning a credential-bearing process.
+// proxyWorkflow serializes native configuration and login changes as the verified agent, passing credentials only on stdin.
 func (w agentWork) proxyWorkflow() int {
 	unlock, err := lockAgentData(w.root)
 	if err != nil {
@@ -101,8 +101,6 @@ func (w agentWork) proxyWorkflow() int {
 		if err = catalog.CodexProxyVersion(selection["codex"].Version); err != nil {
 			return exitStatus(err, w.stderr)
 		}
-	}
-	if w.request.name == "codex" {
 		if err := w.codexProxyWorkflow(); err != nil {
 			return exitStatus(err, w.stderr)
 		}
@@ -150,14 +148,8 @@ func proxyDigest(value json.RawMessage) string {
 func writeClaudeProxy(home string, options map[string]string, key string) error {
 	directory := filepath.Join(home, ".claude")
 	path := filepath.Join(directory, "settings.json")
-	for _, target := range []string{directory, path} {
-		info, err := os.Lstat(target)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil || !agentFileOwned(info) || (target == directory && !info.IsDir()) || (target == path && !info.Mode().IsRegular()) {
-			return errors.New("Claude settings require an agent-owned directory and regular unlinked file")
-		}
+	if err := validateProxyFiles("Claude", directory, path); err != nil {
+		return err
 	}
 	settings := map[string]json.RawMessage{}
 	data, err := os.ReadFile(path)
@@ -237,4 +229,18 @@ func writeClaudeProxy(home string, options map[string]string, key string) error 
 func equalProxyModel(a, b json.RawMessage) bool {
 	var left, right string
 	return json.Unmarshal(a, &left) == nil && json.Unmarshal(b, &right) == nil && left == right
+}
+
+// validateProxyFiles refuses linked, nonregular or foreign-owned native settings before reading them.
+func validateProxyFiles(agent, directory string, files ...string) error {
+	for _, path := range append([]string{directory}, files...) {
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil || !agentFileOwned(info) || (path == directory && !info.IsDir()) || (path != directory && !info.Mode().IsRegular()) {
+			return fmt.Errorf("%s proxy settings require an agent-owned directory and regular unlinked files", agent)
+		}
+	}
+	return nil
 }
