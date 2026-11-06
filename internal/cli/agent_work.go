@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"io"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
 // runAgentWork checks sandbox and selection state before starting unprivileged agent work.
@@ -41,6 +43,11 @@ func runAgentWork(request Request, p podmanTarget, stdout, stderr io.Writer) (in
 		return 1, agentNotEnabledError(request)
 	}
 	if request.Command == "agents login" && request.AgentWorkflow == "proxy" {
+		if request.Args[1] == "codex" && request.Options["remove"] == "" {
+			if err := catalog.CodexProxyVersion(status.InstalledVersion); err != nil {
+				return 1, err
+			}
+		}
 		return runProxyWorkflow(request, p, names.Container, stdout, stderr)
 	}
 	interactive := !stopping && p.host.IsInputTerminal(p.host.Stdin) && p.host.IsOutputTerminal(stdout)

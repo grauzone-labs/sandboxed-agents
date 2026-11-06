@@ -137,3 +137,66 @@ func TestProxyPreservesEncodedPathPrefix(t *testing.T) {
 		t.Fatalf("url=%q err=%v", r.Options["url"], err)
 	}
 }
+
+// TestCodexProxyGrammar proves Codex requires a model and reserves replacement for its proxy workflow at Parse.
+func TestCodexProxyGrammar(t *testing.T) {
+	for _, args := range [][]string{
+		{"codex", "proxy", "--url", "https://example"},
+		{"codex", "proxy", "--remove", "--replace-login"},
+		{"codex", "browser", "--replace-login"},
+		{"claude", "proxy", "--url", "https://example", "--replace-login"},
+	} {
+		if _, err := cli.Parse(append([]string{"agents", "login", "demo"}, args...), "default"); err == nil {
+			t.Fatalf("accepted %v", args)
+		}
+	}
+	for _, tail := range [][]string{{"proxy", "--url", "https://example", "--model", "chosen", "--replace-login"}, {"proxy", "--remove"}} {
+		if _, err := cli.Parse(append([]string{"agents", "login", "demo", "codex"}, tail...), "default"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestCodexProxyVersionPrecedesKey proves the installed-version gate runs before host key input through RunWithHost.
+func TestCodexProxyVersionPrecedesKey(t *testing.T) {
+	f := sandboxStateFixture(t)
+	f.host.Stdin = unreadableToken{t}
+	f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+	f.responses[agentWorkStatus+"codex"] = response{Output: `{"name":"codex","enabled":true,"installed_version":"0.1.0"}`}
+	status, output, _ := f.run(t, "agents", "login", "agent01", "codex", "proxy", "--url", "https://proxy.example", "--model", "chosen")
+	if status != 1 || !strings.Contains(output, "agents update") {
+		t.Fatalf("status=%d output=%s", status, output)
+	}
+}
+
+// TestCodexProxyRemoveAllowsOlderVersion proves removal reaches the manager without key input for an older installed Codex through RunWithHost.
+func TestCodexProxyRemoveAllowsOlderVersion(t *testing.T) {
+	f := sandboxStateFixture(t)
+	f.host.Stdin = unreadableToken{t}
+	f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+	f.responses[agentWorkStatus+"codex"] = response{Output: `{"name":"codex","enabled":true,"installed_version":"0.1.0"}`}
+	command := "exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " agents login codex proxy --remove"
+	f.responses[command] = response{}
+	status, output, calls := f.run(t, "agents", "login", "agent01", "codex", "proxy", "--remove")
+	if status != 0 || !strings.Contains(fmt.Sprint(calls), command) {
+		t.Fatalf("removal did not reach manager: status=%d output=%s", status, output)
+	}
+}
+
+// TestCodexProxyHostTransport proves replacement options and key-only stdin reach the manager through RunWithHost.
+func TestCodexProxyHostTransport(t *testing.T) {
+	f := sandboxStateFixture(t)
+	f.host.Stdin = strings.NewReader("codex-secret")
+	f.host.IsInputTerminal = func(io.Reader) bool { return false }
+	f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+	f.responses[agentWorkStatus+"codex"] = response{Output: `{"name":"codex","enabled":true,"installed_version":"0.166.0"}`}
+	command := "exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " agents login codex proxy --replace-login --url https://proxy.example --model chosen"
+	f.responses[command] = response{ExpectedStdin: "codex-secret\n", EchoStdin: true}
+	status, output, calls := f.run(t, "agents", "login", "agent01", "codex", "proxy", "--url", "https://proxy.example", "--model", "chosen", "--replace-login")
+	if status != 0 {
+		t.Fatalf("status=%d output=%s", status, output)
+	}
+	if strings.Contains(fmt.Sprint(calls)+output, "codex-secret") {
+		t.Fatal("key leaked")
+	}
+}

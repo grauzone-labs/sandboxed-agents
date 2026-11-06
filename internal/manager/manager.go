@@ -88,6 +88,14 @@ type Effects struct {
 	Start         func(Process) error
 	Reexec        func(Process) error
 	ReadFile      func(string) ([]byte, error)
+	// RenameFile moves Codex files during publication; nil uses os.Rename.
+	RenameFile func(string, string) error
+	// LinkFile publishes Codex files without replacing an existing path; nil uses os.Link.
+	LinkFile func(string, string) error
+	// RemoveFile removes Codex publication artifacts; nil uses os.Remove.
+	RemoveFile func(string) error
+	// Mkdir creates the Codex publication recovery directory; nil uses os.Mkdir.
+	Mkdir func(string, os.FileMode) error
 	// LookPath resolves a program on PATH; record-versions probes optional toolchains with it.
 	LookPath func(string) (string, error)
 	// WriteFile writes a whole file with a mode; record-versions writes the versions manifest with it.

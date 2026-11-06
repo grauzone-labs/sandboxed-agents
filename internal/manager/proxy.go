@@ -29,7 +29,7 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 	options := map[string]string{}
 	for i := 0; i < len(args); i++ {
 		name, value, inline := strings.Cut(strings.TrimPrefix(args[i], "--"), "=")
-		if !strings.HasPrefix(args[i], "--") || (name != "url" && name != "model" && name != "remove") {
+		if !strings.HasPrefix(args[i], "--") || (name != "url" && name != "model" && name != "remove" && name != "replace-login") {
 			fmt.Fprintln(stderr, "unexpected proxy arguments")
 			return r, false
 		}
@@ -37,9 +37,9 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 			fmt.Fprintln(stderr, "duplicate proxy option")
 			return r, false
 		}
-		if name == "remove" {
+		if name == "remove" || name == "replace-login" {
 			if inline {
-				fmt.Fprintln(stderr, "--remove takes no value")
+				fmt.Fprintf(stderr, "--%s takes no value\n", name)
 				return r, false
 			}
 			value = "true"
@@ -54,6 +54,9 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 		options[name] = value
 	}
 	url, err := catalog.ProxyOptions(options)
+	if err == nil {
+		err = catalog.AgentProxyOptions(r.name, options)
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return r, false
@@ -65,7 +68,7 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 	return r, true
 }
 
-// proxyWorkflow serializes native configuration changes as the verified agent without spawning a credential-bearing process.
+// proxyWorkflow serializes native configuration and login changes as the verified agent, passing credentials only on stdin.
 func (w agentWork) proxyWorkflow() int {
 	unlock, err := lockAgentData(w.root)
 	if err != nil {
@@ -74,6 +77,46 @@ func (w agentWork) proxyWorkflow() int {
 	defer unlock()
 	if _, err = w.requireEnabled(); err != nil {
 		return exitStatus(err, w.stderr)
+	}
+	if w.request.name == "codex" {
+		lock, err := lockCodexConfiguration(w.root, true)
+		if err != nil {
+			return exitStatus(err, w.stderr)
+		}
+		defer lock.Close()
+		if err := checkCodexRunMarkers(w.root); err != nil {
+			return exitStatus(err, w.stderr)
+		}
+		if err := checkCodexProxyRecovery(w.home); err != nil {
+			return exitStatus(err, w.stderr)
+		}
+		names, err := readSessionNames(w.effects)
+		if err != nil {
+			return exitStatus(err, w.stderr)
+		}
+		for _, name := range names {
+			if name == "codex" {
+				return exitStatus(errors.New("Codex session is running; run agents session NAME codex --stop before changing the proxy"), w.stderr)
+			}
+		}
+		selection, err := readSelection(w.root)
+		if err != nil {
+			return exitStatus(err, w.stderr)
+		}
+		if w.request.proxyOptions["remove"] == "" {
+			if err = catalog.CodexProxyVersion(selection["codex"].Version); err != nil {
+				return exitStatus(err, w.stderr)
+			}
+		}
+		if err := w.codexProxyWorkflow(); err != nil {
+			return exitStatus(err, w.stderr)
+		}
+		if w.request.proxyOptions["remove"] != "" {
+			fmt.Fprintln(w.stdout, "Codex proxy configuration removed; browser and device-code login are available.")
+		} else {
+			fmt.Fprintln(w.stdout, "Codex proxy configuration written; the key was not checked against the server. Restart existing sessions to load changed configuration.")
+		}
+		return 0
 	}
 	key := ""
 	if w.request.proxyOptions["remove"] == "" {
@@ -106,14 +149,8 @@ func proxyDigest(value json.RawMessage) string {
 func writeClaudeProxy(home string, options map[string]string, key string) error {
 	directory := filepath.Join(home, ".claude")
 	path := filepath.Join(directory, "settings.json")
-	for _, target := range []string{directory, path} {
-		info, err := os.Lstat(target)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil || !agentFileOwned(info) || (target == directory && !info.IsDir()) || (target == path && !info.Mode().IsRegular()) {
-			return errors.New("Claude settings require an agent-owned directory and regular unlinked file")
-		}
+	if err := validateProxyFiles("Claude", directory, path); err != nil {
+		return err
 	}
 	settings := map[string]json.RawMessage{}
 	data, err := os.ReadFile(path)
@@ -193,4 +230,18 @@ func writeClaudeProxy(home string, options map[string]string, key string) error 
 func equalProxyModel(a, b json.RawMessage) bool {
 	var left, right string
 	return json.Unmarshal(a, &left) == nil && json.Unmarshal(b, &right) == nil && left == right
+}
+
+// validateProxyFiles refuses linked, nonregular or foreign-owned native settings before reading them.
+func validateProxyFiles(agent, directory string, files ...string) error {
+	for _, path := range append([]string{directory}, files...) {
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil || !agentFileOwned(info) || (path == directory && !info.IsDir()) || (path != directory && !info.Mode().IsRegular()) {
+			return fmt.Errorf("%s proxy settings require an agent-owned directory and regular unlinked files", agent)
+		}
+	}
+	return nil
 }

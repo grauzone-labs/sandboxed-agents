@@ -79,3 +79,28 @@ func ReadProxyKey(input io.Reader) (string, error) {
 	}
 	return raw, nil
 }
+
+// AgentProxyOptions checks the agent-specific proxy grammar without accessing a sandbox.
+func AgentProxyOptions(agent string, options map[string]string) error {
+	if options["replace-login"] != "" && (agent != "codex" || options["remove"] != "") {
+		return fmt.Errorf("--replace-login requires Codex proxy setup")
+	}
+	if agent == "codex" && options["remove"] == "" && options["model"] == "" {
+		return fmt.Errorf("Codex proxy requires --model")
+	}
+	return nil
+}
+
+// codexProxyMinimumMinor is the oldest tested native API-key login contract.
+const codexProxyMinimumMinor = 166
+
+// CodexProxyVersion refuses clients older than the tested native authentication contract.
+func CodexProxyVersion(version string) error {
+	var major, minor, patch int
+	n, err := fmt.Sscanf(version, "%d.%d.%d", &major, &minor, &patch)
+	validRelease := ValidateVersion(version) == nil && !strings.Contains(version, "-") && err == nil && n == 3
+	if !validRelease || major == 0 && minor < codexProxyMinimumMinor {
+		return fmt.Errorf("Codex proxy requires Codex 0.%d.0 or newer; run agents update or agents enable --version", codexProxyMinimumMinor)
+	}
+	return nil
+}

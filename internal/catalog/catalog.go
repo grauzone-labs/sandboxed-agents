@@ -50,7 +50,7 @@ var Default = Catalog{
 		},
 		"codex": {
 			Delivered: true, Install: Install{Kind: NPM, Package: "@openai/codex"}, Command: "codex",
-			LoginWorkflows: map[string][]string{"browser": {"login"}, "device-code": {"login", "--device-auth"}},
+			LoginWorkflows: map[string][]string{"browser": {"login"}, "device-code": {"login", "--device-auth"}, "proxy": {}},
 			LoginMessage:   "Follow the Codex login instructions on your host. Browser login needs an SSH tunnel for the callback; device-code does not.",
 			Documentation:  "https://developers.openai.com/codex/cli",
 		},
