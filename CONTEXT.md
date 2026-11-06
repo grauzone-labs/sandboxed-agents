@@ -53,6 +53,10 @@ _Avoid_: SSH setup (the host-to-sandbox connection)
 **Workflow**:
 A named login or config operation that an agent or integration exposes. A login workflow authenticates or links an account; a config workflow changes a setting that is not authentication.
 
+**Proxy workflow**:
+The `proxy` login workflow of an agent, first of `claude`, that points the agent at a CLIProxyAPI server the user already runs and reachable from the sandbox: it reads a client API key from standard input, validates the server URL, and writes URL, key, and an optional model selection into the agent's own configuration file in the home data with a merge-and-restore write that keeps every other setting. It installs and configures no server, signs in to no upstream account, checks the key against nothing, and leaves the agent's browser login untouched; `--remove` deletes only the entries it owns.
+_Avoid_: Proxy login (it is not a login to the server), API-key login, proxy setup (the server side), credential injection (the agent reads its own settings file; the sandbox injects nothing)
+
 **Toolchain**:
 An optional set of SDKs or system packages built into a sandbox's image, such as .NET, Playwright with browsers, Azure CLI, or native build tools. Each sandbox's toolchain set is chosen when it is created; `update NAME --with SET` replaces it with another set and keeps the sandbox's volumes.
 _Avoid_: Tool, image option, capability

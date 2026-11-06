@@ -58,7 +58,7 @@ var commands = map[string]commandSpec{
 	"agents enable":       spec(2, 2, true, "version", "force"),
 	"agents disable":      spec(2, 2, true, "", "force"),
 	"agents update":       spec(2, 2, true, "", "unpin force"),
-	"agents login":        spec(2, 3, true, "", ""),
+	"agents login":        spec(2, 3, true, "url model", "remove"),
 	"agents status":       spec(2, 2, true, "", ""),
 	"agents run":          spec(2, -1, true, "", ""),
 	"agents session":      spec(2, 2, true, "", "stop"),
@@ -239,6 +239,21 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 			return request, err
 		}
 		request.AgentWorkflow = workflow
+		if workflow == "proxy" {
+			normalized, err := catalog.ProxyOptions(request.Options)
+			if err != nil {
+				return request, err
+			}
+			if request.Options["remove"] == "" {
+				request.Options["url"] = normalized
+			}
+		} else {
+			for _, option := range []string{"url", "model", "remove"} {
+				if _, present := request.Options[option]; present {
+					return request, fmt.Errorf("--%s requires proxy workflow", option)
+				}
+			}
+		}
 	case "integrations login":
 		if _, err := catalog.Default.ResolveLogin(request.Args[1], loginWorkflow(request.Args)); err != nil {
 			return request, err

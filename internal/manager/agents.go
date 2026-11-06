@@ -27,6 +27,7 @@ type agentRequest struct {
 	operation, name, version string
 	force, unpin, stop       bool
 	arguments                []string
+	proxyOptions             map[string]string
 	definition               catalog.Agent
 }
 
@@ -59,6 +60,9 @@ func parseAgents(args []string, stderr io.Writer) (agentRequest, bool) {
 		return r, true
 	}
 	if r.operation == "login" {
+		if len(args) >= 3 && args[2] == "proxy" && r.name == "claude" {
+			return parseProxyLogin(r, args[3:], stderr)
+		}
 		if len(args) > 3 {
 			fmt.Fprintln(stderr, "agents login requires AGENT [WORKFLOW]")
 			return r, false

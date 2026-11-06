@@ -29,6 +29,9 @@ func executeAgent(r agentRequest, stdout, stderr io.Writer, effects Effects) int
 	if !enabled {
 		return 0
 	}
+	if r.proxyOptions != nil {
+		return work.proxyLogin()
+	}
 	if r.operation == "session" {
 		return work.session()
 	}

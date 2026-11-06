@@ -20,7 +20,7 @@ func TestAgentLoginUsesTerminalAndResolvesWorkflow(t *testing.T) {
 	for _, tc := range []struct {
 		agent, supplied, resolved string
 	}{
-		{"copilot", "", "device-code"}, {"claude", "", "browser"}, {"opencode", "", "provider"},
+		{"copilot", "", "device-code"}, {"claude", "browser", "browser"}, {"opencode", "", "provider"},
 		{"codex", "browser", "browser"}, {"codex", "device-code", "device-code"},
 	} {
 		for _, exit := range []int{0, 23} {
@@ -68,7 +68,11 @@ func TestAgentWorkTerminalRules(t *testing.T) {
 				execution = append(execution, "browser")
 			}
 			f.responses[strings.Join(execution, " ")] = response{}
-			status, output, calls := f.run(t, "agents", verb, "agent01", "claude")
+			args := []string{"agents", verb, "agent01", "claude"}
+			if verb == "login" {
+				args = append(args, "browser")
+			}
+			status, output, calls := f.run(t, args...)
 			want := append(sandboxQueryCalls(), strings.Fields(agentWorkProbe), strings.Fields(agentWorkStatus+"claude"))
 			wantStatus := 0
 			if verb == "run" || interactive {
