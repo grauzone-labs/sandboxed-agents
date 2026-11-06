@@ -61,7 +61,7 @@ func ProxyUnencrypted(raw string) bool {
 	return !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback())
 }
 
-// ReadProxyKey reads only the first line, strips surrounding spaces and rejects control or internal whitespace.
+// ReadProxyKey reads only the first line, strips surrounding whitespace and rejects control or internal whitespace.
 func ReadProxyKey(input io.Reader) (string, error) {
 	if input == nil {
 		return "", fmt.Errorf("proxy key is required")
@@ -70,11 +70,11 @@ func ReadProxyKey(input io.Reader) (string, error) {
 	if err != nil && err != io.EOF {
 		return "", fmt.Errorf("cannot read proxy key")
 	}
-	raw = strings.TrimSuffix(raw, "\n")
+	raw = strings.TrimSpace(raw)
 	if strings.IndexFunc(raw, unicode.IsControl) >= 0 {
 		return "", fmt.Errorf("proxy key must not contain control characters")
 	}
-	key := strings.TrimSpace(raw)
+	key := raw
 	if key == "" || strings.IndexFunc(key, unicode.IsSpace) >= 0 {
 		return "", fmt.Errorf("proxy key is required and must not contain whitespace")
 	}
