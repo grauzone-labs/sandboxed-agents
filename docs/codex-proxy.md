@@ -32,7 +32,7 @@ Revisit this if a CLIProxyAPI release starts to require the header, which would 
 
 ## The version floor
 
-`codex proxy` refuses Codex older than 0.166.0, on both the host, from the installed version `agents status` reports, and in the manager, from the agent selection. 0.166.0 is the version the native contract test passed against, so it is the oldest version with evidence; older versions are untested, not known to be broken. The flags and settings the workflow depends on, `login --with-api-key`, `cli_auth_credentials_store`, and `requires_openai_auth`, are all documented without a version on the Codex authentication page. Raise the floor only with a reason, and lower it only after the native test has passed against the older version.
+`codex proxy` setup refuses Codex older than 0.166.0, on both the host, from the installed version `agents status` reports, and in the manager, from the agent selection. `--remove` skips the floor at both entry points: it uses the manager's file operations and no Codex login API, and it must remain available after a downgrade so an owned configuration cannot keep refusing the native logins; the ownership, lock, recovery, and enabled-status checks still apply. 0.166.0 is the version the native contract test passed against, so it is the oldest version with evidence; older versions are untested, not known to be broken. The flags and settings the workflow depends on, `login --with-api-key`, `cli_auth_credentials_store`, and `requires_openai_auth`, are all documented without a version on the Codex authentication page. Raise the floor only with a reason, and lower it only after the native test has passed against the older version.
 
 ## Ownership record
 

@@ -200,6 +200,20 @@ func TestCodexProxyVersionPrecedesKey(t *testing.T) {
 	}
 }
 
+// TestCodexProxyRemoveAllowsOlderVersion proves removal reaches the manager without key input for an older installed Codex through RunWithHost.
+func TestCodexProxyRemoveAllowsOlderVersion(t *testing.T) {
+	f := sandboxStateFixture(t)
+	f.host.Stdin = unreadableToken{t}
+	f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+	f.responses[agentWorkStatus+"codex"] = response{Output: `{"name":"codex","enabled":true,"installed_version":"0.1.0"}`}
+	command := "exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " agents login codex proxy --remove"
+	f.responses[command] = response{}
+	status, output, calls := f.run(t, "agents", "login", "agent01", "codex", "proxy", "--remove")
+	if status != 0 || !strings.Contains(fmt.Sprint(calls), command) {
+		t.Fatalf("removal did not reach manager: status=%d output=%s", status, output)
+	}
+}
+
 // TestCodexProxyHostTransport proves replacement options and key-only stdin reach the manager through RunWithHost.
 func TestCodexProxyHostTransport(t *testing.T) {
 	f := sandboxStateFixture(t)
