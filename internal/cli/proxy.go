@@ -12,6 +12,9 @@ import (
 // runProxyWorkflow passes a validated key exclusively on manager stdin after sandbox and agent checks.
 func runProxyWorkflow(request Request, p podmanTarget, container string, stdout, stderr io.Writer) (int, error) {
 	args := []string{"agents", "login", request.Args[1], "proxy"}
+	if request.Options["replace-login"] != "" {
+		args = append(args, "--replace-login")
+	}
 	var input io.Reader
 	var key string
 	if request.Options["remove"] != "" {

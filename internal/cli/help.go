@@ -209,7 +209,7 @@ func helpTopics() map[string]helpEntry {
 		},
 		"agents login": {
 			summary: "Run an agent login workflow; proxy reads a key without requiring a terminal.",
-			usage:   []string{"agents login NAME AGENT [WORKFLOW] [--url URL] [--model ID] [--remove]"},
+			usage:   []string{"agents login NAME AGENT [WORKFLOW] [--url URL] [--model ID] [--replace-login] [--remove]"},
 			arguments: []helpRow{sandboxArgument, agentArgument,
 				{"WORKFLOW", "A login workflow of the agent; see Login workflows. It may be omitted when the agent has one."}},
 			sections: []helpSection{agentLoginWorkflows()},
