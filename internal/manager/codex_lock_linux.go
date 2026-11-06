@@ -14,9 +14,14 @@ func lockCodexConfiguration(root string, exclusive bool) (*os.File, error) {
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(filepath.Join(root, "codex.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	file, err := os.OpenFile(filepath.Join(root, "codex.lock"), os.O_CREATE|os.O_RDWR|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0600)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("cannot open Codex configuration lock")
+	}
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		file.Close()
+		return nil, errors.New("Codex configuration lock must be a regular file")
 	}
 	mode := unix.LOCK_SH
 	if exclusive {
