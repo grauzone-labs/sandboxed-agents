@@ -243,7 +243,7 @@ func readSSHConfig(root *os.Root) (sshConfigFile, error) {
 	if err != nil {
 		return sshConfigFile{}, fmt.Errorf("cannot inspect SSH configuration")
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 || !sshFileOwned(info) {
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 || !agentFileOwned(info) {
 		return sshConfigFile{}, fmt.Errorf("SSH configuration must be a regular file owned by agent and not writable by others; SSH configuration unchanged")
 	}
 	content, err := root.ReadFile(relative)

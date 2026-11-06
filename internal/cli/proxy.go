@@ -9,8 +9,8 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
-// runProxyLogin passes a validated key exclusively on manager stdin after sandbox and agent checks.
-func runProxyLogin(request Request, p podmanTarget, container string, stdout, stderr io.Writer) (int, error) {
+// runProxyWorkflow passes a validated key exclusively on manager stdin after sandbox and agent checks.
+func runProxyWorkflow(request Request, p podmanTarget, container string, stdout, stderr io.Writer) (int, error) {
 	args := []string{"agents", "login", request.Args[1], "proxy"}
 	var input io.Reader
 	var key string
@@ -24,7 +24,7 @@ func runProxyLogin(request Request, p podmanTarget, container string, stdout, st
 		var err error
 		if p.host.IsInputTerminal(p.host.Stdin) {
 			var data []byte
-			data, err = readTerminalSecretPrompt(p.host.Stdin, stderr, "Key: ")
+			data, err = readTerminalSecret(p.host.Stdin, stderr, "Key: ")
 			if err == nil {
 				key, err = catalog.ReadProxyKey(strings.NewReader(string(data)))
 			}

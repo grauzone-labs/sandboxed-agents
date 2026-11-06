@@ -156,7 +156,7 @@ func loginWorkflow(args []string) string {
 // readAzureDevOpsToken selects hidden terminal input or the shared first-line reader using stdin alone.
 func readAzureDevOpsToken(host Host, stderr io.Writer) (string, error) {
 	if host.IsInputTerminal(host.Stdin) {
-		data, err := readTerminalSecret(host.Stdin, stderr)
+		data, err := readTerminalSecret(host.Stdin, stderr, "Token: ")
 		if err != nil {
 			return "", fmt.Errorf("cannot read Azure DevOps token")
 		}

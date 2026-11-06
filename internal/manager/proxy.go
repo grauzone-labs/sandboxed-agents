@@ -24,8 +24,8 @@ type proxyOwnership struct {
 
 const proxyMetadata = "_sandboxedAgentsProxy"
 
-// parseProxyLogin validates proxy options without echoing caller-provided values in errors.
-func parseProxyLogin(r agentRequest, args []string, stderr io.Writer) (agentRequest, bool) {
+// parseProxyWorkflow validates proxy options without echoing caller-provided values in errors.
+func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentRequest, bool) {
 	options := map[string]string{}
 	for i := 0; i < len(args); i++ {
 		name, value, inline := strings.Cut(strings.TrimPrefix(args[i], "--"), "=")
@@ -65,8 +65,8 @@ func parseProxyLogin(r agentRequest, args []string, stderr io.Writer) (agentRequ
 	return r, true
 }
 
-// proxyLogin serializes native configuration changes as the verified agent without spawning a credential-bearing process.
-func (w agentWork) proxyLogin() int {
+// proxyWorkflow serializes native configuration changes as the verified agent without spawning a credential-bearing process.
+func (w agentWork) proxyWorkflow() int {
 	unlock, err := lockAgentData(w.root)
 	if err != nil {
 		return exitStatus(err, w.stderr)
@@ -111,7 +111,7 @@ func writeClaudeProxy(home string, options map[string]string, key string) error 
 		if os.IsNotExist(err) {
 			continue
 		}
-		if err != nil || !sshFileOwned(info) || (target == directory && !info.IsDir()) || (target == path && !info.Mode().IsRegular()) {
+		if err != nil || !agentFileOwned(info) || (target == directory && !info.IsDir()) || (target == path && !info.Mode().IsRegular()) {
 			return errors.New("Claude settings require an agent-owned directory and regular unlinked file")
 		}
 	}

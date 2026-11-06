@@ -4,5 +4,5 @@ package manager
 
 import "os"
 
-// sshFileOwned refuses key storage outside the manager's supported Linux platform.
-func sshFileOwned(os.FileInfo) bool { return false }
+// agentFileOwned refuses file storage outside the manager's supported Linux platform.
+func agentFileOwned(os.FileInfo) bool { return false }

@@ -134,7 +134,7 @@ func prepareSSHKey(home, name string, effects Effects) (string, error) {
 func readSSHPublic(root *os.Root, relative string) (string, error) {
 	for _, suffix := range []string{"", ".pub"} {
 		info, err := root.Lstat(relative + suffix)
-		if err != nil || !info.Mode().IsRegular() || !sshFileOwned(info) || info.Mode().Perm()&0022 != 0 || (suffix == "" && info.Mode().Perm() != 0600 && info.Mode().Perm() != 0400) {
+		if err != nil || !info.Mode().IsRegular() || !agentFileOwned(info) || info.Mode().Perm()&0022 != 0 || (suffix == "" && info.Mode().Perm() != 0600 && info.Mode().Perm() != 0400) {
 			return "", errUnsafeSSHKey
 		}
 	}
@@ -166,7 +166,7 @@ func prepareSSHDirectory(root *os.Root) error {
 // checkSSHDirectory refuses a .ssh directory that is not a real directory owned by agent with mode 0700, without creating one.
 func checkSSHDirectory(root *os.Root) error {
 	info, err := root.Lstat(".ssh")
-	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || !sshFileOwned(info) {
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || !agentFileOwned(info) {
 		return fmt.Errorf("~/.ssh must be a directory, not a link, owned by agent with mode 0700; no files changed")
 	}
 	return nil
