@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// TestClaudeProxyNativeClientReachesOnlyFakeUpstream proves the installed catalog Claude CLI accepts manager settings and metadata and sends the configured bearer token, model and prefixed messages path through RunWithEffects and a real isolated client.
+// TestClaudeProxyNativeClientReachesOnlyFakeUpstream proves the installed catalog Claude CLI accepts manager settings and metadata, sends the configured bearer token, model and prefixed messages path, and reports authentication status as JSON without contacting the server through RunWithEffects and a real isolated client.
 func TestClaudeProxyNativeClientReachesOnlyFakeUpstream(t *testing.T) {
 	binary := os.Getenv("SANDBOXED_AGENTS_TEST_CLAUDE")
 	if binary == "" {
@@ -74,7 +74,9 @@ func TestClaudeProxyNativeClientReachesOnlyFakeUpstream(t *testing.T) {
 	if err := json.Unmarshal(probeOutput, &auth); err != nil {
 		t.Fatalf("invalid auth status: %v", err)
 	}
-	if probeErr != nil && (auth.LoggedIn || probe.ProcessState.ExitCode() != 1) {
+	// Claude documents exit one only for an explicitly signed-out status.
+	signedOut := !auth.LoggedIn && probe.ProcessState != nil && probe.ProcessState.ExitCode() == 1
+	if probeErr != nil && !signedOut {
 		t.Fatalf("auth probe failed: %v", probeErr)
 	}
 	mu.Lock()

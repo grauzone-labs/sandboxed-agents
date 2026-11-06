@@ -74,9 +74,8 @@ func ReadProxyKey(input io.Reader) (string, error) {
 	if strings.IndexFunc(raw, unicode.IsControl) >= 0 {
 		return "", fmt.Errorf("proxy key must not contain control characters")
 	}
-	key := raw
-	if key == "" || strings.IndexFunc(key, unicode.IsSpace) >= 0 {
+	if raw == "" || strings.IndexFunc(raw, unicode.IsSpace) >= 0 {
 		return "", fmt.Errorf("proxy key is required and must not contain whitespace")
 	}
-	return key, nil
+	return raw, nil
 }
