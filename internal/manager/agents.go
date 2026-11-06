@@ -60,7 +60,8 @@ func parseAgents(args []string, stderr io.Writer) (agentRequest, bool) {
 		return r, true
 	}
 	if r.operation == "login" {
-		if len(args) >= 3 && args[2] == "proxy" && (r.name == "claude" || r.name == "codex") {
+		_, proxySupported := r.definition.LoginWorkflows["proxy"]
+		if len(args) >= 3 && args[2] == "proxy" && proxySupported {
 			return parseProxyWorkflow(r, args[3:], stderr)
 		}
 		if len(args) > 3 {
@@ -429,22 +430,7 @@ func writeJSONFile(path, pattern string, value any) error {
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), pattern)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	defer os.Remove(file.Name())
-	if _, err := file.Write(append(data, '\n')); err != nil {
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
+	return writePrivateFile(path, pattern, append(data, '\n'))
 }
 
 // commandPath locates the managed command link in the agent home.
@@ -587,4 +573,31 @@ func lockAgentData(root string) (func(), error) {
 		return nil, err
 	}
 	return lockManager(filepath.Join(root, "manager.lock"))
+}
+
+// writePrivateFile syncs private bytes in a sibling before replacing a file, or removes the file for nil data.
+func writePrivateFile(path, pattern string, data []byte) error {
+	if data == nil {
+		err := os.Remove(path)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), pattern)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	defer file.Close()
+	if _, err = file.Write(data); err != nil {
+		return err
+	}
+	if err = file.Sync(); err != nil {
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }

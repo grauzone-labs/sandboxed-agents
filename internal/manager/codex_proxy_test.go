@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
 // TestCodexProxyRequiresModel proves missing model fails before reading a key at RunWithEffects.
@@ -214,7 +215,7 @@ func TestCodexProxyNativeClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "original") || !strings.Contains(string(data), "keep") || strings.Contains(string(data), "cliproxyapi") {
+	if !strings.Contains(string(data), "original") || !strings.Contains(string(data), "keep") || strings.Contains(string(data), "cliproxyapi") || strings.Contains(string(data), "[model_providers]") {
 		t.Fatalf("removal config: %s", data)
 	}
 }
@@ -225,6 +226,14 @@ func TestCodexProxyPreservesLaterLogin(t *testing.T) {
 		home, version, installs := t.TempDir(), "0.166.0", 0
 		e := agentEffects(t, home, &version, &installs)
 		runAgents(t, e, 0, "enable", "codex")
+		dir := filepath.Join(home, ".codex")
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[model_providers]\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+
 		e.Start = func(p manager.Process) error {
 			for _, env := range p.Environment {
 				if strings.HasPrefix(env, "CODEX_HOME=") {
@@ -241,6 +250,11 @@ func TestCodexProxyPreservesLaterLogin(t *testing.T) {
 		}
 		e.Stdin = forbiddenProxyInput{t}
 		runAgents(t, e, 0, "login", "codex", "proxy", "--remove")
+		configuration, err := os.ReadFile(filepath.Join(dir, "config.toml"))
+		if err != nil || !strings.Contains(string(configuration), "[model_providers]") {
+			t.Fatal("preexisting empty table lost")
+		}
+
 		got, err := os.ReadFile(path)
 		if err != nil || string(got) != later {
 			t.Fatal("later login changed")
@@ -287,5 +301,16 @@ func TestCodexProxyLoginFailureRestoresFiles(t *testing.T) {
 		if err != nil || info.Mode().Perm() != 0644 {
 			t.Fatal("changed mode")
 		}
+	}
+}
+
+// TestCodexProxyBooleanDiagnostic proves a valued replacement flag names its own invalid option at RunWithEffects.
+func TestCodexProxyBooleanDiagnostic(t *testing.T) {
+	home, version, installs := t.TempDir(), "0.166.0", 0
+	e := agentEffects(t, home, &version, &installs)
+	e.Stdin = forbiddenProxyInput{t}
+	out := runAgents(t, e, 2, "login", "codex", "proxy", "--url", "https://proxy.example", "--model", "chosen", "--replace-login=true")
+	if !strings.Contains(out, "--replace-login takes no value") {
+		t.Fatal(out)
 	}
 }

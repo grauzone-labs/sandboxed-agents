@@ -2,8 +2,9 @@ package cli
 
 import (
 	"fmt"
-	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 	"io"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
 // runAgentWork checks sandbox and selection state before starting unprivileged agent work.
