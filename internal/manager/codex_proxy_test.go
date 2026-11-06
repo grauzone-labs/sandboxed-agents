@@ -1,6 +1,7 @@
 package manager_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -58,6 +59,9 @@ func TestCodexProxyWritesNativeConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.Start = func(p manager.Process) error {
+		if p.Program == "tmux" {
+			return nil
+		}
 		if strings.Join(p.Args, " ") != "login --with-api-key -c cli_auth_credentials_store=\"file\"" {
 			t.Fatalf("unexpected args %v", p.Args)
 		}
@@ -170,6 +174,9 @@ func TestCodexProxyNativeClient(t *testing.T) {
 	runAgents(t, e, 0, "enable", "codex")
 	env := []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "HTTP_PROXY=" + server.URL, "HTTPS_PROXY=" + server.URL, "ALL_PROXY=" + server.URL, "NO_PROXY=127.0.0.1,localhost"}
 	e.Start = func(p manager.Process) error {
+		if p.Program == "tmux" {
+			return nil
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, binary, p.Args...)
@@ -191,15 +198,7 @@ func TestCodexProxyNativeClient(t *testing.T) {
 	}
 	e.Stdin = strings.NewReader("fake-proxy-key")
 	runAgents(t, e, 0, "login", "codex", "proxy", "--url", server.URL+"/prefix", "--model", "gpt-5.1-codex", "--replace-login")
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, binary, "exec", "--skip-git-repo-check", "--ephemeral", "-c", "analytics.enabled=false", "-c", "features.plugins=false", "-c", "features.apps=false", "-c", "features.api_key_model_discovery=false", "-c", "features.api_key_cyber_access_programs=false", "Reply OK")
-	cmd.Env = append(env, "CODEX_HOME="+dir)
-	cmd.Dir = home
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("native exec: %v %s", err, output)
-	}
+	output := runAgents(t, e, 0, "run", "codex", "exec", "--skip-git-repo-check", "--ephemeral", "-c", "analytics.enabled=false", "-c", "features.plugins=false", "-c", "features.apps=false", "-c", "features.api_key_model_discovery=false", "-c", "features.api_key_cyber_access_programs=false", "Reply OK")
 	mu.Lock()
 	count := requests
 	mu.Unlock()
@@ -235,6 +234,9 @@ func TestCodexProxyPreservesLaterLogin(t *testing.T) {
 		}
 
 		e.Start = func(p manager.Process) error {
+			if p.Program == "tmux" {
+				return nil
+			}
 			for _, env := range p.Environment {
 				if strings.HasPrefix(env, "CODEX_HOME=") {
 					return os.WriteFile(filepath.Join(strings.TrimPrefix(env, "CODEX_HOME="), "auth.json"), []byte(`{"OPENAI_API_KEY":"managed-key"}`), 0600)
@@ -261,6 +263,9 @@ func TestCodexProxyPreservesLaterLogin(t *testing.T) {
 		}
 		// Native workflows keep their original argv after removal.
 		e.Start = func(p manager.Process) error {
+			if p.Program == "tmux" {
+				return nil
+			}
 			if strings.Join(p.Args, " ") != "login" && strings.Join(p.Args, " ") != "login --device-auth" {
 				t.Fatalf("changed native workflow: %v", p.Args)
 			}
@@ -286,7 +291,12 @@ func TestCodexProxyLoginFailureRestoresFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e.Start = func(p manager.Process) error { return fmt.Errorf("private-key must not appear") }
+	e.Start = func(p manager.Process) error {
+		if p.Program == "tmux" {
+			return nil
+		}
+		return fmt.Errorf("private-key must not appear")
+	}
 	e.Stdin = strings.NewReader("private-key")
 	out := runAgents(t, e, 1, "login", "codex", "proxy", "--url", "https://proxy.example", "--model", "chosen")
 	if strings.Contains(out, "private-key") {
@@ -335,6 +345,9 @@ func TestCodexProxyPublicationRollback(t *testing.T) {
 				}
 			}
 			e.Start = func(p manager.Process) error {
+				if p.Program == "tmux" {
+					return nil
+				}
 				for _, env := range p.Environment {
 					if stage, ok := strings.CutPrefix(env, "CODEX_HOME="); ok {
 						return os.WriteFile(filepath.Join(stage, "auth.json"), []byte(`{"OPENAI_API_KEY":"private-key"}`), 0600)
@@ -453,6 +466,9 @@ func TestCodexNativeLoginHoldsManagerLock(t *testing.T) {
 	runAgents(t, e, 0, "enable", "codex")
 	started := false
 	e.Start = func(p manager.Process) error {
+		if p.Program == "tmux" {
+			return nil
+		}
 		started = true
 		competing := e
 		competing.Stdin = forbiddenProxyInput{t}
@@ -488,6 +504,9 @@ func TestCodexProxyPreservesEditsDuringLogin(t *testing.T) {
 	}
 	laterConfig, laterAuth := "model = 'later'\n", `{"OPENAI_API_KEY":"later-private-key"}`
 	e.Start = func(p manager.Process) error {
+		if p.Program == "tmux" {
+			return nil
+		}
 		if err := os.WriteFile(configPath, []byte(laterConfig), 0600); err != nil {
 			return err
 		}
@@ -532,6 +551,9 @@ func TestCodexProxyInterruptedPublicationFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.Start = func(p manager.Process) error {
+		if p.Program == "tmux" {
+			return nil
+		}
 		for _, env := range p.Environment {
 			if stage, ok := strings.CutPrefix(env, "CODEX_HOME="); ok {
 				return os.WriteFile(filepath.Join(stage, "auth.json"), []byte(`{"OPENAI_API_KEY":"proxy-key"}`), 0600)
@@ -599,6 +621,9 @@ func codexPublicationEffects(t *testing.T) (manager.Effects, string) {
 		}
 	}
 	e.Start = func(p manager.Process) error {
+		if p.Program == "tmux" {
+			return nil
+		}
 		for _, env := range p.Environment {
 			if stage, ok := strings.CutPrefix(env, "CODEX_HOME="); ok {
 				return os.WriteFile(filepath.Join(stage, "auth.json"), []byte(`{"OPENAI_API_KEY":"proxy-key"}`), 0600)
@@ -813,4 +838,29 @@ func TestCodexProxyCaptureAndAuthInterruptionsRetainRecovery(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCodexRunExcludesProxyChanges proves a managed run cannot read an old login across a proxy destination change through RunWithEffects.
+func TestCodexRunExcludesProxyChanges(t *testing.T) {
+	e, dir := codexPublicationEffects(t)
+	writer := e
+	reader := e
+	reader.Start = func(p manager.Process) error {
+		oldAuth, err := os.ReadFile(filepath.Join(dir, "auth.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out, diagnostic bytes.Buffer
+		status := manager.RunWithEffects([]string{"agents", "login", "codex", "proxy", "--url", "https://new-proxy.example", "--model", "chosen"}, &out, &diagnostic, writer)
+		config, err := os.ReadFile(filepath.Join(dir, "config.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status != 1 || !strings.Contains(diagnostic.String(), "Codex is running") || strings.Contains(string(config), "new-proxy.example") {
+			t.Fatalf("proxy change overlapped a managed run with cached login %q: status=%d config=%s", oldAuth, status, config)
+		}
+		return nil
+	}
+	runAgents(t, reader, 0, "run", "codex")
+	runAgents(t, writer, 0, "login", "codex", "proxy", "--url", "https://new-proxy.example", "--model", "chosen")
 }

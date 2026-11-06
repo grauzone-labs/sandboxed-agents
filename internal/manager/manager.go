@@ -92,6 +92,8 @@ type Effects struct {
 	RenameFile func(string, string) error
 	// LinkFile publishes Codex files without replacing an existing path; nil uses os.Link.
 	LinkFile func(string, string) error
+	// RemoveFile removes Codex publication artifacts; nil uses os.Remove.
+	RemoveFile func(string) error
 	// LookPath resolves a program on PATH; record-versions probes optional toolchains with it.
 	LookPath func(string) (string, error)
 	// WriteFile writes a whole file with a mode; record-versions writes the versions manifest with it.

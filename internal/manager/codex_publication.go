@@ -26,18 +26,23 @@ type codexPublicationFile struct {
 	active, previous, staged string
 	old, next                []byte
 	captured, published      bool
+	removed                  bool
+	mode                     os.FileMode
 }
 
 // publishCodexFiles moves auth out before changing destinations and publishes without clobbering.
 // The manager lock serializes manager writers; observed direct-writer conflicts require
 // manual recovery. This is not a filesystem CAS or a power-loss durability protocol.
 func publishCodexFiles(configPath, authPath string, before, oldAuth, after, newAuth []byte, effects Effects) error {
-	rename, link := effects.RenameFile, effects.LinkFile
+	rename, link, remove := effects.RenameFile, effects.LinkFile, effects.RemoveFile
 	if rename == nil {
 		rename = os.Rename
 	}
 	if link == nil {
 		link = os.Link
+	}
+	if remove == nil {
+		remove = os.Remove
 	}
 	recoveryDir := filepath.Join(filepath.Dir(configPath), codexProxyRecoveryDir)
 	recovery := errors.New(codexRecovery)
@@ -54,19 +59,28 @@ func publishCodexFiles(configPath, authPath string, before, oldAuth, after, newA
 	config := &codexPublicationFile{active: configPath, previous: filepath.Join(recoveryDir, "config.toml.prev"), old: before, next: after}
 	auth := &codexPublicationFile{active: authPath, previous: filepath.Join(recoveryDir, "auth.json.prev"), old: oldAuth, next: newAuth}
 	artifacts := map[string][]byte{}
-	cleanup := func() bool {
+	cleanup := func() (complete, removalFailed bool) {
 		// Verify every retained artifact before removing any of them.
 		for path, expected := range artifacts {
 			if !codexFileMatches(path, expected) {
-				return false
+				return false, false
 			}
 		}
 		for path := range artifacts {
-			if os.Remove(path) != nil {
-				return false
+			if remove(path) != nil {
+				return false, true
+			}
+			delete(artifacts, path)
+			for _, file := range []*codexPublicationFile{config, auth} {
+				if path == file.previous {
+					file.removed = true
+				}
 			}
 		}
-		return os.Remove(recoveryDir) == nil
+		if remove(recoveryDir) != nil {
+			return false, true
+		}
+		return true, false
 	}
 	rollback := func(message string) error {
 		// Quarantine auth first, so interrupted rollback cannot pair it with a restored destination.
@@ -130,14 +144,14 @@ func publishCodexFiles(configPath, authPath string, before, oldAuth, after, newA
 			}
 		}
 		for path := range artifacts {
-			if os.Remove(path) != nil {
+			if remove(path) != nil {
 				return recovery
 			}
-			if filepath.Dir(path) != recoveryDir && os.Remove(filepath.Dir(path)) != nil {
+			if filepath.Dir(path) != recoveryDir && remove(filepath.Dir(path)) != nil {
 				return recovery
 			}
 		}
-		if os.Remove(recoveryDir) != nil {
+		if remove(recoveryDir) != nil {
 			return recovery
 		}
 		return errors.New(message)
@@ -150,7 +164,7 @@ func publishCodexFiles(configPath, authPath string, before, oldAuth, after, newA
 		}
 		path, err := stageCodexPublication(recoveryDir, file.next)
 		if err != nil {
-			if !cleanup() {
+			if complete, _ := cleanup(); !complete {
 				return recovery
 			}
 			return errors.New("cannot publish Codex configuration; previous configuration and login unchanged")
@@ -159,7 +173,7 @@ func publishCodexFiles(configPath, authPath string, before, oldAuth, after, newA
 		artifacts[path] = file.next
 	}
 	if !codexFileMatches(configPath, before) || !codexFileMatches(authPath, oldAuth) {
-		if !cleanup() {
+		if complete, _ := cleanup(); !complete {
 			return recovery
 		}
 		return errors.New("Codex files changed during staging; previous configuration and login unchanged")
@@ -179,6 +193,11 @@ func publishCodexFiles(configPath, authPath string, before, oldAuth, after, newA
 		if !codexFileMatches(file.previous, file.old) {
 			return recovery
 		}
+		info, err := os.Stat(file.previous)
+		if err != nil {
+			return recovery
+		}
+		file.mode = info.Mode()
 		artifacts[file.previous] = file.old
 	}
 	if !codexFileMatches(authPath, nil) {
@@ -201,7 +220,7 @@ func publishCodexFiles(configPath, authPath string, before, oldAuth, after, newA
 		}
 		file.published = true
 		if file.staged != "" {
-			if os.Remove(file.staged) != nil {
+			if remove(file.staged) != nil {
 				return rollback(message)
 			}
 			delete(artifacts, file.staged)
@@ -210,8 +229,31 @@ func publishCodexFiles(configPath, authPath string, before, oldAuth, after, newA
 	if !codexFileMatches(configPath, after) || !codexFileMatches(authPath, newAuth) {
 		return rollback("cannot publish Codex login; previous configuration restored")
 	}
-	if !cleanup() {
-		return recovery
+	if complete, removalFailed := cleanup(); !complete {
+		if !removalFailed {
+			return recovery
+		}
+		// Only this invocation knows which originals its cleanup removed. Rebuild
+		// those names without replacing anything before the usual safe rollback.
+		for _, file := range []*codexPublicationFile{config, auth} {
+			if !file.removed {
+				continue
+			}
+			candidate, err := stageCodexPublication(recoveryDir, file.old)
+			if err != nil {
+				return recovery
+			}
+			artifacts[candidate] = file.old
+			if os.Chmod(candidate, file.mode) != nil || link(candidate, file.previous) != nil {
+				return recovery
+			}
+			artifacts[file.previous] = file.old
+			if remove(candidate) != nil {
+				return recovery
+			}
+			delete(artifacts, candidate)
+		}
+		return rollback("cannot finish Codex publication; previous configuration and login restored")
 	}
 	return nil
 }
