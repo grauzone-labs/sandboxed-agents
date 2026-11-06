@@ -58,13 +58,32 @@ func TestClaudeProxyNativeClientReachesOnlyFakeUpstream(t *testing.T) {
 	home, version, installs := t.TempDir(), "1.2.3", 0
 	e := agentEffects(t, home, &version, &installs)
 	runAgents(t, e, 0, "enable", "claude")
-	e.Stdin = strings.NewReader("local-test-secret")
+	e.Stdin = strings.NewReader("  local-test-secret \r\n")
 	runAgents(t, e, 0, "login", "claude", "proxy", "--url", server.URL+"/prefix", "--model", "claude-sonnet-4-20250514")
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "-p", "Reply OK", "--max-turns", "1", "--tools", "")
 	cmd.Dir = home
 	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "CLAUDE_CONFIG_DIR=" + filepath.Join(home, ".claude"), "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_AUTOUPDATER=1", "HTTP_PROXY=" + server.URL, "HTTPS_PROXY=" + server.URL, "NO_PROXY=127.0.0.1,localhost", "API_TIMEOUT_MS=10000"}
+	probe := exec.CommandContext(ctx, binary, "auth", "status", "--json")
+	probe.Dir, probe.Env = home, cmd.Env
+	probeOutput, probeErr := probe.Output()
+	var auth struct {
+		LoggedIn bool `json:"loggedIn"`
+	}
+	if err := json.Unmarshal(probeOutput, &auth); err != nil {
+		t.Fatalf("invalid auth status: %v", err)
+	}
+	if probeErr != nil && (auth.LoggedIn || probe.ProcessState.ExitCode() != 1) {
+		t.Fatalf("auth probe failed: %v", probeErr)
+	}
+	mu.Lock()
+	probeRequests := len(requests)
+	mu.Unlock()
+	if probeRequests != 0 {
+		t.Fatal("authentication status contacted upstream")
+	}
+	t.Logf("native auth status with proxy key only: loggedIn=%t; no server requests", auth.LoggedIn)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("isolated Claude failed: %v output=%s", err, output)

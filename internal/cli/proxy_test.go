@@ -39,7 +39,7 @@ func TestProxyWorkflowReadsKeyOnlyOnStdin(t *testing.T) {
 	f := sandboxStateFixture(t)
 	envLog := filepath.Join(t.TempDir(), "podman-environment.json")
 	t.Setenv("TEST_PODMAN_ENV_LOG", envLog)
-	f.host.Stdin = strings.NewReader("  sentinel-proxy-key  \nignored\n")
+	f.host.Stdin = strings.NewReader("  sentinel-proxy-key  \r\nignored\n")
 	f.host.IsInputTerminal = func(io.Reader) bool { return false }
 	f.host.IsOutputTerminal = func(io.Writer) bool { return false }
 	f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
@@ -74,7 +74,7 @@ func TestProxyWorkflowReadsKeyOnlyOnStdin(t *testing.T) {
 
 // TestProxyWorkflowRejectsBadKeys proves invalid input never reaches the manager mutation through RunWithHost.
 func TestProxyWorkflowRejectsBadKeys(t *testing.T) {
-	for _, key := range []string{"", "\n", "a b\n", "a\tb\n", "a\rb\n", "key\r\n", "a\x00b\n", "a\x1bb\n"} {
+	for _, key := range []string{"", "\n", "a b\n", "a\tb\n", "a\rb\n", "a\x00b\n", "a\x1bb\n"} {
 		t.Run(fmt.Sprintf("%q", key), func(t *testing.T) {
 			f := sandboxStateFixture(t)
 			f.host.Stdin = strings.NewReader(key)

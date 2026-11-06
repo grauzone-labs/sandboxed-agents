@@ -147,7 +147,7 @@ func TestClaudeProxyRefusesUnsafeInput(t *testing.T) {
 		{"eof", `{"model":"keep"}`, "", "key"},
 		{"empty", `{}`, "\n", "key"},
 		{"whitespace", `{}`, "secret with-space", "whitespace"},
-		{"cr", `{}`, "secret\r\n", "control"},
+		{"cr", `{}`, "secret\rkey", "control"},
 		{"nul", `{}`, "secret\x00", "control"},
 		{"api-key", `{"env":{"ANTHROPIC_API_KEY":"private-existing"}}`, "new-secret", "ANTHROPIC_API_KEY"},
 		{"helper", `{"apiKeyHelper":"private-existing"}`, "new-secret", "apiKeyHelper"},
