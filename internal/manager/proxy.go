@@ -145,10 +145,15 @@ func writeClaudeProxy(home string, options map[string]string, key string) error 
 		if owned.Version == 0 {
 			return nil
 		}
-		if proxyDigest(env["ANTHROPIC_BASE_URL"]) == owned.URLHash {
+		urlOwned := proxyDigest(env["ANTHROPIC_BASE_URL"]) == owned.URLHash
+		tokenOwned := proxyDigest(env["ANTHROPIC_AUTH_TOKEN"]) == owned.TokenHash
+		if _, tokenPresent := env["ANTHROPIC_AUTH_TOKEN"]; urlOwned && tokenPresent && !tokenOwned {
+			return errors.New("Claude proxy key was edited; restore the managed key or remove ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN together in settings.json")
+		}
+		if urlOwned {
 			delete(env, "ANTHROPIC_BASE_URL")
 		}
-		if proxyDigest(env["ANTHROPIC_AUTH_TOKEN"]) == owned.TokenHash {
+		if tokenOwned {
 			delete(env, "ANTHROPIC_AUTH_TOKEN")
 		}
 		if len(owned.Model) > 0 && equalProxyModel(settings["model"], owned.Model) {
