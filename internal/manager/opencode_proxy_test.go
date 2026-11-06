@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
 // TestOpenCodeProxyMergesSettings proves native provider configuration and private permissions through RunWithEffects.

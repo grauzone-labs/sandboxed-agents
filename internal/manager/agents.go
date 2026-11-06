@@ -60,7 +60,8 @@ func parseAgents(args []string, stderr io.Writer) (agentRequest, bool) {
 		return r, true
 	}
 	if r.operation == "login" {
-		if len(args) >= 3 && args[2] == "proxy" && (r.name == "claude" || r.name == "opencode") {
+		_, hasProxy := r.definition.LoginWorkflows["proxy"]
+		if len(args) >= 3 && args[2] == "proxy" && hasProxy {
 			return parseProxyWorkflow(r, args[3:], stderr)
 		}
 		if len(args) > 3 {
