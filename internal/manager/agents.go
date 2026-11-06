@@ -577,6 +577,11 @@ func lockAgentData(root string) (func(), error) {
 
 // writePrivateFile syncs private bytes in a sibling before replacing a file, or removes the file for nil data.
 func writePrivateFile(path, pattern string, data []byte) error {
+	return writePrivateFileWithRename(path, pattern, data, os.Rename)
+}
+
+// writePrivateFileWithRename syncs private bytes before publishing through the supplied filesystem rename, or removes the file for nil data.
+func writePrivateFileWithRename(path, pattern string, data []byte, rename func(string, string) error) error {
 	if data == nil {
 		err := os.Remove(path)
 		if os.IsNotExist(err) {
@@ -599,5 +604,5 @@ func writePrivateFile(path, pattern string, data []byte) error {
 	if err = file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(file.Name(), path)
+	return rename(file.Name(), path)
 }

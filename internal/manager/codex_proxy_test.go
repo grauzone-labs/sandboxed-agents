@@ -314,3 +314,86 @@ func TestCodexProxyBooleanDiagnostic(t *testing.T) {
 		t.Fatal(out)
 	}
 }
+
+// TestCodexProxyPublicationRollback proves authentication publication failure restores configuration bytes and mode, or reports restoration failure, through RunWithEffects.
+func TestCodexProxyPublicationRollback(t *testing.T) {
+	for _, restoreFails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("restoreFails=%t", restoreFails), func(t *testing.T) {
+			home, version, installs := t.TempDir(), "0.166.0", 0
+			e := agentEffects(t, home, &version, &installs)
+			runAgents(t, e, 0, "enable", "codex")
+			dir := filepath.Join(home, ".codex")
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			configPath, authPath := filepath.Join(dir, "config.toml"), filepath.Join(dir, "auth.json")
+			original := "# preserve bytes\nmodel = \"original\"\n"
+			auth := `{"OPENAI_API_KEY":"prior-key"}`
+			for path, data := range map[string]string{configPath: original, authPath: auth} {
+				if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			e.Start = func(p manager.Process) error {
+				for _, env := range p.Environment {
+					if stage, ok := strings.CutPrefix(env, "CODEX_HOME="); ok {
+						return os.WriteFile(filepath.Join(stage, "auth.json"), []byte(`{"OPENAI_API_KEY":"private-key"}`), 0600)
+					}
+				}
+				return fmt.Errorf("missing staged home")
+			}
+			configPublished, authAttempted := false, false
+			e.RenameFile = func(from, to string) error {
+				if to == authPath {
+					published, err := os.ReadFile(configPath)
+					if err != nil || !strings.Contains(string(published), `model_provider = 'cliproxyapi'`) {
+						t.Fatalf("configuration was not published before login: %s (%v)", published, err)
+					}
+					authAttempted = true
+					return fmt.Errorf("private-key: injected authentication publication failure")
+				}
+				if to == configPath && configPublished && restoreFails {
+					return fmt.Errorf("private-key: injected restoration failure")
+				}
+				err := os.Rename(from, to)
+				if to == configPath && err == nil {
+					configPublished = true
+				}
+				return err
+			}
+			e.Stdin = strings.NewReader("private-key")
+			out := runAgents(t, e, 1, "login", "codex", "proxy", "--url", "https://proxy.example", "--model", "chosen")
+			want := "cannot publish Codex login; previous configuration restored"
+			if restoreFails {
+				want = "Codex publication failed and configuration restore failed"
+			}
+			if !authAttempted || !strings.Contains(out, want) || strings.Contains(out, "private-key") {
+				t.Fatalf("unexpected publication result: %s", out)
+			}
+			if !restoreFails {
+				got, err := os.ReadFile(configPath)
+				if err != nil || string(got) != original {
+					t.Fatalf("configuration not restored: %q (%v)", got, err)
+				}
+				info, err := os.Stat(configPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if info.Mode().Perm() != 0644 {
+					t.Fatalf("configuration mode not restored: %v", info.Mode())
+				}
+			}
+			got, err := os.ReadFile(authPath)
+			if err != nil || string(got) != auth {
+				t.Fatalf("prior login changed: %q (%v)", got, err)
+			}
+			info, err := os.Stat(authPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0644 {
+				t.Fatalf("prior login mode changed: %v", info.Mode())
+			}
+		})
+	}
+}

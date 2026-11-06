@@ -88,6 +88,8 @@ type Effects struct {
 	Start         func(Process) error
 	Reexec        func(Process) error
 	ReadFile      func(string) ([]byte, error)
+	// RenameFile publishes Codex files atomically; nil uses os.Rename.
+	RenameFile func(string, string) error
 	// LookPath resolves a program on PATH; record-versions probes optional toolchains with it.
 	LookPath func(string) (string, error)
 	// WriteFile writes a whole file with a mode; record-versions writes the versions manifest with it.
