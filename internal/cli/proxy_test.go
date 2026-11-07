@@ -34,41 +34,54 @@ func TestProxyWorkflowGrammar(t *testing.T) {
 	}
 }
 
-// TestProxyWorkflowReadsKeyOnlyOnStdin proves first-line input reaches only manager stdin without a terminal through RunWithHost.
+// TestProxyWorkflowReadsKeyOnlyOnStdin proves Claude and OpenCode forward first-line keys only to manager stdin with an HTTP warning through non-terminal RunWithHost.
 func TestProxyWorkflowReadsKeyOnlyOnStdin(t *testing.T) {
-	f := sandboxStateFixture(t)
-	envLog := filepath.Join(t.TempDir(), "podman-environment.json")
-	t.Setenv("TEST_PODMAN_ENV_LOG", envLog)
-	f.host.Stdin = strings.NewReader("\r\t  sentinel-proxy-key  \r\nignored\n")
-	f.host.IsInputTerminal = func(io.Reader) bool { return false }
-	f.host.IsOutputTerminal = func(io.Writer) bool { return false }
-	f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
-	f.responses[agentWorkStatus+"claude"] = response{Output: `{"name":"claude","enabled":true,"installed_version":"1.2.3"}`}
-	command := "exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " agents login claude proxy --url http://proxy.example:8317 --model example-model"
-	f.responses[command] = response{ExpectedStdin: "sentinel-proxy-key\n", EchoStdin: true}
-	status, output, calls := f.run(t, "agents", "login", "agent01", "claude", "proxy", "--url", "http://proxy.example:8317/", "--model", "example-model")
-	if status != 0 || !strings.Contains(output, "unencrypted") {
-		t.Fatalf("status=%d output=%s calls=%v", status, output, calls)
-	}
-	environment, err := os.ReadFile(envLog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var entries []string
-	if err := json.Unmarshal(environment, &entries); err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range append(entries, os.Environ()...) {
-		// The fake's response script contains the expected stdin sentinel by design.
-		if strings.HasPrefix(entry, "TEST_PODMAN_RESPONSES=") {
-			continue
-		}
-		if strings.Contains(entry, "sentinel-proxy-key") {
-			t.Fatal("key leaked into process environment")
-		}
-	}
-	if strings.Contains(fmt.Sprint(calls)+output, "sentinel-proxy-key") {
-		t.Fatal("key leaked")
+	for _, agent := range []string{"claude", "opencode"} {
+		t.Run(agent, func(t *testing.T) {
+			f := sandboxStateFixture(t)
+			envLog := filepath.Join(t.TempDir(), "podman-environment.json")
+			t.Setenv("TEST_PODMAN_ENV_LOG", envLog)
+			f.host.Stdin = strings.NewReader("\r\t  sentinel-proxy-key  \r\nignored\n")
+			f.host.IsInputTerminal = func(io.Reader) bool { return false }
+			f.host.IsOutputTerminal = func(io.Writer) bool { return false }
+			f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+			f.responses[agentWorkStatus+agent] = response{Output: fmt.Sprintf(`{"name":%q,"enabled":true,"installed_version":"1.2.3"}`, agent)}
+			command := "exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " agents login " + agent + " proxy --url http://proxy.example:8317 --model example-model"
+			f.responses[command] = response{ExpectedStdin: "sentinel-proxy-key\n", EchoStdin: true}
+			status, output, calls := f.run(t, "agents", "login", "agent01", agent, "proxy", "--url", "http://proxy.example:8317/", "--model", "example-model")
+			if status != 0 || !strings.Contains(output, "unencrypted") {
+				t.Fatalf("status=%d output=%s calls=%v", status, output, calls)
+			}
+			commandSeen := false
+			for _, call := range calls {
+				if strings.Join(call, " ") == command {
+					commandSeen = true
+				}
+			}
+			if !commandSeen {
+				t.Fatalf("manager command missing: %v", calls)
+			}
+			environment, err := os.ReadFile(envLog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var entries []string
+			if err := json.Unmarshal(environment, &entries); err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range append(entries, os.Environ()...) {
+				// The fake's response script contains the expected stdin sentinel by design.
+				if strings.HasPrefix(entry, "TEST_PODMAN_RESPONSES=") {
+					continue
+				}
+				if strings.Contains(entry, "sentinel-proxy-key") {
+					t.Fatal("key leaked into process environment")
+				}
+			}
+			if strings.Contains(fmt.Sprint(calls)+output, "sentinel-proxy-key") {
+				t.Fatal("key leaked")
+			}
+		})
 	}
 }
 
