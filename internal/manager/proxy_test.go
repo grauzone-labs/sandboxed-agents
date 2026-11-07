@@ -18,10 +18,11 @@ import (
 // TestProxyWorkflowPrintsCopyableCheck proves successful proxy setup prints a complete check command without attached prose through RunWithEffects.
 func TestProxyWorkflowPrintsCopyableCheck(t *testing.T) {
 	for _, test := range []struct {
-		agent, check string
+		agent, label, check string
 	}{
-		{"claude", "sandboxed-agents agents run NAME claude -p 'Reply OK'"},
-		{"opencode", "sandboxed-agents agents run NAME opencode run 'Reply OK' < /dev/null"},
+		{"claude", "Check with: ", "sandboxed-agents agents run NAME claude -p 'Reply OK'"},
+		{"opencode", "Check with (POSIX shell): ", "sandboxed-agents agents run NAME opencode run 'Reply OK' < /dev/null"},
+		{"opencode", "Check with (PowerShell): ", "'' | sandboxed-agents agents run NAME opencode run 'Reply OK'"},
 	} {
 		t.Run(test.agent, func(t *testing.T) {
 			home, version, installs := t.TempDir(), "1.2.3", 0
@@ -29,7 +30,7 @@ func TestProxyWorkflowPrintsCopyableCheck(t *testing.T) {
 			runAgents(t, e, 0, "enable", test.agent)
 			e.Stdin = strings.NewReader("proxy-secret\n")
 			out := runAgents(t, e, 0, "login", test.agent, "proxy", "--url", "https://proxy.example", "--model", "chosen")
-			if !strings.Contains(out, "Check with: "+test.check+"\n") {
+			if !strings.Contains(out, test.label+test.check+"\n") {
 				t.Fatalf("check command is not copyable: %q", out)
 			}
 			if !strings.Contains(out, "not checked against the server") || !strings.Contains(out, "Restart existing sessions") {

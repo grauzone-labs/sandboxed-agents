@@ -69,13 +69,15 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 	return r, true
 }
 
-// proxyClients associates each native configuration writer with its user-facing login and check command.
+// proxyClients associates each native configuration writer with its user-facing login and shell-specific check guidance.
 var proxyClients = map[string]struct {
 	write              func(string, map[string]string, string) error
 	name, login, check string
 }{
-	"claude":   {writeClaudeProxy, "Claude", "browser", "claude -p 'Reply OK'"},
-	"opencode": {writeOpenCodeProxy, "OpenCode", "provider", "opencode run 'Reply OK' < /dev/null"},
+	"claude": {writeClaudeProxy, "Claude", "browser", "Check with: sandboxed-agents agents run NAME claude -p 'Reply OK'"},
+	"opencode": {writeOpenCodeProxy, "OpenCode", "provider",
+		"Check with (POSIX shell): sandboxed-agents agents run NAME opencode run 'Reply OK' < /dev/null\n" +
+			"Check with (PowerShell): '' | sandboxed-agents agents run NAME opencode run 'Reply OK'"},
 }
 
 // proxyWorkflow serializes native configuration changes as the verified agent without spawning a credential-bearing process.
@@ -107,7 +109,7 @@ func (w agentWork) proxyWorkflow() int {
 		fmt.Fprintf(w.stdout, "%s proxy configuration removed; %s login is unchanged.\n", client.name, client.login)
 		return 0
 	}
-	fmt.Fprintf(w.stdout, "%s proxy configuration written; the key was not checked against the server. Check with: sandboxed-agents agents run NAME %s\nRestart existing sessions to load changed configuration.\n", client.name, client.check)
+	fmt.Fprintf(w.stdout, "%s proxy configuration written; the key was not checked against the server. %s\nRestart existing sessions to load changed configuration.\n", client.name, client.check)
 
 	return 0
 }
