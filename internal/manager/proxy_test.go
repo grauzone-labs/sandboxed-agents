@@ -15,6 +15,30 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
+// TestProxyWorkflowPrintsCopyableCheck proves successful proxy setup prints a complete check command without attached prose through RunWithEffects.
+func TestProxyWorkflowPrintsCopyableCheck(t *testing.T) {
+	for _, test := range []struct {
+		agent, check string
+	}{
+		{"claude", "sandboxed-agents agents run NAME claude -p 'Reply OK'"},
+		{"opencode", "sandboxed-agents agents run NAME opencode run 'Reply OK' < /dev/null"},
+	} {
+		t.Run(test.agent, func(t *testing.T) {
+			home, version, installs := t.TempDir(), "1.2.3", 0
+			e := agentEffects(t, home, &version, &installs)
+			runAgents(t, e, 0, "enable", test.agent)
+			e.Stdin = strings.NewReader("proxy-secret\n")
+			out := runAgents(t, e, 0, "login", test.agent, "proxy", "--url", "https://proxy.example", "--model", "chosen")
+			if !strings.Contains(out, "Check with: "+test.check+"\n") {
+				t.Fatalf("check command is not copyable: %q", out)
+			}
+			if !strings.Contains(out, "not checked against the server") || !strings.Contains(out, "Restart existing sessions") {
+				t.Fatalf("missing setup guidance: %q", out)
+			}
+		})
+	}
+}
+
 // TestClaudeProxyMergesNativeSettings proves the proxy workflow merges private native settings and leaves OAuth untouched through RunWithEffects.
 func TestClaudeProxyMergesNativeSettings(t *testing.T) {
 	home, version, installs := t.TempDir(), "1.2.3", 0

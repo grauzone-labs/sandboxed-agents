@@ -75,7 +75,7 @@ var proxyClients = map[string]struct {
 	name, login, check string
 }{
 	"claude":   {writeClaudeProxy, "Claude", "browser", "claude -p 'Reply OK'"},
-	"opencode": {writeOpenCodeProxy, "OpenCode", "provider", "opencode run 'Reply OK'"},
+	"opencode": {writeOpenCodeProxy, "OpenCode", "provider", "opencode run 'Reply OK' < /dev/null"},
 }
 
 // proxyWorkflow serializes native configuration changes as the verified agent without spawning a credential-bearing process.
@@ -107,7 +107,7 @@ func (w agentWork) proxyWorkflow() int {
 		fmt.Fprintf(w.stdout, "%s proxy configuration removed; %s login is unchanged.\n", client.name, client.login)
 		return 0
 	}
-	fmt.Fprintf(w.stdout, "%s proxy configuration written; the key was not checked against the server. Check with: sandboxed-agents agents run NAME %s. Restart existing sessions to load changed configuration.\n", client.name, client.check)
+	fmt.Fprintf(w.stdout, "%s proxy configuration written; the key was not checked against the server. Check with: sandboxed-agents agents run NAME %s\nRestart existing sessions to load changed configuration.\n", client.name, client.check)
 
 	return 0
 }
