@@ -134,7 +134,7 @@ A command that would end an agent session, or replace the installation of an age
 
 | Command | What it does |
 |---|---|
-| `shell NAME` | Opens a shell as `agent` in `/workspace` through Podman. It needs no SSH setup. The exit status is the shell's. |
+| `shell NAME` | Opens Bash as `agent` in `/workspace` through Podman. It needs no SSH setup. It takes no command: with no terminal it reads its commands from standard input, and it allocates a terminal only when both standard input and standard output are one. The exit status is the shell's ([details](#shell)). |
 | `ssh-config NAME` | Prints the host entry for the sandbox and creates nothing. |
 | `ssh-config NAME --install` | Creates a key dedicated to the sandbox, authorizes it, pins the host key, writes the host entry, and adds the controller group's `Include` line to your SSH configuration. |
 | `ssh-config NAME --remove` | Removes the host side of the SSH setup and, on a running sandbox, the authorization in the sandbox. |
@@ -157,7 +157,7 @@ Running `ssh-config NAME --install` again with a matching host key changes no ho
 | `agents login NAME opencode proxy --url URL --model ID` | Points OpenCode at a CLIProxyAPI server you already run: it writes the URL, a client key, read from standard input only, and the model into OpenCode's configuration file in the home data, as a provider of its own. `--model ID` is required unless `--remove` is given, because OpenCode addresses every model through a provider. `--remove` deletes the managed provider and reads no key. The key is checked against nothing; the documented check is `agents run NAME opencode run ...`. See [OpenCode proxy workflow](agents.md#opencode-proxy-workflow). |
 | `agents login NAME copilot proxy --url URL --model ID [--wire-api API]` | Points Copilot CLI at a CLIProxyAPI server you already run: it writes a `cliproxyapi` provider with the URL and a client key, read from standard input only, and a model entry for `ID` into Copilot's provider registry in the home data. `--model ID` is required and makes the model no default: select it with `--model cliproxyapi/ID`. `--wire-api` chooses `completions` (default) or `responses`. `--remove` deletes the managed provider and the models that point to it and reads no key. The key is checked against nothing; the documented check is `agents run NAME copilot -p ... --model cliproxyapi/ID`. GitHub-hosted features still need `device-code`. Copilot CLI 1.0.106 or newer is required. See [Copilot proxy workflow](agents.md#copilot-proxy-workflow). |
 | `agents status NAME AGENT` | Reports whether the agent is enabled, its version, its pin, whether a session runs, and whether it is signed in when a status probe exists. |
-| `agents run NAME AGENT [ARG...]` | Runs the agent once in `/workspace`. Every argument after the agent name is passed on unchanged. The exit status is the agent's. |
+| `agents run NAME AGENT [ARG...]` | Runs the agent once in `/workspace`. Every argument after the agent name is passed on to the agent literally, `--help` included. The exit status is the agent's ([details](#agents-run)). |
 | `agents session NAME AGENT` | Starts or attaches to the agent's persistent terminal session. `--stop` ends the session and needs no terminal. |
 
 `--url`, `--model`, and `--remove` belong to the `proxy` workflows of `claude`, `codex`, `copilot`, and `opencode`; `--replace-login` belongs to `codex proxy` alone and `--wire-api` to `copilot proxy` alone. For `claude`, `--model` is optional; for `codex`, `copilot`, and `opencode`, it is required unless `--remove` is given. Any of them on another agent or workflow, a missing or invalid `--url`, a `codex proxy`, `copilot proxy`, or `opencode proxy` setup without `--model`, `--replace-login` on another agent or together with `--remove`, an invalid `--wire-api`, `--wire-api` on another agent or together with `--remove`, and `--remove` together with `--url` or `--model` are usage errors that exit 2 before Podman is called. All `agents` commands need a running sandbox with an answering manager; see [Agents](agents.md).
@@ -239,9 +239,34 @@ QR pairing needs an origin a phone can reach, and the sandbox has none of its ow
 
 Your tailnet must have MagicDNS and HTTPS certificates enabled (`https://login.tailscale.com/admin/dns`); `tools pair` names the missing one. The node appears in your tailnet admin console as a device named after the sandbox, and a device whose sign-out failed stays there until it expires or you remove it. While the node is signed in, a device of your tailnet that your tailnet's access policy allows reaches not only the HTTPS origin on port 443 but, through the node's address, the sandbox's loopback listeners as well: `sshd` on port 22, which accepts only the sandbox's key, and the T3 Code service on port 3773, which T3 Code's own pairing and session tokens protect. Nothing is reachable from outside your tailnet, and nothing while no node is signed in. Do not set Tailscale's `--shields-up` on the node to narrow that reach: it blocks the HTTPS origin too, and the phone loses the sandbox until it is unset.
 
+## Running programs in a sandbox
+
+`shell NAME` and `agents run NAME AGENT [ARG...]` start a program in the sandbox as `agent` (UID and GID 1000, `HOME=/home/agent`, working directory `/workspace`) and connect it to the streams of your terminal or script ([ADR 0006](adr/0006-podman-target-and-execution-identity.md)). Both use the same terminal rule and both pass the program's exit status through. Neither command adds syntax of its own to what follows the sandbox name or the agent name.
+
+### Terminal and standard input
+
+Both commands always pass your standard input on to the program. They allocate a terminal for it only when your standard input and your standard output are both terminals; a file, a pipe, or the null device on either one means no terminal. Standard error does not take part in the decision. Without a terminal, the program's standard output and standard error stay two separate streams, so you can redirect or capture each one; with a terminal, both reach it through the terminal.
+
+### `shell`
+
+`shell NAME` runs `/bin/bash` and takes no other argument: a word after `NAME` is a usage error with status 2, and a command goes to Bash on standard input instead. The sandbox must exist and be running; otherwise the command names the problem, starts nothing, and exits with status 1.
+
+- **With a terminal**, Bash is an interactive shell: it prints its prompt and reads what you type until you leave it with `exit` or `Ctrl+D`.
+- **Without a terminal**, Bash is not interactive. It prints no prompt and reads its commands from standard input line by line until the input ends, so `printf 'pwd\n' | sandboxed-agents shell agent01` runs `pwd` in `/workspace` and returns. A program started by those commands reads the same input, so one that reads standard input, such as `cat`, takes the lines that follow it.
+- **The exit status is the shell's.** An interactive shell ends with the status of its last command or of `exit N`. A shell that reads from standard input ends with the status of the last command it ran, or `N` when a line says `exit N`. The executable adds no diagnostic and does not translate the status, so the statuses 125, 126, and 127 that Podman itself returns for a failed `exec` come through unchanged and cannot be told from the same statuses of a command in Bash. Only when Podman is ended by a signal does the command exit with status 1 and say so.
+- **On Windows, PowerShell ends every string it pipes to a program with a carriage return and a line feed**, and Bash takes the carriage return as part of the last word of the line: `pwd` arrives as `pwd` followed by a carriage return and fails as `command not found`. End the piped text with ` #`, so that the carriage return falls inside a comment: `'pwd #' | sandboxed-agents shell agent01`. The [Windows quick guide](quick-guide-windows.md#run-a-command-without-a-terminal) has the full examples.
+
+### `agents run`
+
+`agents run NAME AGENT [ARG...]` starts the agent's command once, from `/workspace`, through the manager of the sandbox ([agents](agents.md#run-an-agent-once)).
+
+- **Every argument after `AGENT` is passed to the agent literally**, in order, and the executable reads none of them: `--help`, `-h`, `--`, an argument that starts with a dash, one with a space, and an empty argument all arrive as given. `agents run NAME AGENT --help` therefore shows the agent's help; only `agents run --help` and `agents run NAME --help`, which stop before `AGENT`, show the help of `agents run`.
+- **Your own shell splits and unquotes the command line before the executable starts**, so what reaches the agent is what your shell leaves after its quoting rules. Quote an argument for Bash with single quotes, `'Reply OK'`, which expand nothing; for PowerShell also with single quotes, in which a single quote is written twice, `'it''s'`. PowerShell 7.3 and newer pass an argument that holds double quotes or is empty on as it is; Windows PowerShell 5.1 strips the double quotes and drops the empty argument, so keep both out of an argument there ([about_Parsing](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_parsing?view=powershell-7.6#passing-arguments-that-contain-quote-characters)).
+- **The exit status is the agent's.** The command refuses with status 1 before it starts the agent when the sandbox is not running, the manager does not answer, or the agent is not enabled; once the agent runs, its status comes through without translation. `agents login` and `agents session` use their own status instead.
+
 ## Exit status
 
-Exit status zero means the command did what was asked, or the requested state already held. Non-zero means the command could not do it, it refused, or a checking command (`check`, `check NAME`) found a problem. Only `agents run` and `shell` pass through another program's exit status. The first version defines no distinct codes per kind of failure; a usage error happens to exit with 2.
+Exit status zero means the command did what was asked, or the requested state already held. Non-zero means the command could not do it, it refused, or a checking command (`check`, `check NAME`) found a problem. Only `agents run` and `shell` pass through another program's exit status ([how](#running-programs-in-a-sandbox)). The first version defines no distinct codes per kind of failure; a usage error happens to exit with 2.
 
 ## Order of checks
 

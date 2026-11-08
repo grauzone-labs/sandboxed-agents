@@ -10,25 +10,29 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
-// TestAgentRunForwardsLiteralArguments proves dash-prefixed, empty, and shell-like arguments and the agent exit status survive the executable CLI and fake Podman seam.
+// TestAgentRunForwardsLiteralArguments proves --help, dash-prefixed, empty, and shell-like arguments and the agent exit status survive the executable CLI and fake Podman seam.
 func TestAgentRunForwardsLiteralArguments(t *testing.T) {
-	for _, exit := range []int{0, 23, 127} {
-		responses := ownedLifecycleResponses(true)
-		responses[agentManagerPrefix+"version"] = lifecycleResponse{Output: "sandboxed-agents-manager development\n"}
-		responses[agentManagerPrefix+"agents status codex"] = lifecycleResponse{Output: `{"name":"codex","enabled":true,"installed_version":"1.2.3"}`}
-		forwarded := []string{"--unknown-to-host", "two words", "", "$(touch never)", "--", "-x"}
-		execution := append([]string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent", "-i", "sandboxed-agents.default.demo", "/usr/local/bin/sandboxed-agents-manager", "agents", "run", "codex"}, forwarded...)
-		responses[strings.Join(execution, " ")] = lifecycleResponse{Output: "agent output\n", Stderr: "agent diagnostic\n", Exit: exit}
-		f := agentExecutableHarness(t, responses)
-		command := exec.Command(executable, append([]string{"agents", "run", "demo", "codex"}, forwarded...)...)
-		command.Env = os.Environ()
-		output, err := command.CombinedOutput()
-		if status := exitStatus(t, err); status != exit || string(output) != "agent output\nagent diagnostic\n" {
-			t.Fatalf("status=%d output=%q; want status=%d", status, output, exit)
-		}
-		calls := agentManagerCalls(t, f)
-		if len(calls) != 3 || !reflect.DeepEqual(calls[2], execution) {
-			t.Fatalf("calls=%v; want final=%v", calls, execution)
+	for _, forwarded := range [][]string{
+		{"--help"},
+		{"--unknown-to-host", "two words", "", "$(touch never)", "--help", "--", "-x"},
+	} {
+		for _, exit := range []int{0, 23, 127} {
+			responses := ownedLifecycleResponses(true)
+			responses[agentManagerPrefix+"version"] = lifecycleResponse{Output: "sandboxed-agents-manager development\n"}
+			responses[agentManagerPrefix+"agents status codex"] = lifecycleResponse{Output: `{"name":"codex","enabled":true,"installed_version":"1.2.3"}`}
+			execution := append([]string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent", "-i", "sandboxed-agents.default.demo", "/usr/local/bin/sandboxed-agents-manager", "agents", "run", "codex"}, forwarded...)
+			responses[strings.Join(execution, " ")] = lifecycleResponse{Output: "agent output\n", Stderr: "agent diagnostic\n", Exit: exit}
+			f := agentExecutableHarness(t, responses)
+			command := exec.Command(executable, append([]string{"agents", "run", "demo", "codex"}, forwarded...)...)
+			command.Env = os.Environ()
+			output, err := command.CombinedOutput()
+			if status := exitStatus(t, err); status != exit || string(output) != "agent output\nagent diagnostic\n" {
+				t.Fatalf("status=%d output=%q; want status=%d", status, output, exit)
+			}
+			calls := agentManagerCalls(t, f)
+			if len(calls) != 3 || !reflect.DeepEqual(calls[2], execution) {
+				t.Fatalf("calls=%v; want final=%v", calls, execution)
+			}
 		}
 	}
 }

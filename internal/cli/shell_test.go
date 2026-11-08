@@ -109,6 +109,27 @@ func TestShellOmitsTerminalForPipedOutput(t *testing.T) {
 	}
 }
 
+// TestShellOmitsTerminalForPipedInput proves piped stdin with terminal stdout omits -t through RunWithHost's terminal predicates and fake Podman.
+func TestShellOmitsTerminalForPipedInput(t *testing.T) {
+	f := sandboxStateFixture(t)
+	f.host.Stdin = strings.NewReader("echo from pipe\n")
+	f.host.IsInputTerminal = func(input io.Reader) bool {
+		if input != f.host.Stdin {
+			t.Fatal("input predicate did not receive piped stdin")
+		}
+		return false
+	}
+	f.host.IsOutputTerminal = func(io.Writer) bool { return true }
+	f.responses[shellExec] = response{Output: "shell output\n", EchoStdin: true}
+	status, stdout, stderr, calls := runCommand(t, f, "shell", "agent01")
+	if status != 0 || stdout != "shell output\necho from pipe\n" || stderr != "" {
+		t.Fatalf("status=%d stdout=%q stderr=%q", status, stdout, stderr)
+	}
+	if call := calls[len(calls)-1]; !reflect.DeepEqual(call, strings.Fields(shellExec)) {
+		t.Fatalf("exec=%v want=%v", call, strings.Fields(shellExec))
+	}
+}
+
 // TestShellAllocatesTerminal proves terminal stdin and stdout pass both stdin and TTY flags through RunWithHost's terminal predicates and fake Podman.
 func TestShellAllocatesTerminal(t *testing.T) {
 	f := linuxHost(t)
@@ -187,6 +208,22 @@ func TestShellRequiresName(t *testing.T) {
 	want := "step 1: sandbox name must follow the command path\nusage: sandboxed-agents shell NAME\nrun 'sandboxed-agents shell --help' for usage\n"
 	if status != 2 || output != want {
 		t.Fatalf("status=%d output=%q want=%q", status, output, want)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("unexpected Podman calls: %v", calls)
+	}
+	if calls := testutil.Invocations(t, f.fakes.SSHLog); len(calls) != 0 {
+		t.Fatalf("unexpected SSH calls: %v", calls)
+	}
+}
+
+// TestShellRejectsCommandWords proves shell command-tail words return usage status
+// before any process starts through RunWithHost and fake Podman.
+func TestShellRejectsCommandWords(t *testing.T) {
+	f := linuxHost(t)
+	status, output, calls := f.run(t, "shell", "agent01", "pwd")
+	if status != 2 || !strings.Contains(output, "usage: sandboxed-agents shell NAME") {
+		t.Fatalf("status=%d output=%q; want usage status 2", status, output)
 	}
 	if len(calls) != 0 {
 		t.Fatalf("unexpected Podman calls: %v", calls)
