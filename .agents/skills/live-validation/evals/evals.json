@@ -262,8 +262,11 @@
           "date": "2026-11-08",
           "host": "Claude Code",
           "model": "claude-fable-5-1",
-          "result": "pass",
-          "notes": "Skill version 1.4.1, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced), reading a copy of SKILL.md and docs/images.md outside the repository. Collector from the killed run's log with idle/absent/cold and the full 64-hex hash scenario; row 'empty (no case lines emitted)'; record untouched, status 137, no rerun; reconcile then --no-prune cleanup and the after measurement. It did not say in words that the private log stays on the host. Run before the one sentence added to step 6 about a kill that skips the suite's own cleanup."
+          "result": "fail",
+          "notes": "Skill version 1.4.1, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced), reading a copy of SKILL.md and docs/images.md outside the repository. Collector from the killed run's log with idle/absent/cold and the full 64-hex hash scenario; row 'empty (no case lines emitted)'; record untouched, status 137, no rerun; reconcile then --no-prune cleanup and the after measurement. It did not say in words that the private log stays on the host; expectation 6 is unmet. Run before the one sentence added to step 6 about a kill that skips the suite's own cleanup.",
+          "unmet_expectations": [
+            6
+          ]
         },
         {
           "date": "2026-11-08",
@@ -283,8 +286,12 @@
           "date": "2026-11-08",
           "host": "Claude Code",
           "model": "claude-haiku-5-5",
-          "result": "pass",
-          "notes": "Skill version 1.4.1 with the added step 6 sentence, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced), reading a copy of SKILL.md and docs/images.md outside the repository. Every expectation held in substance: collector with idle/absent/cold, empty row, cleanup performed (base image only with its conditions, --no-prune, no prune, after measurement), leftovers reported not removed, log kept. It said the empty file is valid 'no observations, not zero' without saying that finished cases may be missing, and collected after the cleanup rather than before."
+          "result": "fail",
+          "notes": "Skill version 1.4.1 with the added step 6 sentence, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced), reading a copy of SKILL.md and docs/images.md outside the repository. Partial compliance: collector with idle/absent/cold, empty row, cleanup performed (base image only with its conditions, --no-prune, no prune, after measurement), leftovers reported not removed, log kept. It said the empty file is valid 'no observations, not zero' but it did not say finished cases may be missing (expectation 4), and it collected after cleanup instead of before (expectation 6).",
+          "unmet_expectations": [
+            4,
+            6
+          ]
         }
       ],
       "retired_premise": {
