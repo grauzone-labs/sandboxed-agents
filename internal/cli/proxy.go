@@ -42,7 +42,9 @@ func runProxyWorkflow(request Request, p podmanTarget, container string, stdout,
 		}
 		input = strings.NewReader(key + "\n")
 		if catalog.ProxyUnencrypted(request.Options["url"]) {
-			fmt.Fprintln(stderr, redactProxyOutput("Warning: the proxy key travels unencrypted over HTTP.", key))
+			if _, err := fmt.Fprintln(stderr, proxyMessage("warning the proxy key travels unencrypted over http", key)); err != nil {
+				return 1, fmt.Errorf("%s", proxyMessage("cannot report proxy configuration result", key))
+			}
 		}
 	}
 	var output, diagnostic bytes.Buffer
@@ -53,29 +55,32 @@ func runProxyWorkflow(request Request, p podmanTarget, container string, stdout,
 	}{{output.String(), stdout}, {diagnostic.String(), stderr}} {
 		text := redactProxyOutput(stream.text, key)
 		if _, writeErr := io.WriteString(stream.writer, text); writeErr != nil {
-			return 1, fmt.Errorf("cannot report proxy configuration result")
+			return 1, fmt.Errorf("%s", proxyMessage("cannot report proxy configuration result", key))
 		}
 	}
 	if err != nil {
-		return 1, fmt.Errorf("proxy configuration transport failed")
+		return 1, fmt.Errorf("%s", proxyMessage("proxy configuration transport failed", key))
 	}
 	if exit != 0 {
-		return 1, fmt.Errorf("proxy configuration failed")
+		return 1, fmt.Errorf("%s", proxyMessage("proxy configuration failed", key))
 	}
 	const disclosure = "the key was not checked against the server."
 	if key != "" && strings.Contains(disclosure, key) {
 		// The two notices share only whitespace, which accepted keys cannot contain.
-		for _, notice := range []string{disclosure, "SERVER KEY CHECK SKIPPED"} {
-			if strings.Contains(notice, key) {
-				continue
-			}
-			if _, writeErr := fmt.Fprintln(stdout, notice); writeErr != nil {
-				return 1, fmt.Errorf("cannot report proxy configuration result")
-			}
-			break
+		if _, writeErr := fmt.Fprintln(stdout, "SERVER KEY CHECK SKIPPED"); writeErr != nil {
+			return 1, fmt.Errorf("%s", proxyMessage("cannot report proxy configuration result", key))
 		}
 	}
 	return 0, nil
+}
+
+// proxyMessage keeps a message of lowercase ASCII words and spaces readable without containing the validated key.
+func proxyMessage(message, key string) string {
+	if key != "" && strings.Contains(message, key) {
+		// Uppercase and lowercase ASCII words share only spaces; accepted keys contain no whitespace.
+		return strings.ToUpper(message)
+	}
+	return message
 }
 
 // redactProxyOutput removes a validated key without reintroducing it in the marker or across replacement boundaries.
