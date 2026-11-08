@@ -141,6 +141,33 @@ sandboxed-agents agents session agent01 claude
 
 **If it fails:** the output names what is missing: `start agent01` for a stopped sandbox, `agents enable agent01 claude` for an agent that is not enabled, or an interactive terminal.
 
+## Run a command without a terminal
+
+`sandboxed-agents shell agent01` opens an interactive Bash as `agent` in `/workspace`; leave it with `exit`. When standard input or standard output is not a terminal, for example behind a pipe, the same command runs Bash without a prompt, reads its commands from standard input until the input ends, and exits with the status of the last command. Both streams of your own terminal must be a terminal for it to allocate one. `shell` takes no command after the name; pipe the commands in ([command reference](command-reference.md#running-programs-in-a-sandbox)).
+
+PowerShell on Windows ends every string it pipes to a program with a carriage return and a line feed, and Bash reads the carriage return as part of the last word, so `'pwd' | sandboxed-agents shell agent01` fails with `command not found`. End the piped text with ` #`, which turns the carriage return into part of a comment, and separate commands with `;`. The same text works in PowerShell 7 and in Windows PowerShell.
+
+```text
+'pwd; id -un; exit 7 #' | sandboxed-agents shell agent01
+$LASTEXITCODE
+```
+
+**Expected:** `/workspace` and `agent` on two lines, then `7`: the exit status of `shell` is the status of the `exit 7` that Bash read, and `$LASTEXITCODE` holds it.
+
+**If it fails:** the output names the cause: `start agent01` for a stopped sandbox, or `up agent01` for one that does not exist.
+
+`agents run` runs an agent once in `/workspace` and passes everything after the agent name on to the agent, `--help` included, so the first command below prints Claude Code's own help, not that of `sandboxed-agents`. PowerShell splits the command line before `sandboxed-agents` starts: single quotes keep `Print $HOME` as one argument and expand nothing, so the agent receives the text `$HOME` as written. To put a single quote inside single quotes, write it twice: `'it''s'`. Keep double quotes and empty arguments out of an argument in Windows PowerShell 5.1, which removes them; PowerShell 7.3 and newer pass them on ([command reference](command-reference.md#agents-run)).
+
+```text
+sandboxed-agents agents run agent01 claude --help
+sandboxed-agents agents run agent01 claude -p 'Print $HOME'
+$LASTEXITCODE
+```
+
+**Expected:** the agent's help, then the agent's answer, then `0`; a non-zero number is the exit status of Claude Code itself, because `agents run` returns the agent's status. The second command needs the sign-in of step 8.
+
+**If it fails:** the output names what is missing before the agent starts, with status 1: `agents enable agent01 claude` for an agent that is not enabled, or `start agent01` for a stopped sandbox.
+
 ## Next steps
 
 - **Git identity.** Set your name and email for commits in the sandbox: `sandboxed-agents integrations config agent01 git identity --name "A Person" --email "a@example.com"` ([integrations](integrations.md#commit-identity)).
