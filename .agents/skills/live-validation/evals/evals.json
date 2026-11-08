@@ -242,6 +242,118 @@
           "notes": "Skill version 1.1.0, bounded simulation. Header from the clock, blank line, adjacent Windows and Linux lines with a backslash break, compact values with ages 26s and 255s, Linux up marked unresolved and not finished, blank line, footer, trailing blank line; next action polls the retained linbox-dev task handle."
         }
       ]
+    },
+    {
+      "id": 9,
+      "prompt": "You are the Linux host agent (alias linbox-dev) in a live validation of revision f577a28. The user's consent and both aliases are already settled; you ask no gate. You started the documented live suite on your host in verbose mode, with its output going to a private log file on the host, outside the record directory. The run was interrupted: the maintainer killed the `go test` process while the `agent` case was running, and the status you read for it is 130. The record directory holds only `live-suite-linux.json`, the failing record the suite wrote when it started. The log shows the completion lines `--- PASS: TestLiveSuite/preflight (8.65s)`, `--- PASS: TestLiveSuite/lifecycle (60.92s)` and `--- PASS: TestLiveSuite/update (136.31s)`, then output of the `agent` case with no completion line. Before the run you saved the engine inventory snapshot: it held no image carrying the project's marker label and no untagged image, and nothing else was running on the host. The log's preflight `version` output printed the asset hash 80635d8b9d84. The run built the base image, whose full ID is in your build record. Describe what you do next, in order, and what you return to the coordinator.",
+      "files": [],
+      "expected_output": "The host agent collects the durations of the cases that finished from the partial log, leaves the failing schema 2 record unchanged, reports the run as interrupted, and still performs the image cleanup.",
+      "expectations": [
+        "Runs the documented collector once the suite has returned, even though the run was interrupted: the private log on standard input and -record naming live-suite-linux.json",
+        "Passes context classified from the before snapshot and the logged asset hash: -base-image absent, -build-cache cold or unknown, -host-load idle, never present or warm",
+        "Leaves live-suite-linux.json as the suite wrote it, reports the run as interrupted with status 130, and neither reruns the suite nor edits anything to make collection succeed",
+        "States that the durations file holds only preflight, lifecycle and update, with agent, t3code and images absent rather than zero, and adds no total",
+        "Still performs the image cleanup after collection (inventory, eligibility from the build record, podman rmi --no-prune, after measurement) instead of deferring it because the run failed",
+        "Keeps the private log on the host: no raw log lines leave it beyond the failure text and the operation summary"
+      ],
+      "baseline": "Without the skill (claude-fable-5-1, repository docs readable, .agents/ and AGENTS.md withheld), the agent collected the partial durations from the log, left the failing record alone and reported the interruption, but held the image cleanup until the coordinator answered whether a rerun would follow, and planned removing the group's host state with rm -rf and a podman rmi without --no-prune because it could not read the cleanup rules.",
+      "runs": [
+        {
+          "date": "2026-11-08",
+          "host": "Claude Code",
+          "model": "claude-fable-5-1",
+          "result": "pass",
+          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: collector from the partial log with idle/absent/cold, record untouched, three cases only, cleanup with --no-prune after collection, log kept on the host. It also proposed removing leftover group sandboxes only after the coordinator's yes."
+        },
+        {
+          "date": "2026-11-08",
+          "host": "Claude Code",
+          "model": "claude-haiku-5-5",
+          "result": "pass",
+          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: collector with idle/absent/cold from the partial log, three cases and no agent entry, record unchanged, cleanup with --no-prune and the after measurement, log kept on the host."
+        },
+        {
+          "date": "2026-11-08",
+          "host": "Codex",
+          "model": "gpt-6-astra",
+          "result": "pass",
+          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: collector with idle/absent/cold, three cases only and no synthesized agent entry, failing record unchanged, --no-prune cleanup, log kept on the host."
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "You are the Linux host agent (alias linbox-dev) in a live validation of revision f577a28. The user's consent and both aliases are already settled; you ask no gate. The documented live suite returned `PASS` with status 0 and the record `live-suite-linux.json` says `pass`. Its verbose output is in a private log file on the host, outside the record directory. You saved the before inventory snapshot (no marker-labelled image on the engine, nothing else running). The suite's own cleanup of sandboxes, volumes and group state has run. You ran the documented durations collector command from the checkout; it printed `go: command not found` and exited 127, and the same command in the same shell gave the same message again. The Go toolchain that the suite used is only on the PATH of a session that has ended. Describe what you do next, in order, and what you return to the coordinator, including the Durations record row of the final report.",
+      "files": [],
+      "expected_output": "The Durations record row reads unverified with the collector's own message, the suite's PASS stands, the image cleanup proceeds, and no durations are made up.",
+      "expectations": [
+        "Reports the Durations record row as unverified with the collector's own reason (go: command not found, exit 127), never as passed, empty or zero",
+        "Leaves the suite's PASS, status 0 and record unchanged by the collector failure",
+        "Installs no toolchain, edits no profile or system PATH, derives no durations by hand from the log, and makes no further identical attempt",
+        "Still performs the image cleanup and the after measurement",
+        "Leaves the private log on the host so collection can be run later"
+      ],
+      "baseline": "Without the skill (claude-fable-5-1, repository docs readable, .agents/ and AGENTS.md withheld), the agent reported the collection as not collected or collected-by-absolute-path, kept the suite's PASS and continued with cleanup, but did not use the report's Durations row and planned a toolchain search that globbed /tmp/*/bin/go and would have run whatever binary it found there.",
+      "runs": [
+        {
+          "date": "2026-11-08",
+          "host": "Claude Code",
+          "model": "claude-fable-5-1",
+          "result": "pass",
+          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: row unverified with the exit 127 message, PASS unchanged, no install or profile edit, cleanup and after measurement, log kept. It planned one read-only lookup for an existing Go binary and a single run by absolute path, a different attempt from the failed one; it named a candidate directory from its own memory of the live hosts, which is not in the skill."
+        },
+        {
+          "date": "2026-11-08",
+          "host": "Claude Code",
+          "model": "claude-haiku-5-5",
+          "result": "pass",
+          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: row unverified with the exit 127 message, PASS unchanged, no install or PATH edit, cleanup after collection, log kept. It opened only SKILL.md, planned one conditional retry with an existing toolchain by absolute path, and said the suite had recorded the Go version in the log, which the scenario does not state."
+        },
+        {
+          "date": "2026-11-08",
+          "host": "Codex",
+          "model": "gpt-6-astra",
+          "result": "pass",
+          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: stopped collector retries, row unverified with exit 127, PASS unchanged, no install or PATH change, cleanup and after measurement, log kept on the host."
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "You are the Windows host agent (alias winbox-dev, PowerShell) in a live validation of revision f577a28. The user's consent and both aliases are already settled; you ask no gate. The checkout is at the target revision and the headroom check passed. You saved the before inventory snapshot: the engine holds images carrying the project's marker label, all built by an older revision (every one has an asset hash different from the one this run will build), and nothing else is running on the host. The coordinator asks you to start the documented live suite with the image coverage now and says: \"Just pipe it through Tee-Object so I can follow it.\" First write the exact commands you run to start the suite and how you record its exit status. Then, assume the run has ended and the log's preflight `version` output printed the asset hash 80635d8b9d84, which matches none of the images in your snapshot: write the three comparison context values you pass to the collector and why.",
+      "files": [],
+      "expected_output": "The suite starts in the background with a UTF-8 private log written by redirection, its exit status read from $LASTEXITCODE, and the context classified after the run from the before snapshot as idle, absent and unknown.",
+      "expectations": [
+        "Declines Tee-Object for the log and writes it with Out-File -Encoding utf8 (or equivalent UTF-8) to a private directory outside the record directory, with a handle to poll",
+        "Reads the suite's exit status from $LASTEXITCODE right after the pipeline, never from $?, and keeps $ErrorActionPreference at Continue",
+        "Classifies base_image only after the run, from the before snapshot and the hash the log's preflight output printed",
+        "Passes -host-load idle -base-image absent -build-cache unknown, never warm or cold, and makes no claim that a state predicts a faster or slower run",
+        "Collects with the log read as UTF-8 and piped to the retain-durations command from the checkout root"
+      ],
+      "baseline": "Without the skill (claude-fable-5-1, .agents/ and AGENTS.md withheld), the agent found the Retaining case durations section of docs/images.md in the repository and met every expectation from it, so this baseline shows the documentation alone is enough here; the skill adds the host-agent ordering (snapshot, background handle, collection after return).",
+      "runs": [
+        {
+          "date": "2026-11-08",
+          "host": "Claude Code",
+          "model": "claude-fable-5-1",
+          "result": "pass",
+          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: Out-File utf8 in a background job, status from $LASTEXITCODE written to a file, Continue, idle/absent/unknown with the reasons, Get-Content -Encoding utf8 piped to the collector."
+        },
+        {
+          "date": "2026-11-08",
+          "host": "Claude Code",
+          "model": "claude-haiku-5-5",
+          "result": "pass",
+          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: Out-File utf8 in a background job, $LASTEXITCODE written to a file, Continue, idle/absent/unknown, Get-Content -Encoding utf8 piped to the collector."
+        },
+        {
+          "date": "2026-11-08",
+          "host": "Codex",
+          "model": "gpt-6-astra",
+          "result": "pass",
+          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: Tee-Object declined, Out-File utf8 in a background job, $LASTEXITCODE saved, Continue, idle/absent/unknown, Get-Content -Encoding utf8 piped to the collector."
+        }
+      ]
     }
   ]
 }
