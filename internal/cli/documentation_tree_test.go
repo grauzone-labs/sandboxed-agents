@@ -102,16 +102,14 @@ func commandReferenceError(document string) error {
 			}
 			documented[command][match[1]] = match[2] != ""
 		}
-		// The mandatory form of every grammar line must also be a real
-		// invocation. This catches positional and fixed workflow drift that
-		// a command/option inventory alone cannot find.
+		// Exercise the grammar with valid domain values. Login additionally
+		// needs a workflow when the chosen agent offers more than one.
 		example := strings.Fields(optionalPattern.ReplaceAllString(strings.TrimPrefix(line, "sandboxed-agents "), ""))
 		for index, word := range example {
 			switch word {
 			case "NAME":
 				example[index] = "agent01"
 			case "AGENT":
-				// OpenCode has a sole login workflow, so its workflow may be omitted.
 				example[index] = "opencode"
 			case "TOOL":
 				example[index] = "t3code"
@@ -120,6 +118,9 @@ func commandReferenceError(document string) error {
 			case "URL":
 				example[index] = "https://dev.azure.com/contoso"
 			}
+		}
+		if command == "agents login" && len(example) == 4 {
+			example = append(example, "provider")
 		}
 		parsed, err := Parse(example, "default")
 		if err != nil {
