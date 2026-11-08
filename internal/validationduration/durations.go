@@ -81,24 +81,37 @@ func Collect(log io.Reader, record []byte, state Context) ([]byte, error) {
 	source.SchemaVersion, source.Kind = 1, "live-suite-durations"
 	result := evidence{sourceRecord: source, Context: state, Cases: []caseDuration{}}
 	seen := map[string]bool{}
-	scanner := bufio.NewScanner(log)
-	for scanner.Scan() {
-		match := completionLine.FindStringSubmatch(strings.TrimSuffix(scanner.Text(), "\r"))
-		if match == nil {
+	// Fixed completion lines fit in 4 KiB. Discard oversized program lines in
+	// chunks so untrusted output cannot grow memory or hide later completions.
+	reader := bufio.NewReaderSize(log, 4096)
+	oversized := false
+	for {
+		line, err := reader.ReadSlice('\n')
+		if err == bufio.ErrBufferFull {
+			oversized = true
 			continue
 		}
-		if seen[match[2]] {
-			return nil, fmt.Errorf("repeated case: supply one verbose suite run")
-		}
-		seen[match[2]] = true
-		seconds, err := strconv.ParseFloat(match[3], 64)
-		if err != nil {
+		if err != nil && err != io.EOF {
 			return nil, err
 		}
-		result.Cases = append(result.Cases, caseDuration{Name: match[2], Result: strings.ToLower(match[1]), Seconds: seconds})
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
+		if !oversized {
+			match := completionLine.FindStringSubmatch(strings.TrimSuffix(strings.TrimSuffix(string(line), "\n"), "\r"))
+			if match != nil {
+				if seen[match[2]] {
+					return nil, fmt.Errorf("repeated case: supply one verbose suite run")
+				}
+				seen[match[2]] = true
+				seconds, parseErr := strconv.ParseFloat(match[3], 64)
+				if parseErr != nil {
+					return nil, parseErr
+				}
+				result.Cases = append(result.Cases, caseDuration{Name: match[2], Result: strings.ToLower(match[1]), Seconds: seconds})
+			}
+		}
+		oversized = false
+		if err == io.EOF {
+			break
+		}
 	}
 	return json.Marshal(result)
 }

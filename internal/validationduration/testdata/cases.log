@@ -1,12 +1,13 @@
 === RUN   TestLiveSuite
     secret program output: account=user group=private /home/user sandboxed-agents.private.image
 === RUN   TestLiveSuite/preflight
-    --- PASS: TestLiveSuite/preflight (2.52s)
 === RUN   TestLiveSuite/lifecycle
-        --- PASS: TestLiveSuite/lifecycle/private-sandbox (7.00s)
+=== RUN   TestLiveSuite/images
+--- FAIL: TestLiveSuite (40.00s)
+    --- PASS: TestLiveSuite/preflight (2.52s)
     --- FAIL: TestLiveSuite/lifecycle (34.99s)
+        --- PASS: TestLiveSuite/lifecycle/private-sandbox (7.00s)
     --- SKIP: TestLiveSuite/images (0.00s)
     --- PASS: TestLiveSuite/private-group (999.00s)
     --- PASS: TestUnrelated/agent (999.00s)
---- FAIL: TestLiveSuite (40.00s)
 FAIL

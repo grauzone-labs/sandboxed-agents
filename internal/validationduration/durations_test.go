@@ -2,6 +2,9 @@ package validationduration_test
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -104,5 +107,52 @@ func TestCollectRejectsRepeatedRuns(t *testing.T) {
 	}
 	if data, err := validationduration.Collect(strings.NewReader(line), []byte(record), state); err != nil || !strings.Contains(string(data), `"seconds":1`) {
 		t.Fatalf("partial CRLF log: %s; %v", data, err)
+	}
+}
+
+// TestCollectSkipsOversizedProgramLines proves valid case durations on both sides
+// of untrusted oversized lines survive the collector seam without leaking output.
+func TestCollectSkipsOversizedProgramLines(t *testing.T) {
+	for _, size := range []int{4095, 4096, 4097, 65535, 65536, 65537, 1024 * 1024} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			before := "    --- PASS: TestLiveSuite/preflight (1.00s)\n"
+			after := "    --- FAIL: TestLiveSuite/lifecycle (2.00s)\r\n"
+			// A completion-shaped tail must not become a new line when a chunk is skipped.
+			untrusted := strings.Repeat("private", size/7+1)[:size] + after
+			state := validationduration.Context{HostLoad: "unknown", BaseImage: "unknown", BuildCache: "unknown"}
+			const wantCases = `[{"name":"preflight","result":"pass","seconds":1},{"name":"lifecycle","result":"fail","seconds":2}]`
+			for _, log := range []string{before + untrusted + after, before + after + strings.TrimSuffix(untrusted, "\r\n")} {
+				got, err := validationduration.Collect(strings.NewReader(log), []byte(record), state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var fields map[string]json.RawMessage
+				if err := json.Unmarshal(got, &fields); err != nil {
+					t.Fatal(err)
+				}
+				if string(fields["cases"]) != wantCases || strings.Contains(string(got), "private") {
+					t.Fatalf("oversized output: got %s; want cases %s without program output", got, wantCases)
+				}
+			}
+		})
+	}
+}
+
+// failingLogReader returns a stable error at the untrusted log read boundary.
+type failingLogReader struct{ err error }
+
+// Read reports the injected source failure without supplying log bytes.
+func (r failingLogReader) Read([]byte) (int, error) { return 0, r.err }
+
+// TestCollectPreservesReadErrors proves source failures, including after an
+// oversized line fragment, are returned without publishing partial evidence.
+func TestCollectPreservesReadErrors(t *testing.T) {
+	failure := errors.New("log source failed")
+	for _, prefix := range []string{"", "    --- PASS: TestLiveSuite/preflight (1.00s)\n", strings.Repeat("x", 65537)} {
+		log := io.MultiReader(strings.NewReader(prefix), failingLogReader{failure})
+		data, err := validationduration.Collect(log, []byte(record), validationduration.Context{HostLoad: "unknown", BaseImage: "unknown", BuildCache: "unknown"})
+		if !errors.Is(err, failure) || len(data) != 0 {
+			t.Fatalf("data=%s error=%v; want original read failure", data, err)
+		}
 	}
 }
