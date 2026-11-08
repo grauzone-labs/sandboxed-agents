@@ -176,6 +176,7 @@ func TestCodexProxyGrammar(t *testing.T) {
 		{"codex", "proxy", "--remove", "--replace-login"},
 		{"codex", "browser", "--replace-login"},
 		{"claude", "proxy", "--url", "https://example", "--replace-login"},
+		{"opencode", "proxy", "--url", "https://example", "--model", "chosen", "--replace-login"},
 	} {
 		if _, err := cli.Parse(append([]string{"agents", "login", "demo"}, args...), "default"); err == nil {
 			t.Fatalf("accepted %v", args)
