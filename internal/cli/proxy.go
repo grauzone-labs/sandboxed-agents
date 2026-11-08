@@ -65,5 +65,12 @@ func runProxyWorkflow(request Request, p podmanTarget, container string, stdout,
 	if exit != 0 {
 		return 1, fmt.Errorf("proxy configuration failed")
 	}
+	const disclosure = "the key was not checked against the server."
+	if key != "" && strings.Contains(disclosure, key) {
+		// Restore only fixed host text; manager output remains fully redacted.
+		if _, writeErr := fmt.Fprintln(stdout, "Notice: "+disclosure); writeErr != nil {
+			return 1, fmt.Errorf("cannot report proxy configuration result")
+		}
+	}
 	return 0, nil
 }

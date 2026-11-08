@@ -12,6 +12,65 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
 )
 
+// TestProxyDisclosureSurvivesSecretRedaction proves successful setup keeps the unchecked-key disclosure while redacting manager content through RunWithHost.
+func TestProxyDisclosureSurvivesSecretRedaction(t *testing.T) {
+	for _, agent := range []string{"claude", "codex", "copilot", "opencode"} {
+		for _, key := range []string{"not", "checked", "server", "sentinel-proxy-key"} {
+			t.Run(agent+"/"+key, func(t *testing.T) {
+				f := sandboxStateFixture(t)
+				f.host.Stdin = strings.NewReader(key + "\n")
+				f.host.IsInputTerminal = func(io.Reader) bool { return false }
+				f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+				f.responses[agentWorkStatus+agent] = response{Output: fmt.Sprintf(`{"name":%q,"enabled":true,"installed_version":"1.2.3"}`, agent)}
+				command := "exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " agents login " + agent + " proxy --url https://proxy.example --model chosen"
+				f.responses[command] = response{
+					ExpectedStdin: key + "\n",
+					Output:        "configuration written; the key was not checked against the server.\nprovided=" + key + "\n",
+					Stderr:        "diagnostic=" + key + "\n",
+				}
+				status, output, _ := f.run(t, "agents", "login", "agent01", agent, "proxy", "--url", "https://proxy.example", "--model", "chosen")
+				if status != 0 || strings.Count(output, "the key was not checked against the server.") != 1 {
+					t.Fatalf("unchecked-key disclosure missing or repeated: status=%d output=%q", status, output)
+				}
+				if !strings.Contains(output, "provided=[redacted]\n") || !strings.Contains(output, "diagnostic=[redacted]\n") || strings.Contains(output, "provided="+key) || strings.Contains(output, "diagnostic="+key) {
+					t.Fatalf("manager content was not redacted: %q", output)
+				}
+			})
+		}
+	}
+}
+
+// TestProxyDisclosureExcludesFailureAndRemoval proves the host adds no setup notice after a refused write or keyless removal through RunWithHost.
+func TestProxyDisclosureExcludesFailureAndRemoval(t *testing.T) {
+	for _, remove := range []bool{false, true} {
+		t.Run(fmt.Sprintf("remove=%t", remove), func(t *testing.T) {
+			f := sandboxStateFixture(t)
+			f.host.Stdin = strings.NewReader("not\n")
+			f.host.IsInputTerminal = func(io.Reader) bool { return false }
+			f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+			f.responses[agentWorkStatus+"copilot"] = response{Output: `{"name":"copilot","enabled":true,"installed_version":"1.0.106"}`}
+			options := []string{"--url", "https://proxy.example", "--model", "chosen"}
+			answer := response{Exit: 23, ExpectedStdin: "not\n", Stderr: "refused provided=not\n"}
+			wantStatus := 1
+			if remove {
+				f.host.Stdin = unreadableToken{t}
+				options = []string{"--remove"}
+				answer = response{Output: "configuration removed\n"}
+				wantStatus = 0
+			}
+			command := "exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " agents login copilot proxy " + strings.Join(options, " ")
+			f.responses[command] = answer
+			status, output, _ := f.run(t, append([]string{"agents", "login", "agent01", "copilot", "proxy"}, options...)...)
+			if status != wantStatus || strings.Contains(output, "the key was not checked against the server.") {
+				t.Fatalf("unexpected setup notice or status: status=%d output=%q", status, output)
+			}
+			if !remove && (!strings.Contains(output, "provided=[redacted]") || strings.Contains(output, "provided=not")) {
+				t.Fatalf("failure leaked the key: %q", output)
+			}
+		})
+	}
+}
+
 // TestProxyWorkflowGrammar proves proxy options normalize URLs and reject invalid combinations at cli.Parse.
 func TestProxyWorkflowGrammar(t *testing.T) {
 	r, err := cli.Parse([]string{"agents", "login", "demo", "claude", "proxy", "--url", "http://proxy.example:8317/prefix///", "--model", "example-model"}, "default")
