@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/release"
 )
 
 // Context describes categorical observations made before a validation run.
@@ -50,6 +52,9 @@ type evidence struct {
 // completionLine accepts only immediate, fixed-name cases from Go's verbose output.
 var completionLine = regexp.MustCompile(`^    --- (PASS|FAIL|SKIP): TestLiveSuite/(preflight|lifecycle|update|agent|t3code|images) \(([0-9]+\.[0-9]+)s\)$`)
 
+// commitPattern permits only the revision form used by live-suite records.
+var commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
 // Collect derives inclusive case durations from verbose logs and comparison context.
 // Nested and unknown subtests and all program output are discarded.
 func Collect(log io.Reader, record []byte, state Context) ([]byte, error) {
@@ -57,7 +62,8 @@ func Collect(log io.Reader, record []byte, state Context) ([]byte, error) {
 	if err := json.Unmarshal(record, &source); err != nil {
 		return nil, fmt.Errorf("invalid live-suite record")
 	}
-	if source.SchemaVersion != 2 || source.Kind != "live-suite" || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(source.Commit) || !slices.Contains([]string{"linux", "windows-11"}, source.Platform) {
+	_, platformErr := release.LiveSuiteRecordFilename(source.Platform)
+	if source.SchemaVersion != 2 || source.Kind != "live-suite" || !commitPattern.MatchString(source.Commit) || platformErr != nil {
 		return nil, fmt.Errorf("expected schema 2 live-suite record with revision and platform")
 	}
 	var fields map[string]json.RawMessage
@@ -111,7 +117,11 @@ func Retain(log io.Reader, recordPath string, state Context) (string, error) {
 	if err := json.Unmarshal(data, &source); err != nil {
 		return "", err
 	}
-	if filepath.Base(recordPath) != "live-suite-"+source.Platform+".json" {
+	recordName, err := release.LiveSuiteRecordFilename(source.Platform)
+	if err != nil {
+		return "", err
+	}
+	if filepath.Base(recordPath) != recordName {
 		return "", fmt.Errorf("expected the platform live-suite record filename")
 	}
 	path := filepath.Join(filepath.Dir(recordPath), "durations-"+source.Platform+".json")

@@ -80,6 +80,8 @@ func TestLiveDurationRetentionAfterInterruption(t *testing.T) {
 	if err := json.Unmarshal(before, &fields); err != nil {
 		t.Fatal(err)
 	}
+	// Schema 2 has schema_version, kind, commit, platform, result, three image
+	// coverage flags, and checks; supplemental timing must add no tenth field.
 	if len(fields) != 9 || string(fields["schema_version"]) != "2" || string(fields["result"]) != `"fail"` {
 		t.Fatalf("interruption record: %s", before)
 	}
