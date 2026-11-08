@@ -12,28 +12,42 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
 )
 
-// TestProxyDisclosureSurvivesSecretRedaction proves successful setup keeps the unchecked-key disclosure while redacting manager content through RunWithHost.
+// TestProxyDisclosureSurvivesSecretRedaction proves successful setup discloses the skipped server check without emitting the key anywhere through RunWithHost.
 func TestProxyDisclosureSurvivesSecretRedaction(t *testing.T) {
 	for _, agent := range []string{"claude", "codex", "copilot", "opencode"} {
-		for _, key := range []string{"not", "checked", "server", "sentinel-proxy-key"} {
-			t.Run(agent+"/"+key, func(t *testing.T) {
+		for _, tc := range []struct{ key, notice string }{
+			{"not", "SERVER KEY CHECK SKIPPED\n"},
+			{"checked", "SERVER KEY CHECK SKIPPED\n"},
+			{"server", "SERVER KEY CHECK SKIPPED\n"},
+			{"e", "SERVER KEY CHECK SKIPPED\n"},
+			{".", "SERVER KEY CHECK SKIPPED\n"},
+			{"[redacted]", "the key was not checked against the server."},
+			{"]x", "the key was not checked against the server."},
+			{"sentinel-proxy-key", "the key was not checked against the server."},
+		} {
+			t.Run(agent+"/"+tc.key, func(t *testing.T) {
+				key := tc.key
+				url := "https://proxy.example"
+				if key == "e" {
+					url = "http://proxy.example"
+				}
 				f := sandboxStateFixture(t)
 				f.host.Stdin = strings.NewReader(key + "\n")
 				f.host.IsInputTerminal = func(io.Reader) bool { return false }
 				f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
 				f.responses[agentWorkStatus+agent] = response{Output: fmt.Sprintf(`{"name":%q,"enabled":true,"installed_version":"1.2.3"}`, agent)}
-				command := "exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " agents login " + agent + " proxy --url https://proxy.example --model chosen"
+				command := "exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " agents login " + agent + " proxy --url " + url + " --model chosen"
 				f.responses[command] = response{
 					ExpectedStdin: key + "\n",
-					Output:        "configuration written; the key was not checked against the server.\nprovided=" + key + "\n",
+					Output:        "configuration written; the key was not checked against the server.\npayload=" + key + "x\n",
 					Stderr:        "diagnostic=" + key + "\n",
 				}
-				status, output, _ := f.run(t, "agents", "login", "agent01", agent, "proxy", "--url", "https://proxy.example", "--model", "chosen")
-				if status != 0 || strings.Count(output, "the key was not checked against the server.") != 1 {
-					t.Fatalf("unchecked-key disclosure missing or repeated: status=%d output=%q", status, output)
+				status, output, _ := f.run(t, "agents", "login", "agent01", agent, "proxy", "--url", url, "--model", "chosen")
+				if strings.Contains(output, key) || !strings.Contains(output, "payload=") || !strings.Contains(output, "diagnostic=") {
+					t.Fatalf("complete output leaked the key or dropped manager content: %q", output)
 				}
-				if !strings.Contains(output, "provided=[redacted]\n") || !strings.Contains(output, "diagnostic=[redacted]\n") || strings.Contains(output, "provided="+key) || strings.Contains(output, "diagnostic="+key) {
-					t.Fatalf("manager content was not redacted: %q", output)
+				if status != 0 || strings.Count(output, tc.notice) != 1 {
+					t.Fatalf("unchecked-key disclosure missing or repeated: status=%d output=%q", status, output)
 				}
 			})
 		}
@@ -61,10 +75,10 @@ func TestProxyDisclosureExcludesFailureAndRemoval(t *testing.T) {
 			command := "exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " agents login copilot proxy " + strings.Join(options, " ")
 			f.responses[command] = answer
 			status, output, _ := f.run(t, append([]string{"agents", "login", "agent01", "copilot", "proxy"}, options...)...)
-			if status != wantStatus || strings.Contains(output, "the key was not checked against the server.") {
+			if status != wantStatus || strings.Contains(output, "the key was not checked against the server.") || strings.Contains(output, "SERVER KEY CHECK SKIPPED") {
 				t.Fatalf("unexpected setup notice or status: status=%d output=%q", status, output)
 			}
-			if !remove && (!strings.Contains(output, "provided=[redacted]") || strings.Contains(output, "provided=not")) {
+			if !remove && (!strings.Contains(output, "provided= [redacted] ") || strings.Contains(output, "provided=not")) {
 				t.Fatalf("failure leaked the key: %q", output)
 			}
 		})
