@@ -49,6 +49,33 @@ func TestProxyDisclosureSurvivesSecretRedaction(t *testing.T) {
 				if status != 0 || strings.Count(output, tc.notice) != 1 {
 					t.Fatalf("unchecked-key disclosure missing or repeated: status=%d output=%q", status, output)
 				}
+				if key == "e" && !strings.Contains(output, "WARNING THE PROXY KEY TRAVELS UNENCRYPTED OVER HTTP\n") {
+					t.Fatalf("HTTP warning is not readable: %q", output)
+				}
+			})
+		}
+	}
+}
+
+// TestProxyFailureExcludesSecret proves refused setup reports a readable failure without the accepted key through RunWithHost.
+func TestProxyFailureExcludesSecret(t *testing.T) {
+	for _, agent := range []string{"claude", "codex", "copilot", "opencode"} {
+		for _, key := range []string{"proxy", "configuration", "failed", "P", "F", "[redacted]", "]x", "sentinel-proxy-key"} {
+			t.Run(agent+"/"+key, func(t *testing.T) {
+				f := sandboxStateFixture(t)
+				f.host.Stdin = strings.NewReader(key + "\n")
+				f.host.IsInputTerminal = func(io.Reader) bool { return false }
+				f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+				f.responses[agentWorkStatus+agent] = response{Output: fmt.Sprintf(`{"name":%q,"enabled":true,"installed_version":"1.2.3"}`, agent)}
+				command := "exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " agents login " + agent + " proxy --url https://proxy.example --model chosen"
+				f.responses[command] = response{Exit: 23, ExpectedStdin: key + "\n", Stderr: "provided=" + key + "x\n"}
+				status, output, _ := f.run(t, "agents", "login", "agent01", agent, "proxy", "--url", "https://proxy.example", "--model", "chosen")
+				if status != 1 || strings.Contains(output, key) || !strings.Contains(output, "provided=") {
+					t.Fatalf("failure leaked key or lost status/content: status=%d output=%q", status, output)
+				}
+				if !strings.Contains(strings.ToLower(output), "proxy configuration failed\n") || strings.Contains(output, "SERVER KEY CHECK SKIPPED") {
+					t.Fatalf("failure lacks readable error or claims success: %q", output)
+				}
 			})
 		}
 	}
@@ -83,6 +110,58 @@ func TestProxyDisclosureExcludesFailureAndRemoval(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestProxyOutputFailureExcludesSecret proves output failures retain a readable key-free error through RunWithHost.
+func TestProxyOutputFailureExcludesSecret(t *testing.T) {
+	for _, phase := range []string{"warning", "stdout", "stderr"} {
+		for _, key := range []string{"report", "configuration", "C"} {
+			t.Run(phase+"/"+key, func(t *testing.T) {
+				f := sandboxStateFixture(t)
+				f.host.Stdin = strings.NewReader(key + "\n")
+				f.host.IsInputTerminal = func(io.Reader) bool { return false }
+				f.responses[agentWorkProbe] = response{Output: "sandboxed-agents-manager development\n"}
+				f.responses[agentWorkStatus+"copilot"] = response{Output: `{"name":"copilot","enabled":true,"installed_version":"1.0.106"}`}
+				url := "https://proxy.example"
+				if phase == "warning" {
+					url = "http://proxy.example"
+				}
+				command := "exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " agents login copilot proxy --url " + url + " --model chosen"
+				f.responses[command] = response{ExpectedStdin: key + "\n", Output: "result\n", Stderr: "diagnostic\n"}
+				data, err := json.Marshal(f.responses)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("TEST_PODMAN_RESPONSES", string(data))
+				var output strings.Builder
+				var failed proxyFailOnceWriter
+				var stdout, stderr io.Writer = &output, &failed
+				if phase == "stdout" {
+					stdout, stderr = &failed, &output
+				}
+				status := cli.RunWithHost([]string{"agents", "login", "agent01", "copilot", "proxy", "--url", url, "--model", "chosen"}, stdout, stderr, f.host)
+				combined := output.String() + failed.output.String()
+				if status != 1 || strings.Contains(combined, key) || !strings.Contains(strings.ToLower(combined), "cannot report proxy configuration result\n") {
+					t.Fatalf("output failure lost error or leaked key: status=%d output=%q", status, combined)
+				}
+			})
+		}
+	}
+}
+
+// proxyFailOnceWriter rejects the first output write and captures later error reporting.
+type proxyFailOnceWriter struct {
+	output strings.Builder
+	failed bool
+}
+
+// Write fails once before accepting subsequent diagnostic bytes.
+func (w *proxyFailOnceWriter) Write(data []byte) (int, error) {
+	if !w.failed {
+		w.failed = true
+		return 0, io.ErrClosedPipe
+	}
+	return w.output.Write(data)
 }
 
 // TestProxyWorkflowGrammar proves proxy options normalize URLs and reject invalid combinations at cli.Parse.
