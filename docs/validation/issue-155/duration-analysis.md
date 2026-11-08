@@ -83,13 +83,12 @@ are not substituted for the suite total.
 53.4% of Windows's. Its absolute difference is 1,128.53 seconds, 47.3% of the total
 2,383.81-second difference. The largest ratio is instead `lifecycle`, at 14.52×.
 Neither identifies the responsible operation: a case includes multiple CLI,
-Podman, build, readiness, and smoke operations. A slow `up` is not evidence of
-ownership mapping. The preflight ratio also does not establish preflight as the
-dominant contributor to the overall difference.
+Podman, build, readiness, and smoke operations. The preflight ratio also does not establish preflight as the dominant
+contributor to the overall difference.
 
 ## Disk and cleanup
 
-Before any build, each host agent recorded the complete engine inventory,
+Before any build, each operator recorded the complete engine inventory,
 container image references, storage usage, and free space. The conservative
 additional-space estimates were 87 GiB for Linux and 53.6 GB for Windows, including
 two image generations, intermediate/transient layers, writable sandboxes, and
@@ -117,7 +116,8 @@ records. Logs, checkouts, and evidence were retained; no disk compaction was don
 ## Historical evidence and conclusion
 
 The ~6× figure in [story #152](https://github.com/grauzone-labs/sandboxed-agents/issues/152)
-remains an unrecorded observation. The preceding retained pair at `dbd5237` was
+remains an unrecorded observation. The preceding pair with retained JSON suite
+records referenced by the story, at `dbd5237`, was
 1,944.72 seconds on Linux and 4,266.48 seconds on Windows, or 2.19×, as recorded in
 the [maintainer run history](../../maintainers.md#live-runs-on-record). Historical
 revisions, suites, and host state differ. The current 2.46× ratio neither
