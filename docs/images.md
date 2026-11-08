@@ -160,3 +160,85 @@ SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1 \
 ```
 
 Without the image opt-in the suite runs its other cases and records the image coverage as `not-run`. The suite removes its sandboxes, volumes, and group state but none of the images it builds; removing them is a maintainer step, and the runs on record are listed in the [maintainer notes](maintainers.md#live-runs-on-record).
+
+### Retaining case durations
+
+The schema 2 record holds results without timings. `go test -v` prints each case's duration and the suite's total, and that log is private: it holds group, sandbox, container, volume, and image names, paths, and program output. A run that should leave duration evidence keeps that log on the host where the suite ran, outside the record directory, and derives from it a sanitized file, `durations-linux.json` or `durations-windows-11.json`, written beside the schema 2 record. Only that file is shared with the run's evidence. Collecting it reads the record and never changes it, so the schema 2 record, the release gate, and the failing record that an interrupted run leaves are the same with or without it.
+
+**Run the suite with its log kept.** Both commands send the verbose output to a log file and keep the exit status of `go test`, the suite's verdict. Add `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1` as above whenever the image coverage is selected, which a release run requires.
+
+On Linux, in Bash:
+
+```sh
+PRIVATE="$HOME/live-suite-private"
+mkdir -p "$PRIVATE" && chmod 700 "$PRIVATE"
+SANDBOXED_AGENTS_LIVE_TESTS=1 \
+SANDBOXED_AGENTS_GROUP=live \
+SANDBOXED_AGENTS_LIVE_RECORD_DIR="$HOME/live-suite-records" \
+SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1 \
+  go test ./cmd/sandboxed-agents -run '^TestLiveSuite$' -timeout 120m -v \
+  > "$PRIVATE/live-suite-linux.log" 2>&1
+status=$?
+```
+
+On Windows, in PowerShell:
+
+```powershell
+$private = Join-Path $env:USERPROFILE 'live-suite-private'
+New-Item -ItemType Directory -Force $private | Out-Null
+$env:SANDBOXED_AGENTS_LIVE_TESTS = '1'
+$env:SANDBOXED_AGENTS_GROUP = 'live'
+$env:SANDBOXED_AGENTS_LIVE_RECORD_DIR = Join-Path $env:USERPROFILE 'live-suite-records'
+$env:SANDBOXED_AGENTS_LIVE_IMAGES_TESTS = '1'
+go test ./cmd/sandboxed-agents -run '^TestLiveSuite$' -timeout 120m -v 2>&1 |
+  Out-File -Encoding utf8 -FilePath (Join-Path $private 'live-suite-windows-11.log')
+$status = $LASTEXITCODE
+```
+
+Watch a run from a second session with `tail -f` on Linux or `Get-Content -Wait -Tail 20` on Windows; to run in the background, start the same command from a subshell or job and have it write `$status` to a file when `go test` returns. Three habits keep the exit status honest:
+
+- **A pipeline reports its last command.** `go test ... | tee LOG` exits 0 when `tee` does, whether or not the suite passed or was interrupted. In Bash set `set -o pipefail` first and read `${PIPESTATUS[0]}`; in PowerShell read `$LASTEXITCODE`, which only a native program sets, never `$?`, which reports the pipeline.
+- **Keep PowerShell's `$ErrorActionPreference` at `Continue`.** With `Stop`, Windows PowerShell 5.1 turns a line that `go` writes to standard error, such as `go: downloading`, into a terminating error that can end the run early.
+- **Write the Windows log as UTF-8.** `>` and `Tee-Object` in Windows PowerShell 5.1 write UTF-16, which the collector reads as a log with no cases.
+
+The suite's exit status is the result to report, and an interrupted or failed run is reported as it ended. Do not rerun or edit anything to make collection succeed.
+
+**Observe the comparison context before the suite starts.** Save a snapshot of the engine's inventory (`podman images --all --no-trunc` with each image's labels and `podman ps --all`; on Windows with the `--connection` the preflight selects) and a note of what else runs on the host. Classify the three values from that snapshot alone, and for `base_image` only after the run, because the asset hash it needs appears first in the log's preflight `version` output; the engine after the run has been changed by the suite and shows nothing about its start. The collector takes three categorical values and nothing else about the host. `unknown` is the answer whenever a value cannot be shown from the snapshot, and an elapsed time never shows it.
+
+| Value | Choices | Meaning |
+|---|---|---|
+| `host_load` | `idle`, `shared`, `unknown` | `idle` when the snapshot and the host show nothing else running, `shared` when something else was (containers of another group, another build or suite, the maintainer's own work), `unknown` when it was not looked at. |
+| `base_image` | `present`, `absent`, `unknown` | `present` when the snapshot holds a base image (toolchain set `none`) whose `io.sandboxed-agents.asset-sha256` label equals the asset hash that the log's preflight `version` output prints, `absent` when a snapshot that was read completely holds none, `unknown` when there is no snapshot, it is incomplete, or the log does not print the hash. |
+| `build_cache` | `warm`, `cold`, `unknown` | A proxy from the snapshot, not a cache reading: no query reports the build cache before a run, and a build's own `Using cache` lines are not read. `warm` when the snapshot holds images labelled `io.sandboxed-agents.image` that carry this run's asset hash, `cold` when a complete `--all` snapshot holds no image with that label and no untagged image, `unknown` otherwise, including images of other asset hashes only. `warm` does not mean the run hit the cache, and neither value predicts a faster or slower run. |
+
+The revision, the platform (`linux` or `windows-11`), and the selected coverage (`image_part_selected`, `image_part_ran`, `image_coverage_complete`) are categorical facts too, and the collector copies them from the schema 2 record rather than taking them as input.
+
+**Collect the durations** after the suite has returned, pass or fail, from the repository root of the checkout that ran it. The collector reads the log of one run on standard input and the run's own schema 2 record named by `-record`, takes the three context values from the flags (each defaults to `unknown`), and prints the path of the file it wrote. Feed it one run's log: a log with a case twice is refused, and an existing durations file is replaced.
+
+On Linux:
+
+```sh
+go run ./internal/validationduration/cmd/retain-durations \
+  -record "$HOME/live-suite-records/live-suite-linux.json" \
+  -host-load idle -base-image absent -build-cache cold \
+  < "$PRIVATE/live-suite-linux.log"
+```
+
+On Windows, where PowerShell has no `<` redirection and the log is piped in:
+
+```powershell
+Get-Content -Encoding utf8 (Join-Path $private 'live-suite-windows-11.log') |
+  go run ./internal/validationduration/cmd/retain-durations `
+    -record (Join-Path $env:SANDBOXED_AGENTS_LIVE_RECORD_DIR 'live-suite-windows-11.json') `
+    -host-load idle -base-image absent -build-cache cold
+```
+
+Use the values you observed in place of `idle`, `absent`, and `cold`. The collector exits non-zero with a one-line message when the record is not a schema 2 live-suite record, a context value is outside its choices, or the log repeats a case; it then writes nothing, and the suite's status and record are unaffected. A log from an interrupted run yields the cases that finished, beside the interrupted run's failing record.
+
+**What the file holds.** The revision, the platform, the three coverage flags, the three context values, and for each top-level case of the suite that appears in the log its `name`, `result` (`pass`, `fail`, or `skip`), and `seconds`. It holds no group, sandbox, container, volume, or image names, no paths, no account details, and no program output: the collector keeps nothing from the log but the fixed case names and their numbers. Read three things from it correctly:
+
+- **A case's `seconds` is inclusive.** It is the time `go test -v` printed for that case, with its nested subtests and its cleanup inside it. The collector discards nested lines; never add them, and never add cases to rebuild the suite's total, because the total also counts what runs outside the cases.
+- **A missing case did not report.** An interrupted run, or a revision whose suite lacks the case, leaves it out of the file; it is not zero. A `skip` carries the time the log printed.
+- **The coverage flags say what ran.** Compare only runs whose coverage matches; a run without the image coverage omits the case that dominates the total.
+
+**Comparing runs.** Put the differences first: revision, coverage, and each context value, with `unknown` named as unknown, never treated as equal to a known value or to another `unknown`. Then compare the same case in two files of one platform, or in a Linux and a Windows file of a paired run, which has the same revision and the same coverage, so that the platform is the difference under study; the ratio of one case between them is a comparison only on those terms. Two comparable runs are a starting sample, not proof, and a duration shows how long a case took, not why; a cause or a speedup needs its own evidence.
