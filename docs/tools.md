@@ -68,7 +68,7 @@ Five different things carry a login or a pairing name in T3 Code's setup. Only t
 | **Tailscale node login** | `tools tailscale NAME t3code login` | Signs the sandbox's own tailnet node in to **your tailnet**. | Your tailnet's device list. |
 | **Agent provider sign-in** | `agents login NAME AGENT [WORKFLOW]` | Codex, Claude, Copilot, or OpenCode sign-in. | The agent's credentials in the sandbox. |
 
-T3 Connect, QR pairing, and the Tailscale node authenticate **no agent provider**: sign in to an agent with `agents login NAME AGENT [WORKFLOW]`, whether or not T3 Code is enabled. The workflow name is optional only for an agent with exactly one workflow; `claude` has two and `codex` has three, so both require it. [Sign in to an agent](agents.md#sign-in-to-an-agent) lists each agent's workflows and the options of the `proxy` workflows of `claude` and `codex`. `tools connect … unlink` and `logout` never touch an agent or integration login.
+T3 Connect, QR pairing, and the Tailscale node authenticate **no agent provider**: sign in to an agent with `agents login NAME AGENT [WORKFLOW]`, whether or not T3 Code is enabled. The workflow name is optional only for an agent with exactly one workflow; `claude` and `opencode` each have two and `codex` has three, so all three require it. [Sign in to an agent](agents.md#sign-in-to-an-agent) lists each agent's workflows and the options of the `proxy` workflows of `claude`, `codex`, and `opencode`. `tools connect … unlink` and `logout` never touch an agent or integration login.
 
 ## Enable T3 Code
 
