@@ -165,6 +165,8 @@ Without the image opt-in the suite runs its other cases and records the image co
 
 The schema 2 record holds results without timings. `go test -v` prints each case's duration and the suite's total, and that log is private: it holds group, sandbox, container, volume, and image names, paths, and program output. A run that should leave duration evidence keeps that log on the host where the suite ran, outside the record directory, and derives from it a sanitized file, `durations-linux.json` or `durations-windows-11.json`, written beside the schema 2 record. Only that file is shared with the run's evidence. Collecting it reads the record and never changes it, so the schema 2 record, the release gate, and the failing record that an interrupted run leaves are the same with or without it.
 
+`go test -v` prints a top-level case's completion line only once the parent test ends, so the log of a run that the parent did not outlive may hold none of its case durations, finished cases included. The file records what the log emitted and nothing more.
+
 **Run the suite with its log kept.** Both commands send the verbose output to a log file and keep the exit status of `go test`, the suite's verdict. Add `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1` as above whenever the image coverage is selected, which a release run requires.
 
 On Linux, in Bash:
@@ -233,12 +235,16 @@ Get-Content -Encoding utf8 (Join-Path $private 'live-suite-windows-11.log') |
     -host-load idle -base-image absent -build-cache cold
 ```
 
-Use the values you observed in place of `idle`, `absent`, and `cold`. The collector exits non-zero with a one-line message when the record is not a schema 2 live-suite record, a context value is outside its choices, or the log repeats a case; it then writes nothing, and the suite's status and record are unaffected. A log from an interrupted run yields the cases that finished, beside the interrupted run's failing record.
+Use the values you observed in place of `idle`, `absent`, and `cold`. The collector exits non-zero with a one-line message when the record is not a schema 2 live-suite record, a context value is outside its choices, or the log repeats a case; it then writes nothing, and the suite's status and record are unaffected.
+
+**A file is current evidence only when this invocation's collector succeeded.** Success is exit status 0 and the printed path of the file just written. After any failure, the earlier `durations-<platform>.json` that may sit in the record directory stays exactly as it was and belongs to an earlier run, even when it names the same revision. Do not read, quote, or report its numbers as this run's: the run's durations are `unverified` with the collector's own message, and the earlier file is left in place.
+
+An interrupted run is collected from its failing record and the log as it ended. The file holds only the completion lines that log emitted. A signal or `-timeout` that ends the test binary before the parent returns yields a successful collection with an empty `cases` list: valid, no observations, not zero and not proof that no case finished. A case that fails while the suite still returns (status 1) leaves its parent's completion lines in the log, and they are collected.
 
 **What the file holds.** The revision, the platform, the three coverage flags, the three context values, and for each top-level case of the suite that appears in the log its `name`, `result` (`pass`, `fail`, or `skip`), and `seconds`. It holds no group, sandbox, container, volume, or image names, no paths, no account details, and no program output: the collector keeps nothing from the log but the fixed case names and their numbers. Read three things from it correctly:
 
 - **A case's `seconds` is inclusive.** It is the time `go test -v` printed for that case, with its nested subtests and its cleanup inside it. The collector discards nested lines; never add them, and never add cases to rebuild the suite's total, because the total also counts what runs outside the cases.
-- **A missing case did not report.** An interrupted run, or a revision whose suite lacks the case, leaves it out of the file; it is not zero. A `skip` carries the time the log printed.
+- **A missing case did not report.** A case the log has no completion line for, because the run was interrupted before the parent printed it or because the revision's suite lacks the case, is left out of the file; it is not zero, and the file does not show whether the case finished. A `skip` carries the time the log printed.
 - **The coverage flags say what ran.** Compare only runs whose coverage matches; a run without the image coverage omits the case that dominates the total.
 
 **Comparing runs.** Put the differences first: revision, coverage, and each context value, with `unknown` named as unknown, never treated as equal to a known value or to another `unknown`. Then compare the same case in two files of one platform, or in a Linux and a Windows file of a paired run, which has the same revision and the same coverage, so that the platform is the difference under study; the ratio of one case between them is a comparison only on those terms. Two comparable runs are a starting sample, not proof, and a duration shows how long a case took, not why; a cause or a speedup needs its own evidence.
