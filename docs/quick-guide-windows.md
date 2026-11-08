@@ -154,7 +154,7 @@ $LASTEXITCODE
 
 **Expected:** `/workspace` and `agent` on two lines, then `7`: the exit status of `shell` is the status of the `exit 7` that Bash read, and `$LASTEXITCODE` holds it.
 
-**If it fails:** the output names the cause: `start agent01` for a stopped sandbox, or `up agent01` for one that does not exist.
+**If it fails:** the output names the cause: `start agent01` for a stopped sandbox, and for a sandbox that does not exist it reports that the sandbox does not exist.
 
 `agents run` runs an agent once in `/workspace` and passes everything after the agent name on to the agent, `--help` included, so the first command below prints Claude Code's own help, not that of `sandboxed-agents`. PowerShell splits the command line before `sandboxed-agents` starts: single quotes keep `Print $HOME` as one argument and expand nothing, so the agent receives the text `$HOME` as written. To put a single quote inside single quotes, write it twice: `'it''s'`. Keep double quotes and empty arguments out of an argument in Windows PowerShell 5.1, which removes them; PowerShell 7.3 and newer pass them on ([command reference](command-reference.md#agents-run)).
 
