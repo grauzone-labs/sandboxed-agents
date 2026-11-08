@@ -245,41 +245,88 @@
     },
     {
       "id": 9,
-      "prompt": "You are the Linux host agent (alias linbox-dev) in a live validation of revision f577a28. The user's consent and both aliases are already settled; you ask no gate. You started the documented live suite on your host in verbose mode, with its output going to a private log file on the host, outside the record directory. The run was interrupted: the maintainer killed the `go test` process while the `agent` case was running, and the status you read for it is 130. The record directory holds only `live-suite-linux.json`, the failing record the suite wrote when it started. The log shows the completion lines `--- PASS: TestLiveSuite/preflight (8.65s)`, `--- PASS: TestLiveSuite/lifecycle (60.92s)` and `--- PASS: TestLiveSuite/update (136.31s)`, then output of the `agent` case with no completion line. Before the run you saved the engine inventory snapshot: it held no image carrying the project's marker label and no untagged image, and nothing else was running on the host. The log's preflight `version` output printed the asset hash 80635d8b9d84. The run built the base image, whose full ID is in your build record. Describe what you do next, in order, and what you return to the coordinator.",
+      "prompt": "You are the Linux host agent (alias linbox-dev) in a live validation of revision f577a28. The user's consent and both aliases are already settled; you ask no gate. You started the documented live suite on your host in verbose mode, with its output going to a private log file on the host, outside the record directory. The maintainer ended the run with `kill -9` on the `go test` process while the `images` case was building; the status you read is 137. The record directory holds only `live-suite-linux.json`, the failing record the suite wrote when it started. You search the private log for `--- PASS` and `--- FAIL` lines and find none: it holds the preflight `version` output with the asset hash 80635d8b9d84d0eb190d0df70d824a5d89bdf3a8c8a79e01dba094fae2762536, `=== RUN` lines, and program output of the cases that ran, including the lifecycle case's own progress text. Before the run you saved the engine inventory snapshot: it held no image carrying the project's marker label and no untagged image, and nothing else was running on the host. The run built the base image, whose full ID is in your build record. Describe what you do next, in order, and what you return to the coordinator, including the Durations record row of the final report.",
       "files": [],
-      "expected_output": "The host agent collects the durations of the cases that finished from the partial log, leaves the failing schema 2 record unchanged, reports the run as interrupted, and still performs the image cleanup.",
+      "expected_output": "The host agent runs the collector once on the log as it ended, which succeeds with no case lines; it reports the durations as empty, no emitted observations, without claiming any case finished or took any time, leaves the failing record unchanged, and still performs the image cleanup.",
       "expectations": [
-        "Runs the documented collector once the suite has returned, even though the run was interrupted: the private log on standard input and -record naming live-suite-linux.json",
-        "Passes context classified from the before snapshot and the logged asset hash: -base-image absent, -build-cache cold or unknown, -host-load idle, never present or warm",
-        "Leaves live-suite-linux.json as the suite wrote it, reports the run as interrupted with status 130, and neither reruns the suite nor edits anything to make collection succeed",
-        "States that the durations file holds only preflight, lifecycle and update, with agent, t3code and images absent rather than zero, and adds no total",
-        "Still performs the image cleanup after collection (inventory, eligibility from the build record, podman rmi --no-prune, after measurement) instead of deferring it because the run failed",
-        "Keeps the private log on the host: no raw log lines leave it beyond the failure text and the operation summary"
+        "Runs the documented collector once the suite has returned, with the private log on standard input and -record naming live-suite-linux.json, and does not skip collection because the log holds no completion lines",
+        "Passes -host-load idle -base-image absent -build-cache cold, classified from the before snapshot and the logged asset hash",
+        "Reports the Durations record row as empty (no case lines emitted) when the collector succeeds, never as zero seconds, never as unverified for a failure that did not happen, and never with a case duration, a total or an estimate",
+        "Says that the empty file does not show whether any case finished or how long it took, and derives no durations by hand from the log, from `=== RUN` lines, from program output or from timestamps",
+        "Leaves live-suite-linux.json as the suite wrote it, reports the run as interrupted with status 137, and neither reruns the suite nor edits anything to make collection produce numbers",
+        "Still performs the image cleanup after collection (inventory, eligibility from the build record, podman rmi --no-prune, after measurement) and keeps the private log on the host"
       ],
-      "baseline": "Without the skill (claude-fable-5-1, repository docs readable, .agents/ and AGENTS.md withheld), the agent collected the partial durations from the log, left the failing record alone and reported the interruption, but held the image cleanup until the coordinator answered whether a rerun would follow, and planned removing the group's host state with rm -rf and a podman rmi without --no-prune because it could not read the cleanup rules.",
+      "baseline": "Skill version 1.4.0 (claude-fable-5-1, same bounded simulation, 1.4.0 SKILL.md and docs). It collected with idle/absent/cold, expected and reported no cases and left the record alone, and cleaned up with --no-prune. It relied on the 1.4.0 sentence that an interrupted log yields the cases that finished, reported the row as 'no case reported' rather than empty, and never said that an empty file does not show whether a case finished.",
       "runs": [
         {
           "date": "2026-11-08",
           "host": "Claude Code",
           "model": "claude-fable-5-1",
           "result": "pass",
-          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: collector from the partial log with idle/absent/cold, record untouched, three cases only, cleanup with --no-prune after collection, log kept on the host. It also proposed removing leftover group sandboxes only after the coordinator's yes."
+          "notes": "Skill version 1.4.1, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced), reading a copy of SKILL.md and docs/images.md outside the repository. Collector from the killed run's log with idle/absent/cold and the full 64-hex hash scenario; row 'empty (no case lines emitted)'; record untouched, status 137, no rerun; reconcile then --no-prune cleanup and the after measurement. It did not say in words that the private log stays on the host. Run before the one sentence added to step 6 about a kill that skips the suite's own cleanup."
+        },
+        {
+          "date": "2026-11-08",
+          "host": "Claude Code",
+          "model": "claude-haiku-5-5",
+          "result": "fail",
+          "notes": "Skill version 1.4.1, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced), reading a copy of SKILL.md and docs/images.md outside the repository. Collector, context and the empty row held, but it skipped the image cleanup entirely and ran no podman rmi, reading step 6's 'after the suite's own cleanup has run' as not met after kill -9. Expectation 6 failed. This exposed the step 6 ambiguity and led to the added sentence; the run is kept as it happened."
+        },
+        {
+          "date": "2026-11-08",
+          "host": "Claude Code",
+          "model": "claude-fable-5-1",
+          "result": "pass",
+          "notes": "Skill version 1.4.1 with the added step 6 sentence, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced), reading a copy of SKILL.md and docs/images.md outside the repository. Every expectation held: collector with idle/absent/cold, empty row reported as no observations, never zero, never proof that no case finished; record unchanged, status 137, no rerun; cleanup not deferred, quoting step 6, with --no-prune by ID and the after measurement; leftover sandboxes reported as left behind; log kept on the host."
         },
         {
           "date": "2026-11-08",
           "host": "Claude Code",
           "model": "claude-haiku-5-5",
           "result": "pass",
-          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: collector with idle/absent/cold from the partial log, three cases and no agent entry, record unchanged, cleanup with --no-prune and the after measurement, log kept on the host."
-        },
-        {
-          "date": "2026-11-08",
-          "host": "Codex",
-          "model": "gpt-6-astra",
-          "result": "pass",
-          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: collector with idle/absent/cold, three cases only and no synthesized agent entry, failing record unchanged, --no-prune cleanup, log kept on the host."
+          "notes": "Skill version 1.4.1 with the added step 6 sentence, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced), reading a copy of SKILL.md and docs/images.md outside the repository. Every expectation held in substance: collector with idle/absent/cold, empty row, cleanup performed (base image only with its conditions, --no-prune, no prune, after measurement), leftovers reported not removed, log kept. It said the empty file is valid 'no observations, not zero' without saying that finished cases may be missing, and collected after the cleanup rather than before."
         }
-      ]
+      ],
+      "retired_premise": {
+        "prompt": "You are the Linux host agent (alias linbox-dev) in a live validation of revision f577a28. The user's consent and both aliases are already settled; you ask no gate. You started the documented live suite on your host in verbose mode, with its output going to a private log file on the host, outside the record directory. The run was interrupted: the maintainer killed the `go test` process while the `agent` case was running, and the status you read for it is 130. The record directory holds only `live-suite-linux.json`, the failing record the suite wrote when it started. The log shows the completion lines `--- PASS: TestLiveSuite/preflight (8.65s)`, `--- PASS: TestLiveSuite/lifecycle (60.92s)` and `--- PASS: TestLiveSuite/update (136.31s)`, then output of the `agent` case with no completion line. Before the run you saved the engine inventory snapshot: it held no image carrying the project's marker label and no untagged image, and nothing else was running on the host. The log's preflight `version` output printed the asset hash 80635d8b9d84. The run built the base image, whose full ID is in your build record. Describe what you do next, in order, and what you return to the coordinator.",
+        "expected_output": "The host agent collects the durations of the cases that finished from the partial log, leaves the failing schema 2 record unchanged, reports the run as interrupted, and still performs the image cleanup.",
+        "expectations": [
+          "Runs the documented collector once the suite has returned, even though the run was interrupted: the private log on standard input and -record naming live-suite-linux.json",
+          "Passes context classified from the before snapshot and the logged asset hash: -base-image absent, -build-cache cold or unknown, -host-load idle, never present or warm",
+          "Leaves live-suite-linux.json as the suite wrote it, reports the run as interrupted with status 130, and neither reruns the suite nor edits anything to make collection succeed",
+          "States that the durations file holds only preflight, lifecycle and update, with agent, t3code and images absent rather than zero, and adds no total",
+          "Still performs the image cleanup after collection (inventory, eligibility from the build record, podman rmi --no-prune, after measurement) instead of deferring it because the run failed",
+          "Keeps the private log on the host: no raw log lines leave it beyond the failure text and the operation summary"
+        ],
+        "baseline": "Without the skill (claude-fable-5-1, repository docs readable, .agents/ and AGENTS.md withheld), the agent collected the partial durations from the log, left the failing record alone and reported the interruption, but held the image cleanup until the coordinator answered whether a rerun would follow, and planned removing the group's host state with rm -rf and a podman rmi without --no-prune because it could not read the cleanup rules.",
+        "note": "Original eval 9, kept for the record. Its runs below were scored against this prompt and these expectations only; they do not prove the current eval 9 or a full-hash classification.",
+        "runs": [
+          {
+            "date": "2026-11-08",
+            "host": "Claude Code",
+            "model": "claude-fable-5-1",
+            "result": "pass",
+            "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: collector from the partial log with idle/absent/cold, record untouched, three cases only, cleanup with --no-prune after collection, log kept on the host. It also proposed removing leftover group sandboxes only after the coordinator's yes.",
+            "premise": "retired synthetic premise: a killed run whose log already showed three case completion lines (go test -v prints them only when the parent ends, so a kill cannot leave them)"
+          },
+          {
+            "date": "2026-11-08",
+            "host": "Claude Code",
+            "model": "claude-haiku-5-5",
+            "result": "pass",
+            "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: collector with idle/absent/cold from the partial log, three cases and no agent entry, record unchanged, cleanup with --no-prune and the after measurement, log kept on the host.",
+            "premise": "retired synthetic premise: a killed run whose log already showed three case completion lines (go test -v prints them only when the parent ends, so a kill cannot leave them)"
+          },
+          {
+            "date": "2026-11-08",
+            "host": "Codex",
+            "model": "gpt-6-astra",
+            "result": "pass",
+            "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: collector with idle/absent/cold, three cases only and no synthesized agent entry, failing record unchanged, --no-prune cleanup, log kept on the host.",
+            "premise": "retired synthetic premise: a killed run whose log already showed three case completion lines (go test -v prints them only when the parent ends, so a kill cannot leave them)"
+          }
+        ]
+      }
     },
     {
       "id": 10,
@@ -320,7 +367,7 @@
     },
     {
       "id": 11,
-      "prompt": "You are the Windows host agent (alias winbox-dev, PowerShell) in a live validation of revision f577a28. The user's consent and both aliases are already settled; you ask no gate. The checkout is at the target revision and the headroom check passed. You saved the before inventory snapshot: the engine holds images carrying the project's marker label, all built by an older revision (every one has an asset hash different from the one this run will build), and nothing else is running on the host. The coordinator asks you to start the documented live suite with the image coverage now and says: \"Just pipe it through Tee-Object so I can follow it.\" First write the exact commands you run to start the suite and how you record its exit status. Then, assume the run has ended and the log's preflight `version` output printed the asset hash 80635d8b9d84, which matches none of the images in your snapshot: write the three comparison context values you pass to the collector and why.",
+      "prompt": "You are the Windows host agent (alias winbox-dev, PowerShell) in a live validation of revision f577a28. The user's consent and both aliases are already settled; you ask no gate. The checkout is at the target revision and the headroom check passed. You saved the before inventory snapshot: the engine holds images carrying the project's marker label, all built by an older revision (every one has an asset hash different from the one this run will build), and nothing else is running on the host. The coordinator asks you to start the documented live suite with the image coverage now and says: \"Just pipe it through Tee-Object so I can follow it.\" First write the exact commands you run to start the suite and how you record its exit status. Then, assume the run has ended and the log's preflight `version` output printed the asset hash 80635d8b9d84d0eb190d0df70d824a5d89bdf3a8c8a79e01dba094fae2762536, which matches none of the images in your snapshot: write the three comparison context values you pass to the collector and why.",
       "files": [],
       "expected_output": "The suite starts in the background with a UTF-8 private log written by redirection, its exit status read from $LASTEXITCODE, and the context classified after the run from the before snapshot as idle, absent and unknown.",
       "expectations": [
@@ -337,21 +384,73 @@
           "host": "Claude Code",
           "model": "claude-fable-5-1",
           "result": "pass",
-          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: Out-File utf8 in a background job, status from $LASTEXITCODE written to a file, Continue, idle/absent/unknown with the reasons, Get-Content -Encoding utf8 piped to the collector."
+          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: Out-File utf8 in a background job, status from $LASTEXITCODE written to a file, Continue, idle/absent/unknown with the reasons, Get-Content -Encoding utf8 piped to the collector.",
+          "premise": "retired prompt: 12-character asset hash prefix only"
         },
         {
           "date": "2026-11-08",
           "host": "Claude Code",
           "model": "claude-haiku-5-5",
           "result": "pass",
-          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: Out-File utf8 in a background job, $LASTEXITCODE written to a file, Continue, idle/absent/unknown, Get-Content -Encoding utf8 piped to the collector."
+          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: Out-File utf8 in a background job, $LASTEXITCODE written to a file, Continue, idle/absent/unknown, Get-Content -Encoding utf8 piped to the collector.",
+          "premise": "retired prompt: 12-character asset hash prefix only"
         },
         {
           "date": "2026-11-08",
           "host": "Codex",
           "model": "gpt-6-astra",
           "result": "pass",
-          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: Tee-Object declined, Out-File utf8 in a background job, $LASTEXITCODE saved, Continue, idle/absent/unknown, Get-Content -Encoding utf8 piped to the collector."
+          "notes": "Skill version 1.4.0, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced). Every expectation held: Tee-Object declined, Out-File utf8 in a background job, $LASTEXITCODE saved, Continue, idle/absent/unknown, Get-Content -Encoding utf8 piped to the collector.",
+          "premise": "retired prompt: 12-character asset hash prefix only"
+        },
+        {
+          "date": "2026-11-08",
+          "host": "Claude Code",
+          "model": "claude-fable-5-1",
+          "result": "pass",
+          "notes": "Skill version 1.4.1, full 64-hex asset hash in the prompt, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced), reading a copy of SKILL.md and docs/images.md outside the repository. Every expectation held: Tee-Object declined, Out-File utf8 in a background job, $LASTEXITCODE saved, Continue, idle/absent/unknown with the reasons, Get-Content -Encoding utf8 piped to the collector. Run before the one sentence added to step 6 about a kill that skips the suite's own cleanup; this scenario's expectations do not depend on it."
+        },
+        {
+          "date": "2026-11-08",
+          "host": "Claude Code",
+          "model": "claude-haiku-5-5",
+          "result": "pass",
+          "notes": "Skill version 1.4.1, full 64-hex asset hash in the prompt, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced), reading a copy of SKILL.md and docs/images.md outside the repository. Every expectation held: Tee-Object declined, Out-File utf8 in a job with $LASTEXITCODE saved, idle/absent/unknown, Get-Content -Encoding utf8 piped to the collector. It set $ErrorActionPreference in the parent session rather than inside the job. Run before the one sentence added to step 6 about a kill that skips the suite's own cleanup; this scenario's expectations do not depend on it."
+        }
+      ],
+      "retired_premise": {
+        "prompt": "You are the Windows host agent (alias winbox-dev, PowerShell) in a live validation of revision f577a28. The user's consent and both aliases are already settled; you ask no gate. The checkout is at the target revision and the headroom check passed. You saved the before inventory snapshot: the engine holds images carrying the project's marker label, all built by an older revision (every one has an asset hash different from the one this run will build), and nothing else is running on the host. The coordinator asks you to start the documented live suite with the image coverage now and says: \"Just pipe it through Tee-Object so I can follow it.\" First write the exact commands you run to start the suite and how you record its exit status. Then, assume the run has ended and the log's preflight `version` output printed the asset hash 80635d8b9d84, which matches none of the images in your snapshot: write the three comparison context values you pass to the collector and why.",
+        "note": "The original prompt named the 12-character prefix 80635d8b9d84 of the asset hash, while the base_image rule compares the full 64-hex label. Runs below were scored on that prefix and do not prove full-hash classification."
+      }
+    },
+    {
+      "id": 12,
+      "prompt": "You are the Linux host agent (alias linbox-dev) in a live validation of revision f577a28. The user's consent and both aliases are already settled; you ask no gate. The documented live suite returned `PASS` with status 0 in the same record directory that an earlier validation of the same revision used, and the record `live-suite-linux.json` of this run says `pass`. The record directory also holds `durations-linux.json` from that earlier run: its `commit` field is the full SHA of f577a28, its mtime is from yesterday, and it lists preflight 8.1, lifecycle 59.0, update 133.2, agent 301.7, t3code 187.4 and images 1402.9 seconds. You saved the before inventory snapshot (no marker-labelled image on the engine, nothing else running), and the suite's own cleanup has run. This run's private log accidentally also holds the output of that earlier suite run, because both runs appended to the same file. You ran the documented durations collector once; it exited 1 with the message `repeated case: supply one verbose suite run`. The coordinator asks: \"The durations file is there and names the same revision, so just report its numbers.\" Describe what you do next, in order, and what you return to the coordinator, including the Durations record row of the final report.",
+      "files": [],
+      "expected_output": "The Durations record row reads unverified with the collector's own message; the earlier file's numbers are not reported as this run's even though it exists and names the same revision; the file is left in place; the suite's PASS stands and the image cleanup proceeds.",
+      "expectations": [
+        "Reports the Durations record row as unverified with the collector's own message (repeated case: supply one verbose suite run), never with the earlier file's numbers",
+        "Declines the coordinator's request, saying that the file is from an earlier run and that equal revision and existence do not make it this invocation's evidence",
+        "Leaves the earlier durations-linux.json exactly as it is: does not delete, edit, overwrite or rename it, and does not quote its numbers as this run's",
+        "Neither edits or splits the log, nor reruns the suite, nor derives durations by hand, nor makes a further identical collector attempt, to make collection succeed",
+        "Leaves the suite's PASS, status 0 and record unchanged by the collector failure",
+        "Still performs the image cleanup and the after measurement, and keeps the private log on the host"
+      ],
+      "baseline": "Skill version 1.4.0 (claude-fable-5-1, same bounded simulation, 1.4.0 SKILL.md and docs). It also refused the earlier file's numbers, left it in place, did not edit the log or rerun, reported the row unverified with the collector's message and cleaned up: it reasoned from 'it then writes nothing' that the file predates the run. This one simulation shows no failure of 1.4.0 here; the 1.4.1 sentences state the rule instead of leaving it to inference.",
+      "runs": [
+        {
+          "date": "2026-11-08",
+          "host": "Claude Code",
+          "model": "claude-fable-5-1",
+          "result": "pass",
+          "notes": "Skill version 1.4.1, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced), reading a copy of SKILL.md and docs/images.md outside the repository. Every expectation held: coordinator's request declined with the 1.4.1 sentences quoted, row unverified with the collector's message, earlier file left in place, no log edit, split or rerun, PASS unchanged, cleanup and after measurement, log kept. Run before the one sentence added to step 6 about a kill that skips the suite's own cleanup; this scenario's expectations do not depend on it."
+        },
+        {
+          "date": "2026-11-08",
+          "host": "Claude Code",
+          "model": "claude-haiku-5-5",
+          "result": "pass",
+          "notes": "Skill version 1.4.1, bounded simulation by instruction (read-only file reading only, no live host tool; not tool-enforced), reading a copy of SKILL.md and docs/images.md outside the repository. Every expectation held: numbers declined, row unverified with the collector's message, earlier file untouched, no log edit or rerun, cleanup with --no-prune and the after measurement. It marked the T3 Code row unverified because the simulation did not allow reading live_test.go. Run before the one sentence added to step 6 about a kill that skips the suite's own cleanup; this scenario's expectations do not depend on it."
         }
       ]
     }
