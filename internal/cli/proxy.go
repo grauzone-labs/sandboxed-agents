@@ -42,7 +42,7 @@ func runProxyWorkflow(request Request, p podmanTarget, container string, stdout,
 		}
 		input = strings.NewReader(key + "\n")
 		if catalog.ProxyUnencrypted(request.Options["url"]) {
-			fmt.Fprintln(stderr, "Warning: the proxy key travels unencrypted over HTTP.")
+			fmt.Fprintln(stderr, redactProxyOutput("Warning: the proxy key travels unencrypted over HTTP.", key))
 		}
 	}
 	var output, diagnostic bytes.Buffer
@@ -51,10 +51,7 @@ func runProxyWorkflow(request Request, p podmanTarget, container string, stdout,
 		text   string
 		writer io.Writer
 	}{{output.String(), stdout}, {diagnostic.String(), stderr}} {
-		text := stream.text
-		if key != "" {
-			text = strings.ReplaceAll(text, key, "[redacted]")
-		}
+		text := redactProxyOutput(stream.text, key)
 		if _, writeErr := io.WriteString(stream.writer, text); writeErr != nil {
 			return 1, fmt.Errorf("cannot report proxy configuration result")
 		}
@@ -67,10 +64,29 @@ func runProxyWorkflow(request Request, p podmanTarget, container string, stdout,
 	}
 	const disclosure = "the key was not checked against the server."
 	if key != "" && strings.Contains(disclosure, key) {
-		// Restore only fixed host text; manager output remains fully redacted.
-		if _, writeErr := fmt.Fprintln(stdout, "Notice: "+disclosure); writeErr != nil {
-			return 1, fmt.Errorf("cannot report proxy configuration result")
+		// The two notices share only whitespace, which accepted keys cannot contain.
+		for _, notice := range []string{disclosure, "SERVER KEY CHECK SKIPPED"} {
+			if strings.Contains(notice, key) {
+				continue
+			}
+			if _, writeErr := fmt.Fprintln(stdout, notice); writeErr != nil {
+				return 1, fmt.Errorf("cannot report proxy configuration result")
+			}
+			break
 		}
 	}
 	return 0, nil
+}
+
+// redactProxyOutput removes a validated key without reintroducing it in the marker or across replacement boundaries.
+func redactProxyOutput(text, key string) string {
+	if key == "" {
+		return text
+	}
+	marker := "[redacted]"
+	if strings.Contains(marker, key) {
+		marker = "HIDDEN"
+	}
+	// Markers have disjoint character sets; spaces stop non-whitespace keys crossing their edges.
+	return strings.ReplaceAll(text, key, " "+marker+" ")
 }
