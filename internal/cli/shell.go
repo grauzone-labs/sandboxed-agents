@@ -17,6 +17,6 @@ func openShell(request Request, p podmanTarget, interactive bool, stdout, stderr
 	if interactive {
 		args = append(args, "-t")
 	}
-	args = append(args, "--user=1000:1000", "--env", "HOME=/home/agent", "--workdir=/workspace", names.Container, "/bin/bash")
+	args = append(appendAgentIdentity(args), "--workdir=/workspace", names.Container, "/bin/bash")
 	return p.run(p.host.Stdin, stdout, stderr, args...)
 }
