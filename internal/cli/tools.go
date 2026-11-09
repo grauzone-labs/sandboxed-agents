@@ -16,7 +16,7 @@ import (
 
 // toolManagerArgs builds the Podman arguments that start the manager directly as agent for Tool work (ADR-0009).
 func toolManagerArgs(request Request, payload ...string) []string {
-	return append([]string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent", DerivedNames(request.Group, request.Name).Container, managerPath, "tools"}, payload...)
+	return append(append(appendAgentIdentity([]string{"exec"}), DerivedNames(request.Group, request.Name).Container, managerPath, "tools"), payload...)
 }
 
 // administerTool enforces the ordered sandbox checks and dispatches a validated Tool operation to the manager as agent.
@@ -314,7 +314,7 @@ func connectTool(request Request, p podmanTarget, stdout, stderr io.Writer) erro
 // agentExecArgs builds the Podman arguments that run the manager directly as agent with the caller's
 // input, and with a terminal when the caller has one (ADR-0006).
 func agentExecArgs(interactive bool, container string, payload ...string) []string {
-	args := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent", "-i"}
+	args := append(appendAgentIdentity([]string{"exec"}), "-i")
 	if interactive {
 		args = append(args, "-t")
 	}
