@@ -97,7 +97,7 @@ func podmanTransportFailure(code int) bool {
 
 // runAgentChange captures an administrative mutation result and separates transport failures from operation failures.
 func runAgentChange(request Request, p podmanTarget, stdout io.Writer, payload ...string) error {
-	args := append([]string{"exec", "--user=0:0", DerivedNames(request.Group, request.Name).Container, managerPath}, payload...)
+	args := append(append(appendRootIdentity([]string{"exec"}), DerivedNames(request.Group, request.Name).Container, managerPath), payload...)
 	var output, diagnostic bytes.Buffer
 	status, err := p.run(nil, &output, &diagnostic, args...)
 	if err != nil || podmanTransportFailure(status) {
