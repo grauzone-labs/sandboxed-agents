@@ -101,11 +101,11 @@ func checkSandbox(request Request, p podmanTarget, output io.Writer) error {
 
 // reportToolServices lists every enabled Tool with its service and tailnet node state and reports a failed service or node as a problem.
 func reportToolServices(p podmanTarget, container string, output io.Writer) []error {
-	args, err := ManagerQueryArgs(container, managerPath, "tools", "list")
+	operation, err := newManagerRequest(container, managerPath, "tools", "list")
 	if err != nil {
 		return []error{err}
 	}
-	answer, err := queryManagerArgs(p, args)
+	answer, err := queryManagerRequest(p, operation)
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && managerWithoutTools(exit.ExitCode(), err.Error()) {
