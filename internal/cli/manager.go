@@ -67,7 +67,7 @@ func newManagerRequest(container, managerPath, subcommand string, payload ...str
 	default:
 		return managerRequest{}, fmt.Errorf("unknown manager query %q", subcommand)
 	}
-	return managerRequest{args: append([]string{"exec", "--user=0:0", container, managerPath, subcommand}, payload...), readOnly: readOnly}, nil
+	return managerRequest{args: append(append(appendRootIdentity([]string{"exec"}), container, managerPath, subcommand), payload...), readOnly: readOnly}, nil
 }
 
 // managerNoPayload rejects arguments to administrative operations that take none.

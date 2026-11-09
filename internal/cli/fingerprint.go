@@ -35,7 +35,8 @@ func printFingerprints(request Request, p podmanTarget, stdout io.Writer) error 
 	}
 	var output strings.Builder
 	for _, key := range hostKeys {
-		text, err := p.query("exec", "--user=1000:1000", "--env", "HOME=/home/agent", names.Container, "cat", key.path)
+		args := append(appendAgentIdentity([]string{"exec"}), names.Container, "cat", key.path)
+		text, err := p.query(args...)
 		if err != nil {
 			return fmt.Errorf("fingerprint: read %s: %w", key.path, err)
 		}

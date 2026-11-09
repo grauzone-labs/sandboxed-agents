@@ -39,7 +39,7 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 			return fmt.Errorf("%s login requires the azure toolchain; run update %s --with %s", request.Args[1], request.Name, toolchainSet(set))
 		}
 	}
-	args := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent"}
+	args := appendAgentIdentity([]string{"exec"})
 	var stdin io.Reader
 	if request.Command == "integrations config" && request.ConfigSelection.Integration == catalog.SSHIntegration {
 		if !p.host.IsInputTerminal(p.host.Stdin) || !p.host.IsOutputTerminal(stdout) {
