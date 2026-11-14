@@ -31,11 +31,11 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 	host = host.defaults()
 	var stateRoot string
 	var request Request
-	var topic helpSelection
+	var selection helpSelection
 	var help bool
 	err := checks.Run(checks.Checks{Usage: func() error {
 		var err error
-		if topic, help, err = requestedHelp(args); help {
+		if selection, help, err = requestedHelp(args); help {
 			return err
 		}
 		group, set := os.LookupEnv("SANDBOXED_AGENTS_GROUP")
@@ -43,10 +43,8 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 			group = "default"
 		}
 		request, err = parseForHost(args, group, host)
-		topic.command, _ = commandPath(strings.Fields(request.Command))
-		if request.Command == "agents login" {
-			topic, _ = agentLoginHelpSelection(request.Args)
-		}
+		selection.command, _ = commandPath(strings.Fields(request.Command))
+		selection, _ = selection.forArguments(request.Args)
 		if err == nil {
 			switch request.Command {
 			case "up", "start", "stop", "restart", "remove", "update":
@@ -64,12 +62,12 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		if errors.As(err, new(hostStateError)) {
 			fmt.Fprintln(stderr, "usage: sandboxed-agents COMMAND [ARG...]")
 		} else {
-			writeUsage(stderr, topic)
+			writeUsage(stderr, selection)
 		}
 		return 2
 	}
 	if help {
-		writeHelp(stdout, topic)
+		writeHelp(stdout, selection)
 		return 0
 	}
 	checkedTarget := func() (podmanTarget, error) {

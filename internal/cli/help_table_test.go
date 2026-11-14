@@ -43,9 +43,9 @@ func TestEveryCommandHasHelp(t *testing.T) {
 			}
 		}
 		want := map[string]bool{}
-		options := definition.options
-		if command == "agents login" {
-			options = leafOptions(command)
+		options := leafOptions(command)
+		if command == "integrations config" {
+			options = definition.options
 		}
 		for name, takesValue := range options {
 			want[name] = takesValue

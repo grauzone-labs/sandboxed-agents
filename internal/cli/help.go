@@ -40,7 +40,7 @@ type helpEntry struct {
 type helpRow struct{ name, text string }
 
 // helpOption describes one option of a leaf command; value is empty for a switch.
-type helpOption struct{ name, value, text, defaultValue string }
+type helpOption struct{ name, value, text, defaultValue, applicability string }
 
 // helpSection is a titled list of rows, such as a group's subcommands or catalog values.
 type helpSection struct {
@@ -518,11 +518,8 @@ func requestedHelp(args []string) (helpSelection, bool, error) {
 			break
 		}
 		if helpFlag(arg) {
-			if topic == "agents login" {
-				selected, err := agentLoginHelpSelection(loginArgs)
-				return selected, true, err
-			}
-			return helpSelection{command: topic}, true, nil
+			selected, err := (helpSelection{command: topic}).forArguments(loginArgs)
+			return selected, true, err
 		}
 		if !strings.HasPrefix(arg, "-") {
 			positionals++
@@ -637,6 +634,9 @@ func (option helpOption) row() helpRow {
 	text := option.text
 	if option.defaultValue != "" {
 		text = strings.TrimSuffix(text, ".") + " (default " + option.defaultValue + ")."
+	}
+	if option.applicability != "" {
+		text += " " + option.applicability
 	}
 	return helpRow{name, text}
 }
