@@ -55,13 +55,38 @@ func proxyLoginWorkflow(policy proxyLoginPolicy) AgentLoginWorkflow {
 	return w
 }
 
+// AgentLoginOptionSummary describes a general login option and the workflows that accept it.
+type AgentLoginOptionSummary struct {
+	Option    AgentLoginOption
+	Workflows []string
+}
+
+// AgentLoginOptionSummaries returns the stable option union and its owners for help and parsing.
+func (c Catalog) AgentLoginOptionSummaries() []AgentLoginOptionSummary {
+	var summaries []AgentLoginOptionSummary
+	indexes := make(map[string]int)
+	for _, name := range c.AgentNames() {
+		agent := c.Agents[name]
+		for _, workflow := range slices.Sorted(maps.Keys(agent.LoginWorkflows)) {
+			for _, option := range agent.LoginWorkflows[workflow].Options {
+				index, exists := indexes[option.Name]
+				if !exists {
+					index = len(summaries)
+					indexes[option.Name] = index
+					summaries = append(summaries, AgentLoginOptionSummary{Option: option})
+				}
+				summaries[index].Workflows = append(summaries[index].Workflows, name+" "+workflow)
+			}
+		}
+	}
+	return summaries
+}
+
 // AgentLoginOptions returns the union of delivered workflow options for token parsing.
 func (c Catalog) AgentLoginOptions() map[string]bool {
 	options := make(map[string]bool)
-	for _, name := range c.AgentNames() {
-		for _, workflow := range c.Agents[name].LoginWorkflows {
-			maps.Copy(options, workflow.OptionSyntax())
-		}
+	for _, summary := range c.AgentLoginOptionSummaries() {
+		options[summary.Option.Name] = summary.Option.Value != ""
 	}
 	return options
 }

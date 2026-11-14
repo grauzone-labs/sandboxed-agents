@@ -15,24 +15,12 @@ type helpSelection struct{ command, agent, workflow string }
 // agentLoginHelpOptions derives general option details and applicability from delivered workflows.
 func agentLoginHelpOptions() []helpOption {
 	var options []helpOption
-	indexes := make(map[string]int)
-	owners := make(map[string][]string)
-	for _, name := range catalog.Default.AgentNames() {
-		agent := catalog.Default.Agents[name]
-		for _, workflow := range slices.Sorted(maps.Keys(agent.LoginWorkflows)) {
-			for _, option := range agent.LoginWorkflows[workflow].Options {
-				if _, seen := indexes[option.Name]; !seen {
-					indexes[option.Name] = len(options)
-					general := option
-					general.Required, general.Conflicts = false, nil
-					options = append(options, loginHelpOption(general))
-				}
-				owners[option.Name] = append(owners[option.Name], name+" "+workflow)
-			}
-		}
-	}
-	for index := range options {
-		options[index].text += " Applies to: " + strings.Join(owners[options[index].name], ", ") + "."
+	for _, summary := range catalog.Default.AgentLoginOptionSummaries() {
+		general := summary.Option
+		general.Required, general.Conflicts = false, nil
+		option := loginHelpOption(general)
+		option.applicability = "Applies to: " + strings.Join(summary.Workflows, ", ") + "."
+		options = append(options, option)
 	}
 	return options
 }
@@ -42,26 +30,34 @@ func loginHelpOption(option catalog.AgentLoginOption) helpOption {
 	return helpOption{name: option.Name, value: option.Value, text: option.HelpText(), defaultValue: option.Default}
 }
 
+// forArguments enriches a command's help selection with its supported positional context.
+func (selection helpSelection) forArguments(args []string) (helpSelection, error) {
+	if selection.command == "agents login" {
+		return agentLoginHelpSelection(args)
+	}
+	return selection, nil
+}
+
 // agentLoginHelpSelection selects catalog help without interpreting or looking up NAME.
 func agentLoginHelpSelection(args []string) (helpSelection, error) {
-	topic := helpSelection{command: "agents login"}
+	selection := helpSelection{command: "agents login"}
 	if len(args) < 2 {
-		return topic, nil
+		return selection, nil
 	}
 	_, err := catalog.Default.ResolveAgent(args[1])
 	if err != nil {
-		return topic, err
+		return selection, err
 	}
-	topic.agent = args[1]
+	selection.agent = args[1]
 	if len(args) < 3 {
-		return topic, nil
+		return selection, nil
 	}
 	workflow, err := catalog.Default.ResolveAgentLogin(args[1], args[2])
 	if err != nil {
-		return topic, err
+		return selection, err
 	}
-	topic.workflow = workflow
-	return topic, nil
+	selection.workflow = workflow
+	return selection, nil
 }
 
 // entry expands selected login context or returns ordinary command help.
