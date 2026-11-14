@@ -487,22 +487,24 @@ func commandPath(words []string) (string, []string) {
 // and agents run only before its AGENT argument, so that later arguments reach the agent. A token
 // the parser reads as an option's value is never a help request. A help command that names no
 // known topic returns the deepest recognised topic and an error.
-func requestedHelp(args []string) (string, bool, error) {
+func requestedHelp(args []string) (helpSelection, bool, error) {
 	if len(args) > 0 && args[0] == "help" {
-		return helpCommandTopic(args[1:])
+		topic, help, err := helpCommandTopic(args[1:])
+		return helpSelection{command: topic}, help, err
 	}
 	topic, rest := commandPath(args)
 	if len(rest) == 0 {
-		return "", false, nil
+		return helpSelection{}, false, nil
 	}
 	if topic == "" {
-		return "", helpFlag(rest[0]), nil
+		return helpSelection{}, helpFlag(rest[0]), nil
 	}
 	if slices.Contains(commandGroups, topic) {
 		if rest[0] == "help" {
-			return helpCommandTopic(append([]string{topic}, rest[1:]...))
+			selected, help, err := helpCommandTopic(append([]string{topic}, rest[1:]...))
+			return helpSelection{command: selected}, help, err
 		}
-		return topic, helpFlag(rest[0]), nil
+		return helpSelection{command: topic}, helpFlag(rest[0]), nil
 	}
 	if topic == "agents run" {
 		rest = rest[:min(2, len(rest))]
@@ -517,10 +519,10 @@ func requestedHelp(args []string) (string, bool, error) {
 		}
 		if helpFlag(arg) {
 			if topic == "agents login" {
-				selected, err := agentLoginHelpTopic(loginArgs)
+				selected, err := agentLoginHelpSelection(loginArgs)
 				return selected, true, err
 			}
-			return topic, true, nil
+			return helpSelection{command: topic}, true, nil
 		}
 		if !strings.HasPrefix(arg, "-") {
 			positionals++
@@ -536,7 +538,7 @@ func requestedHelp(args []string) (string, bool, error) {
 			index++
 		}
 	}
-	return "", false, nil
+	return helpSelection{}, false, nil
 }
 
 // takesValue reports whether the parser reads the token after arg as arg's value: arg is
@@ -557,8 +559,8 @@ func helpCommandTopic(words []string) (string, bool, error) {
 }
 
 // writeHelp writes the full help of a topic: description, usage, sections, options, and examples.
-func writeHelp(w io.Writer, topic string) {
-	entry := helpTopicEntry(topic)
+func writeHelp(w io.Writer, selection helpSelection) {
+	entry := selection.entry()
 	fmt.Fprintf(w, "%s\n\n", entry.summary)
 	writeUsageLines(w, entry)
 	if len(entry.arguments) > 0 {
@@ -567,15 +569,7 @@ func writeHelp(w io.Writer, topic string) {
 	if len(entry.options) > 0 {
 		var rows []helpRow
 		for _, option := range entry.options {
-			name := "--" + option.name
-			if option.value != "" {
-				name += " " + option.value
-			}
-			text := option.text
-			if option.defaultValue != "" {
-				text = strings.TrimSuffix(text, ".") + " (default " + option.defaultValue + ")."
-			}
-			rows = append(rows, helpRow{name, text})
+			rows = append(rows, option.row())
 		}
 		writeSection(w, helpSection{"Options", rows})
 	}
@@ -599,23 +593,16 @@ func writeHelp(w io.Writer, topic string) {
 
 // writeUsage writes the usage of a topic after a usage error: the usage lines, the command list of
 // the root or a group, and the help command that shows the full help.
-func writeUsage(w io.Writer, topic string) {
-	entry := helpTopicEntry(topic)
+func writeUsage(w io.Writer, selection helpSelection) {
+	entry := selection.entry()
 	writeUsageLines(w, entry)
-	if topic == "" || slices.Contains(commandGroups, topic) {
+	if selection.command == "" || slices.Contains(commandGroups, selection.command) {
 		for _, section := range entry.sections {
 			writeSection(w, section)
 		}
 		fmt.Fprintln(w)
 	}
-	command := "sandboxed-agents --help"
-	if topic != "" {
-		command = "sandboxed-agents " + topic + " --help"
-		if strings.HasPrefix(topic, "agents login ") {
-			command = "sandboxed-agents agents login NAME " + strings.TrimPrefix(topic, "agents login ") + " --help"
-		}
-	}
-	fmt.Fprintf(w, "run '%s' for usage\n", command)
+	fmt.Fprintf(w, "run '%s' for usage\n", selection.commandHelp())
 }
 
 // writeUsageLines writes each usage form, the first after "usage:" and the rest aligned below it.
@@ -639,4 +626,17 @@ func writeSection(w io.Writer, section helpSection) {
 	for _, row := range section.rows {
 		fmt.Fprintf(w, "  %-*s  %s\n", width, row.name, row.text)
 	}
+}
+
+// row formats an option's label and description consistently in every help section.
+func (option helpOption) row() helpRow {
+	name := "--" + option.name
+	if option.value != "" {
+		name += " " + option.value
+	}
+	text := option.text
+	if option.defaultValue != "" {
+		text = strings.TrimSuffix(text, ".") + " (default " + option.defaultValue + ")."
+	}
+	return helpRow{name, text}
 }

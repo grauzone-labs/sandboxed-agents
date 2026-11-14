@@ -2,12 +2,13 @@ package cli_test
 
 import (
 	"bytes"
-	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
-	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
-	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
+	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
+	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
 // TestAgentLoginWorkflowHelpShowsOnlyItsOptions proves selected workflow help describes OpenCode's requirements, removal conflicts, and examples without execution through RunWithHost.
@@ -16,7 +17,7 @@ func TestAgentLoginWorkflowHelpShowsOnlyItsOptions(t *testing.T) {
 	if status != 0 || stderr != "" || len(calls) != 0 {
 		t.Fatalf("status=%d stderr=%q calls=%v", status, stderr, calls)
 	}
-	for _, want := range []string{"agents login NAME opencode proxy", "--url URL", "--model ID", "Required unless --remove", "conflicts with --url, --model", "without reading a key", "agents login agent01 opencode proxy --url https://proxy.example --model MODEL"} {
+	for _, want := range []string{"agents login NAME opencode proxy", "--url URL", "--model ID", "Required unless --remove", "Conflicts with --url, --model", "without reading a key", "agents login agent01 opencode proxy --url https://proxy.example --model MODEL"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("help lacks %q:\n%s", want, stdout)
 		}
@@ -174,7 +175,7 @@ func TestAgentLoginCatalogOptionDrivesHelpAndValidation(t *testing.T) {
 		}, Examples: []string{"--endpoint https://login.example", "--clear"}},
 	}}
 	status, stdout, stderr, calls := runHelp(t, "agents", "login", "missing", "sample", "token", "--help")
-	for _, want := range []string{"--endpoint URL", "Required unless --clear", "conflicts with --endpoint", "--endpoint https://login.example"} {
+	for _, want := range []string{"--endpoint URL", "Required unless --clear", "Conflicts with --endpoint", "--endpoint https://login.example"} {
 		if status != 0 || stderr != "" || len(calls) != 0 || !strings.Contains(stdout, want) {
 			t.Errorf("help missing %s: status=%d stderr=%q calls=%v stdout=%s", want, status, stderr, calls, stdout)
 		}
@@ -187,6 +188,29 @@ func TestAgentLoginCatalogOptionDrivesHelpAndValidation(t *testing.T) {
 	for _, tail := range [][]string{{}, {"--clear", "--endpoint", "https://login.example"}, {"--url", "https://proxy.example"}} {
 		if _, err := cli.Parse(append([]string{"agents", "login", "demo", "sample", "token"}, tail...), "default"); err == nil {
 			t.Errorf("accepted invalid options %v", tail)
+		}
+	}
+}
+
+// TestAgentLoginGeneralHelpPreservesOptionDetails proves general help retains choices, defaults, and agent applicability through RunWithHost.
+func TestAgentLoginGeneralHelpPreservesOptionDetails(t *testing.T) {
+	status, stdout, stderr, calls := runHelp(t, "agents", "login", "--help")
+	if status != 0 || stderr != "" || len(calls) != 0 {
+		t.Fatalf("status=%d stderr=%q calls=%v", status, stderr, calls)
+	}
+	for _, want := range []string{"Choices: completions, responses", "default completions", "Applies to: copilot proxy", "Applies to: codex proxy"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("missing %q in %s", want, stdout)
+		}
+	}
+}
+
+// TestAgentLoginPreservesModelWhitespaceGrammar proves existing model-value compatibility remains agent-specific through Parse.
+func TestAgentLoginPreservesModelWhitespaceGrammar(t *testing.T) {
+	for _, agent := range []string{"claude", "codex", "opencode", "copilot"} {
+		_, err := cli.Parse([]string{"agents", "login", "demo", agent, "proxy", "--url", "https://proxy.example", "--model", " "}, "default")
+		if (err != nil) != (agent == "copilot") {
+			t.Errorf("%s: whitespace model error=%v", agent, err)
 		}
 	}
 }
