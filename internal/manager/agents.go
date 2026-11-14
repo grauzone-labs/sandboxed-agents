@@ -77,7 +77,7 @@ func parseAgents(args []string, stderr io.Writer) (agentRequest, bool) {
 			fmt.Fprintln(stderr, err)
 			return r, false
 		}
-		r.arguments = r.definition.LoginWorkflows[resolved]
+		r.arguments = r.definition.LoginWorkflows[resolved].Args
 		return r, true
 	}
 	f := flag.NewFlagSet("agents "+r.operation, flag.ContinueOnError)

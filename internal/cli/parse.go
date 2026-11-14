@@ -58,7 +58,7 @@ var commands = map[string]commandSpec{
 	"agents enable":       spec(2, 2, true, "version", "force"),
 	"agents disable":      spec(2, 2, true, "", "force"),
 	"agents update":       spec(2, 2, true, "", "unpin force"),
-	"agents login":        spec(2, 3, true, "url model wire-api", "remove replace-login"),
+	"agents login":        spec(2, 3, true, "", ""),
 	"agents status":       spec(2, 2, true, "", ""),
 	"agents run":          spec(2, -1, true, "", ""),
 	"agents session":      spec(2, 2, true, "", "stop"),
@@ -77,6 +77,9 @@ var commands = map[string]commandSpec{
 // keyed by name with true for an option that takes a value. integrations config gets a new map of
 // the catalog's delivered config options, so staging adds to it without touching commands.
 func leafOptions(command string) map[string]bool {
+	if command == "agents login" {
+		return catalog.Default.AgentLoginOptions()
+	}
 	if command != "integrations config" {
 		return commands[command].options
 	}
@@ -241,21 +244,14 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 		request.AgentWorkflow = workflow
 		if workflow == "proxy" {
 			normalized, err := catalog.Default.Agents[request.Args[1]].ProxyOptions(request.Options)
-			if err == nil {
-				err = catalog.AgentProxyOptions(request.Args[1], request.Options)
-			}
 			if err != nil {
 				return request, err
 			}
 			if request.Options["remove"] == "" {
 				request.Options["url"] = normalized
 			}
-		} else {
-			for _, option := range []string{"url", "model", "wire-api", "remove", "replace-login"} {
-				if _, present := request.Options[option]; present {
-					return request, fmt.Errorf("--%s requires proxy workflow", option)
-				}
-			}
+		} else if err := catalog.Default.Agents[request.Args[1]].LoginWorkflows[workflow].ValidateOptions(request.Options); err != nil {
+			return request, err
 		}
 	case "integrations login":
 		if _, err := catalog.Default.ResolveLogin(request.Args[1], loginWorkflow(request.Args)); err != nil {

@@ -31,9 +31,14 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 		return r, false
 	}
 	options := map[string]string{}
+	allowed := make(map[string]bool)
+	for _, option := range r.definition.LoginWorkflows["proxy"].Options {
+		allowed[option.Name] = option.Value != ""
+	}
 	for i := 0; i < len(args); i++ {
 		name, value, inline := strings.Cut(strings.TrimPrefix(args[i], "--"), "=")
-		if !strings.HasPrefix(args[i], "--") || (name != "url" && name != "model" && name != "remove" && name != "replace-login" && name != "wire-api") {
+		takesValue, known := allowed[name]
+		if !strings.HasPrefix(args[i], "--") || !known {
 			fmt.Fprintln(stderr, "unexpected proxy arguments")
 			return r, false
 		}
@@ -41,7 +46,7 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 			fmt.Fprintln(stderr, "duplicate proxy option")
 			return r, false
 		}
-		if name == "remove" || name == "replace-login" {
+		if !takesValue {
 			if inline {
 				fmt.Fprintf(stderr, "--%s takes no value\n", name)
 				return r, false
@@ -58,9 +63,6 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 		options[name] = value
 	}
 	url, err := r.definition.ProxyOptions(options)
-	if err == nil {
-		err = catalog.AgentProxyOptions(r.name, options)
-	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return r, false

@@ -213,7 +213,7 @@ func helpTopics() map[string]helpEntry {
 			arguments: []helpRow{sandboxArgument, agentArgument,
 				{"WORKFLOW", "A login workflow of the agent; see Login workflows. It may be omitted when the agent has one."}},
 			sections: []helpSection{agentLoginWorkflows()},
-			options:  []helpOption{{name: "url", value: "URL", text: "Proxy server base URL."}, {name: "model", value: "ID", text: "Proxy model selection."}, {name: "wire-api", value: "API", text: "Copilot proxy wire API: completions (default) or responses."}, {name: "replace-login", text: "Allow Codex proxy setup to replace its ChatGPT login."}, {name: "remove", text: "Remove managed proxy settings without reading a key."}},
+			options:  agentLoginHelpOptions(),
 			examples: []string{"agents login agent01 claude browser", "agents login agent01 codex device-code"},
 		},
 		"agents status": {
@@ -509,16 +509,22 @@ func requestedHelp(args []string) (string, bool, error) {
 	}
 	options := leafOptions(topic)
 	positionals := 0
+	var loginArgs []string
 	for index := 0; index < len(rest); index++ {
 		arg := rest[index]
 		if arg == "--" {
 			break
 		}
 		if helpFlag(arg) {
+			if topic == "agents login" {
+				selected, err := agentLoginHelpTopic(loginArgs)
+				return selected, true, err
+			}
 			return topic, true, nil
 		}
 		if !strings.HasPrefix(arg, "-") {
 			positionals++
+			loginArgs = append(loginArgs, arg)
 			if topic == "integrations config" && positionals == 2 {
 				for _, option := range catalog.Default.StagedConfigOptionNames(arg) {
 					options[option] = true
@@ -552,7 +558,7 @@ func helpCommandTopic(words []string) (string, bool, error) {
 
 // writeHelp writes the full help of a topic: description, usage, sections, options, and examples.
 func writeHelp(w io.Writer, topic string) {
-	entry := helpTopics()[topic]
+	entry := helpTopicEntry(topic)
 	fmt.Fprintf(w, "%s\n\n", entry.summary)
 	writeUsageLines(w, entry)
 	if len(entry.arguments) > 0 {
@@ -594,7 +600,7 @@ func writeHelp(w io.Writer, topic string) {
 // writeUsage writes the usage of a topic after a usage error: the usage lines, the command list of
 // the root or a group, and the help command that shows the full help.
 func writeUsage(w io.Writer, topic string) {
-	entry := helpTopics()[topic]
+	entry := helpTopicEntry(topic)
 	writeUsageLines(w, entry)
 	if topic == "" || slices.Contains(commandGroups, topic) {
 		for _, section := range entry.sections {
@@ -605,6 +611,9 @@ func writeUsage(w io.Writer, topic string) {
 	command := "sandboxed-agents --help"
 	if topic != "" {
 		command = "sandboxed-agents " + topic + " --help"
+		if strings.HasPrefix(topic, "agents login ") {
+			command = "sandboxed-agents agents login NAME " + strings.TrimPrefix(topic, "agents login ") + " --help"
+		}
 	}
 	fmt.Fprintf(w, "run '%s' for usage\n", command)
 }

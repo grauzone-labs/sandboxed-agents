@@ -43,7 +43,11 @@ func TestEveryCommandHasHelp(t *testing.T) {
 			}
 		}
 		want := map[string]bool{}
-		for name, takesValue := range definition.options {
+		options := definition.options
+		if command == "agents login" {
+			options = leafOptions(command)
+		}
+		for name, takesValue := range options {
 			want[name] = takesValue
 		}
 		if command == "update" {
