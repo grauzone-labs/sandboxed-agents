@@ -13,12 +13,8 @@ import (
 
 // ProxyOptions validates the shared proxy flags and returns a normalized server base URL.
 func ProxyOptions(options map[string]string) (string, error) {
-	_, urlSet := options["url"]
 	_, modelSet := options["model"]
 	if options["remove"] != "" {
-		if urlSet || modelSet {
-			return "", fmt.Errorf("--remove conflicts with --url and --model")
-		}
 		return "", nil
 	}
 	if modelSet && (options["model"] == "" || strings.IndexFunc(options["model"], unicode.IsControl) >= 0) {
@@ -80,31 +76,12 @@ func ReadProxyKey(input io.Reader) (string, error) {
 	return raw, nil
 }
 
-// ProxyOptions applies this agent's required model policy before shared proxy validation.
+// ProxyOptions validates this agent's catalog workflow before normalizing its server URL.
 func (a Agent) ProxyOptions(options map[string]string) (string, error) {
-	if a.ProxyModelRequired && options["remove"] == "" && options["model"] == "" {
-		return "", fmt.Errorf("proxy requires --model")
+	if err := a.LoginWorkflows["proxy"].ValidateOptions(options); err != nil {
+		return "", err
 	}
 	return ProxyOptions(options)
-}
-
-// AgentProxyOptions checks the agent-specific proxy grammar without accessing a sandbox.
-func AgentProxyOptions(agent string, options map[string]string) error {
-	if wire, present := options["wire-api"]; present {
-		if agent != "copilot" || (wire != "completions" && wire != "responses") || options["remove"] != "" {
-			return fmt.Errorf("--wire-api requires copilot proxy and completions or responses, without --remove")
-		}
-	}
-	if agent == "copilot" && options["remove"] == "" && strings.TrimSpace(options["model"]) == "" {
-		return fmt.Errorf("copilot proxy requires --model")
-	}
-	if options["replace-login"] != "" && (agent != "codex" || options["remove"] != "") {
-		return fmt.Errorf("--replace-login requires Codex proxy setup")
-	}
-	if agent == "codex" && options["remove"] == "" && options["model"] == "" {
-		return fmt.Errorf("Codex proxy requires --model")
-	}
-	return nil
 }
 
 // codexProxyMinimumMinor is the oldest tested native API-key login contract.

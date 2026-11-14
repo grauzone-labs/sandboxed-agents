@@ -44,6 +44,9 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		}
 		request, err = parseForHost(args, group, host)
 		topic, _ = commandPath(strings.Fields(request.Command))
+		if topic == "agents login" {
+			topic, _ = agentLoginHelpTopic(request.Args)
+		}
 		if err == nil {
 			switch request.Command {
 			case "up", "start", "stop", "restart", "remove", "update":

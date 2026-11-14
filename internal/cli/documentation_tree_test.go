@@ -157,9 +157,9 @@ func commandReferenceError(document string) error {
 		ranges[command] = form
 	}
 	want := map[string]map[string]bool{}
-	for command, definition := range commands {
+	for command := range commands {
 		options := map[string]bool{}
-		for name, takesValue := range definition.options {
+		for name, takesValue := range leafOptions(command) {
 			options[name] = takesValue
 		}
 		want[command] = options

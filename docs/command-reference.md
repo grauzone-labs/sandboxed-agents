@@ -66,12 +66,44 @@ Every level of the command chain has help: the root, each command group, and eac
 | `sandboxed-agents --help`, `sandboxed-agents -h`, or `sandboxed-agents help` | The root help: a description, the usage, and every command and group with a one-line description. |
 | `GROUP --help`, `GROUP -h`, `GROUP help`, or `help GROUP`, for `agents`, `integrations`, or `tools` | The group's help: a description, the usage, and every subcommand with a one-line description. |
 | `COMMAND --help`, `COMMAND -h`, `COMMAND NAME --help`, or `help COMMAND`, where `COMMAND` is a command path such as `up` or `tools enable` | The command's help: a description, the usage as in the grammar above, the arguments, each option with its value and its default where one exists, and examples. |
+| `agents login NAME AGENT --help` or `-h` | The help of that agent's login workflows only, with the options that apply to them ([details](#help-for-agents-login)). |
+| `agents login NAME AGENT WORKFLOW --help` or `-h` | The help of that one workflow ([details](#help-for-agents-login)). |
 
 The help of a command lists the catalog values it accepts as the executable holds them: agents and their login workflows, integrations with their workflows and options, toolchains, Tools with their channels, and actions. Help goes to standard output and exits with status zero. It calls no Podman and reads and writes no host state.
 
 `help` is a command word only in the command position; it reserves no sandbox name, so `up help` creates a sandbox named `help`. A leaf command takes `--help` or `-h` anywhere before `--`, except that `agents run NAME AGENT [ARG...]` passes every argument after `AGENT` on to the agent unchanged, `--help` included; `agents run --help` and `agents run NAME --help` show the help of `agents run`.
 
 A usage error keeps its message and exits with status 2. The message is followed by the usage of the deepest level the arguments reached, the command list for the root or a group, and the help command to run: `tools bogus` ends with `run 'sandboxed-agents tools --help' for usage`, and `tools enable agent01` ends with `run 'sandboxed-agents tools enable --help' for usage`.
+
+#### Help for `agents login`
+
+`agents login --help` and `agents login NAME --help` stay the general help of the command: every agent with its workflows and every option. Naming the agent, and then the workflow, narrows it:
+
+- **`agents login NAME AGENT --help`** (or `-h`) lists only the workflows of `AGENT` and only the options that apply to them. For each workflow it states what the workflow requires, which options conflict, and an example.
+- **`agents login NAME AGENT WORKFLOW --help`** narrows that to the one workflow.
+- **An unknown `AGENT` or `WORKFLOW`** is a usage error and exits with status 2; no help is printed for it.
+- **`NAME` is never looked up for help.** It need not name an existing sandbox, and the help needs no running sandbox. Like all help it reads no key from standard input, calls no Podman, and reads and writes no host state.
+
+```text
+  sandboxed-agents agents login agent01 codex --help
+  sandboxed-agents agents login agent01 codex proxy --help
+  sandboxed-agents agents login agent01 copilot proxy -h
+```
+
+The options belong to the `proxy` workflows, so the help of `browser`, `device-code`, and `provider` lists none. For the `proxy` workflow of each agent, the help states:
+
+| Agent | `--url URL` | `--model ID` | Option of this agent alone |
+|---|---|---|---|
+| `claude` | Required. | Optional. | None. |
+| `codex` | Required. | Required. | `--replace-login`, which lets the setup replace a stored ChatGPT login. |
+| `copilot` | Required. | Required. | `--wire-api completions\|responses`; `completions` is the default. |
+| `opencode` | Required. | Required. | None. |
+
+`--remove` takes the place of a setup on every `proxy` workflow: it reads no key, needs no `--url`, waives the required `--model`, and conflicts with `--url`, `--model`, `--wire-api`, and `--replace-login`. The help of a `proxy` workflow gives examples for both.
+
+An invalid, inapplicable, missing, or conflicting option exits with status 2 and prints the usage that applies to the selected workflow, not the general usage of `agents login`; see [Agent commands](#agent-commands) for the rules.
+
+`agents run NAME AGENT [ARG...]` is the exception that stays: it forwards `--help` after `AGENT` to the agent, as the paragraph above says.
 
 ## General commands
 
