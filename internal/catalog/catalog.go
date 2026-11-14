@@ -37,26 +37,26 @@ var Default = Catalog{
 	Agents: map[string]Agent{
 		"copilot": {
 			Delivered: true, Install: Install{Kind: NPM, Package: "@github/copilot"}, Command: "copilot",
-			LoginWorkflows: map[string]AgentLoginWorkflow{"device-code": {Args: []string{"login", "--device-code"}}, "proxy": proxyLoginWorkflow(proxyLoginPolicy{ModelRequired: true, ModelNonblank: true, WireAPI: true})},
+			LoginWorkflows: map[string]AgentLoginWorkflow{"device-code": {Args: []string{"login", "--device-code"}, Description: "Sign in with a code entered in your host browser; needs interactive standard input and output."}, "proxy": proxyLoginWorkflow(proxyLoginPolicy{ModelRequired: true, ModelNonblank: true, WireAPI: true})},
 			LoginMessage:   "Open the URL shown by Copilot on your host and enter its device code.",
 			Documentation:  "https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli",
 		},
 		"claude": {
 			Delivered: true, Install: Install{Kind: NPM, Package: "@anthropic-ai/claude-code"}, Command: "claude",
-			LoginWorkflows: map[string]AgentLoginWorkflow{"browser": {Args: []string{"auth", "login"}}, "proxy": proxyLoginWorkflow(proxyLoginPolicy{})},
+			LoginWorkflows: map[string]AgentLoginWorkflow{"browser": {Args: []string{"auth", "login"}, Description: "Sign in through a browser; needs interactive standard input and output."}, "proxy": proxyLoginWorkflow(proxyLoginPolicy{})},
 			LoginMessage:   "Open the URL shown by Claude on your host and follow its authentication instructions.",
 			Documentation:  "https://code.claude.com/docs/en/overview",
 			StatusProbe:    &Probe{Args: []string{"auth", "status", "--json"}, BooleanField: "loggedIn", SignedOutExitCode: 1},
 		},
 		"codex": {
 			Delivered: true, Install: Install{Kind: NPM, Package: "@openai/codex"}, Command: "codex",
-			LoginWorkflows: map[string]AgentLoginWorkflow{"browser": {Args: []string{"login"}}, "device-code": {Args: []string{"login", "--device-auth"}}, "proxy": proxyLoginWorkflow(proxyLoginPolicy{ModelRequired: true, ReplaceLogin: true})},
+			LoginWorkflows: map[string]AgentLoginWorkflow{"browser": {Args: []string{"login"}, Description: "Sign in through a browser with an SSH callback tunnel; needs interactive standard input and output."}, "device-code": {Args: []string{"login", "--device-auth"}, Description: "Sign in with a code entered in your host browser; needs interactive standard input and output."}, "proxy": proxyLoginWorkflow(proxyLoginPolicy{ModelRequired: true, ReplaceLogin: true})},
 			LoginMessage:   "Follow the Codex login instructions on your host. Browser login needs an SSH tunnel for the callback; device-code does not.",
 			Documentation:  "https://developers.openai.com/codex/cli",
 		},
 		"opencode": {
 			Delivered: true, Install: Install{Kind: NPM, Package: "opencode-ai"}, Command: "opencode",
-			LoginWorkflows: map[string]AgentLoginWorkflow{"provider": {Args: []string{"auth", "login"}}, "proxy": proxyLoginWorkflow(proxyLoginPolicy{ModelRequired: true})},
+			LoginWorkflows: map[string]AgentLoginWorkflow{"provider": {Args: []string{"auth", "login"}, Description: "Choose a provider and follow its login instructions; needs interactive standard input and output."}, "proxy": proxyLoginWorkflow(proxyLoginPolicy{ModelRequired: true})},
 			LoginMessage:   "Select your provider and follow the OpenCode login instructions.",
 			Documentation:  "https://opencode.ai/docs/",
 		},

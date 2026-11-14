@@ -75,14 +75,17 @@ func (selection helpSelection) entry() helpEntry {
 	for _, workflow := range workflows {
 		definition := agent.LoginWorkflows[workflow]
 		form := "agents login NAME " + name + " " + workflow
-		section := helpSection{title: workflow + " workflow"}
+		section := helpSection{title: "Workflow " + workflow}
+		if definition.Description != "" {
+			section.rows = append(section.rows, helpRow{"About", definition.Description})
+		}
 		for _, option := range definition.Options {
 			row := loginHelpOption(option).row()
 			form += " [" + row.name + "]"
 			section.rows = append(section.rows, row)
 		}
-		if len(section.rows) == 0 {
-			section.rows = []helpRow{{"Options", "No options."}}
+		if len(definition.Options) == 0 {
+			section.rows = append(section.rows, helpRow{"Options", "This workflow takes no options."})
 		}
 		entry.usage = append(entry.usage, form)
 		entry.sections = append(entry.sections, section)
