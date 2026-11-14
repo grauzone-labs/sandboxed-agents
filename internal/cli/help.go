@@ -215,6 +215,7 @@ func helpTopics() map[string]helpEntry {
 			sections: []helpSection{agentLoginWorkflows()},
 			options:  agentLoginHelpOptions(),
 			examples: []string{"agents login agent01 claude browser", "agents login agent01 codex device-code"},
+			footer:   "For agent-specific help, run 'sandboxed-agents agents login NAME AGENT --help'.\nAdd WORKFLOW to focus on one workflow, for example 'sandboxed-agents agents login agent01 codex proxy --help'.",
 		},
 		"agents status": {
 			summary:   "Report whether an agent is enabled, its version and pin, its session, and its sign-in.",
@@ -510,21 +511,20 @@ func requestedHelp(args []string) (helpSelection, bool, error) {
 		rest = rest[:min(2, len(rest))]
 	}
 	options := leafOptions(topic)
-	positionals := 0
-	var loginArgs []string
+	var positionalArgs []string
+	helpRequested := false
 	for index := 0; index < len(rest); index++ {
 		arg := rest[index]
 		if arg == "--" {
 			break
 		}
 		if helpFlag(arg) {
-			selected, err := (helpSelection{command: topic}).forArguments(loginArgs)
-			return selected, true, err
+			helpRequested = true
+			continue
 		}
 		if !strings.HasPrefix(arg, "-") {
-			positionals++
-			loginArgs = append(loginArgs, arg)
-			if topic == "integrations config" && positionals == 2 {
+			positionalArgs = append(positionalArgs, arg)
+			if topic == "integrations config" && len(positionalArgs) == 2 {
 				for _, option := range catalog.Default.StagedConfigOptionNames(arg) {
 					options[option] = true
 				}
@@ -534,6 +534,10 @@ func requestedHelp(args []string) (helpSelection, bool, error) {
 		if takesValue(options, arg) && index+1 < len(rest) && !strings.HasPrefix(rest[index+1], "--") {
 			index++
 		}
+	}
+	if helpRequested {
+		selected, err := (helpSelection{command: topic}).forArguments(positionalArgs)
+		return selected, true, err
 	}
 	return helpSelection{}, false, nil
 }

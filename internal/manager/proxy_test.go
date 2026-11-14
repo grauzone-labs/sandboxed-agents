@@ -543,3 +543,22 @@ func TestClaudeProxyUnownedRemovalIsBytePreserving(t *testing.T) {
 		t.Fatal("unowned removal rewrote settings")
 	}
 }
+
+// TestAgentProxyRemovalConflictsRefuseBeforeHomeAccess proves agent-specific setup options cannot accompany removal before secret input, home access, or processes through RunWithEffects.
+func TestAgentProxyRemovalConflictsRefuseBeforeHomeAccess(t *testing.T) {
+	for _, tc := range []struct{ agent, option, value string }{{"copilot", "wire-api", "responses"}, {"codex", "replace-login", ""}} {
+		t.Run(tc.agent, func(t *testing.T) {
+			e := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
+			e.Stdin = forbiddenProxyInput{t}
+			e.HomeDirectory = func() (string, error) { t.Fatal("removal conflict accessed home"); return "", nil }
+			args := []string{"login", tc.agent, "proxy", "--remove", "--" + tc.option}
+			if tc.value != "" {
+				args = append(args, tc.value)
+			}
+			output := runAgents(t, e, 2, args...)
+			if !strings.Contains(output, "--remove conflicts with --"+tc.option) {
+				t.Fatalf("output=%q", output)
+			}
+		})
+	}
+}

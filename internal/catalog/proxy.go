@@ -11,8 +11,9 @@ import (
 	"unicode"
 )
 
-// ProxyOptions validates the shared proxy flags and returns a normalized server base URL.
-func ProxyOptions(options map[string]string) (string, error) {
+// normalizeProxyOptions checks URL and model values after workflow option validation.
+// Callers must first apply AgentLoginWorkflow.ValidateOptions; removal returns no URL.
+func normalizeProxyOptions(options map[string]string) (string, error) {
 	_, modelSet := options["model"]
 	if options["remove"] != "" {
 		return "", nil
@@ -81,7 +82,7 @@ func (a Agent) ProxyOptions(options map[string]string) (string, error) {
 	if err := a.LoginWorkflows["proxy"].ValidateOptions(options); err != nil {
 		return "", err
 	}
-	return ProxyOptions(options)
+	return normalizeProxyOptions(options)
 }
 
 // codexProxyMinimumMinor is the oldest tested native API-key login contract.

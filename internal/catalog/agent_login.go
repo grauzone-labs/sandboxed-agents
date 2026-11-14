@@ -20,8 +20,9 @@ type AgentLoginOption struct {
 
 // AgentLoginWorkflow keeps execution arguments and user-facing login rules together.
 type AgentLoginWorkflow struct {
-	Args    []string
-	Options []AgentLoginOption
+	Description string
+	Args        []string
+	Options     []AgentLoginOption
 	// Examples are option suffixes appended to a concrete agent and workflow command.
 	Examples []string
 }
@@ -33,7 +34,7 @@ type proxyLoginPolicy struct {
 
 // proxyLoginWorkflow defines proxy setup and removal, with each agent's supported additions.
 func proxyLoginWorkflow(policy proxyLoginPolicy) AgentLoginWorkflow {
-	w := AgentLoginWorkflow{Options: []AgentLoginOption{
+	w := AgentLoginWorkflow{Description: "Configure an existing CLIProxyAPI server for this agent. Setup reads one client API key from the first line of standard input, never as an option or argument. A terminal shows a Key: prompt with input hidden; no terminal is required. --remove reads no key.", Options: []AgentLoginOption{
 		{Name: "url", Value: "URL", Description: "Proxy server base URL.", Required: true, RequiredUnless: "remove"},
 		{Name: "model", Value: "ID", Description: "Proxy model selection.", Required: policy.ModelRequired, Nonblank: policy.ModelNonblank, RequiredUnless: "remove"},
 	}}
@@ -49,7 +50,7 @@ func proxyLoginWorkflow(policy proxyLoginPolicy) AgentLoginWorkflow {
 	w.Options = append(w.Options, AgentLoginOption{Name: "remove", Description: "Remove managed proxy settings without reading a key.", Conflicts: conflicts})
 	example := "--url https://proxy.example"
 	if policy.ModelRequired {
-		example += " --model MODEL"
+		example += " --model ID"
 	}
 	w.Examples = []string{example, "--remove"}
 	return w

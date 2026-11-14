@@ -79,7 +79,7 @@ A usage error keeps its message and exits with status 2. The message is followed
 
 `agents login --help` and `agents login NAME --help` stay the general help of the command: every agent with its workflows and every option. Naming the agent, and then the workflow, narrows it:
 
-- **`agents login NAME AGENT --help`** (or `-h`) lists only the workflows of `AGENT` and only the options that apply to them. For each workflow it states what the workflow requires, which options conflict, and an example.
+- **`agents login NAME AGENT --help`** (or `-h`) lists only the workflows of `AGENT` and only the options that apply to them. For each workflow it states what the workflow requires, which options conflict, and an example. A `proxy` setup reads the client API key from the first line of standard input, or from a hidden `Key:` prompt when standard input is a terminal, and never from an option or argument; `--remove` reads none. The `browser`, `device-code`, and `provider` workflows need an interactive standard input and output.
 - **`agents login NAME AGENT WORKFLOW --help`** narrows that to the one workflow.
 - **An unknown `AGENT` or `WORKFLOW`** is a usage error and exits with status 2; no help is printed for it.
 - **`NAME` is never looked up for help.** It need not name an existing sandbox, and the help needs no running sandbox. Like all help it reads no key from standard input, calls no Podman, and reads and writes no host state.
@@ -92,18 +92,18 @@ A usage error keeps its message and exits with status 2. The message is followed
 
 The options belong to the `proxy` workflows, so the help of `browser`, `device-code`, and `provider` lists none. For the `proxy` workflow of each agent, the help states:
 
-| Agent | `--url URL` | `--model ID` | Option of this agent alone |
+| Agent | `--url URL` | `--model ID` | Agent-specific option |
 |---|---|---|---|
 | `claude` | Required. | Optional. | None. |
 | `codex` | Required. | Required. | `--replace-login`, which lets the setup replace a stored ChatGPT login. |
 | `copilot` | Required. | Required. | `--wire-api completions\|responses`; `completions` is the default. |
 | `opencode` | Required. | Required. | None. |
 
-`--remove` takes the place of a setup on every `proxy` workflow: it reads no key, needs no `--url`, waives the required `--model`, and conflicts with `--url`, `--model`, `--wire-api`, and `--replace-login`. The help of a `proxy` workflow gives examples for both.
+`--remove` takes the place of a setup on every `proxy` workflow: it reads no key, needs no `--url`, waives the required `--model`, and conflicts with `--url` and `--model`, with `--wire-api` on `copilot proxy` alone, and with `--replace-login` on `codex proxy` alone. The help of a `proxy` workflow gives examples for both.
 
-An invalid, inapplicable, missing, or conflicting option exits with status 2 and prints the usage that applies to the selected workflow, not the general usage of `agents login`; see [Agent commands](#agent-commands) for the rules.
+An invalid, inapplicable, missing, or conflicting option exits with status 2 and prints the usage that applies to the selected workflow, not the general usage of `agents login`, followed by the help command to run, with the literal placeholder `NAME`: `run 'sandboxed-agents agents login NAME codex proxy --help' for usage`. That help needs no existing sandbox. See [Agent commands](#agent-commands) for the rules.
 
-`agents run NAME AGENT [ARG...]` is the exception that stays: it forwards `--help` after `AGENT` to the agent, as the paragraph above says.
+`agents run NAME AGENT [ARG...]` is the exception: it forwards every argument after `AGENT`, `--help` included, to the agent and shows no help of its own there ([details](#help)).
 
 ## General commands
 

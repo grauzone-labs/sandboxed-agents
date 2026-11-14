@@ -17,7 +17,7 @@ func TestAgentLoginWorkflowHelpShowsOnlyItsOptions(t *testing.T) {
 	if status != 0 || stderr != "" || len(calls) != 0 {
 		t.Fatalf("status=%d stderr=%q calls=%v", status, stderr, calls)
 	}
-	for _, want := range []string{"agents login NAME opencode proxy", "--url URL", "--model ID", "Required unless --remove", "Conflicts with --url, --model", "without reading a key", "agents login agent01 opencode proxy --url https://proxy.example --model MODEL"} {
+	for _, want := range []string{"agents login NAME opencode proxy", "--url URL", "--model ID", "Required unless --remove", "Conflicts with --url, --model", "without reading a key", "agents login agent01 opencode proxy --url https://proxy.example --model ID"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("help lacks %q:\n%s", want, stdout)
 		}
@@ -212,5 +212,68 @@ func TestAgentLoginPreservesModelWhitespaceGrammar(t *testing.T) {
 		if (err != nil) != (agent == "copilot") {
 			t.Errorf("%s: whitespace model error=%v", agent, err)
 		}
+	}
+}
+
+// TestAgentLoginHelpExplainsWorkflowInput proves selected help explains proxy-key input and native terminal requirements through RunWithHost without reading input or executing commands.
+func TestAgentLoginHelpExplainsWorkflowInput(t *testing.T) {
+	for _, agent := range []string{"claude", "codex", "copilot", "opencode"} {
+		for _, workflow := range []string{"", "proxy"} {
+			args := []string{"agents", "login", "missing", agent}
+			if workflow != "" {
+				args = append(args, workflow)
+			}
+			args = append(args, "--help")
+			status, stdout, stderr, calls := runHelp(t, args...)
+			if status != 0 || stderr != "" || len(calls) != 0 {
+				t.Fatalf("%v: status=%d stderr=%q calls=%v", args, status, stderr, calls)
+			}
+			for _, want := range []string{"client API key", "first line of standard input", "Key:", "never as an option or argument", "--remove reads no key"} {
+				if !strings.Contains(stdout, want) {
+					t.Errorf("%v: missing %q in %s", args, want, stdout)
+				}
+			}
+		}
+	}
+	for _, tail := range [][]string{{"claude", "browser"}, {"codex", "browser"}, {"codex", "device-code"}, {"copilot", "device-code"}, {"opencode", "provider"}} {
+		args := append([]string{"agents", "login", "missing"}, tail...)
+		status, stdout, stderr, calls := runHelp(t, append(args, "--help")...)
+		if status != 0 || stderr != "" || len(calls) != 0 || !strings.Contains(stdout, "interactive standard input and output") {
+			t.Errorf("%v: status=%d stdout=%q stderr=%q calls=%v", args, status, stdout, stderr, calls)
+		}
+	}
+	_, stdout, _, _ := runHelp(t, "agents", "login", "--help")
+	if !strings.Contains(stdout, "agents login NAME AGENT --help") || !strings.Contains(stdout, "agents login agent01 codex proxy --help") {
+		t.Errorf("general help omits selected-help discovery: %s", stdout)
+	}
+}
+
+// TestAgentLoginHelpSelectsContextAfterTheHelpFlag proves help selects all agent/workflow positionals before -- and rejects unknown selections through RunWithHost without execution.
+func TestAgentLoginHelpSelectsContextAfterTheHelpFlag(t *testing.T) {
+	_, trailing, _, _ := runHelp(t, "agents", "login", "missing", "codex", "proxy", "--help")
+	for _, args := range [][]string{
+		{"agents", "login", "missing", "codex", "--help", "proxy"},
+		{"agents", "login", "missing", "-h", "codex", "proxy"},
+		{"agents", "login", "--help", "missing", "codex", "proxy"},
+		{"agents", "login", "missing", "--url", "https://proxy.example", "--help", "codex", "proxy"},
+	} {
+		status, stdout, stderr, calls := runHelp(t, args...)
+		if status != 0 || stdout != trailing || stderr != "" || len(calls) != 0 {
+			t.Errorf("%v: status=%d stderr=%q calls=%v stdout=%s", args, status, stderr, calls, stdout)
+		}
+	}
+	for _, args := range [][]string{
+		{"agents", "login", "missing", "--help", "unknown"},
+		{"agents", "login", "missing", "codex", "--help", "unknown"},
+	} {
+		status, stdout, stderr, calls := runHelp(t, args...)
+		if status != 2 || stdout != "" || !strings.Contains(stderr, "unknown") || len(calls) != 0 {
+			t.Errorf("%v: status=%d stdout=%q stderr=%q calls=%v", args, status, stdout, stderr, calls)
+		}
+	}
+	_, general, _, _ := runHelp(t, "agents", "login", "--help")
+	status, stdout, stderr, calls := runHelp(t, "agents", "login", "missing", "--help", "--", "codex", "proxy")
+	if status != 0 || stdout != general || stderr != "" || len(calls) != 0 {
+		t.Errorf("delimiter: status=%d stdout=%q stderr=%q calls=%v", status, stdout, stderr, calls)
 	}
 }
