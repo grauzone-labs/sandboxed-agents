@@ -11,6 +11,7 @@ import (
 type AgentLoginOption struct {
 	Name, Value, Description string
 	Required                 bool
+	Nonblank                 bool
 	RequiredUnless           string
 	Conflicts                []string
 	Choices                  []string
@@ -25,24 +26,29 @@ type AgentLoginWorkflow struct {
 	Examples []string
 }
 
+// proxyLoginPolicy names the differences between the agents' proxy workflows.
+type proxyLoginPolicy struct {
+	ModelRequired, ModelNonblank, WireAPI, ReplaceLogin bool
+}
+
 // proxyLoginWorkflow defines proxy setup and removal, with each agent's supported additions.
-func proxyLoginWorkflow(modelRequired, wireAPI, replaceLogin bool) AgentLoginWorkflow {
+func proxyLoginWorkflow(policy proxyLoginPolicy) AgentLoginWorkflow {
 	w := AgentLoginWorkflow{Options: []AgentLoginOption{
 		{Name: "url", Value: "URL", Description: "Proxy server base URL.", Required: true, RequiredUnless: "remove"},
-		{Name: "model", Value: "ID", Description: "Proxy model selection.", Required: modelRequired, RequiredUnless: "remove"},
+		{Name: "model", Value: "ID", Description: "Proxy model selection.", Required: policy.ModelRequired, Nonblank: policy.ModelNonblank, RequiredUnless: "remove"},
 	}}
 	conflicts := []string{"url", "model"}
-	if wireAPI {
+	if policy.WireAPI {
 		w.Options = append(w.Options, AgentLoginOption{Name: "wire-api", Value: "API", Description: "Proxy wire API.", Choices: []string{"completions", "responses"}, Default: "completions"})
 		conflicts = append(conflicts, "wire-api")
 	}
-	if replaceLogin {
+	if policy.ReplaceLogin {
 		w.Options = append(w.Options, AgentLoginOption{Name: "replace-login", Description: "Allow proxy setup to replace the ChatGPT login."})
 		conflicts = append(conflicts, "replace-login")
 	}
 	w.Options = append(w.Options, AgentLoginOption{Name: "remove", Description: "Remove managed proxy settings without reading a key.", Conflicts: conflicts})
 	example := "--url https://proxy.example"
-	if modelRequired {
+	if policy.ModelRequired {
 		example += " --model MODEL"
 	}
 	w.Examples = []string{example, "--remove"}
@@ -54,9 +60,7 @@ func (c Catalog) AgentLoginOptions() map[string]bool {
 	options := make(map[string]bool)
 	for _, name := range c.AgentNames() {
 		for _, workflow := range c.Agents[name].LoginWorkflows {
-			for _, option := range workflow.Options {
-				options[option.Name] = option.Value != ""
-			}
+			maps.Copy(options, workflow.OptionSyntax())
 		}
 	}
 	return options
@@ -73,7 +77,7 @@ func (o AgentLoginOption) HelpText() string {
 		text += "."
 	}
 	if len(o.Conflicts) > 0 {
-		text += " conflicts with --" + strings.Join(o.Conflicts, ", --") + "."
+		text += " Conflicts with --" + strings.Join(o.Conflicts, ", --") + "."
 	}
 	if len(o.Choices) > 0 {
 		text += " Choices: " + strings.Join(o.Choices, ", ") + "."
@@ -83,12 +87,9 @@ func (o AgentLoginOption) HelpText() string {
 
 // ValidateOptions rejects inapplicable options, conflicts, missing requirements, and invalid choices without effects.
 func (w AgentLoginWorkflow) ValidateOptions(options map[string]string) error {
-	applicable := make(map[string]bool)
-	for _, option := range w.Options {
-		applicable[option.Name] = true
-	}
+	applicable := w.OptionSyntax()
 	for _, name := range slices.Sorted(maps.Keys(options)) {
-		if !applicable[name] {
+		if _, known := applicable[name]; !known {
 			return fmt.Errorf("workflow does not support --%s", name)
 		}
 	}
@@ -103,7 +104,9 @@ func (w AgentLoginWorkflow) ValidateOptions(options map[string]string) error {
 		}
 	}
 	for _, option := range w.Options {
-		if option.Required && strings.TrimSpace(options[option.Name]) == "" && (option.RequiredUnless == "" || options[option.RequiredUnless] == "") {
+		value := options[option.Name]
+		missing := value == "" || option.Nonblank && strings.TrimSpace(value) == ""
+		if option.Required && missing && (option.RequiredUnless == "" || options[option.RequiredUnless] == "") {
 			return fmt.Errorf("workflow requires --%s", option.Name)
 		}
 		if value, present := options[option.Name]; present && len(option.Choices) > 0 && !slices.Contains(option.Choices, value) {
@@ -111,4 +114,13 @@ func (w AgentLoginWorkflow) ValidateOptions(options map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// OptionSyntax returns applicable option names with true for a value and false for a switch.
+func (w AgentLoginWorkflow) OptionSyntax() map[string]bool {
+	options := make(map[string]bool, len(w.Options))
+	for _, option := range w.Options {
+		options[option.Name] = option.Value != ""
+	}
+	return options
 }

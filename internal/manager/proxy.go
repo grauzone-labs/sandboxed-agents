@@ -31,10 +31,7 @@ func parseProxyWorkflow(r agentRequest, args []string, stderr io.Writer) (agentR
 		return r, false
 	}
 	options := map[string]string{}
-	allowed := make(map[string]bool)
-	for _, option := range r.definition.LoginWorkflows["proxy"].Options {
-		allowed[option.Name] = option.Value != ""
-	}
+	allowed := r.definition.LoginWorkflows["proxy"].OptionSyntax()
 	for i := 0; i < len(args); i++ {
 		name, value, inline := strings.Cut(strings.TrimPrefix(args[i], "--"), "=")
 		takesValue, known := allowed[name]
