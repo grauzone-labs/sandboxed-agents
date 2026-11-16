@@ -137,3 +137,20 @@ func assertRecipeFragments(t *testing.T, recipe string, required, forbidden []st
 		}
 	}
 }
+
+// TestGitCredentialStoreRecipeVerifiesBeforeInstall proves GCM's reviewed bytes are checked before extraction at the embedded recipe seam.
+func TestGitCredentialStoreRecipeVerifiesBeforeInstall(t *testing.T) {
+	data, err := fs.ReadFile(image.Context(), "base/Containerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipe := string(data)
+	assertRecipeFragments(t, recipe, []string{"pass", "gcm-linux-x64-3.0.2.tar.gz", "sha256sum -c", "tar -xzf", "sandboxed-agents-pinentry"}, []string{"pinentry-tty", "allow-preset-passphrase"})
+	pin, err := fs.ReadFile(image.Context(), "base/gcm.sha256")
+	if err != nil || string(pin) != "b8e59e22a830006ca4d93e34513effbb2d9fc0c45d9ccf40395eaab7c4c1b97e  gcm-linux-x64-3.0.2.tar.gz\n" {
+		t.Fatalf("pin = %q: %v", pin, err)
+	}
+	if strings.Index(recipe, "sha256sum -c") > strings.Index(recipe, "tar -xzf") {
+		t.Fatal("extracting unverified GCM")
+	}
+}

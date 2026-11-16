@@ -4,11 +4,21 @@ ARG DEBIAN_FRONTEND=noninteractive
 ENV PATH="${PATH}:/home/agent/.local/bin"
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl gnupg git \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg pass git \
         gh tmux openssh-server openssh-client \
-        bash coreutils findutils procps jq ripgrep less unzip zip xz-utils file libatomic1 \
+        bash coreutils findutils procps jq ripgrep less unzip zip xz-utils file libatomic1 libicu76 \
     && rm -f /etc/ssh/ssh_host_* \
     && rm -rf /var/lib/apt/lists/*
+
+# ADR-0012: reviewed GitHub asset, checked before extracting any executable.
+COPY gcm.sha256 /tmp/gcm/gcm.sha256
+RUN set -eu; cd /tmp/gcm; \
+    curl -fsSL https://github.com/git-ecosystem/git-credential-manager/releases/download/v3.0.2/gcm-linux-x64-3.0.2.tar.gz -o gcm-linux-x64-3.0.2.tar.gz; \
+    sha256sum -c gcm.sha256; \
+    mkdir -p /usr/local/share/gcm; \
+    tar -xzf gcm-linux-x64-3.0.2.tar.gz -C /usr/local/share/gcm; \
+    ln -s /usr/local/share/gcm/git-credential-manager /usr/local/bin/git-credential-manager; \
+    rm -rf /tmp/gcm
 
 RUN groupadd --gid 1000 agent \
     && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash agent \
@@ -55,6 +65,7 @@ COPY sshd_config /usr/local/etc/sandboxed-agents/sshd_config
 COPY --chmod=0755 manager.bin /usr/local/bin/sandboxed-agents-manager
 RUN test -s /usr/local/bin/sandboxed-agents-manager \
         || { echo 'Manager missing: build the host executable with image/cmd/overlay.' >&2; exit 1; } \
+    && ln -s sandboxed-agents-manager /usr/local/bin/sandboxed-agents-pinentry \
     && mkdir -p /usr/local/share/sandboxed-agents \
     && /usr/local/bin/sandboxed-agents-manager record-versions
 

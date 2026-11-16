@@ -70,6 +70,7 @@ func TestRecordVersionsWritesManifestWithPresentToolchains(t *testing.T) {
 		"dpkg-query -W -f=${Package}=${Version}\n\n" +
 		"node --version\n" +
 		"npm --version\n" +
+		"git-credential-manager --version\ngpg --version\npass --version\n" +
 		"sandboxed-agents-manager development\n" +
 		"dotnet --list-sdks\n" +
 		"az version\n" +
@@ -86,7 +87,7 @@ func TestRecordVersionsWritesManifestWithPresentToolchains(t *testing.T) {
 			t.Errorf("az environment = %q; want root's home and Azure directory", process.Environment)
 		}
 	}
-	if !reflect.DeepEqual(programs, []string{"dpkg-query", "node", "npm", "dotnet", "az", "az", "rm"}) {
+	if !reflect.DeepEqual(programs, []string{"dpkg-query", "node", "npm", "git-credential-manager", "gpg", "pass", "dotnet", "az", "az", "rm"}) {
 		t.Fatalf("programs = %q; want the required probes, the present toolchains, and the Azure cleanup", programs)
 	}
 }
@@ -101,7 +102,7 @@ func TestRecordVersionsSkipsAbsentToolchainsAndAzureCleanup(t *testing.T) {
 		t.Fatalf("status=%d stderr=%q", status, stderr.String())
 	}
 	manifest := string(written["/usr/local/share/sandboxed-agents/versions.txt"])
-	if len(started) != 3 || strings.Contains(manifest, "keyring") || strings.Contains(manifest, "rm -rf") || !strings.HasSuffix(manifest, "npm --version\nsandboxed-agents-manager development\n") {
+	if len(started) != 6 || strings.Contains(manifest, "keyring") || strings.Contains(manifest, "rm -rf") || !strings.HasSuffix(manifest, "pass --version\nsandboxed-agents-manager development\n") {
 		t.Fatalf("starts=%d manifest=%q; want the three required probes and the version line only", len(started), manifest)
 	}
 }

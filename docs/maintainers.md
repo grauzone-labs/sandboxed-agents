@@ -730,3 +730,21 @@ The live suite runs on the project's Linux and Windows hosts over their SSH conn
 ## Offline tests behind the pages and the image
 
 Three tests read the user pages: `TestSecurityPolicyCoversPodmanCreateOptions` checks that `SECURITY.md` names every option `up` passes to Podman create; `TestCommandReferenceMatchesCommandTree` checks the grammar block of the command reference against the parser; `TestQuickGuideCommandsParse` parses every command line of both quick guides. `go test ./image` checks the key check script against all three fingerprint files and key fixtures, the embedded `sshd_config` policy with the host's `sshd -T`, the entrypoint's host-key startup under a real shell, and the recipe contents.
+
+## Git Credential Manager release asset (#143)
+
+Reviewed 2026-11-16: downloaded `gcm-linux-x64-3.0.2.tar.gz` from
+https://github.com/git-ecosystem/git-credential-manager/releases/tag/v3.0.2.
+Its computed SHA-256 agrees with the asset's `digest` from
+https://api.github.com/repos/git-ecosystem/git-credential-manager/releases/tags/v3.0.2:
+`b8e59e22a830006ca4d93e34513effbb2d9fc0c45d9ccf40395eaab7c4c1b97e`.
+`image/context/base/gcm.sha256` pins those reviewed bytes. Every build checks the
+pin before extraction; a mismatch fails before installation. This pin does not
+independently authenticate the publisher. Upgrades require another download,
+local hash and GitHub metadata comparison, and a new pin. Only Linux x64 is admitted.
+Local Podman builds on 2026-11-16 measured the baseline recipe at 606,944,813 bytes
+and the recipe with GCM, pass, and ICU at 726,709,377 bytes: growth 119,764,564
+bytes (114.2 MiB), before subsequent manager changes. ICU is required by GCM.
+The changed-pin build failed at SHA-256 verification before extraction. GCM
+reported 3.0.2 as agent with networking disabled; the version manifest recorded
+GCM, GnuPG 2.4.7, and pass.

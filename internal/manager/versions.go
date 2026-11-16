@@ -35,6 +35,9 @@ var versionProbes = []versionProbe{
 	{program: "dpkg-query", args: []string{"-W", "-f=${Package}=${Version}\n"}, required: true},
 	{program: "node", args: []string{"--version"}, required: true},
 	{program: "npm", args: []string{"--version"}, required: true},
+	{program: "git-credential-manager", args: []string{"--version"}, required: true},
+	{program: "gpg", args: []string{"--version"}, required: true},
+	{program: "pass", args: []string{"--version"}, required: true},
 }
 
 // toolchainProbes are the optional toolchain commands; each runs only when its program is present.
