@@ -226,6 +226,19 @@ Like the Claude item above, this item has no identifier and is not part of [the 
 
 Finish with `sandboxed-agents remove chk-proxy --volumes` once the proxy items are done, and revoke the key you used on the server. Never record the key, the rejected string, or the server's log lines that carry them.
 
+### Git credential store
+
+Run the [manual Git credential check](integrations.md#manual-git-credential-check)
+in a disposable sandbox: terminal refusal without writes, mismatched confirmation
+without state, setup/unlock, encrypted dummy credential storage and headless
+readback. After each of stop/start, restart and update, prove the store is locked,
+unlock through `integrations config NAME git credentials`, then perform a headless
+clone and push against a private test remote you are authorized to use. Supply
+credentials only through private stdin from your secret tool; record no token or
+passphrase. A wrong passphrase after a successful lookup must leave it locked.
+Encryption protects at rest only; see the threat model and manual lost-passphrase
+reset steps in the integration guide. This adds no new record identifier.
+
 ### GitHub login
 
 Identifier `github-login`. Use a test account and a private test repository. This item follows [Manual GitHub login check](integrations.md#manual-github-login-check) in `chk-persist`.
@@ -234,6 +247,8 @@ Identifier `github-login`. Use a test account and a private test repository. Thi
 2. Run the command again and complete the device flow in your browser. **Expected:** exit status zero, no error.
 3. In `shell chk-persist`, `gh auth status` shows `github.com` logged in, and `GIT_TERMINAL_PROMPT=0 git clone https://github.com/OWNER/REPO.git /workspace/gh-0` clones the private repository without a prompt.
 4. In `/workspace/gh-0`, commit on a temporary branch and run `GIT_TERMINAL_PROMPT=0 git push -u origin HEAD`. **Expected:** the push succeeds without a prompt. Delete the remote branch.
+
+Set up the Git credential store with a dummy non-GitHub credential. After `stop`/`start`, confirm that credential is locked; GitHub keeps its independent `gh` helper. Unlock with `integrations config chk-persist git credentials`, then repeat the headless clone and push. Repeat after `restart` and `update`.
 
 The login stays until [Final cleanup](#final-cleanup).
 
@@ -261,11 +276,14 @@ The SSH setup and the Azure login stay until [Final cleanup](#final-cleanup).
 
 ### Azure DevOps token
 
-Identifier `azdo-token`. Follow [Manual Azure DevOps login check](integrations.md#manual-azure-devops-login-check) in `chk-persist`, with a personal access token that has `Code (Read)` and `Project and Team (Read)` for a test organization with a private test repository.
+Identifier `azdo-token`. Follow [Manual Azure DevOps login check](integrations.md#manual-azure-devops-login-check) in `chk-persist`, with a personal access token that has `Code (Read & Write)` and `Project and Team (Read)` for a test organization with a private test repository.
 
+0. In a terminal, run `sandboxed-agents integrations config chk-persist git credentials` and set up or unlock the encrypted store. A missing or locked store must refuse the Azure DevOps login before reading a token.
 1. Run `sandboxed-agents integrations login chk-persist azdo --organization https://dev.azure.com/ORGANIZATION` with standard input from a terminal. **Expected:** a prompt; nothing is shown while you paste the token; exit status zero.
 2. In `shell chk-persist`, `GIT_TERMINAL_PROMPT=0 git clone https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO /workspace/azdo-0` succeeds, and `az devops project list --organization https://dev.azure.com/ORGANIZATION --output table` lists projects.
 3. **Expected:** the token was typed only at the hidden prompt. The command line you ran, and so the host's shell history, holds `--organization` and the URL and no token.
+
+After `stop`/`start`, `restart`, and `update`, confirm a Git lookup is locked, then unlock with `integrations config chk-persist git credentials` and repeat a headless clone and push of a temporary branch. The extension's PAT copy is unchanged and may still work while Git is locked. Never record the PAT.
 
 The token stays until [Final cleanup](#final-cleanup).
 
@@ -336,7 +354,9 @@ Identifiers `selection-pins-persist`, `git-identity-persist`, `credentials-persi
 manual-check persistence setup --run ID --github-repo https://github.com/OWNER/REPO.git --azdo-organization https://dev.azure.com/ORGANIZATION --azdo-repo https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO
 ```
 
-It reads the installed version `V` of `opencode` from `agents status` and pins it with `agents enable chk-persist opencode --version V`; runs `integrations config chk-persist git identity --name "Manual Check" --email "manual-check@example.invalid"` and `integrations config chk-persist git credentials`; stores a fake credential for `example.invalid` with `git credential approve` in `shell chk-persist`; records the configuration the update must keep (`podman inspect` of the image, the memory, CPU, process, and shared-memory limits, the toolchain and port labels, and the mount names and destinations) as `config-before.txt`; and notes the Azure account of `az account show` by its SHA-256 only, so that every round can compare it without the name being in any file.
+It reads the installed version `V` of `opencode` from `agents status` and pins it with `agents enable chk-persist opencode --version V`; runs `integrations config chk-persist git identity --name "Manual Check" --email "manual-check@example.invalid"` and requires a Git credential store already unlocked in a separate terminal with `integrations config chk-persist git credentials`; stores a fake credential for `example.invalid` with `git credential approve` in `shell chk-persist`; records the configuration the update must keep (`podman inspect` of the image, the memory, CPU, process, and shared-memory limits, the toolchain and port labels, and the mount names and destinations) as `config-before.txt`; and notes the Azure account of `az account show` by its SHA-256 only, so that every round can compare it without the name being in any file.
+
+**Before each observation after a lifecycle change:** confirm a headless Git lookup is locked, then unlock in a separate terminal with `integrations config chk-persist git credentials`. The runner refuses if the store remains locked; it never reads or records a passphrase.
 
 **The observation set.** Run it three times, as **round 0** (now), **round 1** (after `stop` and `start`), and **round 2** (after `update`). `N` is the round number. Every commit is made fresh in that round, in a fresh repository, so no old commit is read:
 
@@ -349,7 +369,7 @@ manual-check persistence observe --run ID --round N
 3. In `shell chk-persist`: `gh auth status` shows `github.com` logged in, and `GIT_TERMINAL_PROMPT=0 git clone https://github.com/OWNER/REPO.git /workspace/gh-N` succeeds without a prompt (round 0 reuses `/workspace/gh-0`).
 4. In `shell chk-persist`: `az account show` prints the account noted at login (compared by hash), `GIT_TERMINAL_PROMPT=0 git clone https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO /workspace/azdo-N` succeeds without a prompt (round 0 reuses `/workspace/azdo-0`), and `az devops project list --organization https://dev.azure.com/ORGANIZATION --output table` lists projects.
 5. In `shell chk-persist`, two new commits of this round, one in the new repository `/workspace/repo-N` and one in `/workspace/gh-N`, each made with `git commit --allow-empty -m round-N`, print their author with `git log -1 --format='%an <%ae> %s'`.
-6. `grep -c example.invalid /home/agent/.git-credentials` prints `1`.
+6. A headless `git credential fill` for `https://chk@example.invalid` returns the dummy credential. The runner records only whether its password equals `not-a-secret`, as `credential-count 1`; it records no token.
 
 **Expected, in every round:** steps 1 to 4 show the agents and the three integrations still signed in, with no sign-in prompt; step 2 shows version `V` pinned; step 5 prints `Manual Check <manual-check@example.invalid> round-N` for both commits; step 6 prints `1`. The runner's verdict covers steps 2 to 6 and the statuses of step 1; the answered prompts of step 1 are what you observed.
 
@@ -776,7 +796,7 @@ manual-check final-cleanup --run ID
 
 1. The runner removes the SSH setup: `sandboxed-agents ssh-config chk-persist --remove`.
 2. It removes the sandbox and its volumes: `sandboxed-agents remove chk-persist --volumes`. **Expected:** the three volumes are removed (`podman volume ls` shows none for `chk-persist`).
-3. This is the removal half of `credentials-persist`. It creates the sandbox again with `sandboxed-agents up chk-persist --with azure` and checks, in `sandboxed-agents shell chk-persist`, that `/home/agent/.git-credentials` is absent, that `git config --global --get user.email` prints nothing, and that `gh auth status` and `az account show` report no login; then, from the host, that `sandboxed-agents agents status chk-persist opencode` shows the agent not enabled. Then it removes the sandbox for good: `sandboxed-agents remove chk-persist --volumes`.
+3. This is the removal half of `credentials-persist`. It creates the sandbox again with `sandboxed-agents up chk-persist --with azure` and checks, in `sandboxed-agents shell chk-persist`, that `/home/agent/.local/share/sandboxed-agents/git-credentials` is absent, that `git config --global --get user.email` prints nothing, and that `gh auth status` and `az account show` report no login; then, from the host, that `sandboxed-agents agents status chk-persist opencode` shows the agent not enabled. Then it removes the sandbox for good: `sandboxed-agents remove chk-persist --volumes`.
 4. It saves `images-after` and compares it with `images-before` for the [image check](#no-command-removes-an-image).
 5. Revoke what you granted: remove the GitHub device authorization in your GitHub settings, revoke the Azure sign-in sessions for the test account, delete the Azure DevOps personal access token, sign out of the four agents' accounts or revoke their sessions at each provider, revoke the CLIProxyAPI keys on their server if you ran the [Claude](#claude-proxy-workflow), [Codex](#codex-proxy-workflow), [OpenCode](#opencode-proxy-workflow), or [Copilot](#copilot-proxy-workflow) proxy workflow, remove the sandbox's environment and the CLI authorization from the T3 account if they still exist, remove the paired phone's session in the T3 mobile app, and remove the devices `chk-persist` and `chk-pair2` from your tailnet admin console if they are still listed (the `remove chk-persist --volumes` above took the node's state without a sign-out).
 6. `sandboxed-agents list` must show no sandbox of the group, and `podman ps --all` no `sandboxed-agents.manual-check.` container; the runner checks both.

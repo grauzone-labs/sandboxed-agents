@@ -4,7 +4,7 @@ This page shows you how to set up Git identity and credentials in a sandbox, how
 
 Every integration command needs a running sandbox. A stopped sandbox fails and names `start NAME`; a sandbox with only volumes names `up NAME`. If the manager does not answer, the command names `check NAME` for diagnosis and `restart NAME` as the next step. Nothing starts automatically and there is no fallback around the manager. Invalid integration or workflow names list the available choices before any Podman call.
 
-Every workflow runs as `agent` (UID and GID 1000) in the sandbox. No host credential, host configuration, or host environment value is copied into the sandbox. The executable adds no mount for a workflow and passes only the values you give it. Whatever a workflow stores lives in the home volume. It survives `stop`, `start`, and `update`. Every agent in the sandbox can read it. Only `sandboxed-agents remove NAME --volumes` deletes it; removing the sandbox alone keeps its volumes. This is why separate sandboxes, not separate agents, separate accounts.
+Every workflow runs as `agent` (UID and GID 1000) in the sandbox. No host credential, host configuration, or host environment value is copied into the sandbox. The executable adds no mount for a workflow and passes only the values you give it. Whatever a workflow stores lives in the home volume. It survives `stop`, `start`, and `update`. Every agent can access available logins; the Git credential store requires an unlock as described below. Only `sandboxed-agents remove NAME --volumes` deletes it; removing the sandbox alone keeps its volumes. This is why separate sandboxes, not separate agents, separate accounts.
 
 ## Git
 
@@ -24,13 +24,99 @@ This sets `user.name` and `user.email` in the global Git configuration of `agent
 sandboxed-agents integrations config agent01 git credentials
 ```
 
-The helper is Git's built-in `credential-store`. It needs no additional program, daemon, or desktop keyring, and its explicit file keeps credentials in the home volume, as plaintext. The manager runs this one call as `agent`:
+Git Credential Manager (GCM) 3.0.2 keeps Git HTTPS credentials in a GPG-encrypted
+`pass` store in the home volume. The command takes no options. Standard input and
+standard output must both be terminals: without either, it fails before reading a
+passphrase or writing Git configuration, a key, or the store. Passphrases are read
+without echo and travel only through private stdin pipes and gpg-agent's socket,
+never process arguments, environments, files, or diagnostics. They must be nonempty,
+at most 256 bytes, and contain no line break or NUL.
+
+On first use it asks twice, creates one dedicated Ed25519 primary key with a
+Curve25519 encryption subkey, both without expiry, and initializes the store for
+that key. Empty or mismatched input creates no key or store and changes no Git
+configuration. Later runs ask once and reuse that key and store. Missing, damaged,
+or mismatched managed state is refused without overwriting or regenerating it.
+The manager never exports the private key.
+
+The dedicated GnuPG home is
+`~/.local/share/sandboxed-agents/git-credentials/gnupg`; the pass-compatible store
+is its sibling `password-store`, with the key's fingerprint in `.gpg-id`. The
+user's default GnuPG home and its other keys and pinentry settings are untouched.
+The manager-owned `sandboxed-agents-pinentry` is configured only for the dedicated
+agent and never prompts.
+
+Setup replaces every global `credential.helper` with the manager's GCM helper,
+sets `credential.credentialStore=gpg` and `credential.interactive=false`, and leaves
+system and repository configuration unchanged. The GitHub workflow's host-specific
+helpers for `github.com` and `gist.github.com` survive in either order; other hosts
+use GCM. No managed workflow configures a plaintext store.
+
+If a legacy `~/.git-credentials` exists, setup imports every entry through GCM and
+reads each back with `git credential fill` before removing the file and replacing
+the old global helpers. An import or readback failure exits non-zero and retains
+both the source bytes and the previous global helper entries. Resolve the failure
+and rerun; never delete the source before the verified migration succeeds.
+
+### Unlock lifetime and limits
+
+A successful first setup or later unlock leaves the store unlocked without a time
+limit or idle timeout, across separate processes, shells and agent sessions.
+Unlock again with `integrations config NAME git credentials` after **every start,
+restart, or update**. Stopping the sandbox, ending its dedicated gpg-agent, or
+sending that agent SIGHUP loses the unlock. A wrong passphrase first clears the
+previous unlock and warm caches, then fails verification and leaves the store
+locked. Verification uses `PASSWD --verify`, rather than trusting a warm cache.
+
+The verified passphrase lives in gpg-agent's generic memory under a product-only
+name, using inline `PUT_SECRET` with TTL `-1`; it is never preset under a keygrip.
+The adapter reads it with `GET_SECRET`. It fails within a two-second socket limit
+when the agent does not answer. Each whole GCM invocation has a **10-second
+deadline plus one-second kill grace** for its process group, including GPG waiting
+on a stalled agent. The helper sets the nonsecret `GPG_TTY=/dev/null` for GCM's
+headless guard. A locked or missing credential fails non-zero without a terminal
+prompt or plaintext fallback; `git credential fill` receives `quit=true` on failure.
+
+This provides **protection at rest only**. It provides no protection against
+processes running as `agent` while unlocked, or against the host user. The GitHub
+CLI's token and the Azure DevOps extension's separate PAT copy are not encrypted
+by this store.
+
+### Lost-passphrase recovery
+
+Stored encrypted credentials cannot be recovered without the passphrase. Resetting
+is a manual, destructive action; no workflow performs it automatically. Stop and
+start the sandbox, then enter `sandboxed-agents shell NAME` and run:
 
 ```sh
-git config --global --replace-all -- credential.helper 'store --file=/home/agent/.git-credentials'
+gpgconf --homedir /home/agent/.local/share/sandboxed-agents/git-credentials/gnupg --kill gpg-agent
+rm -rf /home/agent/.local/share/sandboxed-agents/git-credentials
+git config --global --unset-all credential.helper || :
+git config --global --unset-all credential.credentialStore || :
+git config --global --unset-all credential.interactive || :
 ```
 
-This replaces every global `credential.helper` entry in `/home/agent/.gitconfig` and leaves system and repository Git configuration unchanged. The command takes no options, prompts for nothing, needs no terminal, and behaves the same with or without one. It stores no credentials itself and creates no credential file. A later Git operation on an HTTPS remote asks for credentials through an askpass program or terminal when no helper supplies them, then stores accepted credentials in `/home/agent/.git-credentials`.
+Leave the shell, run `sandboxed-agents integrations config NAME git credentials`
+with a terminal, and store the credentials again by signing in. Host-specific `gh`
+helpers remain. If state is damaged rather than the passphrase lost, restore the
+matching key and store from your own backup or use this reset; the manager never
+repairs damaged state itself. An interrupted setup may also leave a
+`~/.gitconfig.lock`; remove that lock manually only after confirming no setup or
+Git configuration writer is running.
+
+### Manual Git credential check
+
+Use only a disposable sandbox and dummy secrets for mechanism checks. Confirm
+redirecting either input or output refuses setup without changing files. Check
+mismatched confirmation creates nothing, then create the store and approve a dummy
+HTTPS credential through Git on stdin. Confirm a separate headless shell fills it,
+there is no `~/.git-credentials`, and the store contains encrypted `.gpg` entries.
+After `stop`/`start`, `restart`, and `update`, confirm a headless lookup fails while
+locked, then unlock with the workflow and repeat it successfully. Repeat with a
+wrong passphrase after warming the cache: the lookup must fail until a correct
+unlock. For a user-driven account check, supply a private test remote's credential
+from your secret tool over stdin, unlock, and run a headless clone and push of a
+temporary branch with `GIT_TERMINAL_PROMPT=0`. Never record a credential.
 
 ## GitHub
 
@@ -68,17 +154,17 @@ A reported workflow or runtime failure, including a missing terminal, exits with
 
 The GitHub CLI keeps its configuration and the stored token under `/home/agent/.config/gh`, and `gh auth setup-git` adds its helper entries for `github.com` to `/home/agent/.gitconfig`. Both are in the home volume. Treat the token as a plaintext credential that every agent in the sandbox can read and use for any repository your account can reach. To revoke access on GitHub's side, revoke the token in your GitHub account settings.
 
-`setup-git` writes an empty `github.com` helper entry followed by the `gh` helper (and the same for `gist.github.com`). The empty entry resets any earlier helper for those hosts, so the generic store helper from [`integrations config NAME git credentials`](#git-credential-helper) no longer applies to `github.com`, but still serves other hosts. `gh auth logout` removes the stored login, not these Git entries.
+`setup-git` writes an empty `github.com` helper entry followed by the `gh` helper (and the same for `gist.github.com`). The empty entry resets any earlier helper for those hosts, so the GCM helper from [`integrations config NAME git credentials`](#git-credential-helper) no longer applies to `github.com`, but still serves other hosts. `gh auth logout` removes the stored login, not these Git entries.
 
 ### Manual GitHub login check
 
-The offline tests run no real `gh` and contact no GitHub server, so a working device login, a private clone, and a push are proven only by this check. Run it once for each change to the workflow, on a real sandbox with a browser and an account that can push to a private test repository; the [manual checklist](manual-checklist.md#github-login) runs it before a stable release.
+The offline tests use real Git and `gh auth setup-git` with dummy login state and contact no GitHub server, so a working device login, a private clone, and a push are proven only by this check. Run it once for each change to the workflow, on a real sandbox with a browser and an account that can push to a private test repository; the [manual checklist](manual-checklist.md#github-login) runs it before a stable release.
 
 1. Use a new, clean test sandbox; `gh auth logout` does not undo Git helper entries, so an earlier login leaves it unclean. Run `sandboxed-agents integrations login agent01 github`, wait for the code, and press Ctrl+C. Confirm the status is non-zero and that, in `shell agent01`, `gh auth status` reports no login. Note any `git config --global --get-regexp '^credential\.'` entries; a cancelled login may leave some.
 2. Run the command again and complete the device flow in your browser. Confirm it exits zero and prints no error.
 3. In `shell agent01`, run `gh auth status`; it must show `github.com` logged in. Then clone your private test repository without a prompt: `GIT_TERMINAL_PROMPT=0 git clone https://github.com/OWNER/REPO.git`.
 4. In the clone, make a test commit on a temporary branch (set the author first with [`integrations config NAME git identity`](#commit-identity) if needed) and run `GIT_TERMINAL_PROMPT=0 git push -u origin HEAD`. Confirm the push succeeds without a prompt, then delete the remote branch.
-5. Run `stop` and `start`, open a new shell, and repeat the clone to a fresh directory. Confirm it still works: the login persisted in the home volume.
+5. Set up the Git credential store and a dummy non-GitHub credential. After `stop` and `start`, confirm that credential is locked; GitHub still uses its separate `gh` helper. Unlock with `integrations config agent01 git credentials`, then repeat the headless clone and push. Repeat after `restart` and `update`.
 6. Run the command without a terminal, for example `sandboxed-agents integrations login agent01 github </dev/null`. Confirm it fails with a terminal error and a non-zero status, and starts no `gh`.
 
 Record the sandbox image, host platform, tested commit, `gh --version` from the sandbox, and each step's result. Never record a token or one-time code.
@@ -191,18 +277,32 @@ Only the first line is used, with surrounding whitespace removed; further lines 
 
 ### What it runs
 
-The executable starts the manager once as `agent`, without a terminal, and writes the token to its standard input. The manager verifies it is running as `agent` and runs four programs as `agent`, in this order, stopping at the first failure:
+Before reading any token, the host asks the manager whether the Git credential
+store is set up and unlocked. A missing or locked store exits 1 and names
+`integrations config NAME git credentials`. This follows the existing sandbox,
+manager, and Azure toolchain checks. No token is consumed on that refusal. The
+manager checks again before reading its private stdin handoff.
+
+With an unlocked store, the manager runs the unchanged Azure CLI step:
 
 ```sh
 az devops login --organization https://dev.azure.com/ORGANIZATION --only-show-errors
-git config --global --replace-all -- credential.helper 'store --file=/home/agent/.git-credentials'
-git config --global --replace-all -- credential.https://dev.azure.com/ORGANIZATION.username ORGANIZATION
-git -c credential.helper= -c 'credential.helper=store --file=/home/agent/.git-credentials' -c credential.useHttpPath=false credential approve
 ```
 
-The first stores the token for the Azure DevOps CLI extension, from standard input. The second configures the same store helper as [`integrations config NAME git credentials`](#git-credential-helper), replacing every global `credential.helper` entry. The third sets the username Git sends for the organization URL. The fourth hands URL, username, and token to the helper on standard input; its `-c` options make this one call use only the store helper, so no helper from repository or system Git configuration sees the PAT, and the entry covers the host and username rather than one repository path.
+It then pins GCM's provider to `generic` for both the organization URL and its
+origin, and writes the organization username in global Git configuration. The
+origin pin matters because Git strips repository paths before invoking its helper.
+It approves the URL, username and PAT through Git using only the manager's GCM
+helper and `credential.useHttpPath=false`, so repository and system helpers never
+receive the PAT. The stored host-and-username credential resolves for repository
+URLs under that organization without an OAuth or broker attempt. No global
+plaintext helper or `.git-credentials` file is written.
 
-The token appears in no process argument on the host or in the sandbox, and the output of all four programs is discarded because their diagnostics could contain it. The programs run with a controlled environment that keeps Azure CLI and Git state under `/home/agent`, drops ambient `AZURE_*` values (including any ambient PAT) and Git trace and askpass variables, and disables Azure CLI telemetry, log files, and Git terminal prompts. Later `az` or `git` calls in the sandbox use its own environment.
+All credential subprocess diagnostics are discarded. The token travels only on
+stdin; it appears in no process argument. The Azure step keeps its existing
+controlled environment under `/home/agent`, with ambient PATs, debug logging,
+trace and askpass overrides removed. GCM and GnuPG use the dedicated store and
+agent described above.
 
 ### Result and failure
 
@@ -212,18 +312,23 @@ Because the programs run in order, a failure after the first can leave a partial
 
 ### Where the token lives
 
-The only credential in play is the PAT you supply on standard input. It is stored twice in the home volume: by the Azure DevOps CLI extension under `/home/agent/.azure`, and by Git's store helper as a plaintext line for `dev.azure.com` and the organization username in `/home/agent/.git-credentials`; the helper and username entries live in `/home/agent/.gitconfig`. Every agent in the sandbox can use the token for everything the PAT allows. To revoke access, revoke the PAT in Azure DevOps; `az devops logout` removes only the extension's copy. A later [GitHub login](#github) resets the helper for `github.com` only; the Azure DevOps entry keeps serving its organization.
+The PAT is stored twice in the home volume: by the Azure DevOps extension under
+`~/.azure`, unchanged by this workflow, and by GCM as a GPG-encrypted Git credential
+store entry. The extension copy is outside this encryption feature (#142).
+Processes running as `agent` while the store is unlocked and the host user can
+access the PAT. Revoke it in Azure DevOps to end access; `az devops logout` removes
+only the extension's copy. GitHub's per-host `gh` helpers remain independent.
 
 ### Manual Azure DevOps login check
 
-The offline tests run real Git against a stub `az` and contact no Azure DevOps server: after the login, `git credential fill` resolves the stored token for `https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO` with and without an `ORGANIZATION@` user prefix, and a repository-level helper is never called. A live private clone and an `az devops` query are proven only by this check. Run it once for each change to the workflow, on a real sandbox built with `--with azure`, with a PAT that has `Code (Read)` and `Project and Team (Read)` for an organization holding a private test repository; the [manual checklist](manual-checklist.md#azure-devops-token) runs it before a stable release.
+The offline tests run real Git against a stub `az` and contact no Azure DevOps server: after the login, `git credential fill` resolves the stored token for `https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO` with and without an `ORGANIZATION@` user prefix, and a repository-level helper is never called. A live private clone and an `az devops` query are proven only by this check. Run it once for each change to the workflow, on a real sandbox built with `--with azure`, with a PAT that has `Code (Read & Write)` and `Project and Team (Read)` for an organization holding a private test repository; the [manual checklist](manual-checklist.md#azure-devops-token) runs it before a stable release.
 
-1. In a new sandbox, confirm in `shell agent01` that `az devops --help` works and `git config --global --get-regexp '^credential\.'` prints nothing.
-2. Run the command with `</dev/null`. Confirm it fails with a token message, exits non-zero, and left no `credential.` entries.
+1. In a new sandbox, confirm `az devops --help` works. With the store missing or locked, invoke the login with unread input and confirm it exits 1 naming `git credentials`, without consuming a token. Set up and unlock with `integrations config agent01 git credentials`.
+2. With the store unlocked, run the command with `</dev/null`. Confirm it fails with a token message and exits non-zero.
 3. Run it with standard input on the terminal: it prompts, shows nothing while you paste, and exits zero. Repeat with the token piped from a file.
 4. In `shell agent01`, clone a private repository without a prompt: `GIT_TERMINAL_PROMPT=0 git clone https://dev.azure.com/ORGANIZATION/PROJECT/_git/REPO`, then run `az devops project list --organization https://dev.azure.com/ORGANIZATION --output table`.
 5. Confirm the token is not in the host shell history, and that the `podman` process of step 3 had no token in its arguments (`ps` on the host while it runs).
-6. Run `stop` and `start`, then repeat the clone to a fresh directory.
+6. Run `stop` and `start`, confirm Git lookup fails while locked, unlock with `integrations config agent01 git credentials`, then repeat the headless clone and push of a temporary branch. Repeat after `restart` and `update`. The `az devops` copy remains usable while the Git store is locked.
 7. On a sandbox without the `azure` toolchain, confirm the command fails non-zero and writes no `credential.` entry.
 
 Record the sandbox image, host platform, tested commit, `az version`, and each step's result. Never record the token.

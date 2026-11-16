@@ -63,9 +63,6 @@ func TestGitIdentityWritesBothGlobalValues(t *testing.T) {
 func TestGitWorkflowFailuresStopWithoutFallback(t *testing.T) {
 	for _, args := range [][]string{{"integrations", "config", "git", "identity", "--name", "N", "--email", "E"}} {
 		for _, failureAt := range []int{1, 2} {
-			if args[3] == "credentials" && failureAt == 2 {
-				continue
-			}
 			effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
 			starts := 0
 			effects.Start = func(manager.Process) error {
@@ -83,8 +80,8 @@ func TestGitWorkflowFailuresStopWithoutFallback(t *testing.T) {
 	}
 }
 
-// TestGitWorkflowsWriteGlobalConfigOnly proves real Git replaces helper entries and writes identity only in an isolated home through the manager command and injected process seam.
-func TestGitWorkflowsWriteGlobalConfigOnly(t *testing.T) {
+// TestGitIdentityWritesGlobalConfigOnly proves real Git preserves helper entries and writes identity only in an isolated home through the manager command and injected process seam.
+func TestGitIdentityWritesGlobalConfigOnly(t *testing.T) {
 	git, err := exec.LookPath("git")
 	if err != nil {
 		t.Skip("real Git is unavailable for isolated-home verification")

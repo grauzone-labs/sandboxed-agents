@@ -1,6 +1,7 @@
 package gitcredentials_test
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -37,6 +38,12 @@ func TestStoreSetupAndWarmCacheRelock(t *testing.T) {
 	}
 	if state, err := s.State(); err != nil || state != "ready" {
 		t.Fatalf("state=%s error=%v", state, err)
+	}
+	if err := s.Helper([]string{"--generic", "store"}, strings.NewReader("protocol=https\nhost=example.invalid\nusername=dummy\npassword=warm-cache-dummy\n\n"), &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Helper([]string{"--generic", "get"}, strings.NewReader("protocol=https\nhost=example.invalid\nusername=dummy\n\n"), &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
 	}
 	if err := s.Setup([]byte("wrong-dummy"), nil); err == nil {
 		t.Fatal("wrong passphrase accepted")

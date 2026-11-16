@@ -4,7 +4,7 @@ status: accepted
 
 # Git credentials in an encrypted pass store
 
-[#143](https://github.com/grauzone-labs/sandboxed-agents/issues/143) replaces the plaintext `credential-store` file with Git Credential Manager (GCM) and its `gpg` credential store. During triage of #143 the maintainer approved how GCM 3.0.2 is admitted into the image, which workflow sets up and unlocks the store, which key protects it, how long an unlock must last, and which mechanism holds it. This ADR records those five decisions. They are accepted design; the feature is not yet implemented.
+[#143](https://github.com/grauzone-labs/sandboxed-agents/issues/143) replaces the plaintext `credential-store` file with Git Credential Manager (GCM) and its `gpg` credential store. During triage of #143 the maintainer approved how GCM 3.0.2 is admitted into the image, which workflow sets up and unlocks the store, which key protects it, how long an unlock must last, and which mechanism holds it. This ADR records those five decisions. They are accepted design; #143 now implements them.
 
 ## Decisions
 
@@ -64,12 +64,21 @@ A [local proof](https://github.com/grauzone-labs/sandboxed-agents/issues/143#iss
 
 ## Status
 
-On 2026-11-16 the maintainer confirmed this design, authorized the local proof, and, after it passed, approved publishing this ADR as the basis for implementing #143. No production code exists yet. The product feature on the repository base image, including terminal entry, the manager, lifecycle commands, migration, and the GitHub and Azure DevOps logins, remains to be validated when implemented; live hosts run only after a Yes at the live-validation start checkpoint.
+On 2026-11-16 the maintainer confirmed this design, authorized the local proof, and, after it passed, approved publishing this ADR as the basis for implementing #143. The implementation now includes the terminal entry and private stdin handoff,
+dedicated agent and key, nonprompting pinentry, bounded helper, verified migration,
+and Azure DevOps storage. The repeatable local check on the repository image
+passed mechanism tests, real-Git coexistence and migration tests, and secret scans
+([maintainer record](../maintainers.md#repeatable-local-git-credential-check)).
+Local product startup was blocked by Podman version, networking and cgroup
+prerequisites, so lifecycle proof uses faithful container equivalents. Product
+lifecycle commands and Windows/Linux live proof remain open; live hosts run only
+after a Yes at the live-validation start checkpoint.
 
-## Open
+## Implementation choices
 
-Implementation details, chosen and tested during implementation:
-
-- the helper deadline and kill grace values (the proof's 5 s and 1 s were test values, not choices);
-- the key algorithm;
-- which release asset, tarball or Debian package, is pinned under the provenance rule above, and the measured image growth.
+- Whole GCM invocation deadline: 10 seconds, followed by one second of kill grace.
+- Key algorithm: Ed25519 certification primary plus Curve25519 encryption subkey,
+  both protected by the passphrase, without expiry.
+- Asset: `gcm-linux-x64-3.0.2.tar.gz`, with the reviewed SHA-256 recorded in the
+  recipe and maintainer notes. Comparable release-overlay builds measured growth
+  of 122,307,668 bytes (116.64 MiB).

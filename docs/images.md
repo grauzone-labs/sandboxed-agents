@@ -6,16 +6,32 @@ This page tells you what the image a sandbox runs in contains, which toolchains 
 
 The base image is Debian 13 (trixie) slim with Node.js 24 LTS. It contains:
 
-- OpenSSH server and client, Git, GitHub CLI, tmux, `curl`, `jq`, `ripgrep`, `less`, `unzip`, `zip`, `xz-utils`, `file`, `procps`, Bash, coreutils, findutils, `gnupg`, CA certificates, and `libatomic1`, the GCC atomics runtime library that the T3 Code runtime loads.
+- OpenSSH server and client, Git, GitHub CLI, tmux, `curl`, `jq`, `ripgrep`, `less`, `unzip`, `zip`, `xz-utils`, `file`, `procps`, Bash, coreutils, findutils, `gnupg`, `pass`, `libicu76`, CA certificates, and `libatomic1`, the GCC atomics runtime library that the T3 Code runtime loads.
 - Node.js 24 and npm from the NodeSource repository `node_24.x`, installed after its [signing key check](#signing-key-checks).
 - Tailscale (`tailscale` and `tailscaled`) from Tailscale's Debian 13 repository, installed after its [signing key check](#signing-key-checks), for the T3 Code Tool's tailnet node ([ADR 0010](adr/0010-t3-code-pairs-over-an-in-sandbox-tailnet-node.md)). The image starts no Tailscale process: the manager starts `tailscaled` as `agent` in userspace networking mode, inside the Tool directory, only after `tools tailscale NAME t3code login`. A sandbox without that login runs no Tailscale process and creates no Tailscale state.
 - The user `agent` with UID and GID 1000, the directory `/workspace` owned by `agent`, and no baked SSH host keys.
+- GCM 3.0.2 x64 from a reviewed, SHA-256-pinned GitHub release asset, checked before extraction ([provenance](maintainers.md#git-credential-manager-release-asset-143)).
+- The nonprompting manager-owned pinentry adapter at `/usr/local/bin/sandboxed-agents-pinentry`, for the Git credential store's dedicated gpg-agent only.
 - The in-container manager at `/usr/local/bin/sandboxed-agents-manager`.
 - No agent, no Tool, and none of the toolchains below.
 
 ### Installed version manifest
 
-Every image records the versions of what it installed in `/usr/local/share/sandboxed-agents/versions.txt`: `/etc/os-release`, every Debian package with its version, the Node.js and npm versions, and the manager version. A toolchain image rewrites the same file and adds the output of `dotnet --list-sdks`, `playwright --version`, `az version`, and `cc --version` for the toolchains present.
+Every image records the versions of what it installed in `/usr/local/share/sandboxed-agents/versions.txt`: `/etc/os-release`, every Debian package with its version, the Node.js, npm, GCM, gpg and pass versions, and the manager version. A toolchain image rewrites the same file and adds the output of `dotnet --list-sdks`, `playwright --version`, `az version`, and `cc --version` for the toolchains present.
+
+### Git credentials
+
+Every image supports GCM's GPG-encrypted pass store. Terminal input and output are
+required for `integrations config NAME git credentials`, which sets it up and
+unlocks it. Unlock again after every start, restart, or update. The dedicated
+agent and key leave the user's default GnuPG home alone. The helper runs GCM with
+`GPG_TTY=/dev/null`, a 10-second deadline and one-second kill grace.
+
+Encryption provides protection at rest only, with no protection against processes
+running as `agent` while unlocked or against the host user. A lost passphrase means
+stored credentials cannot be recovered: manually stop/start, kill the dedicated
+agent, remove its state and the managed global settings, rerun setup and sign in
+again, following [the reset commands](integrations.md#lost-passphrase-recovery).
 
 ### SSH host keys
 

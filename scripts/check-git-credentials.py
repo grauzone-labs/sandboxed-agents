@@ -41,15 +41,19 @@ def inside(*args, data=None, ok=True):
 
 def setup(password=phrase, confirm=None, ok=True):
     """Exercise the manager's private stdin handoff after the host terminal guard."""
-    return inside(manager, 'integrations', 'config', 'git', 'credentials',
-                  data=json.dumps({'Passphrase': password.decode(),
-                                   'Confirmation': (password if confirm is None else confirm).decode()}).encode(), ok=ok)
+    result = inside(manager, 'integrations', 'config', 'git', 'credentials',
+                    data=json.dumps({'Passphrase': password.decode(),
+                                     'Confirmation': (password if confirm is None else confirm).decode()}).encode(), ok=ok)
+    assert phrase not in result.stdout + result.stderr, 'passphrase in setup output'
+    return result
 
 
 def fill(host='example.invalid', username='dummy', ok=True):
     """Retrieve a dummy credential through real Git and the installed manager helper."""
-    return inside('git', 'credential', 'fill',
-                  data=f'protocol=https\nhost={host}\nusername={username}\n\n'.encode(), ok=ok)
+    result = inside('git', 'credential', 'fill',
+                    data=f'protocol=https\nhost={host}\nusername={username}\n\n'.encode(), ok=ok)
+    assert phrase not in result.stdout + result.stderr, 'passphrase in lookup output'
+    return result
 
 
 def locked():
@@ -126,6 +130,7 @@ try:
     inside('git', 'config', '--global', 'credential.https://example.invalid.provider', 'generic')
     inside('git', 'credential', 'approve', data=b'protocol=https\nhost=example.invalid\nusername=dummy\npassword=' + token + b'\n\n')
     assert b'password=' + token in fill().stdout
+    assert inside('find', state + '/password-store', '-name', '*.gpg', '-type', 'f').stdout.strip()
     assert inside('test', '!', '-e', home + '/.git-credentials').returncode == 0
     scan()
     assert setup(b'wrong-dummy', ok=False).returncode != 0

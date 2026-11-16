@@ -68,21 +68,12 @@ func TestAzureDevOpsCredentialsResolveForClone(t *testing.T) {
 	environment := append(os.Environ(), "HOME="+home, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+filepath.Join(home, ".gitconfig"), "GIT_TERMINAL_PROMPT=0")
 	effects.Stdin = strings.NewReader("git-pat-sentinel\n")
 	effects.Start = func(p manager.Process) error {
-		if p.Program == "az" {
-			return nil
+		if p.Program != "az" {
+			t.Fatalf("unexpected process %s", p.Program)
 		}
-		args := append([]string(nil), p.Args...)
-		for i, arg := range args {
-			args[i] = strings.ReplaceAll(arg, "/home/agent/.git-credentials", filepath.Join(home, ".git-credentials"))
-		}
-		cmd := exec.Command("git", args...)
-		cmd.Env = environment
-		cmd.Dir = repository
-		cmd.Stdin = p.Stdin
-		cmd.Stdout = p.Stdout
-		cmd.Stderr = p.Stderr
-		return cmd.Run()
+		return nil
 	}
+
 	var out bytes.Buffer
 	if status := manager.RunWithEffects([]string{"integrations", "login", "azdo", "--organization", "https://dev.azure.com/contoso/"}, &out, &out, effects); status != 0 {
 		t.Fatalf("status=%d output=%s", status, &out)
@@ -105,7 +96,7 @@ func TestAzureDevOpsCredentialsResolveForClone(t *testing.T) {
 
 }
 
-// TestAzureDevOpsLoginFailuresDoNotDiscloseToken proves every child failure is normalized and stops later credential changes without exposing child output or errors through the manager seam.
+// TestAzureDevOpsLoginFailuresDoNotDiscloseToken proves an Azure CLI failure is normalized and stops later credential changes without exposing child output or errors through the manager seam.
 func TestAzureDevOpsLoginFailuresDoNotDiscloseToken(t *testing.T) {
 	for failureAt := 1; failureAt <= 1; failureAt++ {
 		effects := credentialEffects(t)

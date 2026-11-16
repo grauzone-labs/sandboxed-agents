@@ -742,9 +742,73 @@ https://api.github.com/repos/git-ecosystem/git-credential-manager/releases/tags/
 pin before extraction; a mismatch fails before installation. This pin does not
 independently authenticate the publisher. Upgrades require another download,
 local hash and GitHub metadata comparison, and a new pin. Only Linux x64 is admitted.
-Local Podman builds on 2026-11-16 measured the baseline recipe at 606,944,813 bytes
-and the recipe with GCM, pass, and ICU at 726,709,377 bytes: growth 119,764,564
-bytes (114.2 MiB), before subsequent manager changes. ICU is required by GCM.
-The changed-pin build failed at SHA-256 verification before extraction. GCM
-reported 3.0.2 as agent with networking disabled; the version manifest recorded
-GCM, GnuPG 2.4.7, and pass.
+Local Podman builds on 2026-11-16, using the same release overlay flags for both
+managers, measured baseline `6feacba` at 604,487,725 bytes and the implemented
+image at 726,795,393 bytes: **growth 122,307,668 bytes (116.64 MiB)**. ICU is required
+by GCM. A deliberately changed pin failed at SHA-256 verification before
+extraction. GCM reported 3.0.2 as `agent` with networking disabled; the manifest
+recorded GCM, GnuPG 2.4.7, and pass.
+
+The Git credential store uses a dedicated GnuPG home and agent, an Ed25519
+certification primary with a Curve25519 encryption subkey, and no expiry. Terminal
+input and output are required for setup and unlock; passphrases travel through
+private stdin and sockets only. The verified passphrase is held in the dedicated
+agent's generic memory with inline `PUT_SECRET` TTL `-1`, never under a keygrip.
+No preset-passphrase support, terminal pinentry, IPC debugging, or agent log is
+configured. To relock even a stalled agent, the manager records only its daemon
+PID, kernel start time and boot identity in `agent-process.json`, never a secret,
+and signals it through a verified Linux pidfd. A listening socket can predate the
+GnuPG daemon fork, so its peer PID is not used as the daemon identity. Stale
+records cannot signal a reused PID. No supervisor or passphrase-holding process
+is added. The nonprompting adapter reads `GET_SECRET` with a two-second socket
+limit. The whole GCM process has a 10-second deadline plus one-second kill grace;
+the group leader is kept unreaped until descendant cleanup to avoid process-group
+ID reuse. `GPG_TTY=/dev/null` admits GCM's headless GPG operation.
+
+Unlock after every start, restart, or update; agent termination or SIGHUP also
+loses the unlock. This is protection at rest only, with no protection against
+processes running as `agent` while unlocked or against the host user. A lost
+passphrase makes stored credentials unrecoverable. Manual recovery stops/starts,
+kills the dedicated agent, removes its directory and managed global Git settings,
+then reruns setup and signs in again; use the
+[exact reset steps](integrations.md#lost-passphrase-recovery). The Azure DevOps
+extension copy remains outside this encryption feature (#142).
+
+### Repeatable local Git credential check
+
+From the repository root with Go 1.27.2, Podman, and Python 3 available:
+
+```sh
+check_directory=$(mktemp -d)
+go run ./image/cmd/overlay "$check_directory"
+podman build --tag localhost/sandboxed-agents:git-credentials-local --file "$check_directory/context/base/Containerfile" "$check_directory/context/base"
+scripts/check-git-credentials.sh localhost/sandboxed-agents:git-credentials-local
+rm -rf "$check_directory"
+```
+
+The check uses only generated or dummy credentials and no external account. It
+runs the offline real-Git/GnuPG/GCM tests in the built image, including migration
+success and failure, exact configuration preservation, GitHub coexistence in both
+orders, damaged-state refusal, and Azure DevOps storage with a stub at the external
+`az` process boundary. It then exercises the installed manager: private setup,
+headless lookup, two-second ordinary cache TTLs followed by a lookup after five
+seconds, warm-cache wrong-passphrase relocking, eight concurrent lookups, killed
+and stalled agents, wrong-passphrase relocking with the agent stalled, stale PID
+record rejection, SIGHUP, persistent-home lifecycle replacements, and scans of
+home files, logs and process arguments/environments during the operations. Its
+disposable containers and volumes are removed; it does not remove the supplied
+image.
+
+The 2026-11-16 local run passed these checks. The stalled-agent lookup failed at
+about 11.2 seconds including process and Podman overhead; ordinary locked lookups
+failed in under one second. A secret scan covered the home and logs and more than
+100 process argument/environment samples during operations, with no match.
+
+Product `up` could not run locally: Podman 4.3.1 is below the 4.4.0 floor, `pasta` is
+missing, and cgroup delegation is unavailable. Therefore lifecycle evidence uses
+local Podman stop/start, restart and replacement with the same home volume,
+networking disabled, and a sleeping entrypoint. It proves the manager/store
+mechanism, not product lifecycle orchestration, SSH readiness or live host
+isolation. Windows/Linux live validation remains pending an explicit Yes at the
+live-validation start checkpoint. Real-account clone and push checks remain
+user-driven manual steps and record no secrets.

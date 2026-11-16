@@ -157,7 +157,11 @@ func (s Store) State() (string, error) {
 
 // Lock ends only the dedicated agent, clearing generic memory and all warm key caches.
 func (s Store) Lock() error {
-	return s.run("gpgconf", []string{"--kill", "gpg-agent"}, nil, io.Discard)
+	socket, err := s.AgentSocket()
+	if err != nil {
+		return err
+	}
+	return s.terminateAgent(socket)
 }
 
 // agent starts the dedicated gpg-agent without IPC logging and opens its private socket.
@@ -169,7 +173,15 @@ func (s Store) agent() (*agentConnection, error) {
 	if err != nil {
 		return nil, err
 	}
-	return connectAgent(socket)
+	a, err := connectAgent(socket)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.rememberAgent(a); err != nil {
+		a.Close()
+		return nil, err
+	}
+	return a, nil
 }
 
 // Check requires valid state and the product's generic-memory unlock without consuming credentials.
@@ -200,6 +212,21 @@ func (s Store) Check() error {
 
 // Setup creates a protected Ed25519 primary and Curve25519 encryption subkey, or verifies and unlocks the existing store.
 func (s Store) Setup(passphrase, confirmation []byte) error {
+
+	// Relock existing managed state before any GPG inspection can wait on a stalled agent.
+	if info, err := os.Lstat(s.directory()); err == nil {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("Git credential store directory is damaged")
+		}
+		if gpgInfo, err := os.Lstat(s.gpgHome()); err == nil && gpgInfo.Mode()&os.ModeSymlink != 0 {
+			return errors.New("dedicated GnuPG home is damaged")
+		}
+		if err := s.Lock(); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return errors.New("cannot inspect Git credential store")
+	}
 	state, err := s.State()
 	if err != nil {
 		return err
@@ -207,11 +234,6 @@ func (s Store) Setup(passphrase, confirmation []byte) error {
 	if state == "new" {
 		if len(passphrase) == 0 || !bytes.Equal(passphrase, confirmation) {
 			return errors.New("empty or mismatched passphrase; no configuration changed")
-		}
-	} else {
-		// Relock before verification, including when the supplied input is empty.
-		if err := s.Lock(); err != nil {
-			return err
 		}
 	}
 	if len(passphrase) == 0 || bytes.ContainsAny(passphrase, "\r\n\x00") || len(passphrase) > 256 {

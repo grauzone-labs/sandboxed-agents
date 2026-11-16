@@ -203,12 +203,38 @@ Running `ssh-config NAME --install` again with a matching host key changes no ho
 | `integrations login NAME azure browser` | Signs in to Azure with a browser on your machine, through an SSH tunnel. It needs the SSH setup. |
 | `integrations login NAME azdo --organization URL` | Stores an Azure DevOps personal access token for the organization. The token is read from standard input only. |
 | `integrations config NAME git identity` | Sets `user.name` and `user.email` of `agent` for every repository in the sandbox. `--name PERSON` and `--email EMAIL` supply your name and email address (not the sandbox name); an omitted one is prompted for and needs a terminal. |
-| `integrations config NAME git credentials` | Configures Git's `credential-store` helper with a file in the home volume. |
+| `integrations config NAME git credentials` | Sets up or unlocks GCM's GPG-encrypted pass store. Requires terminal input and output. |
 | `integrations config NAME ssh --host HOST --user USER` | Prepares a dedicated key for the remote machine, tests the connection with the remote account's password after you approve it, and then writes an alias host entry in `/home/agent/.ssh/config`. It needs an interactive terminal. |
 
-The options belong to their workflow. `--name` and `--email` are options of the `git identity` config workflow, `--host` and `--user` are options of the `ssh` config workflow, and `--organization` is an option of the `azdo` login workflow. A workflow that takes no options refuses any, and a workflow that takes options refuses the others. `azure` and `azdo` need the `azure` toolchain. On a sandbox without it, the command fails, names the toolchain, prints the complete `update NAME --with ...` command for the recorded toolchain set plus `azure` (the printed set never contains `none`), and changes nothing. `integrations login github`, `integrations login azure`, the Azure browser and device-code workflows, and `integrations config ssh` need an interactive terminal and fail without one. See [Integrations](integrations.md).
+The options belong to their workflow. `--name` and `--email` are options of the `git identity` config workflow, `--host` and `--user` are options of the `ssh` config workflow, and `--organization` is an option of the `azdo` login workflow. A workflow that takes no options refuses any, and a workflow that takes options refuses the others. `azure` and `azdo` need the `azure` toolchain. On a sandbox without it, the command fails, names the toolchain, prints the complete `update NAME --with ...` command for the recorded toolchain set plus `azure` (the printed set never contains `none`), and changes nothing. `integrations login github`, `integrations login azure`, the Azure browser and device-code workflows, `integrations config NAME git credentials`, and `integrations config ssh` need an interactive terminal and fail without one. See [Integrations](integrations.md).
 
 Credentials live in the sandbox's home volume. They survive `update` and are removed by `remove NAME --volumes`.
+
+### Git credential store
+
+`git credentials` reads a passphrase without echo, twice on first use and once
+later. It creates a dedicated key and GnuPG home, configures GCM's encrypted `gpg`
+store as the only global helper, and preserves GitHub's host helpers in either
+order. System and repository configuration are unchanged. Legacy plaintext entries
+are imported and read back before deletion; a failed migration retains their
+source and previous helpers.
+
+Unlock after every start, restart, or update. The unlock lasts without an idle or
+absolute timeout until the dedicated gpg-agent ends or receives SIGHUP. A wrong
+passphrase clears earlier unlocks, including warm caches. The helper never prompts;
+it bounds each GCM invocation at 10 seconds plus one-second kill grace.
+
+This is protection at rest only: it does not protect against processes running as
+`agent` while unlocked or against the host user. Stored credentials cannot be recovered after the
+passphrase is lost. Manual recovery stops and starts the sandbox, kills only its
+dedicated gpg-agent, removes `~/.local/share/sandboxed-agents/git-credentials` and
+the global `credential.helper`, `credential.credentialStore` and
+`credential.interactive` settings, then reruns setup and signs in again. Follow the
+[exact reset commands](integrations.md#lost-passphrase-recovery).
+
+`azdo` checks this store after its sandbox and toolchain checks and before reading
+a token; a missing or locked store exits 1 naming `git credentials` and consumes no
+token. Its PAT goes to GCM with a generic provider for the organization and origin.
 
 ### SSH integration
 
