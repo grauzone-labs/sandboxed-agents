@@ -11,7 +11,7 @@ import threading
 import uuid
 
 image = sys.argv[1]
-name = 'wi143-' + uuid.uuid4().hex[:10]
+name = 'sandboxed-agents-git-credentials-' + uuid.uuid4().hex[:10]
 volume = name + '-home'
 manager = '/usr/local/bin/sandboxed-agents-manager'
 home = '/home/agent'
@@ -156,7 +156,7 @@ try:
     # Test-only executable wrappers live only in this disposable container.
     # Delay key inspection to spend budget before GCM, then stall after Check.
     gpg_wrapper = b'#!/bin/sh\ncase "$*" in *--list-keys*) sleep 2;; esac\nexec /usr/bin/gpg "$@"\n'
-    gcm_wrapper = (f'#!/bin/sh\nset -e\nprintf started > /tmp/wi143-gcm-started\nkill -STOP {pid}\n'
+    gcm_wrapper = (f'#!/bin/sh\nset -e\nprintf started > /tmp/sandboxed-agents-git-credentials-gcm-started\nkill -STOP {pid}\n'
                    'exec /usr/local/bin/git-credential-manager-test-real "$@"\n').encode()
     podman('exec', '--user=0:0', name, 'mv', '/usr/local/bin/git-credential-manager',
            '/usr/local/bin/git-credential-manager-test-real')
@@ -169,14 +169,14 @@ try:
         result = fill(ok=False)
         elapsed = time.monotonic() - began
         assert result.returncode != 0, 'mid-request stall succeeded'
-        assert inside('test', '-e', '/tmp/wi143-gcm-started').returncode == 0
+        assert inside('test', '-e', '/tmp/sandboxed-agents-git-credentials-gcm-started').returncode == 0
         # 10 s shared budget + 1 s kill grace + 1 s Podman/Git transport margin.
         assert 10 <= elapsed < 12, f'mid-request stall missed deadline/kill window: {elapsed:.2f}s'
         print(f'PASS mid-request stall after delayed pre-check: {elapsed:.2f}s (transport margin 1s)', flush=True)
     finally:
         inside('kill', '-CONT', pid, ok=False)
         podman('exec', '--user=0:0', name, 'rm', '-f', '/usr/local/bin/gpg',
-               '/usr/local/bin/git-credential-manager', '/tmp/wi143-gcm-started')
+               '/usr/local/bin/git-credential-manager', '/tmp/sandboxed-agents-git-credentials-gcm-started')
         podman('exec', '--user=0:0', name, 'mv', '/usr/local/bin/git-credential-manager-test-real',
                '/usr/local/bin/git-credential-manager')
     inside('kill', '-HUP', pid)

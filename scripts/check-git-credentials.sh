@@ -3,7 +3,7 @@
 set -euo pipefail
 image=${1:?usage: scripts/check-git-credentials.sh LOCAL_REPOSITORY_IMAGE}
 check_directory=$(mktemp -d)
-check_container="wi143-tests-$$"
+check_container="sandboxed-agents-git-credentials-tests-$$"
 cleanup() {
     podman rm --force "$check_container" >/dev/null 2>&1 || true
     rm -rf "$check_directory"

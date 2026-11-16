@@ -13,19 +13,19 @@ import (
 // TestHelperBudgetSpansProcesses proves sequential helper stages share a deadline and expired stages never start at the subprocess seam.
 func TestHelperBudgetSpansProcesses(t *testing.T) {
 	start := time.Now()
-	s := Store{Home: t.TempDir(), deadline: start.Add(200 * time.Millisecond)}
-	if err := s.runWithDiagnostics("/bin/sleep", []string{"0.12"}, nil, io.Discard, io.Discard, nil); err != nil {
+	op := storeOperation{Store: Store{Home: t.TempDir()}, deadline: start.Add(200 * time.Millisecond)}
+	if err := op.runWithDiagnostics("/bin/sleep", []string{"0.12"}, nil, io.Discard, io.Discard, nil); err != nil {
 		t.Fatal(err)
 	}
-	err := s.runWithDiagnostics("/bin/sleep", []string{"0.20"}, nil, io.Discard, io.Discard, nil)
+	err := op.runWithDiagnostics("/bin/sleep", []string{"0.20"}, nil, io.Discard, io.Discard, nil)
 	if !errors.Is(err, errHelperDeadline) {
 		t.Fatal("second stage received a fresh budget")
 	}
 	if elapsed := time.Since(start); elapsed > 200*time.Millisecond+KillGrace+200*time.Millisecond {
 		t.Fatalf("shared budget exceeded: %v", elapsed)
 	}
-	marker := filepath.Join(s.Home, "started")
-	err = s.runWithDiagnostics("/usr/bin/touch", []string{marker}, nil, io.Discard, io.Discard, nil)
+	marker := filepath.Join(op.Home, "started")
+	err = op.runWithDiagnostics("/usr/bin/touch", []string{marker}, nil, io.Discard, io.Discard, nil)
 	if !errors.Is(err, errHelperDeadline) {
 		t.Fatal("expired stage did not fail")
 	}
@@ -42,20 +42,28 @@ func TestHelperBudgetSpansAgentExchanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	done := make(chan struct{})
+	done := make(chan error, 1)
 	go func() {
-		defer close(done)
 		c, err := listener.Accept()
 		if err != nil {
+			done <- err
 			return
 		}
 		defer c.Close()
 		time.Sleep(80 * time.Millisecond)
-		io.WriteString(c, "OK\n")
+		if _, err := io.WriteString(c, "OK\n"); err != nil {
+			done <- err
+			return
+		}
 		buffer := make([]byte, 128)
-		c.Read(buffer)
+		if _, err := c.Read(buffer); err != nil {
+			done <- err
+			return
+		}
 		time.Sleep(100 * time.Millisecond)
-		io.WriteString(c, "D dummy\nOK\n")
+		// The client may have closed after its expected deadline; this late reply is deliberately optional.
+		_, _ = io.WriteString(c, "D dummy\nOK\n")
+		done <- nil
 	}()
 	began := time.Now()
 	a, err := connectAgentBefore(socket, began.Add(120*time.Millisecond))
@@ -69,5 +77,7 @@ func TestHelperBudgetSpansAgentExchanges(t *testing.T) {
 	if elapsed := time.Since(began); elapsed > 200*time.Millisecond {
 		t.Fatalf("socket exceeded shared budget: %v", elapsed)
 	}
-	<-done
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 }
