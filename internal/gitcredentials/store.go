@@ -32,9 +32,6 @@ func (s Store) environment() []string {
 	return env
 }
 
-// keys reads the dedicated public key and validates every corresponding protected private key file.
-func (s Store) keys() (string, []string, error) { return (storeOperation{Store: s}).keys() }
-
 // keys validates the dedicated public and private key state within the operation deadline.
 func (op storeOperation) keys() (fingerprint string, grips []string, err error) {
 	var out bytes.Buffer
@@ -64,7 +61,7 @@ func (op storeOperation) keys() (fingerprint string, grips []string, err error) 
 				if len(grip) != 40 || strings.Trim(grip, "0123456789ABCDEF") != "" {
 					return "", nil, errors.New("invalid dedicated keygrip")
 				}
-				data, readErr := os.ReadFile(filepath.Join(op.gpgHome(), "private-keys-v1.d", grip+".key"))
+				data, readErr := os.ReadFile(filepath.Join(op.store.gpgHome(), "private-keys-v1.d", grip+".key"))
 				if readErr != nil || !bytes.Contains(data, []byte("protected-private-key")) {
 					return "", nil, errors.New("dedicated private key is missing or damaged")
 				}
@@ -79,25 +76,25 @@ func (op storeOperation) keys() (fingerprint string, grips []string, err error) 
 }
 
 // State reports absent or structurally valid managed state without creating or repairing it.
-func (s Store) State() (StoreState, error) { return (storeOperation{Store: s}).State() }
+func (s Store) State() (StoreState, error) { return (storeOperation{store: s}).State() }
 
 // State inspects managed state with key checks bounded by the operation deadline.
 func (op storeOperation) State() (StoreState, error) {
-	_, err := os.Lstat(op.directory())
+	_, err := os.Lstat(op.store.directory())
 	if errors.Is(err, os.ErrNotExist) {
 		return StoreNew, nil
 	}
 	if err != nil {
 		return "", errors.New("cannot inspect Git credential store")
 	}
-	for _, path := range []string{op.gpgHome(), op.passwordStore(), filepath.Join(op.gpgHome(), "pubring.kbx"), filepath.Join(op.gpgHome(), "trustdb.gpg"), filepath.Join(op.gpgHome(), "gpg-agent.conf")} {
+	for _, path := range []string{op.store.gpgHome(), op.store.passwordStore(), filepath.Join(op.store.gpgHome(), "pubring.kbx"), filepath.Join(op.store.gpgHome(), "trustdb.gpg"), filepath.Join(op.store.gpgHome(), "gpg-agent.conf")} {
 		info, err := os.Lstat(path)
 		if err != nil || info.Mode()&os.ModeSymlink != 0 {
 			return "", errors.New("Git credential store has missing or damaged state; manual recovery required")
 		}
 	}
 
-	config, err := os.ReadFile(filepath.Join(op.gpgHome(), "gpg-agent.conf"))
+	config, err := os.ReadFile(filepath.Join(op.store.gpgHome(), "gpg-agent.conf"))
 	if err != nil {
 		return "", errors.New("cannot read dedicated agent configuration")
 	}
@@ -107,7 +104,7 @@ func (op storeOperation) State() (StoreState, error) {
 		if len(fields) == 0 {
 			continue
 		}
-		if line == op.pinentryConfiguration() {
+		if line == op.store.pinentryConfiguration() {
 			pinentry = true
 			continue
 		}
@@ -125,7 +122,7 @@ func (op storeOperation) State() (StoreState, error) {
 	if !pinentry {
 		return "", errors.New("dedicated Git credential pinentry is missing")
 	}
-	recipient, err := os.ReadFile(filepath.Join(op.passwordStore(), ".gpg-id"))
+	recipient, err := os.ReadFile(filepath.Join(op.store.passwordStore(), ".gpg-id"))
 	if err != nil {
 		return "", errors.New("Git credential store recipient is missing")
 	}
@@ -137,11 +134,11 @@ func (op storeOperation) State() (StoreState, error) {
 		return "", errors.New("Git credential store recipient does not match its dedicated key")
 	}
 	// Nested recipients could silently send newly stored credentials to another key.
-	err = filepath.WalkDir(op.passwordStore(), func(path string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(op.store.passwordStore(), func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if path != op.passwordStore() && (d.Type()&os.ModeSymlink != 0 || d.Name() == ".gpg-id" && path != filepath.Join(op.passwordStore(), ".gpg-id")) {
+		if path != op.store.passwordStore() && (d.Type()&os.ModeSymlink != 0 || d.Name() == ".gpg-id" && path != filepath.Join(op.store.passwordStore(), ".gpg-id")) {
 			return errors.New("Git credential store has an unexpected recipient or symlink")
 		}
 		return nil
@@ -182,7 +179,7 @@ func (s Store) agent() (*agentConnection, error) {
 }
 
 // Check requires valid state and the product's generic-memory unlock without consuming credentials.
-func (s Store) Check() error { return (storeOperation{Store: s}).Check() }
+func (s Store) Check() error { return (storeOperation{store: s}).Check() }
 
 // Check verifies managed state and the unlock using the operation deadline for processes and agent IPC.
 func (op storeOperation) Check() error {
@@ -212,7 +209,6 @@ func (op storeOperation) Check() error {
 
 // Setup creates a protected Ed25519 primary and Curve25519 encryption subkey, or verifies and unlocks the existing store.
 func (s Store) Setup(passphrase, confirmation []byte) error {
-
 	// Relock existing managed state before any GPG inspection can wait on a stalled agent.
 	if info, err := os.Lstat(s.directory()); err == nil {
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
@@ -268,7 +264,7 @@ func (s Store) Setup(passphrase, confirmation []byte) error {
 			return errors.New("cannot initialize Git credential store")
 		}
 	}
-	_, grips, err := s.keys()
+	_, grips, err := (storeOperation{store: s}).keys()
 	if err != nil {
 		return err
 	}
@@ -303,7 +299,7 @@ func (s Store) HelperConfig() string {
 }
 
 // AgentSocket asks GnuPG for the dedicated socket, including runtime-directory redirection.
-func (s Store) AgentSocket() (string, error) { return (storeOperation{Store: s}).AgentSocket() }
+func (s Store) AgentSocket() (string, error) { return (storeOperation{store: s}).AgentSocket() }
 
 // AgentSocket resolves the dedicated socket within the operation deadline.
 func (op storeOperation) AgentSocket() (string, error) {

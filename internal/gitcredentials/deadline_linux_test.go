@@ -13,7 +13,7 @@ import (
 // TestHelperBudgetSpansProcesses proves sequential helper stages share a deadline and expired stages never start at the subprocess seam.
 func TestHelperBudgetSpansProcesses(t *testing.T) {
 	start := time.Now()
-	op := storeOperation{Store: Store{Home: t.TempDir()}, deadline: start.Add(200 * time.Millisecond)}
+	op := storeOperation{store: Store{Home: t.TempDir()}, deadline: start.Add(200 * time.Millisecond)}
 	if err := op.runWithDiagnostics("/bin/sleep", []string{"0.12"}, nil, io.Discard, io.Discard, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestHelperBudgetSpansProcesses(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 200*time.Millisecond+KillGrace+200*time.Millisecond {
 		t.Fatalf("shared budget exceeded: %v", elapsed)
 	}
-	marker := filepath.Join(op.Home, "started")
+	marker := filepath.Join(op.store.Home, "started")
 	err = op.runWithDiagnostics("/usr/bin/touch", []string{marker}, nil, io.Discard, io.Discard, nil)
 	if !errors.Is(err, errHelperDeadline) {
 		t.Fatal("expired stage did not fail")

@@ -19,15 +19,15 @@ const KillGrace = time.Second
 var errHelperDeadline = errors.New("credential helper deadline exceeded")
 
 // storeOperation carries an immutable deadline explicitly across one helper's stages.
-// A zero deadline preserves the existing per-operation limits for standalone Store calls.
+// A zero deadline applies only the per-process and per-socket default limits.
 type storeOperation struct {
-	Store
+	store    Store
 	deadline time.Time
 }
 
 // run starts a process in the store's fixed environment and bounds its owned process group.
 func (s Store) run(program string, args []string, input io.Reader, output io.Writer) error {
-	return (storeOperation{Store: s}).run(program, args, input, output)
+	return (storeOperation{store: s}).run(program, args, input, output)
 }
 
 // run uses this operation's deadline for process execution and cleanup.
@@ -41,8 +41,8 @@ func (op storeOperation) run(program string, args []string, input io.Reader, out
 // runWithDiagnostics retains private subprocess status and diagnostics for classification without forwarding them.
 func (op storeOperation) runWithDiagnostics(program string, args []string, input io.Reader, output, diagnostics io.Writer, environment []string) error {
 	cmd := exec.Command(program, args...)
-	cmd.Env = append(op.environment(), environment...)
-	cmd.Dir = op.Home
+	cmd.Env = append(op.store.environment(), environment...)
+	cmd.Dir = op.store.Home
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = input, output, diagnostics
 	cmd.WaitDelay = KillGrace
 	return runCommand(cmd, op.deadline)
@@ -50,12 +50,11 @@ func (op storeOperation) runWithDiagnostics(program string, args []string, input
 
 // Helper runs pre-check, GCM, post-check and agent IPC under one whole-helper invocation deadline.
 func (s Store) Helper(args []string, input io.Reader, output io.Writer) error {
-	return (storeOperation{Store: s, deadline: time.Now().Add(HelperDeadline)}).helper(args, input, output)
+	return (storeOperation{store: s, deadline: time.Now().Add(HelperDeadline)}).helper(args, input, output)
 }
 
 // helper executes the credential protocol with the operation's existing shared deadline.
 func (op storeOperation) helper(args []string, input io.Reader, output io.Writer) (err error) {
-
 	var providerEnvironment []string
 	if len(args) == 2 && args[0] == "--generic" {
 		providerEnvironment = []string{"GCM_PROVIDER=generic"}
