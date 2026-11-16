@@ -79,7 +79,7 @@ func (r *Run) loadPersistence() (string, *PersistenceConfig, error) {
 }
 
 // PersistenceSetup runs the one-time setup of the persistence items: it pins opencode at its
-// installed version, configures the Git identity and credential helper, stores the fake
+// installed version, configures the Git identity, requires a terminal-unlocked Git credential store, stores the fake
 // credential, records the configuration the update must keep, and notes the Azure account by
 // its hash only.
 func (r *Run) PersistenceSetup(options PersistenceSetupOptions) error {
@@ -112,7 +112,6 @@ func (r *Run) PersistenceSetup(options PersistenceSetupOptions) error {
 	}{
 		{"pin-opencode", r.SA("agents", "enable", options.Sandbox, "opencode", "--version", version)},
 		{"git-identity", r.SA("integrations", "config", options.Sandbox, "git", "identity", "--name", "Manual Check", "--email", "manual-check@example.invalid")},
-		{"git-credentials", r.SA("integrations", "config", options.Sandbox, "git", "credentials")},
 	}
 	for _, step := range steps {
 		result, err := Step(dir, step.name, nil, step.command)
@@ -122,6 +121,13 @@ func (r *Run) PersistenceSetup(options PersistenceSetupOptions) error {
 		if result.Exit != 0 {
 			failures.Addf("%s exited %d", step.name, result.Exit)
 		}
+	}
+	ready, err := r.ShellStep(dir, "git-store-unlocked", options.Sandbox, "/usr/local/bin/sandboxed-agents-manager __git-store-check")
+	if err != nil {
+		return err
+	}
+	if ready.Exit != 0 {
+		return fmt.Errorf("unlock the Git credential store in a separate terminal with integrations config %s git credentials, then rerun persistence setup", options.Sandbox)
 	}
 	fake, err := r.ShellStep(dir, "fake-credential", options.Sandbox, `printf 'protocol=https\nhost=example.invalid\nusername=chk\npassword=not-a-secret\n' | git credential approve`)
 	if err != nil {
@@ -193,6 +199,13 @@ func (r *Run) PersistenceObserve(round int) error {
 			failures.Addf("opencode is not at version %s with that pin", config.OpencodeVersion)
 		}
 	}
+	ready, err := r.ShellStep(dir, "git-store-unlocked", config.Sandbox, "/usr/local/bin/sandboxed-agents-manager __git-store-check")
+	if err != nil {
+		return err
+	}
+	if ready.Exit != 0 {
+		return fmt.Errorf("confirm the store is locked, then unlock with integrations config %s git credentials in a separate terminal and rerun this observation", config.Sandbox)
+	}
 	script := roundScript(*config, round)
 	result, err := r.ShellStep(dir, "in-sandbox", config.Sandbox, script)
 	if err != nil {
@@ -252,7 +265,7 @@ git init /workspace/repo-%d > /dev/null && git -C /workspace/repo-%d commit --al
 git -C /workspace/repo-%d log -1 --format='repo-author %%an <%%ae> %%s'
 git -C /workspace/gh-%d commit --allow-empty -m round-%d > /dev/null; echo "gh-commit exit $?"
 git -C /workspace/gh-%d log -1 --format='gh-author %%an <%%ae> %%s'
-grep -c example.invalid /home/agent/.git-credentials | sed 's/^/credential-count /'`,
+printf 'protocol=https\nhost=example.invalid\nusername=chk\n\n' | GIT_TERMINAL_PROMPT=0 git credential fill | awk '$0 == "password=not-a-secret" {n++} END {print "credential-count " n+0}'`,
 		clone, azdoClone, config.AzdoOrganization, round, round, round, round, round, round, round)
 }
 

@@ -13,6 +13,7 @@ import (
 func azureIntegrationFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := sandboxStateFixture(t)
+	f.responses[gitStoreCheck] = response{}
 	f.responses[shellInspect] = response{Output: containerInspectAnswer(`{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.toolchains":"azure"}`, "true")}
 	return f
 }
@@ -29,7 +30,7 @@ func TestAzureDevOpsLoginReadsStdin(t *testing.T) {
 			workflow := strings.Fields("exec --user=1000:1000 --env HOME=/home/agent -i " + shellContainer + " " + integrationManager + " integrations login azdo --organization https://dev.azure.com/contoso")
 			f.responses[strings.Join(workflow, " ")] = response{EchoStdin: true, ExpectedStdin: "pat-host-sentinel\n"}
 			status, output, calls := f.run(t, "integrations", "login", "agent01", "azdo", "--organization", "https://dev.azure.com/contoso/")
-			want := append(sandboxQueryCalls(), strings.Fields(integrationProbe), workflow)
+			want := append(sandboxQueryCalls(), strings.Fields(integrationProbe), strings.Fields(gitStoreCheck), workflow)
 			if status != 0 || !reflect.DeepEqual(calls, want) {
 				t.Fatalf("status=%d output=%s calls=%q", status, output, calls)
 			}
@@ -115,7 +116,7 @@ func TestAzureDevOpsRejectsEmptyToken(t *testing.T) {
 		f.host.Stdin = strings.NewReader(input)
 		f.responses[integrationProbe] = response{}
 		status, output, calls := f.run(t, "integrations", "login", "agent01", "azdo", "--organization", "https://dev.azure.com/contoso")
-		if status != 1 || !strings.Contains(output, "token is required") || len(calls) != len(sandboxQueryCalls())+1 {
+		if status != 1 || !strings.Contains(output, "token is required") || len(calls) != len(sandboxQueryCalls())+2 {
 			t.Fatalf("status=%d output=%s calls=%q", status, output, calls)
 		}
 	}
@@ -168,3 +169,17 @@ func TestAzureDevOpsMissingToolchainDoesNotReadToken(t *testing.T) {
 		})
 	}
 }
+
+// TestAzureDevOpsLockedStoreConsumesNoToken proves the precheck follows toolchain readiness and refuses before PAT input at the host CLI seam.
+func TestAzureDevOpsLockedStoreConsumesNoToken(t *testing.T) {
+	f := azureIntegrationFixture(t)
+	f.responses[integrationProbe] = response{}
+	f.responses[gitStoreCheck] = response{Exit: 1}
+	f.host.Stdin = unreadableToken{t}
+	status, output, _ := f.run(t, "integrations", "login", "agent01", "azdo", "--organization", "https://dev.azure.com/contoso")
+	if status != 1 || !strings.Contains(output, "git credentials") {
+		t.Fatalf("status=%d output=%s", status, output)
+	}
+}
+
+const gitStoreCheck = "exec --user=1000:1000 --env HOME=/home/agent " + shellContainer + " " + integrationManager + " __git-store-check"

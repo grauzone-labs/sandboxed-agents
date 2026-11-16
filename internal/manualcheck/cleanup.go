@@ -48,7 +48,7 @@ func (r *Run) FinalCleanup(sandbox string) error {
 	}
 	// 3. The removal half of credentials-persist, observed inside a fresh sandbox.
 	run("up-again", "up", sandbox, "--with", "azure")
-	inside, err := r.ShellStep(dir, "removal-observation", sandbox, `test -e /home/agent/.git-credentials && echo "credentials-file present" || echo "credentials-file absent"
+	inside, err := r.ShellStep(dir, "removal-observation", sandbox, `test -e /home/agent/.local/share/sandboxed-agents/git-credentials && echo "credentials-file present" || echo "credentials-file absent"
 echo "user-email [$(git config --global --get user.email)]"
 `+ghStatusProbe+`
 `+azAccountProbe)
@@ -56,7 +56,7 @@ echo "user-email [$(git config --global --get user.email)]"
 		return err
 	}
 	if !inside.HasLine("credentials-file absent") {
-		failures.Addf("/home/agent/.git-credentials is present in the fresh sandbox")
+		failures.Addf("the Git credential store is present in the fresh sandbox")
 	}
 	if !inside.HasLine("user-email []") {
 		failures.Addf("git user.email is still configured in the fresh sandbox")

@@ -13,12 +13,13 @@ import (
 	"testing"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
+	"github.com/grauzone-labs/sandboxed-agents/internal/gitcredentials"
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
 // TestAzureDevOpsLoginStoresCredentials proves the manager sends a PAT only on stdin to Azure CLI and Git as agent through injected process functions.
 func TestAzureDevOpsLoginStoresCredentials(t *testing.T) {
-	effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
+	effects := credentialEffects(t)
 	effects.Stdin = strings.NewReader("pat-sentinel\n")
 	var calls [][]string
 	var inputs []string
@@ -40,16 +41,11 @@ func TestAzureDevOpsLoginStoresCredentials(t *testing.T) {
 	}
 	var out bytes.Buffer
 	status := manager.RunWithEffects([]string{"integrations", "login", "azdo", "--organization", "https://dev.azure.com/contoso"}, &out, &out, effects)
-	want := [][]string{
-		{"az", "devops", "login", "--organization", "https://dev.azure.com/contoso", "--only-show-errors"},
-		{"git", "config", "--global", "--replace-all", "--", "credential.helper", "store --file=/home/agent/.git-credentials"},
-		{"git", "config", "--global", "--replace-all", "--", "credential.https://dev.azure.com/contoso.username", "contoso"},
-		{"git", "-c", "credential.helper=", "-c", "credential.helper=store --file=/home/agent/.git-credentials", "-c", "credential.useHttpPath=false", "credential", "approve"},
-	}
+	want := [][]string{{"az", "devops", "login", "--organization", "https://dev.azure.com/contoso", "--only-show-errors"}}
 	if status != 0 || !reflect.DeepEqual(calls, want) {
 		t.Fatalf("status=%d calls=%q output=%s", status, calls, &out)
 	}
-	if !reflect.DeepEqual(inputs, []string{"pat-sentinel\n", "", "", "url=https://dev.azure.com/contoso\nusername=contoso\npassword=pat-sentinel\n\n"}) {
+	if !reflect.DeepEqual(inputs, []string{"pat-sentinel\n"}) {
 		t.Fatalf("credential stdin was not delivered as required")
 	}
 	if strings.Contains(out.String(), "pat-sentinel") {
@@ -59,7 +55,8 @@ func TestAzureDevOpsLoginStoresCredentials(t *testing.T) {
 
 // TestAzureDevOpsCredentialsResolveForClone proves the login's stored credential is usable for plain and username-qualified Azure clone URLs through the manager and real Git credential seam.
 func TestAzureDevOpsCredentialsResolveForClone(t *testing.T) {
-	home := t.TempDir()
+	effects := credentialEffects(t)
+	home, _ := effects.HomeDirectory()
 	repository := t.TempDir()
 	if data, err := exec.Command("git", "init", repository).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v %s", err, data)
@@ -69,7 +66,6 @@ func TestAzureDevOpsCredentialsResolveForClone(t *testing.T) {
 		t.Fatal(err)
 	}
 	environment := append(os.Environ(), "HOME="+home, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+filepath.Join(home, ".gitconfig"), "GIT_TERMINAL_PROMPT=0")
-	effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
 	effects.Stdin = strings.NewReader("git-pat-sentinel\n")
 	effects.Start = func(p manager.Process) error {
 		if p.Program == "az" {
@@ -103,19 +99,16 @@ func TestAzureDevOpsCredentialsResolveForClone(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repository, "helper-ran")); !os.IsNotExist(err) {
 		t.Fatal("login exposed credential to a repository helper")
 	}
-	info, err := os.Stat(filepath.Join(home, ".git-credentials"))
-	if err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(filepath.Join(home, ".git-credentials")); !os.IsNotExist(err) {
+		t.Fatal("plaintext credential file created")
 	}
-	if info.Mode().Perm() != 0600 {
-		t.Errorf("credential file mode=%v", info.Mode().Perm())
-	}
+
 }
 
 // TestAzureDevOpsLoginFailuresDoNotDiscloseToken proves every child failure is normalized and stops later credential changes without exposing child output or errors through the manager seam.
 func TestAzureDevOpsLoginFailuresDoNotDiscloseToken(t *testing.T) {
-	for failureAt := 1; failureAt <= 4; failureAt++ {
-		effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
+	for failureAt := 1; failureAt <= 1; failureAt++ {
+		effects := credentialEffects(t)
 		effects.Stdin = strings.NewReader("failure-pat-sentinel\n")
 		starts := 0
 		effects.Start = func(p manager.Process) error {
@@ -148,6 +141,61 @@ func TestAzureDevOpsLoginHonorsDeliveredCatalog(t *testing.T) {
 	var output bytes.Buffer
 	status := manager.RunWithEffects([]string{"integrations", "login", "azdo", "--organization", "https://dev.azure.com/contoso"}, &output, &output, effects)
 	if status != 2 || !strings.Contains(output.String(), `unknown integration "azdo"`) {
+		t.Fatalf("status=%d output=%s", status, &output)
+	}
+}
+
+// credentialEffects supplies an unlocked real store and injectable external az process at the manager command seam.
+func credentialEffects(t *testing.T) manager.Effects {
+	t.Helper()
+	for _, name := range []string{"gpg", "gpgconf", "pass", "git-credential-manager"} {
+		if _, err := exec.LookPath(name); err != nil {
+			t.Skip("real " + name + " unavailable")
+		}
+	}
+	version, _ := exec.Command("gpg", "--version").Output()
+	if strings.Contains(string(version), "gpg (GnuPG) 2.2.") {
+		t.Skip("GnuPG 2.2 lacks generic memory; run the built-image checks with GnuPG 2.4.7")
+	}
+	home, err := os.MkdirTemp("", "gc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(home) })
+	executable := filepath.Join(home, "manager")
+	if fixture := os.Getenv("SA_GIT_CREDENTIAL_TEST_MANAGER"); fixture != "" {
+		if err := os.Symlink(fixture, executable); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		cmd := exec.Command("go", "build", "-o", executable, "../gitcredentials/testdata/manager")
+		if data, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("fixture build: %s %v", data, err)
+		}
+	}
+	if err := os.Symlink(executable, filepath.Join(home, "sandboxed-agents-pinentry")); err != nil {
+		t.Fatal(err)
+	}
+	store := gitcredentials.Store{Home: home, Manager: executable}
+	t.Cleanup(func() { store.Lock() })
+	if err := store.Setup([]byte("manager-dummy-passphrase"), []byte("manager-dummy-passphrase")); err != nil {
+		t.Fatal(err)
+	}
+	effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
+	effects.HomeDirectory = func() (string, error) { return home, nil }
+	effects.Executable = func() (string, error) { return executable, nil }
+	return effects
+}
+
+// TestAzureDevOpsMissingStoreConsumesNoToken proves manager prechecks precede PAT input at its public command seam.
+func TestAzureDevOpsMissingStoreConsumesNoToken(t *testing.T) {
+	effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
+	home := t.TempDir()
+	effects.HomeDirectory = func() (string, error) { return home, nil }
+	effects.Stdin = forbiddenProxyInput{t}
+	var output bytes.Buffer
+	status := manager.RunWithEffects([]string{"integrations", "login", "azdo", "--organization", "https://dev.azure.com/contoso"}, &output, &output, effects)
+	if status != 1 || !strings.Contains(output.String(), "git credentials") {
 		t.Fatalf("status=%d output=%s", status, &output)
 	}
 }

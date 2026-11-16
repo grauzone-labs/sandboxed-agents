@@ -20,7 +20,7 @@ const (
 	GitIdentityWorkflow = "identity"
 	// GitCredentialsWorkflow configures the sandbox's Git credential store.
 	GitCredentialsWorkflow = "credentials"
-	// GitCredentialStoreHelper stores Git credentials in the sandbox's home data.
+	// GitCredentialStoreHelper identifies the legacy helper for migration only.
 	GitCredentialStoreHelper = "store --file=/home/agent/.git-credentials"
 	// GitNameOption names the Git author name option.
 	GitNameOption = "name"

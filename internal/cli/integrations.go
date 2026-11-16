@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -48,7 +50,46 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 		args = append(args, "-it", names.Container, managerPath, "integrations", "config", catalog.SSHIntegration,
 			"--"+catalog.SSHHostOption, request.Options[catalog.SSHHostOption], "--"+catalog.SSHUserOption, request.Options[catalog.SSHUserOption])
 		stdin = p.host.Stdin
+	} else if request.Command == "integrations config" && request.ConfigSelection.Integration == catalog.GitIntegration && request.ConfigSelection.Workflow == catalog.GitCredentialsWorkflow {
+		if !p.host.IsInputTerminal(p.host.Stdin) || !p.host.IsOutputTerminal(stdout) {
+			return fmt.Errorf("git credentials needs an interactive terminal")
+		}
+		var state bytes.Buffer
+		probe := append(appendAgentIdentity([]string{"exec"}), names.Container, managerPath, "__git-store-state")
+		status, e := p.run(nil, &state, io.Discard, probe...)
+		if e != nil || status != 0 || (strings.TrimSpace(state.String()) != "new" && strings.TrimSpace(state.String()) != "ready") {
+			return fmt.Errorf("Git credential store is damaged; see the manual recovery steps in docs/integrations.md")
+		}
+		passphrase, e := readTerminalSecret(p.host.Stdin, stderr, "Git credential passphrase: ")
+		if e != nil {
+			return fmt.Errorf("cannot read Git credential passphrase")
+		}
+		defer clear(passphrase)
+		var confirmation []byte
+		if strings.TrimSpace(state.String()) == "new" {
+			confirmation, e = readTerminalSecret(p.host.Stdin, stderr, "Confirm passphrase: ")
+			if e != nil {
+				return fmt.Errorf("cannot read Git credential confirmation")
+			}
+			defer clear(confirmation)
+		}
+		data, e := json.Marshal(struct {
+			Passphrase   string
+			Confirmation string
+		}{string(passphrase), string(confirmation)})
+		if e != nil {
+			return fmt.Errorf("cannot prepare Git credential input")
+		}
+		defer clear(data)
+		stdin = bytes.NewReader(data)
+		args = append(args, "-i", names.Container, managerPath, "integrations", "config", "git", "credentials")
+		stdout, stderr = io.Discard, io.Discard
 	} else if azdoLogin {
+		probe := append(appendAgentIdentity([]string{"exec"}), names.Container, managerPath, "__git-store-check")
+		status, e := p.run(nil, io.Discard, io.Discard, probe...)
+		if e != nil || status != 0 {
+			return fmt.Errorf("Git credential store is missing or locked; run integrations config %s git credentials", request.Name)
+		}
 		token, err := readAzureDevOpsToken(p.host, stderr)
 		if err != nil {
 			return err

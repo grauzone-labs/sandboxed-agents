@@ -67,6 +67,9 @@ func configureGit(args []string, stdout, stderr io.Writer, effects Effects) int 
 	if !verifyAgent(effects, stderr) {
 		return 1
 	}
+	if selection.Workflow == catalog.GitCredentialsWorkflow {
+		return setupGitCredentials(stderr, effects)
+	}
 	for _, configuration := range configurations {
 		args := append([]string{"config", "--global", "--replace-all", "--"}, configuration...)
 		err := effects.Start(Process{Program: "git", Args: args, Identity: agentIdentity, EnvironmentPolicy: GitConfigEnvironment, Stdout: stdout, Stderr: stderr})

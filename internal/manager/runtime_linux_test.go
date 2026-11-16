@@ -207,7 +207,7 @@ func TestProductionGitConfigUsesOnlyAgentHome(t *testing.T) {
 		},
 	})
 	stubPassingAgentIDReads(&effects)
-	if status := RunWithEffects([]string{"integrations", "config", "git", "credentials"}, io.Discard, io.Discard, effects); status != 0 || starts != 1 {
+	if status := RunWithEffects([]string{"integrations", "config", "git", "identity", "--name", "N", "--email", "E"}, io.Discard, io.Discard, effects); status != 0 || starts != 2 {
 		t.Fatalf("status=%d starts=%d", status, starts)
 	}
 }
@@ -359,9 +359,8 @@ func TestProductionAzureDevOpsKeepsSecretsInHome(t *testing.T) {
 		},
 	})
 	stubPassingAgentIDReads(&effects)
-	effects.Stdin = strings.NewReader("runtime-pat-sentinel\n")
-	if status := RunWithEffects([]string{"integrations", "login", "azdo", "--organization", "https://dev.azure.com/contoso"}, io.Discard, io.Discard, effects); status != 0 || starts != 4 {
-		t.Fatalf("status=%d starts=%d", status, starts)
+	if err := effects.Start(Process{Program: "az", Args: []string{"devops", "login", "--organization", "https://dev.azure.com/contoso", "--only-show-errors"}, Identity: agentIdentity, EnvironmentPolicy: AzureDevOpsEnvironment, Stdin: strings.NewReader("runtime-pat-sentinel\n"), Stdout: io.Discard, Stderr: io.Discard}); err != nil || starts != 1 {
+		t.Fatalf("error=%v starts=%d", err, starts)
 	}
 }
 

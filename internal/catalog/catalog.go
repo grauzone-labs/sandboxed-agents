@@ -85,7 +85,7 @@ var Default = Catalog{
 				Options:     []string{GitNameOption, GitEmailOption},
 				GitSettings: []GitSetting{{Key: "user.name", Option: GitNameOption}, {Key: "user.email", Option: GitEmailOption}},
 			},
-			GitCredentialsWorkflow: {Delivered: true, GitSettings: []GitSetting{{Key: "credential.helper", Value: GitCredentialStoreHelper}}},
+			GitCredentialsWorkflow: {Delivered: true},
 		}},
 	},
 	Tools: map[string]Tool{

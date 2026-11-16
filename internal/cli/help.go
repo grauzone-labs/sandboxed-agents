@@ -253,7 +253,11 @@ func helpTopics() map[string]helpEntry {
 			arguments: []helpRow{sandboxArgument,
 				{"INTEGRATION", "An integration with a config workflow; see Integrations."},
 				{"WORKFLOW", "A config workflow of the integration. An integration with one unnamed workflow takes none."}},
-			sections: []helpSection{integrationConfigs()},
+			sections: []helpSection{integrationConfigs(), {title: "Git credential store", rows: []helpRow{
+				{"Setup and unlock", "git credentials requires terminal input and output and reads a passphrase without echo. GCM keeps Git HTTPS credentials in a GPG-encrypted pass store with a dedicated key and agent. Unlock again after every start, restart or update."},
+				{"Protection", "Protection at rest only; processes running as agent while unlocked and the host user can access credentials."},
+				{"Recovery", "A lost passphrase cannot be recovered. Stop the sandbox, start it again, kill its dedicated gpg-agent with gpgconf --homedir ~/.local/share/sandboxed-agents/git-credentials/gnupg --kill gpg-agent, remove the dedicated ~/.local/share/sandboxed-agents/git-credentials directory and global credential.helper, credential.credentialStore and credential.interactive settings in a shell, rerun git credentials, and sign in again. See docs/integrations.md for the manual reset commands."},
+			}}},
 			examples: []string{"integrations config agent01 git identity --name Ada --email ada@example.com", "integrations config agent01 ssh --host build.example.com --user ada"},
 		},
 		"tools enable": {

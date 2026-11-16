@@ -54,7 +54,7 @@ func TestGitConfigExecutableWithoutTerminal(t *testing.T) {
 		probeExit, status int
 		messages          []string
 	}{
-		{"credentials", "credentials", nil, true, 0, 0, nil},
+		{"credentials", "credentials", nil, true, 0, 1, []string{"interactive terminal"}},
 		{"identity", "identity", []string{"--name", "A Person", "--email", "a@example.com"}, true, 0, 0, nil},
 		{"missing-email", "identity", []string{"--name", "N"}, true, 0, 1, []string{"terminal"}},
 		{"missing-name", "identity", []string{"--email", "E"}, true, 0, 1, []string{"terminal"}},

@@ -27,27 +27,29 @@ func loginAzureDevOps(args []string, stderr io.Writer, effects Effects) int {
 	if !verifyAgent(effects, stderr) {
 		return 1
 	}
+	store, err := credentialStore(effects)
+	if err != nil {
+		fmt.Fprintln(stderr, "Git credential store is unavailable; run integrations config NAME git credentials")
+		return 1
+	}
+	if err := store.Check(); err != nil {
+		fmt.Fprintln(stderr, "Git credential store is missing or locked; run integrations config NAME git credentials")
+		return 1
+	}
 	token, err := azdo.ReadToken(effects.Stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 
-	processes := []Process{
-		{Program: "az", Args: []string{"devops", "login", "--" + catalog.OrganizationOption, organization, "--only-show-errors"}, Stdin: strings.NewReader(token + "\n")},
-		{Program: "git", Args: []string{"config", "--global", "--replace-all", "--", "credential.helper", catalog.GitCredentialStoreHelper}},
-		{Program: "git", Args: []string{"config", "--global", "--replace-all", "--", "credential." + organization + ".username", username}},
-		{Program: "git", Args: []string{"-c", "credential.helper=", "-c", "credential.helper=" + catalog.GitCredentialStoreHelper, "-c", "credential.useHttpPath=false", "credential", "approve"}, Stdin: strings.NewReader("url=" + organization + "\nusername=" + username + "\npassword=" + token + "\n\n")},
+	p := Process{Program: "az", Args: []string{"devops", "login", "--" + catalog.OrganizationOption, organization, "--only-show-errors"}, Stdin: strings.NewReader(token + "\n"), Identity: agentIdentity, EnvironmentPolicy: AzureDevOpsEnvironment, Stdout: io.Discard, Stderr: io.Discard}
+	if err := effects.Start(p); err != nil {
+		fmt.Fprintln(stderr, "Azure DevOps login failed while running az; credentials may be partially configured")
+		return 1
 	}
-	for _, p := range processes {
-		p.Identity = agentIdentity
-		p.EnvironmentPolicy = AzureDevOpsEnvironment
-		// Child diagnostics and errors may contain credentials. Never forward them.
-		p.Stdout, p.Stderr = io.Discard, io.Discard
-		if err := effects.Start(p); err != nil {
-			fmt.Fprintf(stderr, "Azure DevOps login failed while running %s; credentials may be partially configured\n", p.Program)
-			return 1
-		}
+	if err := store.StoreAzureDevOps(organization, username, token); err != nil {
+		fmt.Fprintln(stderr, "Azure DevOps login failed while storing Git credentials; credentials may be partially configured")
+		return 1
 	}
 	return 0
 }

@@ -50,22 +50,19 @@ func TestGitConfigRefusesUnavailableManager(t *testing.T) {
 	}
 }
 
-// TestGitCredentialsNeedsNoTerminalOrHostData proves the credential command executes only the manager as agent with a fixed home and no forwarded host data at the host CLI and fake Podman seam.
-func TestGitCredentialsNeedsNoTerminalOrHostData(t *testing.T) {
-	f := sandboxStateFixture(t)
-	t.Setenv("GIT_CONFIG_GLOBAL", "/host/gitconfig")
-	t.Setenv("GIT_ASKPASS", "/host/askpass")
-	t.Setenv("GITHUB_TOKEN", "host-token-sentinel")
-	f.responses[integrationProbe] = response{Output: "running-session\n"}
-	workflow := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent", shellContainer, integrationManager, "integrations", "config", "git", "credentials"}
-	f.responses[strings.Join(workflow, " ")] = response{}
-	status, output, calls := f.run(t, "integrations", "config", "agent01", "git", "credentials")
-	if status != 0 {
-		t.Fatalf("status=%d output=%s", status, output)
-	}
-	want := append(sandboxQueryCalls(), strings.Fields(integrationProbe), workflow)
-	if !reflect.DeepEqual(calls, want) {
-		t.Fatalf("calls=%v want=%v", calls, want)
+// TestGitCredentialsRequiresTerminalBeforeReading proves missing input or output terminals refuse before passphrase input or manager writes at the CLI seam.
+func TestGitCredentialsRequiresTerminalBeforeReading(t *testing.T) {
+	for _, terminals := range [][2]bool{{false, false}, {true, false}, {false, true}} {
+		f := sandboxStateFixture(t)
+		f.host.Stdin = unreadableToken{t}
+		f.host.IsInputTerminal = func(io.Reader) bool { return terminals[0] }
+		f.host.IsOutputTerminal = func(io.Writer) bool { return terminals[1] }
+		f.responses[integrationProbe] = response{}
+		status, output, calls := f.run(t, "integrations", "config", "agent01", "git", "credentials")
+		want := append(sandboxQueryCalls(), strings.Fields(integrationProbe))
+		if status != 1 || !strings.Contains(output, "interactive terminal") || !reflect.DeepEqual(calls, want) {
+			t.Fatalf("status=%d output=%s calls=%v", status, output, calls)
+		}
 	}
 }
 
@@ -134,7 +131,7 @@ func TestGitIdentityPromptsOnlyForMissingValues(t *testing.T) {
 
 // TestGitConfigSelectsOneWindowsTarget proves all sandbox queries and both workflow identities name the selected machine through the host CLI and fake Podman seam.
 func TestGitConfigSelectsOneWindowsTarget(t *testing.T) {
-	for _, workflow := range []string{"identity", "credentials"} {
+	for _, workflow := range []string{"identity"} {
 		t.Run(workflow, func(t *testing.T) {
 			f := windowsHost(t)
 			configureSandboxQueries(f, "default", "--connection chosen ")
@@ -190,9 +187,9 @@ func TestGitConfigStateChecksPrecedeTerminal(t *testing.T) {
 func TestGitConfigWorkflowFailureIsNotPassedThrough(t *testing.T) {
 	f := sandboxStateFixture(t)
 	f.responses[integrationProbe] = response{}
-	workflow := strings.Fields("exec --user=1000:1000 --env HOME=/home/agent " + shellContainer + " " + integrationManager + " integrations config git credentials")
+	workflow := strings.Fields("exec --user=1000:1000 --env HOME=/home/agent " + shellContainer + " " + integrationManager + " integrations config git identity --name N --email E")
 	f.responses[strings.Join(workflow, " ")] = response{Exit: 23, Stderr: "Git failed\n"}
-	status, output, calls := f.run(t, "integrations", "config", "agent01", "git", "credentials")
+	status, output, calls := f.run(t, "integrations", "config", "agent01", "git", "identity", "--name", "N", "--email", "E")
 	want := append(sandboxQueryCalls(), strings.Fields(integrationProbe), workflow)
 	if status != 1 || !strings.Contains(output, "Git failed") || !reflect.DeepEqual(calls, want) {
 		t.Fatalf("status=%d output=%s calls=%v want=%v", status, output, calls, want)

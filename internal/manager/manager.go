@@ -78,6 +78,8 @@ type Child interface {
 // ReplaceAuthorizedKey atomically stores a root-owned mode-0644 authorization file.
 type Effects struct {
 	Stdin io.Reader
+	// Executable resolves this trusted manager binary; nil uses os.Executable.
+	Executable func() (string, error)
 	// HomeDirectory is evaluated only by a verified agent worker. Tests use a
 	// temporary directory; production uses the sandbox's fixed home volume.
 	HomeDirectory func() (string, error)
@@ -130,6 +132,10 @@ type Effects struct {
 // only after owned child cleanup. The __azure-browser callback verifies agent
 // identity and emits the record that lets the host establish forwarding before showing the URL.
 func RunWithEffects(args []string, stdout, stderr io.Writer, effects Effects) int {
+	if len(args) > 0 && (args[0] == "__git-pinentry" || args[0] == "__git-credential-helper" || args[0] == "__git-store-state" || args[0] == "__git-store-check") {
+		return gitCredentialProgram(args, stdout, stderr, effects)
+	}
+
 	if len(args) == 3 && args[0] == "__azure-login" {
 		return azureSession(args[1], args[2], stdout, stderr, effects)
 	}

@@ -15,20 +15,16 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
-// TestGitCredentialsConfiguresHomeStore proves the credential workflow requests exactly the specified global Git helper as agent without other processes at the manager command seam.
-func TestGitCredentialsConfiguresHomeStore(t *testing.T) {
+// TestGitCredentialsRejectsMissingPrivateInput proves setup refuses before creating a key or store at the manager command seam.
+func TestGitCredentialsRejectsMissingPrivateInput(t *testing.T) {
 	effects := noProcesses(t, manager.Identity{UID: 1000, GID: 1000})
-	var started []manager.Process
-	effects.Start = func(process manager.Process) error { started = append(started, process); return nil }
-	var stdout, stderr bytes.Buffer
-	status := manager.RunWithEffects([]string{"integrations", "config", "git", "credentials"}, &stdout, &stderr, effects)
-	if status != 0 || len(started) != 1 {
-		t.Fatalf("status=%d processes=%v stderr=%s", status, started, &stderr)
-	}
-	got := started[0]
-	want := []string{"config", "--global", "--replace-all", "--", "credential.helper", "store --file=/home/agent/.git-credentials"}
-	if got.Program != "git" || got.Identity != (manager.Identity{UID: 1000, GID: 1000}) || !reflect.DeepEqual(got.Args, want) {
-		t.Fatalf("process=%+v want git %q as agent", got, want)
+	home := t.TempDir()
+	effects.HomeDirectory = func() (string, error) { return home, nil }
+	var output bytes.Buffer
+	status := manager.RunWithEffects([]string{"integrations", "config", "git", "credentials"}, &output, &output, effects)
+	entries, _ := os.ReadDir(home)
+	if status != 1 || len(entries) != 0 || !strings.Contains(output.String(), "passphrase") {
+		t.Fatalf("status=%d entries=%v output=%s", status, entries, &output)
 	}
 }
 
@@ -65,7 +61,7 @@ func TestGitIdentityWritesBothGlobalValues(t *testing.T) {
 
 // TestGitWorkflowFailuresStopWithoutFallback proves Git failures return a command failure and never attempt later writes or alternate helpers at the manager process seam.
 func TestGitWorkflowFailuresStopWithoutFallback(t *testing.T) {
-	for _, args := range [][]string{{"integrations", "config", "git", "credentials"}, {"integrations", "config", "git", "identity", "--name", "N", "--email", "E"}} {
+	for _, args := range [][]string{{"integrations", "config", "git", "identity", "--name", "N", "--email", "E"}} {
 		for _, failureAt := range []int{1, 2} {
 			if args[3] == "credentials" && failureAt == 2 {
 				continue
@@ -116,12 +112,12 @@ func TestGitWorkflowsWriteGlobalConfigOnly(t *testing.T) {
 		return command.Run()
 	}
 	var output bytes.Buffer
-	for _, args := range [][]string{{"integrations", "config", "git", "credentials"}, {"integrations", "config", "git", "identity", "--name", "A Person", "--email", "a@example.com"}} {
+	for _, args := range [][]string{{"integrations", "config", "git", "identity", "--name", "A Person", "--email", "a@example.com"}} {
 		if status := manager.RunWithEffects(args, &output, &output, effects); status != 0 {
 			t.Fatalf("status=%d output=%s", status, &output)
 		}
 	}
-	for key, want := range map[string]string{"credential.helper": "store --file=/home/agent/.git-credentials\n", "user.name": "A Person\n", "user.email": "a@example.com\n"} {
+	for key, want := range map[string]string{"credential.helper": "old-one\nold-two\n", "user.name": "A Person\n", "user.email": "a@example.com\n"} {
 		command := exec.Command(git, "config", "--global", "--get-all", key)
 		command.Env = environment
 		command.Dir = home
