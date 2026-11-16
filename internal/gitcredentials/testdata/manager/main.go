@@ -8,8 +8,7 @@ import (
 
 // main exposes the real store adapters for isolated-home tests without requiring sandbox UID 1000.
 func main() {
-	executable, _ := os.Executable()
-	s := gitcredentials.Store{Home: os.Getenv("HOME"), Manager: executable}
+	s := gitcredentials.Store{Home: os.Getenv("HOME"), Manager: os.Args[0]}
 	var err error
 	if filepath.Base(os.Args[0]) == "sandboxed-agents-pinentry" {
 		socket, e := s.AgentSocket()

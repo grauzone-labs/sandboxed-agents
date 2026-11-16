@@ -12,6 +12,7 @@ import (
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/azdo"
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
+	"github.com/grauzone-labs/sandboxed-agents/internal/gitcredentials"
 )
 
 // runIntegration checks sandbox readiness, runs the selected workflow as agent, and normalizes workflow failures.
@@ -57,7 +58,8 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 		var state bytes.Buffer
 		probe := append(appendAgentIdentity([]string{"exec"}), names.Container, managerPath, "__git-store-state")
 		status, e := p.run(nil, &state, io.Discard, probe...)
-		if e != nil || status != 0 || (strings.TrimSpace(state.String()) != "new" && strings.TrimSpace(state.String()) != "ready") {
+		storeState, stateErr := gitcredentials.ParseStoreState(state.String())
+		if e != nil || status != 0 || stateErr != nil {
 			return fmt.Errorf("Git credential store is damaged; see the manual recovery steps in docs/integrations.md")
 		}
 		passphrase, e := readTerminalSecret(p.host.Stdin, stderr, "Git credential passphrase: ")
@@ -66,24 +68,21 @@ func runIntegration(request Request, p podmanTarget, stdout, stderr io.Writer) e
 		}
 		defer clear(passphrase)
 		var confirmation []byte
-		if strings.TrimSpace(state.String()) == "new" {
+		if storeState == gitcredentials.StoreNew {
 			confirmation, e = readTerminalSecret(p.host.Stdin, stderr, "Confirm passphrase: ")
 			if e != nil {
 				return fmt.Errorf("cannot read Git credential confirmation")
 			}
 			defer clear(confirmation)
 		}
-		data, e := json.Marshal(struct {
-			Passphrase   string
-			Confirmation string
-		}{string(passphrase), string(confirmation)})
+		data, e := json.Marshal(gitcredentials.SetupInput{Passphrase: string(passphrase), Confirmation: string(confirmation)})
 		if e != nil {
 			return fmt.Errorf("cannot prepare Git credential input")
 		}
 		defer clear(data)
 		stdin = bytes.NewReader(data)
 		args = append(args, "-i", names.Container, managerPath, "integrations", "config", "git", "credentials")
-		stdout, stderr = io.Discard, io.Discard
+		stdout = io.Discard
 	} else if azdoLogin {
 		probe := append(appendAgentIdentity([]string{"exec"}), names.Container, managerPath, "__git-store-check")
 		status, e := p.run(nil, io.Discard, io.Discard, probe...)

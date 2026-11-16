@@ -24,69 +24,27 @@ This sets `user.name` and `user.email` in the global Git configuration of `agent
 sandboxed-agents integrations config agent01 git credentials
 ```
 
-Git Credential Manager (GCM) 3.0.2 keeps Git HTTPS credentials in a GPG-encrypted
-`pass` store in the home volume. The command takes no options. Standard input and
-standard output must both be terminals: without either, it fails before reading a
-passphrase or writing Git configuration, a key, or the store. Passphrases are read
-without echo and travel only through private stdin pipes and gpg-agent's socket,
-never process arguments, environments, files, or diagnostics. They must be nonempty,
-at most 256 bytes, and contain no line break or NUL.
+Git Credential Manager (GCM) 3.0.2 keeps Git HTTPS credentials in a GPG-encrypted `pass` store in the home volume. The command takes no options. Standard input and standard output must both be terminals: without either, it fails before reading a passphrase or writing Git configuration, a key, or the store. Passphrases are read without echo and travel only through private stdin pipes and gpg-agent's socket, never process arguments, environments, files, or diagnostics. They must be nonempty, at most 256 bytes, and contain no line break or NUL.
 
-On first use it asks twice, creates one dedicated Ed25519 primary key with a
-Curve25519 encryption subkey, both without expiry, and initializes the store for
-that key. Empty or mismatched input creates no key or store and changes no Git
-configuration. Later runs ask once and reuse that key and store. Missing, damaged,
-or mismatched managed state is refused without overwriting or regenerating it.
-The manager never exports the private key.
+On first use it asks twice, creates one dedicated Ed25519 primary key with a Curve25519 encryption subkey, both without expiry, and initializes the store for that key. Empty or mismatched input creates no key or store and changes no Git configuration. Later runs ask once and reuse that key and store. Missing, damaged, or mismatched managed state is refused without overwriting or regenerating it. The manager never exports the private key.
 
-The dedicated GnuPG home is
-`~/.local/share/sandboxed-agents/git-credentials/gnupg`; the pass-compatible store
-is its sibling `password-store`, with the key's fingerprint in `.gpg-id`. The
-user's default GnuPG home and its other keys and pinentry settings are untouched.
-The manager-owned `sandboxed-agents-pinentry` is configured only for the dedicated
-agent and never prompts.
+The dedicated GnuPG home is `~/.local/share/sandboxed-agents/git-credentials/gnupg`; the pass-compatible store is its sibling `password-store`, with the key's fingerprint in `.gpg-id`. The user's default GnuPG home and its other keys and pinentry settings are untouched. The manager-owned `sandboxed-agents-pinentry` is configured only for the dedicated agent and never prompts.
 
-Setup replaces every global `credential.helper` with the manager's GCM helper,
-sets `credential.credentialStore=gpg` and `credential.interactive=false`, and leaves
-system and repository configuration unchanged. The GitHub workflow's host-specific
-helpers for `github.com` and `gist.github.com` survive in either order; other hosts
-use GCM. No managed workflow configures a plaintext store.
+Setup replaces every global `credential.helper` with the manager's GCM helper, sets `credential.credentialStore=gpg` and `credential.interactive=false`, and leaves system and repository configuration unchanged. The GitHub workflow's host-specific helpers for `github.com` and `gist.github.com` survive in either order; other hosts use GCM. No managed workflow configures a plaintext store.
 
-If a legacy `~/.git-credentials` exists, setup imports every entry through GCM and
-reads each back with `git credential fill` before removing the file and replacing
-the old global helpers. An import or readback failure exits non-zero and retains
-both the source bytes and the previous global helper entries. Resolve the failure
-and rerun; never delete the source before the verified migration succeeds.
+If a legacy `~/.git-credentials` exists, setup imports every entry through GCM and reads each back with `git credential fill` before removing the file and replacing the old global helpers. An import or readback failure exits non-zero and retains both the source bytes and the previous global helper entries. Resolve the failure and rerun; never delete the source before the verified migration succeeds.
 
 ### Unlock lifetime and limits
 
-A successful first setup or later unlock leaves the store unlocked without a time
-limit or idle timeout, across separate processes, shells and agent sessions.
-Unlock again with `integrations config NAME git credentials` after **every start,
-restart, or update**. Stopping the sandbox, ending its dedicated gpg-agent, or
-sending that agent SIGHUP loses the unlock. A wrong passphrase first clears the
-previous unlock and warm caches, then fails verification and leaves the store
-locked. Verification uses `PASSWD --verify`, rather than trusting a warm cache.
+A successful first setup or later unlock leaves the store unlocked without a time limit or idle timeout, across separate processes, shells and agent sessions. Unlock again with `integrations config NAME git credentials` after **every start, restart, or update**. Stopping the sandbox, ending its dedicated gpg-agent, or sending that agent SIGHUP loses the unlock. A wrong passphrase first clears the previous unlock and warm caches, then fails verification and leaves the store locked. Verification uses `PASSWD --verify`, rather than trusting a warm cache.
 
-The verified passphrase lives in gpg-agent's generic memory under a product-only
-name, using inline `PUT_SECRET` with TTL `-1`; it is never preset under a keygrip.
-The adapter reads it with `GET_SECRET`. It fails within a two-second socket limit
-when the agent does not answer. Each whole GCM invocation has a **10-second
-deadline plus one-second kill grace** for its process group, including GPG waiting
-on a stalled agent. The helper sets the nonsecret `GPG_TTY=/dev/null` for GCM's
-headless guard. A locked or missing credential fails non-zero without a terminal
-prompt or plaintext fallback; `git credential fill` receives `quit=true` on failure.
+The verified passphrase lives in gpg-agent's generic memory under a product-only name, using inline `PUT_SECRET` with TTL `-1`; it is never preset under a keygrip. The adapter reads it with `GET_SECRET`. It fails within a two-second socket limit when the agent does not answer. Each whole GCM invocation has a **10-second deadline plus one-second kill grace** for its process group, including GPG waiting on a stalled agent. The helper sets the nonsecret `GPG_TTY=/dev/null` for GCM's headless guard. A locked or unavailable store, abnormal helper failure, or deadline fails non-zero without a terminal prompt or plaintext fallback; `git credential fill` receives `quit=true`. An unlocked store with no matching credential lets Git continue to later helpers and its configured prompt policy; GCM itself never prompts.
 
-This provides **protection at rest only**. It provides no protection against
-processes running as `agent` while unlocked, or against the host user. The GitHub
-CLI's token and the Azure DevOps extension's separate PAT copy are not encrypted
-by this store.
+This provides **protection at rest only**. It provides no protection against processes running as `agent` while unlocked, or against the host user. The GitHub CLI's token and the Azure DevOps extension's separate PAT copy are not encrypted by this store.
 
 ### Lost-passphrase recovery
 
-Stored encrypted credentials cannot be recovered without the passphrase. Resetting
-is a manual, destructive action; no workflow performs it automatically. Stop and
-start the sandbox, then enter `sandboxed-agents shell NAME` and run:
+Stored encrypted credentials cannot be recovered without the passphrase. Resetting is a manual, destructive action; no workflow performs it automatically. Stop and start the sandbox, then enter `sandboxed-agents shell NAME` and run:
 
 ```sh
 gpgconf --homedir /home/agent/.local/share/sandboxed-agents/git-credentials/gnupg --kill gpg-agent
@@ -96,27 +54,11 @@ git config --global --unset-all credential.credentialStore || :
 git config --global --unset-all credential.interactive || :
 ```
 
-Leave the shell, run `sandboxed-agents integrations config NAME git credentials`
-with a terminal, and store the credentials again by signing in. Host-specific `gh`
-helpers remain. If state is damaged rather than the passphrase lost, restore the
-matching key and store from your own backup or use this reset; the manager never
-repairs damaged state itself. An interrupted setup may also leave a
-`~/.gitconfig.lock`; remove that lock manually only after confirming no setup or
-Git configuration writer is running.
+Leave the shell, run `sandboxed-agents integrations config NAME git credentials` with a terminal, and store the credentials again by signing in. Host-specific `gh` helpers remain. If state is damaged rather than the passphrase lost, restore the matching key and store from your own backup or use this reset; the manager never repairs damaged state itself. An interrupted setup may also leave a `~/.gitconfig.lock`; remove that lock manually only after confirming no setup or Git configuration writer is running.
 
 ### Manual Git credential check
 
-Use only a disposable sandbox and dummy secrets for mechanism checks. Confirm
-redirecting either input or output refuses setup without changing files. Check
-mismatched confirmation creates nothing, then create the store and approve a dummy
-HTTPS credential through Git on stdin. Confirm a separate headless shell fills it,
-there is no `~/.git-credentials`, and the store contains encrypted `.gpg` entries.
-After `stop`/`start`, `restart`, and `update`, confirm a headless lookup fails while
-locked, then unlock with the workflow and repeat it successfully. Repeat with a
-wrong passphrase after warming the cache: the lookup must fail until a correct
-unlock. For a user-driven account check, supply a private test remote's credential
-from your secret tool over stdin, unlock, and run a headless clone and push of a
-temporary branch with `GIT_TERMINAL_PROMPT=0`. Never record a credential.
+Use only a disposable sandbox and dummy secrets for mechanism checks. Confirm redirecting either input or output refuses setup without changing files. Check mismatched confirmation creates nothing, then create the store and approve a dummy HTTPS credential through Git on stdin. Confirm a separate headless shell fills it, there is no `~/.git-credentials`, and the store contains encrypted `.gpg` entries. After `stop`/`start`, `restart`, and `update`, confirm a headless lookup fails while locked, then unlock with the workflow and repeat it successfully. Repeat with a wrong passphrase after warming the cache: the lookup must fail until a correct unlock. For a user-driven account check, supply a private test remote's credential from your secret tool over stdin, unlock, and run a headless clone and push of a temporary branch with `GIT_TERMINAL_PROMPT=0`. Never record a credential.
 
 ## GitHub
 
@@ -277,11 +219,7 @@ Only the first line is used, with surrounding whitespace removed; further lines 
 
 ### What it runs
 
-Before reading any token, the host asks the manager whether the Git credential
-store is set up and unlocked. A missing or locked store exits 1 and names
-`integrations config NAME git credentials`. This follows the existing sandbox,
-manager, and Azure toolchain checks. No token is consumed on that refusal. The
-manager checks again before reading its private stdin handoff.
+Before reading any token, the host asks the manager whether the Git credential store is set up and unlocked. A missing or locked store exits 1 and names `integrations config NAME git credentials`. This follows the existing sandbox, manager, and Azure toolchain checks. No token is consumed on that refusal. The manager checks again before reading its private stdin handoff.
 
 With an unlocked store, the manager runs the unchanged Azure CLI step:
 
@@ -289,20 +227,9 @@ With an unlocked store, the manager runs the unchanged Azure CLI step:
 az devops login --organization https://dev.azure.com/ORGANIZATION --only-show-errors
 ```
 
-It then pins GCM's provider to `generic` for both the organization URL and its
-origin, and writes the organization username in global Git configuration. The
-origin pin matters because Git strips repository paths before invoking its helper.
-It approves the URL, username and PAT through Git using only the manager's GCM
-helper and `credential.useHttpPath=false`, so repository and system helpers never
-receive the PAT. The stored host-and-username credential resolves for repository
-URLs under that organization without an OAuth or broker attempt. No global
-plaintext helper or `.git-credentials` file is written.
+It then pins GCM's provider to `generic` for both the organization URL and its origin, and writes the organization username in global Git configuration. The pin applies to the whole `dev.azure.com` host, including other organizations on that host. The origin pin is necessary because Git strips repository paths before invoking its helper; an organization-only pin would not match. It approves the URL, username and PAT through Git using only the manager's GCM helper and `credential.useHttpPath=false`, so repository and system helpers never receive the PAT. The stored host-and-username credential resolves for repository URLs under that organization without an OAuth or broker attempt. No global plaintext helper or `.git-credentials` file is written.
 
-All credential subprocess diagnostics are discarded. The token travels only on
-stdin; it appears in no process argument. The Azure step keeps its existing
-controlled environment under `/home/agent`, with ambient PATs, debug logging,
-trace and askpass overrides removed. GCM and GnuPG use the dedicated store and
-agent described above.
+All credential subprocess diagnostics are discarded. The token travels only on stdin; it appears in no process argument. The Azure step keeps its existing controlled environment under `/home/agent`, with ambient PATs, debug logging, trace and askpass overrides removed. GCM and GnuPG use the dedicated store and agent described above.
 
 ### Result and failure
 
@@ -312,12 +239,7 @@ Because the programs run in order, a failure after the first can leave a partial
 
 ### Where the token lives
 
-The PAT is stored twice in the home volume: by the Azure DevOps extension under
-`~/.azure`, unchanged by this workflow, and by GCM as a GPG-encrypted Git credential
-store entry. The extension copy is outside this encryption feature (#142).
-Processes running as `agent` while the store is unlocked and the host user can
-access the PAT. Revoke it in Azure DevOps to end access; `az devops logout` removes
-only the extension's copy. GitHub's per-host `gh` helpers remain independent.
+The PAT is stored twice in the home volume: by the Azure DevOps extension under `~/.azure`, unchanged by this workflow, and by GCM as a GPG-encrypted Git credential store entry. The extension copy is outside this encryption feature (#142). Processes running as `agent` while the store is unlocked and the host user can access the PAT. Revoke it in Azure DevOps to end access; `az devops logout` removes only the extension's copy. GitHub's per-host `gh` helpers remain independent.
 
 ### Manual Azure DevOps login check
 

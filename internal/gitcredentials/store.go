@@ -13,7 +13,6 @@ import (
 // Store identifies the dedicated home state and trusted manager executable, without holding a passphrase.
 type Store struct {
 	Home, Manager string
-	generic       bool
 }
 
 // directory is the product's dedicated GnuPG home and pass store parent.
@@ -29,10 +28,7 @@ func (s Store) passwordStore() string { return filepath.Join(s.directory(), "pas
 
 // environment allows only known nonsecret settings, disabling inherited GCM, Git and GnuPG tracing and overrides.
 func (s Store) environment() []string {
-	env := []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + s.Home, "USER=agent", "LOGNAME=agent", "LANG=C.UTF-8", "GNUPGHOME=" + s.gpgHome(), "PASSWORD_STORE_DIR=" + s.passwordStore(), "GPG_TTY=/dev/null", "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never", "GCM_CREDENTIAL_STORE=gpg", "GCM_GUI_PROMPT=0", "GCM_AUTODETECT_PROVIDER=false", "GIT_CONFIG_GLOBAL=" + filepath.Join(s.Home, ".gitconfig"), "XDG_CONFIG_HOME=" + filepath.Join(s.Home, ".config")}
-	if s.generic {
-		env = append(env, "GCM_PROVIDER=generic")
-	}
+	env := []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + s.Home, "USER=agent", "LOGNAME=agent", "LANG=C.UTF-8", "GNUPGHOME=" + s.gpgHome(), "PASSWORD_STORE_DIR=" + s.passwordStore(), "GPG_TTY=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=/bin/false", "SSH_ASKPASS=/bin/false", "GCM_INTERACTIVE=never", "GCM_CREDENTIAL_STORE=gpg", "GCM_GUI_PROMPT=0", "GCM_AUTODETECT_PROVIDER=false", "GIT_CONFIG_GLOBAL=" + filepath.Join(s.Home, ".gitconfig"), "XDG_CONFIG_HOME=" + filepath.Join(s.Home, ".config")}
 	return env
 }
 
@@ -42,7 +38,8 @@ func (s Store) keys() (fingerprint string, grips []string, err error) {
 	if err = s.run("gpg", []string{"--no-options", "--batch", "--no-auto-check-trustdb", "--with-colons", "--with-keygrip", "--list-keys"}, nil, &out); err != nil {
 		return
 	}
-	primary, sub, pending := 0, 0, ""
+	fingerprint = primaryFingerprint(out.String())
+	primary, sub := 0, 0
 	for _, line := range strings.Split(out.String(), "\n") {
 		fields := strings.Split(line, ":")
 		switch fields[0] {
@@ -52,17 +49,11 @@ func (s Store) keys() (fingerprint string, grips []string, err error) {
 			}
 			if fields[0] == "pub" {
 				primary++
-				pending = "primary"
 			} else {
 				sub++
-				pending = "sub"
 				if !strings.Contains(fields[11], "e") {
 					return "", nil, errors.New("dedicated key lacks encryption subkey")
 				}
-			}
-		case "fpr":
-			if pending == "primary" && fingerprint == "" && len(fields) > 9 {
-				fingerprint = fields[9]
 			}
 		case "grp":
 			if len(fields) > 9 {
@@ -85,10 +76,10 @@ func (s Store) keys() (fingerprint string, grips []string, err error) {
 }
 
 // State reports absent or structurally valid managed state without creating or repairing it.
-func (s Store) State() (string, error) {
+func (s Store) State() (StoreState, error) {
 	_, err := os.Lstat(s.directory())
 	if errors.Is(err, os.ErrNotExist) {
-		return "new", nil
+		return StoreNew, nil
 	}
 	if err != nil {
 		return "", errors.New("cannot inspect Git credential store")
@@ -110,7 +101,7 @@ func (s Store) State() (string, error) {
 		if len(fields) == 0 {
 			continue
 		}
-		if line == "pinentry-program "+filepath.Join(filepath.Dir(s.Manager), "sandboxed-agents-pinentry") {
+		if line == s.pinentryConfiguration() {
 			pinentry = true
 			continue
 		}
@@ -152,7 +143,7 @@ func (s Store) State() (string, error) {
 	if err != nil {
 		return "", errors.New("Git credential store is damaged")
 	}
-	return "ready", nil
+	return StoreReady, nil
 }
 
 // Lock ends only the dedicated agent, clearing generic memory and all warm key caches.
@@ -190,7 +181,7 @@ func (s Store) Check() error {
 	if err != nil {
 		return err
 	}
-	if state != "ready" {
+	if state != StoreReady {
 		return errors.New("Git credential store is not set up")
 	}
 	socket, err := s.AgentSocket()
@@ -231,7 +222,7 @@ func (s Store) Setup(passphrase, confirmation []byte) error {
 	if err != nil {
 		return err
 	}
-	if state == "new" {
+	if state == StoreNew {
 		if len(passphrase) == 0 || !bytes.Equal(passphrase, confirmation) {
 			return errors.New("empty or mismatched passphrase; no configuration changed")
 		}
@@ -239,11 +230,11 @@ func (s Store) Setup(passphrase, confirmation []byte) error {
 	if len(passphrase) == 0 || bytes.ContainsAny(passphrase, "\r\n\x00") || len(passphrase) > 256 {
 		return errors.New("invalid Git credential passphrase")
 	}
-	if state == "new" {
+	if state == StoreNew {
 		if err := os.MkdirAll(s.gpgHome(), 0700); err != nil {
 			return errors.New("cannot create dedicated GnuPG home")
 		}
-		config := "pinentry-program " + filepath.Join(filepath.Dir(s.Manager), "sandboxed-agents-pinentry") + "\nno-allow-external-cache\n"
+		config := s.pinentryConfiguration() + "\nno-allow-external-cache\n"
 		if err := os.WriteFile(filepath.Join(s.gpgHome(), "gpg-agent.conf"), []byte(config), 0600); err != nil {
 			return errors.New("cannot configure dedicated gpg-agent")
 		}
@@ -254,14 +245,7 @@ func (s Store) Setup(passphrase, confirmation []byte) error {
 		if err := s.run("gpg", []string{"--no-options", "--batch", "--with-colons", "--list-keys"}, nil, &out); err != nil {
 			return err
 		}
-		fingerprint := ""
-		for _, line := range strings.Split(out.String(), "\n") {
-			f := strings.Split(line, ":")
-			if f[0] == "fpr" && len(f) > 9 {
-				fingerprint = f[9]
-				break
-			}
-		}
+		fingerprint := primaryFingerprint(out.String())
 		if fingerprint == "" {
 			return errors.New("cannot identify dedicated Git credential key")
 		}
@@ -320,4 +304,28 @@ func (s Store) AgentSocket() (string, error) {
 		return "", errors.New("dedicated gpg-agent socket is unavailable")
 	}
 	return socket, nil
+}
+
+// pinentryConfiguration is the dedicated agent's one allowed pinentry program setting.
+func (s Store) pinentryConfiguration() string {
+	return "pinentry-program " + filepath.Join(filepath.Dir(s.Manager), "sandboxed-agents-pinentry")
+}
+
+// primaryFingerprint extracts the first primary fingerprint from GnuPG colon output.
+func primaryFingerprint(output string) string {
+	primary := false
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Split(line, ":")
+		switch fields[0] {
+		case "pub":
+			primary = true
+		case "sub":
+			primary = false
+		case "fpr":
+			if primary && len(fields) > 9 {
+				return fields[9]
+			}
+		}
+	}
+	return ""
 }

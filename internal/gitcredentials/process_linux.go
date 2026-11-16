@@ -28,7 +28,7 @@ func runCommand(cmd *exec.Cmd) error {
 		if time.Now().After(deadline) {
 			syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 			time.Sleep(KillGrace)
-			waitErr = errors.New("credential helper deadline exceeded")
+			waitErr = errHelperDeadline
 			break
 		}
 		time.Sleep(10 * time.Millisecond)

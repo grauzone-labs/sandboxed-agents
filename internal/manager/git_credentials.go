@@ -40,7 +40,7 @@ func gitCredentialProgram(args []string, stdout, stderr io.Writer, effects Effec
 				err = gitcredentials.Pinentry(effects.Stdin, stdout, socket)
 			}
 		} else if args[0] == "__git-store-state" {
-			var state string
+			var state gitcredentials.StoreState
 			state, err = store.State()
 			if err == nil {
 				fmt.Fprintln(stdout, state)
@@ -65,10 +65,7 @@ func setupGitCredentials(stderr io.Writer, effects Effects) int {
 		fmt.Fprintln(stderr, "cannot locate Git credential store")
 		return 1
 	}
-	var input struct {
-		Passphrase   string
-		Confirmation string
-	}
+	var input gitcredentials.SetupInput
 	if effects.Stdin == nil || json.NewDecoder(io.LimitReader(effects.Stdin, 4096)).Decode(&input) != nil {
 		fmt.Fprintln(stderr, "cannot read Git credential passphrase")
 		return 1

@@ -282,3 +282,80 @@ func fileBytes(t *testing.T, root string) map[string]string {
 	}
 	return result
 }
+
+// TestUnlockedMissContinuesToLaterGitHelper proves an unlocked miss permits Git's helper chain while a locked store stops it at the real Git seam.
+func TestUnlockedMissContinuesToLaterGitHelper(t *testing.T) {
+	s := realStore(t)
+	phrase := []byte("fallback-dummy")
+	if err := s.Setup(phrase, phrase); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "config", "--global", "--add", "credential.helper", "!printf 'username=later\\npassword=later-dummy\\n'")
+	cmd.Env = []string{"HOME=" + s.Home, "PATH=/usr/bin:/bin", "GIT_CONFIG_GLOBAL=" + s.Home + "/.gitconfig"}
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	request := "protocol=https\nhost=example.invalid\n\n"
+	data, err := gitRequest(s, "fill", request)
+	if err != nil || !strings.Contains(string(data), "password=later-dummy\n") {
+		t.Fatal("unlocked miss blocked later helper")
+	}
+	if err := s.Lock(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitRequest(s, "fill", request); err == nil {
+		t.Fatal("locked store allowed fallback")
+	}
+}
+
+// TestAzureDevOpsRejectsFailedCredentialWrite proves ignored Git approve errors cannot become a successful PAT store at the real GCM seam.
+func TestAzureDevOpsRejectsFailedCredentialWrite(t *testing.T) {
+	s := realStore(t)
+	phrase := []byte("azdo-write-dummy")
+	if err := s.Setup(phrase, phrase); err != nil {
+		t.Fatal(err)
+	}
+	directory := s.Home + "/.local/share/sandboxed-agents/git-credentials/password-store"
+	if err := os.Chmod(directory, 0500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(directory, 0700)
+	if err := s.StoreAzureDevOps("https://dev.azure.com/dummy", "dummy", "dummy-failed-pat"); err == nil {
+		t.Fatal("failed encrypted write reported success")
+	}
+}
+
+// TestAbnormalHelperFailureStopsFallback proves an unlocked store still fails closed on abnormal GCM exit at the helper process seam.
+func TestAbnormalHelperFailureStopsFallback(t *testing.T) {
+	s := realStore(t)
+	phrase := []byte("abnormal-dummy")
+	if err := s.Setup(phrase, phrase); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	os.WriteFile(bin+"/git-credential-manager", []byte("#!/bin/sh\necho untrusted-dummy-diagnostic >&2\nexit 42\n"), 0700)
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	var output bytes.Buffer
+	err := s.Helper([]string{"get"}, strings.NewReader("protocol=https\nhost=example.invalid\n\n"), &output)
+	if err == nil || output.String() != "quit=true\n\n" || strings.Contains(err.Error(), "untrusted-dummy-diagnostic") {
+		t.Fatal("abnormal helper failure did not stop Git safely")
+	}
+}
+
+// TestAzureDevOpsRejectsMismatchedReadback proves Git approve success alone is insufficient when a helper returns a different PAT at the real Git seam.
+func TestAzureDevOpsRejectsMismatchedReadback(t *testing.T) {
+	s := realStore(t)
+	phrase := []byte("readback-dummy")
+	if err := s.Setup(phrase, phrase); err != nil {
+		t.Fatal(err)
+	}
+	s.Manager = filepath.Join(s.Home, "wrong-helper")
+	script := "#!/bin/sh\ncat >/dev/null\nif [ \"$2\" = get ]; then printf 'username=dummy\\npassword=different-dummy\\n'; fi\n"
+	if err := os.WriteFile(s.Manager, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StoreAzureDevOps("https://dev.azure.com/dummy", "dummy", "expected-dummy"); err == nil {
+		t.Fatal("mismatched PAT readback reported success")
+	}
+}

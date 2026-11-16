@@ -18,10 +18,13 @@ func TestGitCredentialsTerminalHidesPassphrase(t *testing.T) {
 	for _, tc := range []struct {
 		name, input string
 		status      int
+		message     string
 	}{
-		{"success", "terminal-pat-sentinel\nterminal-pat-sentinel\n", 0},
-		{"cancel", "terminal-pat-sentinel\x03", 1},
-		{"empty", "\n\n", 0},
+		{"migration failure", "terminal-pat-sentinel\nterminal-pat-sentinel\n", 1, "legacy Git credential readback failed; source and helpers unchanged"},
+		{"wrong passphrase", "terminal-pat-sentinel\nterminal-pat-sentinel\n", 1, "incorrect passphrase or damaged Git credential key; store remains locked"},
+		{"success", "terminal-pat-sentinel\nterminal-pat-sentinel\n", 0, ""},
+		{"cancel", "terminal-pat-sentinel\x03", 1, ""},
+		{"empty", "\n\n", 0, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY, 0600)
@@ -52,6 +55,9 @@ func TestGitCredentialsTerminalHidesPassphrase(t *testing.T) {
 			f.responses[integrationProbe] = response{}
 			f.responses["exec --user=1000:1000 --env HOME=/home/agent "+shellContainer+" "+integrationManager+" __git-store-state"] = response{Output: "new\n"}
 			f.responses["exec --user=1000:1000 --env HOME=/home/agent -i "+shellContainer+" "+integrationManager+" integrations config git credentials"] = response{}
+			if tc.message != "" {
+				f.responses["exec --user=1000:1000 --env HOME=/home/agent -i "+shellContainer+" "+integrationManager+" integrations config git credentials"] = response{Exit: 1, Stderr: tc.message}
+			}
 			echoDisabled := make(chan bool, 1)
 			go func() {
 				hidden := false
@@ -77,6 +83,9 @@ func TestGitCredentialsTerminalHidesPassphrase(t *testing.T) {
 			}
 			if *restored != *original {
 				t.Error("terminal settings were not restored")
+			}
+			if !strings.Contains(output, tc.message) {
+				t.Fatal("manager diagnostic was hidden")
 			}
 			if status != tc.status || !strings.Contains(output, "Git credential passphrase:") || strings.Contains(output, "terminal-pat-sentinel") {
 				t.Fatalf("status=%d output=%s", status, output)

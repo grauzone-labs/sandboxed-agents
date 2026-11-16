@@ -11,9 +11,9 @@ import (
 )
 
 // gitCredential runs Git's credential protocol with only the managed helper, never repository or legacy helpers.
-func (s Store) gitCredential(operation, record string, generic bool) ([]byte, error) {
+func (s Store) gitCredential(operation, record string, useGenericGCMProvider bool) ([]byte, error) {
 	helper := s.HelperConfig()
-	if generic {
+	if useGenericGCMProvider {
 		helper += " --generic"
 	}
 	var out bytes.Buffer
@@ -92,7 +92,18 @@ func (s Store) StoreAzureDevOps(organization, username, token string) error {
 		}
 	}
 	// Azure organization credentials are host-scoped and selected by the per-organization username, matching clone URLs with repository paths.
-	return s.run("git", []string{"-c", "credential.helper=", "-c", "credential.helper=" + s.HelperConfig(), "-c", "credential.useHttpPath=false", "credential", "approve"}, strings.NewReader("url="+organization+"\nusername="+username+"\npassword="+token+"\n\n"), io.Discard)
+	args := []string{"-c", "credential.helper=", "-c", "credential.helper=" + s.HelperConfig(), "-c", "credential.useHttpPath=false", "credential"}
+	if err := s.run("git", append(args, "approve"), strings.NewReader("url="+organization+"\nusername="+username+"\npassword="+token+"\n\n"), io.Discard); err != nil {
+		return err
+	}
+	var result bytes.Buffer
+	if err := s.run("git", append(args, "fill"), strings.NewReader("url="+organization+"\nusername="+username+"\n\n"), &result); err != nil {
+		return errors.New("Azure DevOps Git credential readback failed")
+	}
+	if credentialField(result.String(), "password") != token || credentialField(result.String(), "username") != username {
+		return errors.New("Azure DevOps Git credential readback did not match")
+	}
+	return nil
 }
 
 // configure stages global settings under Git's exclusive lock and removes verified plaintext only after publication.
@@ -143,4 +154,15 @@ func (s Store) configure() error {
 		return errors.New("legacy Git credentials could not be removed; global configuration restored")
 	}
 	return nil
+}
+
+// credentialField reads an exact Git credential protocol field without matching data inside another value.
+func credentialField(record, name string) string {
+	for _, line := range strings.Split(record, "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if ok && key == name {
+			return value
+		}
+	}
+	return ""
 }
