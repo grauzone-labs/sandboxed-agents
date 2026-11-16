@@ -21,17 +21,9 @@ Every image records the versions of what it installed in `/usr/local/share/sandb
 
 ### Git credentials
 
-Every image supports GCM's GPG-encrypted pass store. Terminal input and output are
-required for `integrations config NAME git credentials`, which sets it up and
-unlocks it. Unlock again after every start, restart, or update. The dedicated
-agent and key leave the user's default GnuPG home alone. The helper runs GCM with
-`GPG_TTY=/dev/null`, a 10-second deadline and one-second kill grace.
+Every image supports GCM's GPG-encrypted pass store. Terminal input and output are required for `integrations config NAME git credentials`, which sets it up and unlocks it. Unlock again after every start, restart, or update. The dedicated agent and key leave the user's default GnuPG home alone. The helper runs GCM with `GPG_TTY=/dev/null`; one 10-second deadline covers pre-check, GCM and post-check, with one second of kill grace.
 
-Encryption provides protection at rest only, with no protection against processes
-running as `agent` while unlocked or against the host user. A lost passphrase means
-stored credentials cannot be recovered: manually stop/start, kill the dedicated
-agent, remove its state and the managed global settings, rerun setup and sign in
-again, following [the reset commands](integrations.md#lost-passphrase-recovery).
+Encryption provides protection at rest only, with no protection against processes running as `agent` while unlocked or against the host user. A lost passphrase means stored credentials cannot be recovered: manually stop/start, kill the dedicated agent, remove its state and the managed global settings, rerun setup and sign in again, following [the reset commands](integrations.md#lost-passphrase-recovery).
 
 ### SSH host keys
 

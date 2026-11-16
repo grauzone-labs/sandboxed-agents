@@ -2,8 +2,9 @@ package gitcredentials_test
 
 import (
 	"encoding/json"
-	"github.com/grauzone-labs/sandboxed-agents/internal/gitcredentials"
 	"testing"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/gitcredentials"
 )
 
 // TestStoreWireContract proves readiness parsing and setup JSON retain the host/manager wire format at the shared protocol seam.

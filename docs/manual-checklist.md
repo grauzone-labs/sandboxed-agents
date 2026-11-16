@@ -228,16 +228,7 @@ Finish with `sandboxed-agents remove chk-proxy --volumes` once the proxy items a
 
 ### Git credential store
 
-Run the [manual Git credential check](integrations.md#manual-git-credential-check)
-in a disposable sandbox: terminal refusal without writes, mismatched confirmation
-without state, setup/unlock, encrypted dummy credential storage and headless
-readback. After each of stop/start, restart and update, prove the store is locked,
-unlock through `integrations config NAME git credentials`, then perform a headless
-clone and push against a private test remote you are authorized to use. Supply
-credentials only through private stdin from your secret tool; record no token or
-passphrase. A wrong passphrase after a successful lookup must leave it locked.
-Encryption protects at rest only; see the threat model and manual lost-passphrase
-reset steps in the integration guide. This adds no new record identifier.
+Run the [manual Git credential check](integrations.md#manual-git-credential-check) in a disposable sandbox: terminal refusal without writes, mismatched confirmation without state, setup/unlock, encrypted dummy credential storage and headless readback. After each of stop/start, restart and update, prove the store is locked, unlock through `integrations config NAME git credentials`, then perform a headless clone and push against a private test remote you are authorized to use. Supply credentials only through private stdin from your secret tool; record no token or passphrase. A wrong passphrase after a successful lookup must leave it locked. Encryption protects at rest only; see the threat model and manual lost-passphrase reset steps in the integration guide. This adds no new record identifier.
 
 ### GitHub login
 
@@ -248,7 +239,7 @@ Identifier `github-login`. Use a test account and a private test repository. Thi
 3. In `shell chk-persist`, `gh auth status` shows `github.com` logged in, and `GIT_TERMINAL_PROMPT=0 git clone https://github.com/OWNER/REPO.git /workspace/gh-0` clones the private repository without a prompt.
 4. In `/workspace/gh-0`, commit on a temporary branch and run `GIT_TERMINAL_PROMPT=0 git push -u origin HEAD`. **Expected:** the push succeeds without a prompt. Delete the remote branch.
 
-Set up the Git credential store with a dummy non-GitHub credential. After `stop`/`start`, confirm that credential is locked; GitHub keeps its independent `gh` helper. Unlock with `integrations config chk-persist git credentials`, then repeat the headless clone and push. Repeat after `restart` and `update`.
+For lifecycle observations, follow the [Git credential store check](#git-credential-store) with a dummy non-GitHub credential; GitHub keeps its independent `gh` helper while that store is locked.
 
 The login stays until [Final cleanup](#final-cleanup).
 

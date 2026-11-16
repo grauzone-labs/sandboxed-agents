@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// HelperDeadline bounds the entire GCM process, including time waiting for gpg-agent.
+// HelperDeadline bounds one complete helper invocation, including pre-check, GCM and post-check.
 const HelperDeadline = 10 * time.Second
 
 // KillGrace is the time allowed after termination before killing the helper's process group.
@@ -33,11 +33,12 @@ func (s Store) runWithDiagnostics(program string, args []string, input io.Reader
 	cmd.Dir = s.Home
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = input, output, diagnostics
 	cmd.WaitDelay = KillGrace
-	return runCommand(cmd)
+	return runCommand(cmd, s.deadline)
 }
 
 // Helper runs GCM with noninteractive GPG settings under the whole-process deadline.
-func (s Store) Helper(args []string, input io.Reader, output io.Writer) error {
+func (s Store) Helper(args []string, input io.Reader, output io.Writer) (err error) {
+	s.deadline = time.Now().Add(HelperDeadline)
 
 	var providerEnvironment []string
 	if len(args) == 2 && args[0] == "--generic" {
@@ -47,14 +48,18 @@ func (s Store) Helper(args []string, input io.Reader, output io.Writer) error {
 	if len(args) != 1 || (args[0] != "get" && args[0] != "store" && args[0] != "erase") {
 		return errors.New("invalid Git credential helper operation")
 	}
+	defer func() {
+		if err != nil && args[0] == "get" {
+			io.WriteString(output, "quit=true\n\n")
+		}
+	}()
 	if args[0] == "get" {
 		if err := s.Check(); err != nil {
-			io.WriteString(output, "quit=true\n\n")
 			return errors.New("Git credential store is locked or unavailable")
 		}
 	}
 	var result, diagnostics bytes.Buffer
-	err := s.runWithDiagnostics("git-credential-manager", args, input, &result, &diagnostics, providerEnvironment)
+	err = s.runWithDiagnostics("git-credential-manager", args, input, &result, &diagnostics, providerEnvironment)
 	if args[0] == "get" && !strings.Contains(result.String(), "password=") {
 		var exit *exec.ExitError
 		// GCM 3.0.2 reports a missing generic credential as this noninteractive failure.
@@ -62,13 +67,9 @@ func (s Store) Helper(args []string, input io.Reader, output io.Writer) error {
 		if normalMiss && s.Check() == nil {
 			return nil
 		}
-		io.WriteString(output, "quit=true\n\n")
 		return errors.New("Git credential lookup failed; store locked, unavailable, or helper failed")
 	}
 	if err != nil {
-		if args[0] == "get" {
-			io.WriteString(output, "quit=true\n\n")
-		}
 		return errors.New("Git credential operation failed")
 	}
 	_, err = io.Copy(output, &result)

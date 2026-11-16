@@ -9,12 +9,17 @@ import (
 )
 
 // runCommand keeps the group leader unreaped until descendant cleanup, preventing process-group ID reuse during grace.
-func runCommand(cmd *exec.Cmd) error {
+func runCommand(cmd *exec.Cmd, deadline time.Time) error {
+	if deadline.IsZero() {
+		deadline = time.Now().Add(HelperDeadline)
+	}
+	if !time.Now().Before(deadline) {
+		return errHelperDeadline
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	deadline := time.Now().Add(HelperDeadline)
 	var waitErr error
 	for {
 		var info unix.Siginfo
@@ -34,5 +39,10 @@ func runCommand(cmd *exec.Cmd) error {
 		time.Sleep(10 * time.Millisecond)
 	}
 	syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	remaining := time.Until(deadline.Add(KillGrace))
+	if remaining <= 0 {
+		remaining = time.Nanosecond
+	}
+	cmd.WaitDelay = remaining
 	return errors.Join(waitErr, cmd.Wait())
 }

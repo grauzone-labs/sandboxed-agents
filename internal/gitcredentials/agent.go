@@ -18,17 +18,27 @@ const socketDeadline = 2 * time.Second
 // agentConnection owns one deadline-bound Assuan connection; errors never include peer data.
 type agentConnection struct {
 	net.Conn
-	reader *bufio.Reader
+	reader   *bufio.Reader
+	deadline time.Time
 }
 
 // connectAgent opens the private socket without starting or prompting an agent.
 func connectAgent(socket string) (*agentConnection, error) {
-	c, err := net.DialTimeout("unix", socket, socketDeadline)
+	return connectAgentBefore(socket, time.Time{})
+}
+
+// connectAgentBefore caps socket connection and exchanges at the shared helper deadline.
+func connectAgentBefore(socket string, deadline time.Time) (*agentConnection, error) {
+	limit := socketLimit(deadline)
+	if !time.Now().Before(limit) {
+		return nil, errHelperDeadline
+	}
+	c, err := net.DialTimeout("unix", socket, time.Until(limit))
 	if err != nil {
 		return nil, errors.New("Git credential store is locked or its agent is unavailable")
 	}
-	c.SetDeadline(time.Now().Add(socketDeadline))
-	a := &agentConnection{c, bufio.NewReader(c)}
+	c.SetDeadline(socketLimit(deadline))
+	a := &agentConnection{Conn: c, reader: bufio.NewReader(c), deadline: deadline}
 	if _, err := a.response(nil); err != nil {
 		c.Close()
 		return nil, err
@@ -75,7 +85,7 @@ func (a *agentConnection) response(passphrase []byte) ([]byte, error) {
 
 // command exchanges a private command, suppressing all peer diagnostics.
 func (a *agentConnection) command(command string, passphrase []byte) ([]byte, error) {
-	a.SetDeadline(time.Now().Add(socketDeadline))
+	a.SetDeadline(socketLimit(a.deadline))
 	if _, err := io.WriteString(a, command+"\n"); err != nil {
 		return nil, errors.New("Git credential agent write failed")
 	}
@@ -119,4 +129,13 @@ func Pinentry(input io.Reader, output io.Writer, socket string) error {
 		}
 	}
 	return scanner.Err()
+}
+
+// socketLimit takes the earlier of the socket timeout and whole-helper deadline.
+func socketLimit(deadline time.Time) time.Time {
+	limit := time.Now().Add(socketDeadline)
+	if !deadline.IsZero() && deadline.Before(limit) {
+		return deadline
+	}
+	return limit
 }

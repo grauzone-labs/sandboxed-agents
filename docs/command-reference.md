@@ -212,29 +212,13 @@ Credentials live in the sandbox's home volume. They survive `update` and are rem
 
 ### Git credential store
 
-`git credentials` reads a passphrase without echo, twice on first use and once
-later. It creates a dedicated key and GnuPG home, configures GCM's encrypted `gpg`
-store as the only global helper, and preserves GitHub's host helpers in either
-order. System and repository configuration are unchanged. Legacy plaintext entries
-are imported and read back before deletion; a failed migration retains their
-source and previous helpers.
+`git credentials` reads a passphrase without echo, twice on first use and once later. It creates a dedicated key and GnuPG home, configures GCM's encrypted `gpg` store as the only global helper, and preserves GitHub's host helpers in either order. System and repository configuration are unchanged. Legacy plaintext entries are imported and read back before deletion; a failed migration retains their source and previous helpers.
 
-Unlock after every start, restart, or update. The unlock lasts without an idle or
-absolute timeout until the dedicated gpg-agent ends or receives SIGHUP. A wrong
-passphrase clears earlier unlocks, including warm caches. The helper never prompts;
-it bounds each GCM invocation at 10 seconds plus one-second kill grace.
+Unlock after every start, restart, or update. The unlock lasts without an idle or absolute timeout until the dedicated gpg-agent ends or receives SIGHUP. A wrong passphrase clears earlier unlocks, including warm caches. The helper never prompts; one 10-second deadline covers the pre-check, GCM and post-check together, followed by at most one second of kill grace.
 
-This is protection at rest only: it does not protect against processes running as
-`agent` while unlocked or against the host user. Stored credentials cannot be recovered after the
-passphrase is lost. Manual recovery stops and starts the sandbox, kills only its
-dedicated gpg-agent, removes `~/.local/share/sandboxed-agents/git-credentials` and
-the global `credential.helper`, `credential.credentialStore` and
-`credential.interactive` settings, then reruns setup and signs in again. Follow the
-[exact reset commands](integrations.md#lost-passphrase-recovery).
+This is protection at rest only: it does not protect against processes running as `agent` while unlocked or against the host user. Stored credentials cannot be recovered after the passphrase is lost. Manual recovery stops and starts the sandbox, kills only its dedicated gpg-agent, removes `~/.local/share/sandboxed-agents/git-credentials` and the global `credential.helper`, `credential.credentialStore` and `credential.interactive` settings, then reruns setup and signs in again. Follow the [exact reset commands](integrations.md#lost-passphrase-recovery).
 
-`azdo` checks this store after its sandbox and toolchain checks and before reading
-a token; a missing or locked store exits 1 naming `git credentials` and consumes no
-token. Its PAT goes to GCM with a generic provider for the organization and origin.
+`azdo` checks this store after its sandbox and toolchain checks and before reading a token; a missing or locked store exits 1 naming `git credentials` and consumes no token. Its PAT goes to GCM with a generic provider for the organization and origin.
 
 ### SSH integration
 

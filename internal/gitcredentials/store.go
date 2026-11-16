@@ -8,11 +8,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Store identifies the dedicated home state and trusted manager executable, without holding a passphrase.
 type Store struct {
 	Home, Manager string
+	deadline      time.Time
 }
 
 // directory is the product's dedicated GnuPG home and pass store parent.
@@ -164,7 +166,7 @@ func (s Store) agent() (*agentConnection, error) {
 	if err != nil {
 		return nil, err
 	}
-	a, err := connectAgent(socket)
+	a, err := connectAgentBefore(socket, s.deadline)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +190,7 @@ func (s Store) Check() error {
 	if err != nil {
 		return err
 	}
-	a, err := connectAgent(socket)
+	a, err := connectAgentBefore(socket, s.deadline)
 	if err != nil {
 		return err
 	}

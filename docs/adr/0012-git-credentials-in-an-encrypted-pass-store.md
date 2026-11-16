@@ -68,6 +68,6 @@ The design is implemented in #143. The [maintainer notes](../maintainers.md#repe
 
 ## Implementation choices
 
-- Whole GCM invocation deadline: 10 seconds, followed by one second of kill grace.
+- Whole helper invocation deadline: 10 seconds shared across pre-check, GCM and post-check, followed by at most one second of kill grace.
 - Key algorithm: Ed25519 certification primary plus Curve25519 encryption subkey, both protected by the passphrase, without expiry.
 - Asset: `gcm-linux-x64-3.0.2.tar.gz`, with the reviewed SHA-256 recorded in the recipe and maintainer notes. Comparable release-overlay builds measured growth of 122,307,668 bytes (116.64 MiB).

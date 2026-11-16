@@ -334,7 +334,9 @@ func TestAbnormalHelperFailureStopsFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := t.TempDir()
-	os.WriteFile(bin+"/git-credential-manager", []byte("#!/bin/sh\necho untrusted-dummy-diagnostic >&2\nexit 42\n"), 0700)
+	if err := os.WriteFile(bin+"/git-credential-manager", []byte("#!/bin/sh\necho untrusted-dummy-diagnostic >&2\nexit 42\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
 	var output bytes.Buffer
 	err := s.Helper([]string{"get"}, strings.NewReader("protocol=https\nhost=example.invalid\n\n"), &output)
