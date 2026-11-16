@@ -59,7 +59,7 @@ The `ssh` integration for configuring outbound SSH access from a sandbox to a re
 _Avoid_: SSH setup (the host-to-sandbox connection)
 
 **Git credential store**:
-The planned GPG-encrypted `pass` store in the `agent` user's home data where Git Credential Manager keeps Git HTTPS credentials, protected by a dedicated key and its passphrase (ADR-0012, #143); today, `git credentials` still configures Git's plaintext `credential-store` file. Once implemented, it is locked after sandbox start, restart, or update until `integrations config NAME git credentials` unlocks it, and then stays unlocked without a time limit or idle timeout until the sandbox stops or the process holding the unlock ends.
+The planned GPG-encrypted `pass` store in the `agent` user's home data where Git Credential Manager keeps Git HTTPS credentials, protected by a dedicated key and its passphrase (ADR-0012, #143); today, `git credentials` still configures Git's plaintext `credential-store` file. Once implemented, it is locked after sandbox start, restart, or update until `integrations config NAME git credentials` unlocks it, and then stays unlocked without a time limit or idle timeout until the sandbox stops or gpg-agent ends.
 _Avoid_: Keyring, credential-store (Git's plaintext helper), credential cache
 
 **Workflow**:

@@ -22,7 +22,7 @@ The considered alternative was to wait for stronger upstream verification, such 
 ### Setup and unlock surface
 
 - `integrations config NAME git credentials` creates the encrypted store on first use and unlocks it on every later run.
-- It requires a terminal and fails without one before any write.
+- It requires an interactive terminal and, without one, fails before any write or passphrase read.
 - No managed workflow configures the plaintext `credential-store` any more.
 - It keeps the per-host helper entries that the GitHub login workflow writes for `github.com` and `gist.github.com`, whichever of the two runs first.
 - A successful first run leaves the store unlocked.
@@ -56,14 +56,14 @@ The store is unlocked through gpg-agent's generic memory and a pinentry adapter 
 - A pinentry adapter owned by the manager is gpg-agent's only pinentry. It reads the passphrase with `GET_SECRET`, never prompts, and fails when the passphrase is absent or gpg-agent does not answer. It replaces the `pinentry-tty` and `allow-preset-passphrase` proposal of #143.
 - The Git credential helper runs GCM with the nonsecret `GPG_TTY=/dev/null`, because GCM refuses GPG operations when neither `GPG_TTY` nor `SSH_TTY` is set ([`CredentialStore.cs`](https://github.com/git-ecosystem/git-credential-manager/blob/0d95999b8fb39bd1045770fe1d69f6a2b07101d7/src/Core/CredentialStore.cs#L269-L291)).
 - The whole GCM helper process runs under a documented, finite deadline with a kill grace period. The adapter's own limit cannot bound a gpg-agent stall that happens before gpg-agent starts the pinentry.
-- The passphrase travels only over private pipes and sockets between these processes and gpg-agent, and never appears in user-visible output, diagnostics, or logs.
+- The passphrase travels only over private pipes and sockets between these processes and gpg-agent, and never appears in user-visible output, diagnostics, or logs. gpg-agent runs without IPC debugging or logging.
 - No manager-supervised process is added; a separate process holding the passphrase is not approved.
 
-A [local proof](https://github.com/grauzone-labs/sandboxed-agents/issues/143#issuecomment-6909531269) of this mechanism passed in a minimal Debian 13 Podman image with GnuPG 2.4.7, Git 2.47.3, and GCM 3.0.2. It showed headless lookups from a separate `exec` against the same gpg-agent; no expiry under short `default-cache-ttl` and `max-cache-ttl` values; rejection of a wrong passphrase with warm caches, leaving the store locked; fast failure with gpg-agent gone, and failure at the helper deadline with gpg-agent stalled; no deadlock under concurrent lookups; a locked store after container stop and start, restart, and replacement with the home volume kept, each unlocked again by a rerun; and no test passphrase in the scanned output, files, logs, or process arguments and environments. The inline `PUT_SECRET`, `GPG_TTY`, and whole-helper deadline conditions above came from that proof. It did not use the repository base image or the manager, so it does not validate the product.
+A [local proof](https://github.com/grauzone-labs/sandboxed-agents/issues/143#issuecomment-6909531269) of this mechanism passed in a minimal Debian 13 Podman image with GnuPG 2.4.7, Git 2.47.3, and GCM 3.0.2. It showed headless lookups from a separate `exec` against the same gpg-agent; during the finite observation, no expiry under short `default-cache-ttl` and `max-cache-ttl` values; rejection of a wrong passphrase with warm caches, leaving the store locked; fast failure with gpg-agent gone, and failure at the helper deadline with gpg-agent stalled; no deadlock under concurrent lookups; a locked store after container stop and start, restart, and replacement with the home volume kept, each unlocked again by a rerun; and no test passphrase in 18 home files, the container log, or 220 sampled process argument and environment snapshots. The inline `PUT_SECRET`, `GPG_TTY`, and whole-helper deadline conditions above came from that proof. It did not use the repository base image or the manager, so it does not validate the product.
 
 ## Status
 
-On 2026-11-16 the maintainer confirmed this design, authorized the local proof, and, after it passed, approved publishing this ADR as the basis for implementing #143. No production code exists yet. The product feature on the repository base image, with the manager, the lifecycle commands, migration, and the GitHub and Azure DevOps logins, is validated when it is implemented; live hosts run only after a Yes at the live-validation start checkpoint.
+On 2026-11-16 the maintainer confirmed this design, authorized the local proof, and, after it passed, approved publishing this ADR as the basis for implementing #143. No production code exists yet. The product feature on the repository base image, including terminal entry, the manager, lifecycle commands, migration, and the GitHub and Azure DevOps logins, remains to be validated when implemented; live hosts run only after a Yes at the live-validation start checkpoint.
 
 ## Open
 
