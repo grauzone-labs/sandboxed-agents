@@ -127,12 +127,12 @@ Every change to the SSH setup also takes a second, nonblocking lock for the cont
 
 | Command | What it does |
 |---|---|
-| `up NAME [WORKSPACE]` | Creates and starts a sandbox, or starts an existing one. Without `WORKSPACE`, the workspace is a volume of the sandbox. With one, exactly that host directory is bound at `/workspace`. A directory that contains or lies inside a protected host path is refused. |
-| `start NAME` | Starts a stopped sandbox. |
+| `up NAME [WORKSPACE]` | Creates and starts a sandbox, or starts an existing one. Without `WORKSPACE`, the workspace is a volume of the sandbox. With one, exactly that host directory is bound at `/workspace`. A directory that contains or lies inside a protected host path is refused. A new sandbox's hostname is derived from `NAME` ([Hostname](#hostname)). |
+| `start NAME` | Starts a stopped sandbox. It keeps the sandbox's current hostname. |
 | `stop NAME` | Stops a running sandbox. |
-| `restart NAME` | Stops and starts a sandbox. |
+| `restart NAME` | Stops and starts a sandbox. It keeps the sandbox's current hostname. |
 | `remove NAME` | Removes the container and keeps the volumes, so a later `up NAME` adopts them. It cleans up the host side of an SSH setup. |
-| `update NAME` | Moves the sandbox to the image of the installed executable, with the same volumes, port, limits, toolchain set, workspace, agent selection, and credentials. See [Updating a sandbox](images.md#updating-a-sandbox). |
+| `update NAME` | Moves the sandbox to the image of the installed executable, with the same volumes, port, limits, toolchain set, workspace, agent selection, and credentials. The replacement container's hostname is derived from `NAME` ([Hostname](#hostname)). See [Updating a sandbox](images.md#updating-a-sandbox). |
 | `update --all` | Updates every sandbox of the current controller group. It builds every needed image before it changes any sandbox, continues after a failure, and exits non-zero when any sandbox was not updated. See [Updating every sandbox](images.md#updating-every-sandbox). |
 
 Options:
@@ -161,6 +161,20 @@ A new sandbox is created with `--memory` and a `--memory-swap` equal to it (both
 The memory limit is a ceiling, not a reservation. On Windows 11 the default `8g` can exceed the memory that the Podman machine has. The machine's memory is shared by all sandboxes and every other process in it, and the machine or the host can run out of memory before one sandbox reaches its ceiling. Disabling swap for a sandbox neither guarantees physical memory nor prevents memory pressure on the machine or the host. Choose a `--memory` below the memory available to the machine, with headroom for other sandboxes and processes. The preflight does not warn about this.
 
 A command that would end an agent session, or replace the installation of an agent whose session is running, refuses while one runs, names the running sessions, and proceeds only with `--force`. This covers `stop`, `restart`, `remove`, and `update`, and for the agent concerned `agents disable`, `agents update`, and `agents enable` on an enabled agent. When the manager does not answer, `stop`, `restart`, `remove`, and `update` cannot rule out running sessions and refuse in the same way.
+
+### Hostname
+
+`up` for a new sandbox and the replacement container of `update` set the sandbox's hostname, the name its shell shows, from the sandbox `NAME`, so a shell tells you which sandbox it is in. The hostname is a DNS label made in these steps:
+
+1. Lowercase `NAME`.
+2. Replace every character other than `a` to `z`, `0` to `9`, and `-` with `-`.
+3. Trim leading and trailing hyphens.
+4. When more than 63 characters remain, keep the first 63 and trim trailing hyphens again.
+5. When nothing remains, use `sandbox`.
+
+For example, `My_Box.1` becomes `my-box-1`. The tailnet node of the T3 Code Tool is named by the same rule. The controller group is not part of the hostname, and every valid sandbox name stays accepted, so sandboxes in different controller groups, or whose names reduce to the same label, can have the same hostname; each is a separate container.
+
+`start`, `restart`, and `up NAME` on an existing sandbox keep its current hostname. A sandbox that exists already and is otherwise current keeps the hostname it has until its next normal `update` replacement, or until you run `remove NAME` and then `up NAME` again, as described under [Memory limit and the Podman machine](#memory-limit-and-the-podman-machine). `list` does not mark such a sandbox as outdated, and nothing replaces it for you. The hostname is not the tailnet node's MagicDNS name, which Tailscale may extend with a counter when the name is taken in your tailnet.
 
 ## Access commands
 
