@@ -20,6 +20,9 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/image"
 )
 
+// npmFixtureVersion is the latest version advertised and packed by the isolated registry.
+const npmFixtureVersion = "11.999.0"
+
 // TestBaseImageInstallsLatestNPM proves the embedded build step installs the registry's latest npm and rejects an incompatible release through a real shell and npm with an isolated registry and prefix.
 func TestBaseImageInstallsLatestNPM(t *testing.T) {
 	if runtime.GOOS != "linux" {
@@ -57,8 +60,8 @@ func TestBaseImageInstallsLatestNPM(t *testing.T) {
 				switch r.URL.Path {
 				case "/npm":
 					w.Header().Set("Content-Type", "application/json")
-					fmt.Fprintf(w, `{"name":"npm","dist-tags":{"latest":"11.999.0"},"versions":{"11.999.0":{"name":"npm","version":"11.999.0","engines":{"node":%q},"bin":{"npm":"bin/npm-cli.js"},"dist":{"tarball":"http://%s/npm/-/npm-11.999.0.tgz"}}}}`, test.engine, r.Host)
-				case "/npm/-/npm-11.999.0.tgz":
+					fmt.Fprintf(w, `{"name":"npm","dist-tags":{"latest":%q},"versions":{%q:{"name":"npm","version":%q,"engines":{"node":%q},"bin":{"npm":"bin/npm-cli.js"},"dist":{"tarball":"http://%s/npm/-/npm-%s.tgz"}}}}`, npmFixtureVersion, npmFixtureVersion, npmFixtureVersion, test.engine, r.Host, npmFixtureVersion)
+				case "/npm/-/npm-" + npmFixtureVersion + ".tgz":
 					w.Write(archive)
 				default:
 					http.NotFound(w, r)
@@ -112,8 +115,8 @@ func npmFixtureArchive(t *testing.T, engine string) []byte {
 	compressed := gzip.NewWriter(&archive)
 	writer := tar.NewWriter(compressed)
 	for name, content := range map[string]string{
-		"package/package.json":   fmt.Sprintf(`{"name":"npm","version":"11.999.0","engines":{"node":%q},"bin":{"npm":"bin/npm-cli.js"}}`, engine),
-		"package/bin/npm-cli.js": "#!/usr/bin/env node\nconsole.log('11.999.0')\n",
+		"package/package.json":   fmt.Sprintf(`{"name":"npm","version":%q,"engines":{"node":%q},"bin":{"npm":"bin/npm-cli.js"}}`, npmFixtureVersion, engine),
+		"package/bin/npm-cli.js": fmt.Sprintf("#!/usr/bin/env node\nconsole.log(%q)\n", npmFixtureVersion),
 	} {
 		if err := writer.WriteHeader(&tar.Header{Name: name, Mode: 0755, Size: int64(len(content))}); err != nil {
 			t.Fatal(err)
