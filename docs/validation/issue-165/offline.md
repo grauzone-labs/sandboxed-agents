@@ -36,7 +36,7 @@ SANDBOXED_AGENTS_TEST_OPENCODE="$work/cli/package/bin/opencode" \
   go test ./internal/manager -run '^TestOpenCodeProxyNativeClientReachesOnlyFakeUpstream$' -count=1 -v
 ```
 
-The recorded run used an empty environment with only `PATH`, an isolated `HOME`, `TMPDIR`, `GOCACHE`, and `GOMODCACHE`, and this variable. It passed in 0.93 s and logged `OpenCode native contract: 2 authenticated chat requests; 0 denied registry checks; no provider-host requests`. That log line is fixed text plus two counters. The test itself fails on a request to any other address, a wrong bearer key or model, no request, or no `OK` in the output.
+The recorded run used an empty environment with only `PATH`, an isolated `HOME`, `TMPDIR`, `GOCACHE`, and `GOMODCACHE`, `GOPROXY=https://proxy.golang.org,direct`, and this variable. It passed in 0.93 s and logged `OpenCode native contract: 2 authenticated chat requests; 0 denied registry checks; no provider-host requests`. That log line is fixed text plus two counters. The test itself fails on a request to any other address, a wrong bearer key or model, no request, or no `OK` in the output.
 
 The recorded repeat that restricts the network ran the same test inside `unshare --user --map-root-user --net`, with loopback raised by an `ioctl` from a temporary Python script outside the repository and checked to be the only interface, after the Go module cache has been filled by a first run, with `GOPROXY=off` and `GOSUMDB=off`. It passed in 0.99 s with the same log line. A tool such as `ip link set lo up` would also raise loopback; it was not run for this record. The test does not set up that namespace; it is the repeat's own restriction, and without it only traffic that follows the test's proxy settings is observed.
 

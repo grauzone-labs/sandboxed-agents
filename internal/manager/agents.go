@@ -221,13 +221,17 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 		if r.operation == "enable" && enabled && !healthy && !r.force {
 			return exitStatus(fmt.Errorf("%s command is missing; retry agents enable with --force to repair it", r.name), stderr)
 		}
+		if r.operation == "enable" && enabled && healthy && r.version == "" {
+			reportInstallation(stdout, r.name, current)
+			return 0
+		}
 		if r.operation == "update" && !r.unpin {
 			r.version = current.Pin
 		}
 		if r.operation == "enable" && enabled && r.version == "" {
 			r.version = current.Pin
 		}
-		if err := validateMigratedAgentPin(r, effects); err != nil {
+		if err := validatePublishedAgentPin(r, effects); err != nil {
 			return exitStatus(err, stderr)
 		}
 		if r.operation == "enable" && enabled && healthy && (r.version == "" || r.version == current.Version) {
@@ -261,8 +265,8 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 	return 2
 }
 
-// validateMigratedAgentPin checks a pin against a renamed package's published versions before installation or session changes.
-func validateMigratedAgentPin(r agentRequest, effects Effects) error {
+// validatePublishedAgentPin checks pins for renamed catalog packages before installation or session changes.
+func validatePublishedAgentPin(r agentRequest, effects Effects) error {
 	if r.version == "" || len(r.definition.Install.PreviousPackages) == 0 {
 		return nil
 	}
@@ -500,16 +504,16 @@ func mutationCommandLink(command, root string, current installation, r agentRequ
 		return "", false, fmt.Errorf("refusing unmanaged command %s: %w", command, err)
 	}
 	expected := installationCommand(root, current, r.definition)
-	healthy := current.Prefix != "" && previous == expected
-	pkg, err := validateManagedTarget(root, previous, r.definition, r.force || !healthy)
+	selected := current.Prefix != "" && previous == expected
+	pkg, err := validateManagedTarget(root, previous, r.definition, r.force || !selected)
 	if err != nil {
 		return "", false, fmt.Errorf("refusing unmanaged command %s: %w", command, err)
 	}
-	if !healthy && !r.force {
+	if !selected && !r.force {
 		return "", false, fmt.Errorf("%s command differs from its selection; retry with --force to repair a managed installation", r.name)
 	}
-	healthy = healthy && (pkg == "" || pkg == r.definition.Install.Package)
-	return previous, healthy, nil
+	currentPackage := pkg == "" || pkg == r.definition.Install.Package
+	return previous, selected && currentPackage, nil
 }
 
 // validateManagedTarget confines a recovery link and its resolved npm command

@@ -12,6 +12,9 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
+// openCodePublishedVersions is the registry snapshot used by the pin command fixtures.
+const openCodePublishedVersions = `{"versions":["2.0.0","2.3.0"],"dist-tags.latest":"2.3.0"}`
+
 // legacyOpenCodeHome creates the installation and home data written before the OpenCode package cutover.
 func legacyOpenCodeHome(t *testing.T, pin string) string {
 	t.Helper()
@@ -85,7 +88,7 @@ func TestOpenCodeUnavailablePinsPreserveInstallation(t *testing.T) {
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			home, version, installs, views := legacyOpenCodeHome(t, "1.19.6"), "2.3.0", 0, 0
-			effects := openCodeRegistry(t, agentEffects(t, home, &version, &installs), `{"versions":["2.0.0","2.3.0"],"dist-tags.latest":"2.3.0"}`, nil, &views)
+			effects := openCodeRegistry(t, agentEffects(t, home, &version, &installs), openCodePublishedVersions, nil, &views)
 			output := runAgents(t, effects, 1, args...)
 			for _, hint := range []string{"@opencode/cli", "not published", "agents update --unpin", "--version 2.3.0"} {
 				if !strings.Contains(output, hint) {
@@ -102,7 +105,7 @@ func TestOpenCodeUnavailablePinsPreserveInstallation(t *testing.T) {
 // TestOpenCodePublishedPinAndUnpin proves a supported replacement pin, pinned update, and unpin migrate safely through RunWithEffects.
 func TestOpenCodePublishedPinAndUnpin(t *testing.T) {
 	home, version, installs, views := legacyOpenCodeHome(t, "1.19.6"), "2.3.0", 0, 0
-	effects := openCodeRegistry(t, agentEffects(t, home, &version, &installs), `{"versions":["2.0.0","2.3.0"],"dist-tags.latest":"2.3.0"}`, nil, &views)
+	effects := openCodeRegistry(t, agentEffects(t, home, &version, &installs), openCodePublishedVersions, nil, &views)
 	runAgents(t, effects, 0, "enable", "opencode", "--version", "2.0.0", "--force")
 	if got := readAgentStatus(t, effects, "opencode"); got.InstalledVersion != "2.0.0" || got.Pin != "2.0.0" || installs != 1 || views != 1 {
 		t.Fatalf("replacement pin status=%+v installs=%d views=%d", got, installs, views)
@@ -114,6 +117,31 @@ func TestOpenCodePublishedPinAndUnpin(t *testing.T) {
 	runAgents(t, effects, 0, "update", "opencode", "--unpin")
 	if got := readAgentStatus(t, effects, "opencode"); got.InstalledVersion != "2.3.0" || got.Pin != "" || installs != 3 || views != 2 {
 		t.Fatalf("unpin status=%+v installs=%d views=%d", got, installs, views)
+	}
+}
+
+// TestOpenCodeHealthyEnableSkipsRegistry proves unchanged legacy and current selections remain usable offline at RunWithEffects.
+func TestOpenCodeHealthyEnableSkipsRegistry(t *testing.T) {
+	for _, migrated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("migrated=%v", migrated), func(t *testing.T) {
+			home, version, installs, views := legacyOpenCodeHome(t, "1.19.6"), "2.3.0", 0, 0
+			effects := agentEffects(t, home, &version, &installs)
+			if migrated {
+				published := openCodeRegistry(t, effects, openCodePublishedVersions, nil, &views)
+				runAgents(t, published, 0, "enable", "opencode", "--version", "2.3.0", "--force")
+			}
+			before := readAgentStatus(t, effects, "opencode")
+			previousInstalls := installs
+			views = 0
+			offline := openCodeRegistry(t, effects, "", fmt.Errorf("registry offline"), &views)
+			runAgents(t, offline, 0, "enable", "opencode")
+			if migrated {
+				runAgents(t, offline, 0, "enable", "opencode", "--force")
+			}
+			if after := readAgentStatus(t, effects, "opencode"); after != before || installs != previousInstalls || views != 0 {
+				t.Fatalf("unchanged enable: before=%+v after=%+v installs=%d views=%d", before, after, installs, views)
+			}
+		})
 	}
 }
 
