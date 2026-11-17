@@ -21,6 +21,7 @@ It is **not** built against code that actively tries to escape. A sandbox shares
 | Option | Value | Purpose |
 |---|---|---|
 | `--name` | `sandboxed-agents.GROUP.NAME` | The container name carries the controller group. A name alone authorizes nothing. |
+| `--hostname` | the sandbox `NAME` as a lowercase DNS label, without the controller group | Sets the sandbox's own OS hostname so a shell shows which sandbox it is in. It changes no isolation boundary, and it is not a host or tailnet identity. |
 | `--label` | `io.sandboxed-agents.owner=GROUP`, `io.sandboxed-agents.name=NAME`, `io.sandboxed-agents.port=PORT`, `io.sandboxed-agents.toolchains=SET` | The owner label is the authoritative check: the executable changes only containers and volumes whose owner is its own controller group. The other labels record the sandbox name, its SSH port, and its toolchain set. The three volumes carry the owner and name labels as well. |
 | `--userns=keep-id:uid=1000,gid=1000` | fixed | Maps the host user to UID and GID 1000 inside the container. |
 | `--user=0:0` | fixed | Starts the container as container root, which initializes the container, runs sshd, and runs the in-container manager for administrative operations. |
