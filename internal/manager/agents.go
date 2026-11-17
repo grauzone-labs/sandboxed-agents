@@ -234,8 +234,8 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 		if err := validatePublishedAgentPin(r, effects); err != nil {
 			return exitStatus(err, stderr)
 		}
-		if r.operation == "enable" && enabled && healthy && (r.version == "" || r.version == current.Version) {
-			if r.version != "" && current.Pin != r.version {
+		if r.operation == "enable" && enabled && healthy && r.version == current.Version {
+			if current.Pin != r.version {
 				current.Pin = r.version
 				selection[r.name] = current
 				if err := writeSelection(root, selection); err != nil {
@@ -493,8 +493,8 @@ func managedCommandLink(command, expected string) (string, error) {
 	return previous, nil
 }
 
-// mutationCommandLink accepts the selected command or, with explicit force,
-// a confined publication of the same catalog package left by an interruption.
+// mutationCommandLink confines selected and forced recovery commands to current or declared predecessor installations.
+// It reports healthy when the selection matches and any checked package is current.
 func mutationCommandLink(command, root string, current installation, r agentRequest) (string, bool, error) {
 	previous, err := os.Readlink(command)
 	if os.IsNotExist(err) {

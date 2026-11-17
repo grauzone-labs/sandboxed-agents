@@ -405,7 +405,7 @@ A change that would replace or remove the installation of an agent while that ag
 | `agents disable` | Refuses, names the running session | Stops the session, names it, and disables |
 | `agents update`, with or without `--unpin` | Refuses, names the running session | Stops the session, names it, and updates |
 | `agents enable --version X` with `X` different from the installed version | Refuses, names the running session | Stops the session, names it, and installs `X` |
-| `agents enable --version X` with the installed version `X` | Records the pin, installs nothing, no guard | The same |
+| `agents enable --version X` with the installed version `X` | Records the pin, installs nothing, no guard (for `opencode`, after the pin check, which refuses an unavailable pin) | The same |
 | `agents enable` without `--version` | No-op, no guard | The same no-op |
 
 `--force` here means "stop the session and proceed"; the command names the session it stopped. An `opencode-ai` installation is the one case in which `agents enable --force` replaces a healthy installation ([OpenCode](#move-opencode-to-its-new-package)). Otherwise an `agents enable --force` on an agent that is not enabled, or without a `--version` that differs from the installed version, behaves as without `--force` and is not an error. The session guard and the command-link repair under [Recover from an interrupted change](#recover-from-an-interrupted-change) are independent: `--force` covers both, but a healthy agent with a running session is refused only for the session, and a mismatched command link without a session is refused only for the link.
