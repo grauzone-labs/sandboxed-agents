@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -220,6 +221,15 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 		if r.operation == "enable" && enabled && !healthy && !r.force {
 			return exitStatus(fmt.Errorf("%s command is missing; retry agents enable with --force to repair it", r.name), stderr)
 		}
+		if r.operation == "update" && !r.unpin {
+			r.version = current.Pin
+		}
+		if r.operation == "enable" && enabled && r.version == "" {
+			r.version = current.Pin
+		}
+		if err := validateMigratedAgentPin(r, effects); err != nil {
+			return exitStatus(err, stderr)
+		}
 		if r.operation == "enable" && enabled && healthy && (r.version == "" || r.version == current.Version) {
 			if r.version != "" && current.Pin != r.version {
 				current.Pin = r.version
@@ -236,12 +246,6 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 				return exitStatus(err, stderr)
 			}
 		}
-		if r.operation == "update" && !r.unpin {
-			r.version = current.Pin
-		}
-		if r.operation == "enable" && enabled && r.version == "" {
-			r.version = current.Pin
-		}
 		installed, err := installAgent(root, r, effects, stderr)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
@@ -255,6 +259,32 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 		return 0
 	}
 	return 2
+}
+
+// validateMigratedAgentPin checks a pin against a renamed package's published versions before installation or session changes.
+func validateMigratedAgentPin(r agentRequest, effects Effects) error {
+	if r.version == "" || len(r.definition.Install.PreviousPackages) == 0 {
+		return nil
+	}
+	var output, diagnostic bytes.Buffer
+	err := effects.Start(Process{Program: "npm", Args: []string{"view", "--json", "--", r.definition.Install.Package, "versions", "dist-tags.latest"}, Identity: agentIdentity, EnvironmentPolicy: NPMEnvironment, Stdout: &output, Stderr: &diagnostic})
+	if err != nil {
+		return fmt.Errorf("cannot check %s pin %s: %s", r.name, r.version, processFailureSummary(diagnostic.String(), err))
+	}
+	var published struct {
+		Versions []string `json:"versions"`
+		Latest   string   `json:"dist-tags.latest"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &published); err != nil || len(published.Versions) == 0 {
+		return fmt.Errorf("cannot check %s pin %s: npm returned invalid published versions", r.name, r.version)
+	}
+	if slices.Contains(published.Versions, r.version) {
+		return nil
+	}
+	if catalog.ValidatePinVersion(published.Latest) != nil || !slices.Contains(published.Versions, published.Latest) {
+		return fmt.Errorf("cannot check %s pin %s: npm returned no published latest version", r.name, r.version)
+	}
+	return fmt.Errorf("%s version %s is not published by %s; retry agents update --unpin or agents enable --version %s", r.name, r.version, r.definition.Install.Package, published.Latest)
 }
 
 // reportInstallation prints the selection version and pin for a completed enable or update.
@@ -471,83 +501,103 @@ func mutationCommandLink(command, root string, current installation, r agentRequ
 	}
 	expected := installationCommand(root, current, r.definition)
 	healthy := current.Prefix != "" && previous == expected
-	if err := validateManagedTarget(root, previous, r.definition, r.force || !healthy); err != nil {
+	pkg, err := validateManagedTarget(root, previous, r.definition, r.force || !healthy)
+	if err != nil {
 		return "", false, fmt.Errorf("refusing unmanaged command %s: %w", command, err)
 	}
 	if !healthy && !r.force {
 		return "", false, fmt.Errorf("%s command differs from its selection; retry with --force to repair a managed installation", r.name)
 	}
+	healthy = healthy && (pkg == "" || pkg == r.definition.Install.Package)
 	return previous, healthy, nil
 }
 
 // validateManagedTarget confines a recovery link and its resolved npm command
-// to one real installation directory and verifies orphan package identity.
-func validateManagedTarget(root, target string, definition catalog.Agent, metadataRequired bool) error {
+// to one real installation directory and returns the package identity when metadata is required.
+func validateManagedTarget(root, target string, definition catalog.Agent, metadataRequired bool) (string, error) {
 	if !filepath.IsAbs(target) || filepath.Clean(target) != target {
-		return errors.New("command target is not a canonical managed path")
+		return "", errors.New("command target is not a canonical managed path")
 	}
 	relative, err := filepath.Rel(root, target)
 	if err != nil {
-		return err
+		return "", err
 	}
 	parts := strings.Split(relative, string(filepath.Separator))
 	if len(parts) != 3 || !strings.HasPrefix(parts[0], "installation-") || parts[1] != "bin" || parts[2] != definition.Command {
-		return errors.New("command target is outside the requested managed installation")
+		return "", errors.New("command target is outside the requested managed installation")
 	}
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return err
+		return "", err
 	}
 	prefix := filepath.Join(root, parts[0])
 	realPrefix, err := filepath.EvalSymlinks(prefix)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if realPrefix != filepath.Join(realRoot, parts[0]) {
-		return errors.New("installation prefix resolves outside its managed directory")
+		return "", errors.New("installation prefix resolves outside its managed directory")
 	}
 	resolved, err := filepath.EvalSymlinks(target)
 	if err != nil {
-		return err
+		return "", err
 	}
-	inside := func(path string) bool {
-		rel, err := filepath.Rel(realPrefix, path)
-		return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
-	}
-	if !inside(resolved) {
-		return errors.New("managed command resolves outside its installation")
+	if !pathInsideInstallation(realPrefix, resolved) {
+		return "", errors.New("managed command resolves outside its installation")
 	}
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !info.Mode().IsRegular() {
-		return errors.New("managed command is not a regular file")
+		return "", errors.New("managed command is not a regular file")
 	}
 	if metadataRequired {
-		metadataPath, err := filepath.EvalSymlinks(filepath.Join(prefix, "lib", "node_modules", definition.Install.Package, "package.json"))
-		if err != nil {
-			return err
+		return managedPackage(prefix, definition.Install)
+	}
+	return "", nil
+}
+
+// pathInsideInstallation reports whether a resolved path is strictly beneath its installation prefix.
+func pathInsideInstallation(prefix, path string) bool {
+	rel, err := filepath.Rel(prefix, path)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+// managedPackage verifies current or known-predecessor package metadata within a confined installation prefix.
+func managedPackage(prefix string, install catalog.Install) (string, error) {
+	realPrefix, err := filepath.EvalSymlinks(prefix)
+	if err != nil {
+		return "", err
+	}
+	for _, pkg := range append([]string{install.Package}, install.PreviousPackages...) {
+		metadataPath, err := filepath.EvalSymlinks(filepath.Join(prefix, "lib", "node_modules", pkg, "package.json"))
+		if os.IsNotExist(err) {
+			continue
 		}
-		if !inside(metadataPath) {
-			return errors.New("package metadata resolves outside its installation")
+		if err != nil {
+			return "", err
+		}
+		if !pathInsideInstallation(realPrefix, metadataPath) {
+			return "", errors.New("package metadata resolves outside its installation")
 		}
 		data, err := os.ReadFile(metadataPath)
 		if err != nil {
-			return err
+			return "", err
 		}
 		var metadata struct{ Name, Version string }
 		if err := json.Unmarshal(data, &metadata); err != nil {
-			return err
+			return "", err
 		}
-		if metadata.Name != definition.Install.Package {
-			return errors.New("installation belongs to another package")
+		if metadata.Name != pkg {
+			return "", errors.New("installation belongs to another package")
 		}
 		if err := catalog.ValidateVersion(metadata.Version); err != nil {
-			return err
+			return "", err
 		}
+		return pkg, nil
 	}
-	return nil
+	return "", errors.New("installation has no recognized package metadata")
 }
 
 // verifiedAgentHome verifies the worker identity before resolving persistent agent data.

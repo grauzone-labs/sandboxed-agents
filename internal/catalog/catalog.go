@@ -55,7 +55,7 @@ var Default = Catalog{
 			Documentation:  "https://developers.openai.com/codex/cli",
 		},
 		"opencode": {
-			Delivered: true, Install: Install{Kind: NPM, Package: "opencode-ai"}, Command: "opencode",
+			Delivered: true, Install: Install{Kind: NPM, Package: "@opencode/cli", PreviousPackages: []string{"opencode-ai"}}, Command: "opencode",
 			LoginWorkflows: map[string]AgentLoginWorkflow{"provider": {Args: []string{"auth", "login"}, Description: "Choose a provider and follow its login instructions; needs interactive standard input and output."}, "proxy": proxyLoginWorkflow(proxyLoginPolicy{ModelRequired: true})},
 			LoginMessage:   "Select your provider and follow the OpenCode login instructions.",
 			Documentation:  "https://opencode.ai/docs/",

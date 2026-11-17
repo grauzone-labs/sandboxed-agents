@@ -18,6 +18,8 @@ const NPM InstallKind = "npm"
 type Install struct {
 	Kind    InstallKind
 	Package string
+	// PreviousPackages are known predecessors accepted only for recovery and migration, never for new installs.
+	PreviousPackages []string
 }
 
 // Probe declares a read-only JSON authentication query and any documented signed-out exit.
