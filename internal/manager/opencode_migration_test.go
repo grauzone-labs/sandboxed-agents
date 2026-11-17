@@ -102,6 +102,19 @@ func TestOpenCodeUnavailablePinsPreserveInstallation(t *testing.T) {
 	}
 }
 
+// TestOpenCodeFirstInstallPinGuidanceNamesEnable proves an unpublished first-install pin recommends an available enable version without an unusable unpin command at RunWithEffects.
+func TestOpenCodeFirstInstallPinGuidanceNamesEnable(t *testing.T) {
+	home, version, installs, views := t.TempDir(), "2.3.0", 0, 0
+	effects := openCodeRegistry(t, agentEffects(t, home, &version, &installs), openCodePublishedVersions, nil, &views)
+	output := runAgents(t, effects, 1, "enable", "opencode", "--version", "2.99.0")
+	if !strings.Contains(output, "agents enable --version 2.3.0") || strings.Contains(output, "--unpin") {
+		t.Fatalf("first install guidance=%s", output)
+	}
+	if got := readAgentStatus(t, effects, "opencode"); got.Enabled || installs != 0 || views != 1 {
+		t.Fatalf("unavailable first-install pin changed status=%+v installs=%d views=%d", got, installs, views)
+	}
+}
+
 // TestOpenCodePublishedPinAndUnpin proves a supported replacement pin, pinned update, and unpin migrate safely through RunWithEffects.
 func TestOpenCodePublishedPinAndUnpin(t *testing.T) {
 	home, version, installs, views := legacyOpenCodeHome(t, "1.19.6"), "2.3.0", 0, 0

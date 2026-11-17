@@ -86,11 +86,16 @@ The migration changes the installation and the selection only. It does not touch
 **Pins.** A pin recorded for `opencode-ai`, such as `1.19.5` or `1.19.6`, names a version that `@opencode/cli` does not publish, so the manager does not carry it across the package. For `opencode`, the manager checks a version only when one is requested or an installation is needed: an explicit `--version` on `agents enable`, even one equal to the installed version, and the recorded pin when `agents update` without `--unpin`, `agents enable --force` on an `opencode-ai` installation, or a repair of a missing or mismatched command installs again. A healthy installation with no `--version` and nothing to install is checked against nothing. The check is a read-only `npm view` of the published versions of `@opencode/cli`, run as `agent` with the sandbox's own npm configuration, before any `npm install` and before the session check:
 
 - **The version is published.** The command goes on as for any pin.
-- **The version is not published.** The command exits non-zero before it installs anything. It changes neither the installation, the selection, nor a running session, and it names the newest published version. Choose one of:
+- **The version is not published.** The command exits non-zero before it installs anything. It changes neither the installation, the selection, nor a running session, and it names the newest published version. When `opencode` is not enabled yet, the message names only the `enable` command, because `agents update` needs an enabled agent:
+
+  ```text
+  sandboxed-agents agents enable agent01 opencode --version 2.3.0
+  ```
+
+  When `opencode` is already enabled, it also names the other way out, which installs the newest version and clears the pin:
 
   ```text
   sandboxed-agents agents update agent01 opencode --unpin
-  sandboxed-agents agents enable agent01 opencode --version 2.3.0
   ```
 
   `--unpin` is an option of `agents update`, and `--version` an option of `agents enable`. `2.3.0` stands for the newest version the message names.

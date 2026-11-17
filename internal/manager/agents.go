@@ -231,7 +231,7 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 		if r.operation == "enable" && enabled && r.version == "" {
 			r.version = current.Pin
 		}
-		if err := validatePublishedAgentPin(r, effects); err != nil {
+		if err := validatePublishedAgentPin(r, enabled, effects); err != nil {
 			return exitStatus(err, stderr)
 		}
 		if r.operation == "enable" && enabled && healthy && r.version == current.Version {
@@ -265,8 +265,8 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 	return 2
 }
 
-// validatePublishedAgentPin checks pins for renamed catalog packages before installation or session changes.
-func validatePublishedAgentPin(r agentRequest, effects Effects) error {
+// validatePublishedAgentPin checks pins for renamed catalog packages before changes, with recovery guidance for the enabled state.
+func validatePublishedAgentPin(r agentRequest, enabled bool, effects Effects) error {
 	if r.version == "" || len(r.definition.Install.PreviousPackages) == 0 {
 		return nil
 	}
@@ -288,7 +288,11 @@ func validatePublishedAgentPin(r agentRequest, effects Effects) error {
 	if catalog.ValidatePinVersion(published.Latest) != nil || !slices.Contains(published.Versions, published.Latest) {
 		return fmt.Errorf("cannot check %s pin %s: npm returned no published latest version", r.name, r.version)
 	}
-	return fmt.Errorf("%s version %s is not published by %s; retry agents update --unpin or agents enable --version %s", r.name, r.version, r.definition.Install.Package, published.Latest)
+	guidance := fmt.Sprintf("agents enable --version %s", published.Latest)
+	if enabled {
+		guidance = "agents update --unpin or " + guidance
+	}
+	return fmt.Errorf("%s version %s is not published by %s; retry %s", r.name, r.version, r.definition.Install.Package, guidance)
 }
 
 // reportInstallation prints the selection version and pin for a completed enable or update.
@@ -557,7 +561,7 @@ func validateManagedTarget(root, target string, definition catalog.Agent, metada
 		return "", errors.New("managed command is not a regular file")
 	}
 	if metadataRequired {
-		return managedPackage(prefix, definition.Install)
+		return managedPackage(realPrefix, definition.Install)
 	}
 	return "", nil
 }
@@ -568,14 +572,10 @@ func pathInsideInstallation(prefix, path string) bool {
 	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
-// managedPackage verifies current or known-predecessor package metadata within a confined installation prefix.
-func managedPackage(prefix string, install catalog.Install) (string, error) {
-	realPrefix, err := filepath.EvalSymlinks(prefix)
-	if err != nil {
-		return "", err
-	}
+// managedPackage verifies current or known-predecessor package metadata beneath an already verified real installation prefix.
+func managedPackage(realPrefix string, install catalog.Install) (string, error) {
 	for _, pkg := range append([]string{install.Package}, install.PreviousPackages...) {
-		metadataPath, err := filepath.EvalSymlinks(filepath.Join(prefix, "lib", "node_modules", pkg, "package.json"))
+		metadataPath, err := filepath.EvalSymlinks(filepath.Join(realPrefix, "lib", "node_modules", pkg, "package.json"))
 		if os.IsNotExist(err) {
 			continue
 		}
