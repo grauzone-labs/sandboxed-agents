@@ -168,7 +168,7 @@ func runToolTerminalWork(request Request, p podmanTarget, stdout, stderr io.Writ
 		label = "tools tailscale " + tool + " " + action
 		payload = []string{"tools", "tailscale", tool, action}
 		if action == "login" {
-			payload = append(payload, "--hostname", tailnetHostname(request.Name))
+			payload = append(payload, "--hostname", sandboxHostname(request.Name))
 		} else {
 			needsTerminal = false
 		}
@@ -188,28 +188,6 @@ func runToolTerminalWork(request Request, p podmanTarget, stdout, stderr io.Writ
 		return fmt.Errorf("%s failed", label)
 	}
 	return nil
-}
-
-// tailnetHostname derives the tailnet node's hostname from the sandbox name: lowercased, every
-// character other than a letter, digit, or hyphen replaced by a hyphen, without leading or trailing
-// hyphens, and at most 63 characters, so that the MagicDNS name reads as the sandbox's name.
-func tailnetHostname(name string) string {
-	var label strings.Builder
-	for _, r := range strings.ToLower(name) {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			label.WriteRune(r)
-		} else {
-			label.WriteRune('-')
-		}
-	}
-	hostname := strings.Trim(label.String(), "-")
-	if len(hostname) > 63 {
-		hostname = strings.TrimRight(hostname[:63], "-")
-	}
-	if hostname == "" {
-		hostname = "sandbox"
-	}
-	return hostname
 }
 
 // describeToolTailnet renders the tailnet node of a Tool: absent, its supervised state, and once signed in its name, origin, Serve mapping, and capabilities.

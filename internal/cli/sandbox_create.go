@@ -19,7 +19,7 @@ var sandboxCreateProgressAfter = 2 * time.Minute
 // sandboxCreateArgs keeps the isolation, identity, and storage policy shared by up and update.
 func sandboxCreateArgs(request Request, port uint16, workspaceMount, tag string, extraLabels ...string) []string {
 	names := DerivedNames(request.Group, request.Name)
-	args := append([]string{"create", "--name", names.Container}, sandboxIdentityLabels(request)...)
+	args := append([]string{"create", "--name", names.Container, "--hostname", sandboxHostname(request.Name)}, sandboxIdentityLabels(request)...)
 	args = append(args, "--label", SSHPortLabel+"="+strconv.Itoa(int(port)),
 		"--userns=keep-id:uid=1000,gid=1000", "--user=0:0", "--security-opt=no-new-privileges", "--network=pasta:--no-map-gw",
 		"--memory", strconv.FormatInt(request.Resources.Memory, 10),
