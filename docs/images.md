@@ -7,7 +7,7 @@ This page tells you what the image a sandbox runs in contains, which toolchains 
 The base image is Debian 13 (trixie) slim with Node.js 24 LTS. It contains:
 
 - OpenSSH server and client, Git, GitHub CLI, tmux, `curl`, `jq`, `ripgrep`, `less`, `unzip`, `zip`, `xz-utils`, `file`, `procps`, Bash, coreutils, findutils, `gnupg`, CA certificates, and `libatomic1`, the GCC atomics runtime library that the T3 Code runtime loads.
-- Node.js 24 and npm from the NodeSource repository `node_24.x`, installed after its [signing key check](#signing-key-checks).
+- Node.js 24 from the NodeSource repository `node_24.x`, installed after its [signing key check](#signing-key-checks), and then npm at `npm@latest`, which replaces the npm that the NodeSource package carries. Node.js stays on major version 24. The npm release is resolved when the image is built, and nothing updates npm at sandbox startup. If the latest npm is incompatible with Node.js 24, the image build fails; it neither falls back to an earlier npm nor moves to another Node.js major version. Toolchain images are built on this base image and inherit its npm. The host's npm and the npm that the release workflow pins for publishing are separate and unchanged.
 - Tailscale (`tailscale` and `tailscaled`) from Tailscale's Debian 13 repository, installed after its [signing key check](#signing-key-checks), for the T3 Code Tool's tailnet node ([ADR 0010](adr/0010-t3-code-pairs-over-an-in-sandbox-tailnet-node.md)). The image starts no Tailscale process: the manager starts `tailscaled` as `agent` in userspace networking mode, inside the Tool directory, only after `tools tailscale NAME t3code login`. A sandbox without that login runs no Tailscale process and creates no Tailscale state.
 - The user `agent` with UID and GID 1000, the directory `/workspace` owned by `agent`, and no baked SSH host keys.
 - The in-container manager at `/usr/local/bin/sandboxed-agents-manager`.
@@ -65,7 +65,7 @@ A build materializes the complete context in a temporary directory, with text no
 
 ## Build, refresh, and reuse
 
-`build [--with ...]` always builds anew, so a new build installs current packages. With or without `--with`:
+`build [--with ...]` always builds anew, so a new build installs current packages, including the current `npm@latest`. With or without `--with`:
 
 1. It lists the images that carry the marker label and the asset hash of the running executable and reads each image's toolchain set. The result is every existing toolchain set of this executable, in any controller group. `--with a,b` adds that set when no image exists for it. Images from other executables (other asset hashes) are neither found nor rebuilt.
 2. It rebuilds the base image with `--no-cache --pull=always`, so Podman pulls `debian:trixie-slim` again.
@@ -73,9 +73,9 @@ A build materializes the complete context in a temporary directory, with text no
 
 When the base image fails to build, including a failed key check, `build` stops and builds no toolchain image. When a toolchain image fails to build, `build` continues with the remaining sets, then names the failed sets and exits non-zero. A failed build never replaces its tag, so an image that was not rebuilt stays usable under its tag. A successful rebuild moves the tag to the new image; the previous image loses the tag but still backs the sandboxes created from it.
 
-Once the base image has been rebuilt, `build` prints that existing sandboxes keep their image until `update` and that `list` marks them as outdated, also when a toolchain image failed. Because images are shared, the rebuild affects the sandboxes of every controller group. `build` followed by `update` brings a sandbox to fresh packages ([Updating a sandbox](#updating-a-sandbox)).
+Once the base image has been rebuilt, `build` prints that existing sandboxes keep their image until `update` and that `list` marks them as outdated, also when a toolchain image failed. Because images are shared, the rebuild affects the sandboxes of every controller group. `build` followed by `update NAME` brings a sandbox to fresh packages, the latest npm included ([Updating a sandbox](#updating-a-sandbox)); `build` alone leaves a running sandbox as it is.
 
-`up` builds only a missing image and may use the layer cache. A toolchain image counts as missing when its base image label differs from the ID of the current base image, so `up` never creates a sandbox from a toolchain image built on a superseded base. It never rebuilds an existing, current image.
+`up` builds only a missing image and may use the layer cache, so it does not promise a fresh `npm@latest` resolution: an existing image or cached layers keep the npm they already hold. A toolchain image counts as missing when its base image label differs from the ID of the current base image, so `up` never creates a sandbox from a toolchain image built on a superseded base. It never rebuilds an existing, current image.
 
 ### Recorded set and outdated sandboxes
 
