@@ -61,7 +61,9 @@ func replacementFixture(t *testing.T) *fixture {
 	return f
 }
 
-// TestUpdateReplacesSandbox proves a replacement keeps volumes, port and limits and stops the old container before starting the new one through the executable CLI and fake processes.
+// TestUpdateReplacesSandbox proves a replacement sets the sandbox hostname, keeps volumes, port
+// and limits, and stops the old container before starting the new one through the executable CLI
+// and fake processes.
 func TestUpdateReplacesSandbox(t *testing.T) {
 	f := replacementFixture(t)
 	status, output, calls := runUpExecutable(t, f, "update", "demo")
@@ -76,7 +78,7 @@ func TestUpdateReplacesSandbox(t *testing.T) {
 		}
 		if call[0] == "create" {
 			joined := strings.Join(call, " ")
-			for _, want := range []string{"--memory 8589934592", "--cpus 4", "--pids-limit 2048", "--shm-size 1073741824", "127.0.0.1:2222:22/tcp", "io.sandboxed-agents.update-was-running=true", "source=sandboxed-agents.default.demo.workspace", "source=sandboxed-agents.default.demo.home", "source=sandboxed-agents.default.demo.ssh", baseTag(t)} {
+			for _, want := range []string{"--hostname demo", "--memory 8589934592", "--cpus 4", "--pids-limit 2048", "--shm-size 1073741824", "127.0.0.1:2222:22/tcp", "io.sandboxed-agents.update-was-running=true", "source=sandboxed-agents.default.demo.workspace", "source=sandboxed-agents.default.demo.home", "source=sandboxed-agents.default.demo.ssh", baseTag(t)} {
 				if !strings.Contains(joined, want) {
 					t.Errorf("create lacks %s: %v", want, call)
 				}
