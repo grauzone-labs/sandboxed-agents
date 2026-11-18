@@ -85,6 +85,7 @@ flowchart TD
 
   F7["F7 CodeRabbit review of the head"]
   MERGE{{"Merge"}}
+  VP{{"Validated preview"}}
 
   subgraph PUSHRUN["Release reproducibility on main"]
     F8["F8 changes, linux, windows, compare"]
@@ -127,7 +128,9 @@ flowchart TD
   F12L ==> F14
   F12W ==> F14
   F13 ==> F14
-  F14 ==> F15
+  F8 ==>|"gate 1 on the commit"| VP
+  F14 ==>|"gates 2 and 3 recorded on the prerelease"| VP
+  VP ==> F15
   F8 ==>|"evidence for the stable release check"| F16G
   F14 ==>|"evidence for the stable release check"| F16G
 
@@ -500,7 +503,7 @@ Each finding carries a number or is marked unmeasured, and is judged against the
 | 6 | O6. Review the five offline tests with run-independent durations for deadlines they wait out | not quantified (hypothesis) | Offline both platforms; CI both jobs | S to M |
 | 7 | O7. Drop the standalone `Stable release gate` run on tag push, or the duplicate check inside `publish` | 0, measured | Tag workflows | S |
 
-The order of the first two ranks depends on a scenario. O1's 5,810 assumes one fewer run on each of the 10 branches with two or more runs, which is an assumed scenario size, not a baseline figure; O2's 5,374.66 is measured. With one fewer run on 9 branches (9 x 581 = 5,229) the two would swap.
+The order of the first two ranks depends on a scenario. O1's 5,810 assumes one fewer run on each of the 10 branches with two or more runs, which is an assumed scenario size, not a baseline figure; O2's 5,374.66 is measured. With one fewer run on 9 branches (9 x 581 = 5,229) the two would swap. The upper bounds of O3 and O4 are not additive, because both are capped by the same per-run lead of `windows` over `linux`.
 
 Enabling observation, not ranked: E1. Record per-operation times in the live suite (live, all cases, both hosts; effort M). It has no saving of its own.
 
@@ -529,7 +532,7 @@ Measure its tests on a Windows runner first, then address the largest. The candi
 
 Run the ACL tests and the image and release tests beside the first test step instead of after it.
 
-- **Saving and basis:** estimate, upper bound over the window: 3,032, the sum, over the 48 full runs, of the smaller of each run's tail (its ACL step plus its image and release step) and its lead of `windows` over `linux`. The uncapped tail sum is 4,037 of `windows` job time. Both figures are before the unmeasured slowdown of the first step on 2 vCPUs. The tail's median is 76.5, the median over the 48 runs of each run's sum of the two steps (the step medians are 8 and 68). Basis: section 3.2 and D7.
+- **Saving and basis:** estimate, upper bound over the window: 3,032, the sum, over the 48 full runs, of the smaller of each run's tail (its ACL step plus its image and release step) and its lead of `windows` over `linux` (a run's lead is the `windows` job's queue plus execution minus the `linux` job's queue plus execution, the section 3.2 definition). The uncapped tail sum is 4,037 of `windows` job time. Both figures are before the unmeasured slowdown of the first step on 2 vCPUs. The tail's median is 76.5, the median over the 48 runs of each run's sum of the two steps (the step medians are 8 and 68). Basis: section 3.2 and D7.
 - **Coverage, quality, reliability; gate, record, or documented behaviour touched:** no coverage change if every invocation keeps its environment and `-v`. Log readability drops with interleaved output. Changes the workflow file, not a gate.
 
 ### O5. Take `TestInstallerHelperSuite` off the local and Linux critical path
@@ -606,6 +609,7 @@ These are drafts. None is filed; each is filed only after maintainer agreement. 
 
 - **Type:** Task.
 - **Problem:** the ACL tests and the image and release tests wait for the 382-second step (tail median 76.5, the median over the 48 runs of each run's sum of the two steps).
+- **Change:** start the ACL tests and the image and release tests beside the first test step instead of after it, each invocation keeping its own environment variables and `-v`; job names and the `compare` job stay unchanged.
 - **Success criterion:** the median `windows` job execution over 20 consecutive full runs is below the baseline 503, and the achieved reduction is recorded against the bound of 76.5; no smaller threshold is set because the slowdown of the first step is not measured. The same tests are reported passing and `compare` is unchanged.
 
 Drafts for O5 and O6 are deliberately not written. O5 moves run wall only after the Windows job shrinks, and O6 is a hypothesis that Draft D's measurement and a reading of the five tests should confirm first. O7 is not recommended.
