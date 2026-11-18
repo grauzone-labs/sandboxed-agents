@@ -214,11 +214,11 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 		if r.operation == "update" && !enabled {
 			return exitStatus(fmt.Errorf("%s not enabled", r.name), stderr)
 		}
-		_, healthy, err := mutationCommandLink(commandPath(home, r.definition), root, current, r)
+		previous, healthy, err := mutationCommandLink(commandPath(home, r.definition), root, current, r)
 		if err != nil {
 			return exitStatus(err, stderr)
 		}
-		if r.operation == "enable" && enabled && !healthy && !r.force {
+		if r.operation == "enable" && enabled && previous == "" && !r.force {
 			return exitStatus(fmt.Errorf("%s command is missing; retry agents enable with --force to repair it", r.name), stderr)
 		}
 		if r.operation == "enable" && enabled && healthy && r.version == "" {
@@ -288,9 +288,9 @@ func validatePublishedAgentPin(r agentRequest, enabled bool, effects Effects) er
 	if catalog.ValidatePinVersion(published.Latest) != nil || !slices.Contains(published.Versions, published.Latest) {
 		return fmt.Errorf("cannot check %s pin %s: npm returned no published latest version", r.name, r.version)
 	}
-	guidance := fmt.Sprintf("agents enable --version %s", published.Latest)
+	guidance := fmt.Sprintf("agents enable NAME %s --version %s", r.name, published.Latest)
 	if enabled {
-		guidance = "agents update --unpin or " + guidance
+		guidance = fmt.Sprintf("agents update NAME %s --unpin or %s", r.name, guidance)
 	}
 	return fmt.Errorf("%s version %s is not published by %s; retry %s", r.name, r.version, r.definition.Install.Package, guidance)
 }
@@ -498,7 +498,7 @@ func managedCommandLink(command, expected string) (string, error) {
 }
 
 // mutationCommandLink confines selected and forced recovery commands to current or declared predecessor installations.
-// It reports healthy when the selection matches and any checked package is current.
+// Explicit pins and updates verify package identity; healthy means the selection matches and any checked package is current.
 func mutationCommandLink(command, root string, current installation, r agentRequest) (string, bool, error) {
 	previous, err := os.Readlink(command)
 	if os.IsNotExist(err) {
@@ -509,8 +509,12 @@ func mutationCommandLink(command, root string, current installation, r agentRequ
 	}
 	expected := installationCommand(root, current, r.definition)
 	selected := current.Prefix != "" && previous == expected
-	pkg, err := validateManagedTarget(root, previous, r.definition, r.force || !selected)
+	metadataRequired := r.force || !selected || r.version != "" || r.operation == "update"
+	pkg, err := validateManagedTarget(root, previous, r.definition, metadataRequired)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, fmt.Errorf("refusing unmanaged command %s: %w; manual recovery required: inspect the installation and remove the dangling command link before retrying with --force", command, err)
+		}
 		return "", false, fmt.Errorf("refusing unmanaged command %s: %w", command, err)
 	}
 	if !selected && !r.force {
@@ -521,7 +525,7 @@ func mutationCommandLink(command, root string, current installation, r agentRequ
 }
 
 // validateManagedTarget confines a recovery link and its resolved npm command
-// to one real installation directory and returns the package identity when metadata is required.
+// to one real installation directory and verifies command ownership when package metadata is required.
 func validateManagedTarget(root, target string, definition catalog.Agent, metadataRequired bool) (string, error) {
 	if !filepath.IsAbs(target) || filepath.Clean(target) != target {
 		return "", errors.New("command target is not a canonical managed path")
@@ -561,7 +565,14 @@ func validateManagedTarget(root, target string, definition catalog.Agent, metada
 		return "", errors.New("managed command is not a regular file")
 	}
 	if metadataRequired {
-		return managedPackage(realPrefix, definition.Install)
+		pkg, err := managedPackage(realPrefix, definition.Install)
+		if err != nil {
+			return "", err
+		}
+		if !pathInsideInstallation(filepath.Join(realPrefix, "lib", "node_modules", pkg), resolved) {
+			return "", errors.New("command does not belong to the recognized package")
+		}
+		return pkg, nil
 	}
 	return "", nil
 }

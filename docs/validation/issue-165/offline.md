@@ -64,7 +64,7 @@ The first-use statement of [Agents](../../agents.md#opencode-proxy-workflow) res
 
 ## What this does not show
 
-- It is Linux x64 only: not Windows, not a live host, not a real sandbox, not a real npm prefix migrated from `opencode-ai`, and not the manager's migration or pin handling, which the repository's own tests and the [live record](live.md) cover.
+- It is Linux x64 only: not Windows, not a live host, not a real sandbox, not a real npm prefix migrated from `opencode-ai`, and not the manager's migration or pin handling, which the repository's own tests and, at the revisions it names, the [live record](live.md) cover.
 - The credentials were dummies imported into a fresh OpenCode database. No real login, no credential's validity, and no database or session written by OpenCode 1.x was checked, and the import is not shown for every historical configuration.
 - The configuration normalizer covers the fields the workflow writes. A user's own configuration may hold v1 fields it does not support or native v2 providers that interact with a legacy entry; no general equivalence of the two formats is claimed.
 - The first-use statement covers the provider entry the workflow writes, without a model-level override, on 2.3.0. It says nothing of the model-list fetch, the updater, plugins, or any other provider package.

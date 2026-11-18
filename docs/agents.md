@@ -70,7 +70,7 @@ If an `update` failure includes a `retry:` line, it repeats the command you ran,
 
 ## Move OpenCode to its new package
 
-`opencode` is installed from the npm package `@opencode/cli`, OpenCode's v2 distribution; earlier releases installed `opencode-ai`. The agent name, its command, and its `opencode auth login` workflow are still `opencode`. A sandbox that enabled `opencode` before the change keeps working: the manager still recognizes an `opencode-ai` installation as the managed one, and it never installs `opencode-ai` again. It does not inspect the package of a healthy selected installation. When `--force` or a mismatched command link requires the check, the command must lead to one installation directory of the manager and the package metadata inside it must name `@opencode/cli` or `opencode-ai`; any other package is refused.
+`opencode` is installed from the npm package `@opencode/cli`, OpenCode's v2 distribution; earlier releases installed `opencode-ai`. The agent name, its command, and its `opencode auth login` workflow are still `opencode`. A sandbox that enabled `opencode` before the change keeps working: the manager still recognizes an `opencode-ai` installation as the managed one, and it never installs `opencode-ai` again. The manager checks the package when `--force`, a mismatched command link, an explicit `--version`, or `update` requires it: the command must lead to one installation directory of the manager, the package metadata inside it must name `@opencode/cli` or `opencode-ai`, and the command must lie beneath that package's directory. Any other package or command is refused. A bare `agents enable` of a healthy selected installation runs no check and stays offline.
 
 **Step 1: update the sandbox.** The manager that runs `agents` commands is part of the sandbox's image, so a sandbox created before the executable you installed keeps an earlier manager, which does not know `@opencode/cli`. After installing the updated `sandboxed-agents`, replace the sandbox's image:
 
@@ -91,18 +91,18 @@ sandboxed-agents agents enable agent01 opencode --force
 
 A bare `agents enable agent01 opencode` migrates nothing: on a healthy installation it is the usual no-op, with `opencode-ai` or `@opencode/cli`, and needs no registry. So is `enable --force` on a healthy `@opencode/cli` installation. `enable --force` on an `opencode-ai` installation replaces it, as `update` does, and both check a recorded pin first, as described under **Pins**. `update` without `--force` refuses while an `opencode` session runs; either command with `--force` stops that session first ([Sessions and installation changes](#sessions-and-installation-changes)).
 
-The migration changes the installation and the selection only. It does not touch `/home/agent/.config/opencode/`, `/home/agent/.local/share/opencode/`, the [proxy configuration](#opencode-proxy-workflow), or a stored login. OpenCode 2.3.0 reads the old `opencode.json` as it is and imports the credentials of the old `auth.json` into its own database; the manager does neither, and OpenCode rewrites neither file. That was observed offline with dummy credentials on Linux ([offline record](validation/issue-165/offline.md)); no real login and no database written by OpenCode 1.x was checked.
+The migration changes the installation and the selection only. It does not touch `/home/agent/.config/opencode/`, `/home/agent/.local/share/opencode/`, the [proxy configuration](#opencode-proxy-workflow), or a stored login. OpenCode 2.3.0 reads the old `opencode.json` as it is. Its own database migration imports the credentials of the old `auth.json` once: it skips malformed records and any integration that already has a credential, so it does not replace credentials already in an existing 2.x database. The manager does none of this, and OpenCode rewrites neither file. That was read from the 2.3.0 source and observed offline with dummy credentials in a fresh database on Linux ([offline record](validation/issue-165/offline.md)); it is not a guarantee for every 2.x version or every existing database, and no real login and no database written by OpenCode 1.x was checked.
 
-**Pins.** A pin recorded for `opencode-ai`, such as `1.19.5` or `1.19.6`, names a version that `@opencode/cli` does not publish, so the manager does not carry it across the package. For `opencode`, the manager checks a version only when one is requested or an installation is needed: an explicit `--version` on `agents enable`, even one equal to the installed version, and the recorded pin when `agents update` without `--unpin`, `agents enable --force` on an `opencode-ai` installation, or a repair of a missing or mismatched command installs again. A healthy installation with no `--version` and nothing to install is checked against nothing. The check is a read-only `npm view` of the published versions of `@opencode/cli`, run as `agent` with the sandbox's own npm configuration, before any `npm install` and before the session check:
+**Pins.** A pin recorded for `opencode-ai`, such as `1.19.5` or `1.19.6`, names a version that `@opencode/cli` does not publish, so the manager does not carry it across the package. For `opencode`, the manager checks a version only when one is requested or an installation is needed: an explicit `--version` on `agents enable`, even one equal to the installed version, and the recorded pin when `agents update` without `--unpin`, `agents enable --force` on an `opencode-ai` installation, or a repair of a missing or mismatched command installs again. For an `opencode-ai` installation, an explicit `--version` equal to the installed version is not a pin-only change: if `@opencode/cli` also publishes that version, the command migrates; otherwise it is refused as unpublished. For an `@opencode/cli` installation, such a command only records the pin after the lookup. A healthy installation with no `--version` and nothing to install is checked against nothing. The check is a read-only `npm view` of the published versions of `@opencode/cli`, run as `agent` with the sandbox's own npm configuration, before any `npm install` and before the session check:
 
 - **The version is published.** The command goes on as for any pin.
 - **The version is not published.** The command exits non-zero before it installs anything. It changes neither the installation, the selection, nor a running session, and it names the version that npm's `latest` tag points to, which is not necessarily the highest published version. A failed `agents update` prints the manager's message, then a `retry:` line that the host adds to every failed `agents update`. For a recorded pin to `1.19.6`, an example of the error message, which the executable's own formatting may prefix, is:
 
   ```text
-  agents update opencode: opencode version 1.19.6 is not published by @opencode/cli; retry agents update --unpin or agents enable --version 2.3.0; retry: agents update agent01 opencode
+  agents update opencode: opencode version 1.19.6 is not published by @opencode/cli; retry agents update NAME opencode --unpin or agents enable NAME opencode --version 2.3.0; retry: agents update agent01 opencode
   ```
 
-  The first `retry` is the manager's hint in short form, without sandbox or agent name. The final `retry:` repeats the refused command with the same recorded pin, so running it fails again. Instead, run one of these full commands with your sandbox name, `opencode`, and the version the message names (`2.3.0` is only an example):
+  In the manager's hint, `NAME` is a placeholder for your sandbox name, which the manager does not know. The final `retry:` repeats the refused command with the same recorded pin, so running it fails again. Instead, run one of these full commands with your sandbox name, `opencode`, and the version the message names (`2.3.0` is only an example):
 
   ```text
   sandboxed-agents agents update agent01 opencode --unpin
@@ -132,12 +132,26 @@ An `enable` or `update` that is killed at the wrong moment, or cut off by a cont
 
 | State | Without `--force` | With `--force` |
 | --- | --- | --- |
-| Healthy: the link matches the selection entry | `enable` is a no-op; `update` and `disable` work as usual | The same. `enable --version X` with a different `X` still installs `X` and replaces the pin, as it does without `--force`. |
+| Healthy: the link matches the selection entry | `enable` is a no-op; `update` and `disable` work as usual | The same. `enable --version X` with a different `X` still installs `X` and replaces the pin, as it does without `--force`. The one exception is an `opencode-ai` installation of `opencode`, which `enable --force` replaces ([OpenCode](#move-opencode-to-its-new-package)). |
 | Enabled, command missing | `enable` fails and names `--force`; `update` installs again; `disable` removes the entry | `enable` installs again and restores the command |
 | Enabled, link points to a different installation | All three fail, name `--force`, and change nothing | `enable` and `update` install again and replace the link and the entry; `disable` removes the link and the entry |
 | Not enabled, link points to an installation | `enable` fails and names `--force`; `update` and `disable` report the agent as not enabled | `enable` installs and creates the entry, with no pin unless `--version` is given; `disable` removes the link; `update` still needs `enable --force` first |
 
 Installing again keeps the pin recorded in the selection. `enable --version X` replaces it with `X`, and `update --unpin` clears it. A change that fails never reports the agent as enabled.
+
+**A dangling command link.** An absent link is repaired as the table says. A link that exists but whose target file or installation directory is missing is refused by `enable` and `update` even with `--force`, because the manager cannot tell what it belonged to; the message ends with `manual recovery required: inspect the installation and remove the dangling command link before retrying with --force`. In `shell agent01`, which runs as `agent`, inspect the link, remove only the link, and retry (shown for `opencode`):
+
+```text
+ls -l ~/.local/bin/opencode
+if test -L ~/.local/bin/opencode && ! test -e ~/.local/bin/opencode; then
+  rm ~/.local/bin/opencode
+  echo removed the dangling link
+else
+  echo not a dangling link: stop here
+fi
+```
+
+The `rm` runs only when the path is a symbolic link whose target is missing. If the block prints `not a dangling link: stop here`, the path is a regular file or a working link: stop, remove nothing, and do not retry `--force`. After `removed the dangling link`, leave the shell and run `sandboxed-agents agents enable agent01 opencode --force`. `rm` removes the link itself and not what it points to; leave the installation and home data directories as they are.
 
 A change that inspects an agent's command checks it before it runs npm or changes anything, and refuses an unsafe command, with or without `--force`. `--force` applies only to the managed installation of the same catalog agent. It never bypasses this check: a regular file, a link outside the manager's installations, a link into another agent's installation or package, and a link that escapes its installation are all refused. Read-only commands do not change the command and do not refuse because of a command-link mismatch. `list` reads only the selection. `status` reads the selection and the command link, and runs the status probe only when the link is the selection's managed link; otherwise it shows signed in as `unknown`. A normal `disable` of an agent that is not enabled still reports that there is nothing to disable.
 
@@ -423,8 +437,8 @@ A change that would replace or remove the installation of an agent while that ag
 | `agents disable` | Refuses, names the running session | Stops the session, names it, and disables |
 | `agents update`, with or without `--unpin` | Refuses, names the running session | Stops the session, names it, and updates |
 | `agents enable --version X` with `X` different from the installed version | Refuses, names the running session | Stops the session, names it, and installs `X` |
-| `agents enable --version X` with the installed version `X` | Records the pin, installs nothing, no guard (for `opencode`, after the pin check, which refuses an unavailable pin) | The same |
-| `agents enable` without `--version` | No-op, no guard | The same no-op |
+| `agents enable --version X` with the installed version `X` | Records the pin, installs nothing, no guard (for `opencode`, after the pin check, which refuses an unavailable pin; an `opencode-ai` installation migrates instead, under the guard) | The same, stopping the session when it migrates |
+| `agents enable` without `--version` | No-op, no guard | The same no-op, except for an `opencode-ai` installation of `opencode`: `--force` replaces it and stops its session, after the pin check, which can refuse before the session is stopped |
 
 `--force` here means "stop the session and proceed"; the command names the session it stopped. An `opencode-ai` installation is the one case in which `agents enable --force` replaces a healthy installation ([OpenCode](#move-opencode-to-its-new-package)). Otherwise an `agents enable --force` on an agent that is not enabled, or without a `--version` that differs from the installed version, behaves as without `--force` and is not an error. The session guard and the command-link repair under [Recover from an interrupted change](#recover-from-an-interrupted-change) are independent: `--force` covers both, but a healthy agent with a running session is refused only for the session, and a mismatched command link without a session is refused only for the link.
 
