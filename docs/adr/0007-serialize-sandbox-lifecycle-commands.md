@@ -6,6 +6,8 @@ status: accepted
 
 The lifecycle commands `up`, `start`, `stop`, `restart`, `remove`, and `update`, and the SSH setup mutations `ssh-config --install` and `ssh-config --remove`, never act on the same sandbox at the same time. A sandbox here means one sandbox name in one controller group, within the Podman authority of one host user. Each of these commands takes an exclusive, nonblocking OS advisory lock for its sandbox. A second command that finds the lock taken does not wait. It exits non-zero, names the sandbox, says that another lifecycle or SSH setup command is in progress for it, and tells the user to retry. `update --all` takes the same lock for each sandbox it acts on; a sandbox whose lock is taken is passed over and counted as failed, and the command continues with the others ([Name inventory of `update --all`](#name-inventory-of-update---all)). The read-only preview `ssh-config NAME` does not take a lock or create host state.
 
+Two further locks serve resources that sandboxes share: one lock per image tag and one lock for loopback port allocation. Unlike the sandbox locks they are blocking and common to all controller groups of one host state root ([Shared image and port locks](#shared-image-and-port-locks)). A second command that needs a shared resource waits for it and then rechecks current Podman facts; it is never refused. The ten-step order of checks and the refusal of a taken sandbox lock do not change.
+
 `update` makes this necessary: it renames and replaces a container in several steps. Without a lock, a `start` or a second `update` could act on a sandbox between the rename and the creation, or between the stop of the old container and the start of the new one.
 
 ## When the lock is held
@@ -31,6 +33,8 @@ The refusal of a taken lock is step 3 of the ten-step order of checks that the E
 
 A lock refusal therefore comes after usage errors and preflight failures and before an unknown sandbox name. Steps 4 to 10 run under the lock, and so do the image builds of `update`, which come after step 7 and before the session guard.
 
+The shared image and port locks add no step. They are waited for only by work that comes after step 3: image ensuring and the port claim of `up` and the image builds of `update`, which run inside the sandbox lock, and `build`, which takes no sandbox lock and waits for an image lock after its steps 1 and 2. A command that waits for a shared lock keeps its sandbox lock, so another command on the same sandbox is still refused at step 3 at once.
+
 ## Name inventory of `update --all`
 
 `update --all` must know the sandbox names before it can take their locks, and it cannot lock a name it has not found. After its preflight, it therefore runs one name inventory: `podman ps --all --format json` and `podman volume ls --format json`. From these lists it takes only the names of the current controller group's sandboxes, as they follow from the Podman names of containers, backup containers, and volumes (ADR-0005). A sandbox of which only volumes or only a backup container remain is found as well. Names of other controller groups are not taken.
@@ -43,27 +47,51 @@ Every lock that `update --all` takes stays held from its acquisition until the c
 
 ## Lock files
 
-- Each sandbox has one lock file at a fixed path in the `locks` directory of the controller group's host state, `group-GROUP/locks/`.
+- Each sandbox has one lock file at a fixed path in the `locks` directory of the controller group's host state, `group-GROUP/locks/`. The shared image and port locks have their own files, directly below the common `sandboxed-agents` host state root and outside every `group-GROUP` directory ([Shared image and port locks](#shared-image-and-port-locks)). The rules below hold for all lock files.
 - The file name is derived from a SHA-256 hash of the sandbox's Podman container name `sandboxed-agents.GROUP.NAME` (ADR-0005), written as lowercase hexadecimal. Two sandbox names that differ only in case therefore get different files on case-insensitive file systems, and no file name equals a name that Windows reserves for devices.
 - The lock file is a regular file. A command fails without acting on the sandbox when something other than a regular file is at that path.
-- Lock files are never deleted. A process that opens a lock file which another process is removing at that moment would lock a file that no other command will open, and both would act on the same sandbox. A lock file is therefore left behind for every sandbox name that a lifecycle command or SSH setup mutation has ever been run for.
+- Lock files are never deleted. A process that opens a lock file which another process is removing at that moment would lock a file that no other command will open, and both would act on the same sandbox. A lock file is therefore left behind for every sandbox name that a lifecycle command or SSH setup mutation has ever been run for, and for every image tag and the port lock once a command has waited for them.
 - A lock file stays empty. It records no update progress, no previous running state, and no configuration. The progress of an update and the running state before it remain only in Podman: in the label on the new container and in the backup container's name (ADR-0005, Update with rollback Feature).
-- On Linux the lock is `flock` with `LOCK_EX | LOCK_NB`. On Windows it is `LockFileEx` with `LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY`. The manager lock in the container uses the same primitives.
+- On Linux the sandbox and SSH configuration locks are `flock` with `LOCK_EX | LOCK_NB`. On Windows they are `LockFileEx` with `LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY`. The manager lock in the container uses the same primitives. The shared image and port locks differ only in that they wait: `flock` with `LOCK_EX` on Linux and `LockFileEx` with `LOCKFILE_EXCLUSIVE_LOCK` alone on Windows.
 
 ## What the contract covers
 
-Commands on different sandbox names, or on the same name in different controller groups, take different locks and run independently. The contract covers only the executable's own lifecycle commands and SSH setup mutations run by the same host user. It does not cover:
+Commands on different sandbox names, or on the same name in different controller groups, take different sandbox locks and do not refuse each other. They still wait for each other where they need the same image tag or, when creating a sandbox, the port lock. The contract covers only the executable's own lifecycle commands and SSH setup mutations run by the same host user. It does not cover:
 
 - commands run by other host users, which use their own Podman and host state;
 - commands that resolve a different host state root, for example with another `XDG_STATE_HOME` on Linux or another `LOCALAPPDATA` on Windows. They lock a different file, so commands are coordinated only when they share one host state root;
 - writers that use Podman directly, such as the user's own `podman` calls or scripts. They hold the same Podman authority as the executable. Agents in a sandbox get no container-engine socket (ADR-0003);
-- image builds and loopback port allocation, which are shared across sandboxes and controller groups (ADR-0005). Two lifecycle commands on different sandboxes may build the same image or read the same recorded ports at the same time. This decision does not serialize those.
+- the complete work of a multi-tag rebuild, of a sandbox start after creation, and of anything that spans several tags, as [Shared image and port locks](#shared-image-and-port-locks) states: each shared lock covers one resource over one step, not a transaction;
+- an unrelated process that takes a loopback port: the port check is a probe, not a reservation.
+
+Image builds and loopback port allocation, which are shared across sandboxes and controller groups (ADR-0005), are covered by the shared locks for the executable's own commands, and only for them.
 
 The lock coordinates the executable's own commands. It is not a security boundary: any program that holds the user's Podman authority can ignore it, delete the lock file, or change the sandbox's objects directly.
 
 ## When inspected objects change
 
 While a command holds the lock, no other lifecycle command of the executable can change the objects the command has inspected. A writer outside the contract still can. Rereading the objects before each action cannot rule this out, because the writer can act between the reread and the action. The command therefore does not reread its objects to detect changes and does not retry automatically on the basis of what it observed before. When a Podman call fails unexpectedly, for example because a container is missing or its name is taken, the command stops, exits non-zero, and does not report success. What `update` does after such a failure, and how an interrupted update is recovered, belongs to the Update with rollback Feature. This decision itself promises no transactional rollback.
+
+## Shared image and port locks
+
+Image tags and loopback ports belong to the host, not to a controller group (ADR-0005). Two commands on different sandboxes, in the same or in different groups, can therefore need the same tag or read the same recorded ports. Two locks serialize this work for the executable's own commands. Both are blocking: a command that finds one taken waits until its holder releases it, with no timeout and no message, and then continues from current Podman facts.
+
+**Image-tag lock.** One lock covers one complete image tag. Its file is `locks/images/HASH` below the common `sandboxed-agents` host state root, where `HASH` is the lowercase hexadecimal SHA-256 of the tag. Image tags carry no controller group, so every group at the same host state root waits on the same file. `up`, `update NAME`, `update --all`, and `build` take it.
+
+- **Ensuring** (`up`, `update`): the command takes the tag's lock before it checks whether the tag exists and, for a toolchain tag, whether its base image label matches the current base image. A command that waited therefore reuses a completed build when the facts it reads after the wait show one, and builds only when they show none. A holder whose build failed releases the lock; a waiter then makes its own attempt and reports its own result, not the holder's.
+- **Toolchain tag.** The ensure of a toolchain tag takes the toolchain tag's lock first and the base tag's lock second, held only while it checks or builds the base tag. It reads the base image ID after its waits, so it never compares a completed toolchain build with a base ID captured before it waited. It holds the toolchain lock through the toolchain build.
+- **Explicit rebuild** (`build`): the command still builds with `--no-cache` and, for the base image, `--pull=always`, also when it waited behind another command. It takes the lock of one tag at a time for that tag's build and never holds the base tag's lock while it waits for a toolchain tag's lock. With the lock order below, the waits cannot form a cycle.
+
+**Port lock.** One file, `locks/ports` at the same common root, covers loopback port allocation. A command that creates a new sandbox with `up` takes it before it reads the ports recorded on the containers of every group and probes the chosen port, so a port-availability failure still comes before an image error. It holds it through image ensuring, the creation of the volumes, and the creation of the container that carries the port label, and releases it right after that container is created, or on any failure. Starting the container, reading it back, and restoring its tools run without the lock. The label on the created container is what other creations then read. `up` on an existing sandbox, `start`, and `update` do not take it, because they keep the recorded port.
+
+**Lock order.** A command takes its locks in this order, and every command takes a subset of them: the sandbox lock, the port lock, the toolchain tag's lock, the base tag's lock. The group's SSH configuration lock follows the sandbox lock. `up` and `update` release their image and port locks before any SSH setup runs, so no command waits for a shared lock while it holds the SSH configuration lock. `build` starts at the image locks because it takes no sandbox lock. The sandbox locks are nonblocking, so they never take part in a wait cycle. A holder that dies releases its lock, because the operating system releases it when the process ends.
+
+**What this does not promise.**
+
+- The executable's commands are coordinated for the same host user and the same host state root, across controller groups. Direct Podman writers, other host users, and commands with another state root are not held back ([What the contract covers](#what-the-contract-covers)).
+- A lock covers one tag or one port claim, not a sequence. `build` releases each lock after that tag's build, so another `build` can replace a base image between this `build`'s base build and one of its toolchain builds. The toolchain image then records the base ID that `build` read, and a later ensure rebuilds it as built on a superseded base. A rebuild and the sandbox creations or updates that follow it are not one transaction.
+- The port probe is not an operating-system reservation. An unrelated host process can take the port between the probe and Podman's start of the container, and the start then fails like any failed start.
+- No lock is a security boundary.
 
 ## Readiness wait of `update`
 
@@ -85,6 +113,9 @@ The readiness wait needs no host prerequisite beyond those the preflight already
 - **One lock per controller group.** Rejected for lifecycle commands: it would serialize commands on unrelated sandboxes. The narrower SSH configuration lock in the consequences above covers only SSH setup changes, which share one managed configuration file per group.
 - **Using the inventory of `update --all` as sandbox state.** Rejected: it is read before any lock is held, so another lifecycle command can change a sandbox after the inventory and before its lock. Only the inspection under the lock is current.
 - **Releasing each lock of `update --all` after its sandbox was inspected.** Rejected: another command could change the sandbox during the builds, and the update would then act on facts read before that change.
+- **A nonblocking refusal for shared resources.** Rejected: a command that needs a tag another command is building would fail for a reason that goes away on its own, and the second command would find a completed build to reuse. The sandbox locks stay nonblocking because a sandbox that another command is changing is not worth waiting for (see *Waiting for the lock*).
+- **One lock per controller group for images and ports.** Rejected: image tags and recorded ports are shared by every group, so a group lock would not serialize the commands that collide.
+- **One lock for all of a command's image work, or a base lock held while taking a toolchain lock.** Rejected: an ensure takes the toolchain tag's lock before the base tag's, so a rebuild that held the base lock and then waited for a toolchain lock could wait on an ensure that waits on it.
 - **Optimistic checks without a lock**: reread the objects before each action and stop when they changed. Rejected: the executable's own commands would still interleave between the reread and the action, and the extra Podman calls are slow through a WSL2 machine.
 - **Lock files named after the sandbox name.** Rejected: names that differ only in case would share a file on case-insensitive file systems, and names such as `con` or `nul` are reserved on Windows.
 - **Deleting a lock file after use.** Rejected because of the race described under [Lock files](#lock-files).
@@ -93,9 +124,10 @@ The readiness wait needs no host prerequisite beyond those the preflight already
 
 ## Consequences
 
-- Each lifecycle command and SSH setup mutation opens and locks one file in host state before its first sandbox lookup, and `update --all` one file per found name after its name inventory, so host state and its `locks` directory are created when they are missing, also for commands that never install an SSH setup. The read-only SSH preview creates no host state.
+- Each lifecycle command and SSH setup mutation opens and locks one file in host state before its first sandbox lookup, and `update --all` one file per found name after its name inventory, so host state and its `locks` directory are created when they are missing, also for commands that never install an SSH setup. `build` creates host state as well when it reaches an image rebuild. The read-only SSH preview creates no host state.
+- Two commands that need the same image tag, from different sandboxes or groups, build it once: the second waits and then reuses the result. Two `up` calls that create sandboxes claim different loopback ports. A command waits silently for a long build, and a sandbox command that waits keeps its sandbox lock, so the same sandbox stays refused for that time.
 - Lifecycle commands and SSH setup mutations on the same sandbox, for example from two terminals or from a script and a user, fail fast instead of interleaving. Scripts that run them in parallel must retry.
 - While `update --all` runs, which can take minutes because of builds and readiness waits, every other lifecycle command on the sandboxes it holds is refused. A second `update --all` passes those sandboxes over and exits non-zero.
-- Lock files accumulate in `group-GROUP/locks/`, one per sandbox name ever used, including unknown names. Each is empty.
+- Lock files accumulate in `group-GROUP/locks/`, one per sandbox name ever used, including unknown names, and in `locks/images/`, one per image tag ever ensured or rebuilt. Each is empty.
 - SSH configuration changes of one controller group also serialise on a second lock, `group-GROUP/locks/ssh-config`, because every sandbox of the group shares its managed SSH configuration and `Include` line. It is exclusive and nonblocking like the sandbox lock, and a command that finds it taken exits non-zero, writes nothing, and says that another SSH setup command is in progress. Every command takes the sandbox's lock first and the group lock second, so they cannot deadlock. `remove` removes the container before its SSH cleanup, so a refused group lock leaves the sandbox's SSH files in place until `remove` runs again.
-- The user documentation states that writers that use Podman directly and commands with another host state root are outside the contract, and that the lock is coordination, not protection.
+- The user documentation states that writers that use Podman directly and commands with another host state root are outside the contract, and that the lock is coordination, not protection. It does not describe the shared locks as a transaction over a multi-tag rebuild or a sandbox start.
