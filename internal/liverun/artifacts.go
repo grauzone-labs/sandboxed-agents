@@ -1,0 +1,60 @@
+package liverun
+
+import "time"
+
+// Snapshot is the private whole-engine inventory retained before any build.
+type Snapshot struct {
+	Complete   bool
+	EngineID   string
+	Target     Target
+	Images     []Image
+	Containers []Container
+	Disks      []Disk
+	SystemDF   string
+	HostLoad   string
+	TakenAt    time.Time
+}
+
+// Disk retains one filesystem's private identity and available bytes.
+type Disk struct {
+	Name      string
+	Path      string
+	FreeBytes uint64
+}
+
+// Image preserves exact IDs, labels, tags and creation times for later image cleanup.
+type Image struct {
+	ID       string
+	Labels   map[string]string
+	Created  time.Time
+	RepoTags []string
+}
+
+// Container preserves each container's exact full image reference across the whole engine.
+type Container struct {
+	ID    string
+	Image string
+	State struct{ Status string }
+}
+
+// PeakRecord is a host-specific peak estimate of additional space before cleanup.
+type PeakRecord struct {
+	EngineID            string
+	PeakAdditionalBytes uint64
+	Basis               string
+}
+
+// Target binds one selected engine and its read-only machine query endpoint.
+type Target struct {
+	Connection      string
+	Storage         string
+	MachineDiskPath string
+	SSH             machineSSH
+}
+
+// machineSSH names Podman's inspected loopback SSH endpoint.
+type machineSSH struct {
+	IdentityPath   string
+	Port           int
+	RemoteUsername string
+}
