@@ -27,12 +27,12 @@ func (suite *liveSuite) agent(t *testing.T) {
 	if !enabled || !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+`).MatchString(version) || session {
 		t.Fatalf("after enable: enabled=%v version=%q session=%v; want enabled with an installed version and no session", enabled, version, session)
 	}
-	terminal := startLiveTerminal(t, host.environment, host.binary, "agents", "session", name, agent)
+	terminal := host.startTerminal(t, "agents", "session", name, agent)
 	defer terminal.Close()
 	// Let the session render before detaching: tmux must own the terminal
 	// when the prefix arrives, and a quiet screen shows the agent is up.
-	waitForTerminalOutput(t, terminal, 3*time.Minute)
-	settleTerminalOutput(terminal, 3*time.Second, time.Minute)
+	waitForTerminalOutput(t, terminal.liveTerminal, 3*time.Minute)
+	settleTerminalOutput(terminal.liveTerminal, 3*time.Second, time.Minute)
 	exit, finished := 0, false
 	for attempt := 0; attempt < 3 && !finished; attempt++ {
 		if err := terminal.Write("\x02d"); err != nil {

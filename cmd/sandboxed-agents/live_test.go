@@ -14,9 +14,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/release"
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
+	"github.com/grauzone-labs/sandboxed-agents/internal/validationduration"
 )
 
 // The live suite is one opt-in entry point. SANDBOXED_AGENTS_LIVE_TESTS=1 selects
@@ -109,14 +111,44 @@ func newLiveSuite(t *testing.T) *liveSuite {
 		t.Fatalf("resolve the checkout's commit: %v", err)
 	}
 	suite.buildDirectory = t.TempDir()
+	suite.host.timings = &liveTimings{evidence: validationduration.Operations{SchemaVersion: 1, Kind: "live-suite-operations", Commit: suite.commit, Platform: suite.platform, Operations: []validationduration.Operation{}, Cases: []validationduration.OperationCase{}}}
+	suite.host.caseName = "suite"
 	suite.writeRecord(t, false)
+	if _, err := validationduration.WriteOperations(suite.recordDirectory, suite.host.timings.evidence); err != nil {
+		t.Fatalf("initialize operation timings: %v", err)
+	}
+	t.Cleanup(func() {
+		suite.host.timings.Lock()
+		defer suite.host.timings.Unlock()
+		if _, err := validationduration.WriteOperations(suite.recordDirectory, suite.host.timings.evidence); err != nil {
+			t.Errorf("write operation timings: %v", err)
+		}
+	})
 	t.Cleanup(func() { suite.writeRecord(t, true) })
 	return suite
 }
 
 // run records a case's result from its subtest outcome.
 func (suite *liveSuite) run(t *testing.T, name string, body func(*testing.T)) bool {
-	passed := t.Run(name, body)
+	passed := t.Run(name, func(t *testing.T) {
+		suite.host.caseName = name
+		started := time.Now()
+		t.Cleanup(func() {
+			seconds := time.Since(started).Seconds()
+			timings := suite.host.timings
+			timings.Lock()
+			defer timings.Unlock()
+			result := "pass"
+			if t.Failed() {
+				result = "fail"
+			} else if t.Skipped() {
+				result = "skip"
+			}
+			timings.evidence.Cases = append(timings.evidence.Cases, validationduration.OperationCase{Name: name, Result: result, Seconds: seconds})
+		})
+		body(t)
+	})
+	suite.host.caseName = "suite"
 	suite.results[name] = map[bool]string{true: "pass", false: "fail"}[passed]
 	return passed
 }
@@ -215,6 +247,17 @@ func (suite *liveSuite) preflight(t *testing.T) {
 	// coverage from a skip.
 	suite.host.mustCLI(t, "", "check")
 	suite.host.selectConnection(t)
+	capacity, capacityErr := suite.host.podman("info", "--format", "json")
+	var info struct {
+		Host struct {
+			CPUs        int    `json:"cpus"`
+			MemoryBytes uint64 `json:"memTotal"`
+		} `json:"host"`
+	}
+	if capacityErr != nil || json.Unmarshal([]byte(capacity), &info) != nil || info.Host.CPUs <= 0 || info.Host.MemoryBytes == 0 {
+		t.Fatalf("read engine capacity: %v", capacityErr)
+	}
+	suite.host.timings.evidence.Engine = &validationduration.Engine{CPUs: info.Host.CPUs, MemoryBytes: info.Host.MemoryBytes}
 	if prepared := os.Getenv(livePreparedExecutableEnv); prepared != "" {
 		suite.host.binary = prepared
 	} else {
@@ -405,8 +448,8 @@ func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 			}
 			filename := liveRecordFilename(t)
 			entries, err := os.ReadDir(records)
-			if err != nil || len(entries) != 1 || entries[0].Name() != filename {
-				t.Fatalf("record directory holds %v (err=%v); want only %s", entries, err, filename)
+			if err != nil || len(entries) != 2 || entries[0].Name() != filename || entries[1].Name() != "operations-"+livePlatform()+".json" {
+				t.Fatalf("record directory holds %v (err=%v); want record and operation evidence beside %s", entries, err, filename)
 			}
 			data, err := os.ReadFile(filepath.Join(records, filename))
 			if err != nil {

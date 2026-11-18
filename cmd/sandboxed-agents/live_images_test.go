@@ -106,6 +106,9 @@ func (host liveHost) assertNoBakedSSHKeys(t *testing.T, tag string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	command := host.podmanCommand(ctx, "image", "save", "--format", "docker-archive", tag)
+	started := time.Now()
+	processErr := fmt.Errorf("image save did not finish")
+	defer func() { host.recordOperation("podman", "inspection", started, processErr) }()
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	stream, err := command.StdoutPipe()
@@ -152,6 +155,7 @@ func (host liveHost) assertNoBakedSSHKeys(t *testing.T, tag string) {
 	// bytes after the tar end marker and must not block on its stdout pipe.
 	_, drainErr := io.Copy(io.Discard, stream)
 	waitErr := command.Wait()
+	processErr = waitErr
 	if err != io.EOF || drainErr != nil || waitErr != nil || layers == 0 {
 		t.Fatalf("read base image layer archive: tar=%v drain=%v process=%v layers=%d\n%s", err, drainErr, waitErr, layers, stderr.String())
 	}

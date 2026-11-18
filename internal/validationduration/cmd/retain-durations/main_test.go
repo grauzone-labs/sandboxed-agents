@@ -39,3 +39,26 @@ func TestRunRetainsStdinWithUnknownContext(t *testing.T) {
 		t.Fatal("collection changed schema 2 record")
 	}
 }
+
+// TestRunRetainsPreparationAndPostSuiteSeconds proves timestamp inputs become
+// elapsed seconds, without retaining timestamps, through the offline command seam.
+func TestRunRetainsPreparationAndPostSuiteSeconds(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "live-suite-linux.json")
+	const source = `{"schema_version":2,"kind":"live-suite","commit":"0123456789abcdef0123456789abcdef01234567","platform":"linux","result":"fail","image_part_selected":false,"image_part_ran":false,"image_coverage_complete":false,"checks":[]}`
+	if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output, diagnostics bytes.Buffer
+	args := []string{"-record", path, "-preparation-start", "2026-11-18T08:00:00Z", "-preparation-end", "2026-11-18T08:00:37.5Z", "-post-suite-start", "2026-11-18T09:00:00Z", "-post-suite-end", "2026-11-18T09:01:02Z"}
+	if err := run(args, strings.NewReader(""), &output, &diagnostics); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(directory, "durations-linux.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"preparation_seconds":37.5`) || !strings.Contains(string(data), `"post_suite_seconds":62`) || strings.Contains(string(data), "2026-") {
+		t.Fatalf("phase evidence: %s", data)
+	}
+}

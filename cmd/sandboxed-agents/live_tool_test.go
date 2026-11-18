@@ -74,7 +74,7 @@ func (suite *liveSuite) t3code(t *testing.T) {
 	}
 	// The enable has a real terminal; observe only after its process exited and the terminal closed.
 	func() {
-		terminal := startLiveTerminal(t, host.environment, host.binary, "tools", "enable", name, "t3code")
+		terminal := host.startTerminal(t, "tools", "enable", name, "t3code")
 		defer terminal.Close()
 		if exit, finished := terminal.Wait(15 * time.Minute); !finished || exit != 0 {
 			t.Fatalf("tools enable terminal: finished=%v exit=%d\n%s", finished, exit, terminal.Output())

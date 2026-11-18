@@ -59,7 +59,7 @@ func TestLiveCLICancellationOwnsHostDescendants(t *testing.T) {
 	for key, value := range nestedExecutables() {
 		environment = append(environment, key+"="+value)
 	}
-	host := liveHost{binary: os.Args[0], environment: environment}
+	host := liveHost{binary: os.Args[0], environment: environment, timings: &liveTimings{}, caseName: "lifecycle"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	type result struct {
@@ -90,6 +90,10 @@ func TestLiveCLICancellationOwnsHostDescendants(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("live CLI cancellation exceeded bound")
 	}
+	operations := host.timings.evidence.Operations
+	if len(operations) != 1 || operations[0].Result != "fail" || operations[0].Source != "cli" || operations[0].Case != "lifecycle" || operations[0].Seconds <= 0 {
+		t.Fatalf("cancelled timing: %+v", operations)
+	}
 	time.Sleep(100 * time.Millisecond)
 	first, _ := os.ReadFile(marker)
 	time.Sleep(150 * time.Millisecond)
@@ -106,10 +110,14 @@ func TestLiveCLIPreservesCombinedTrace(t *testing.T) {
 	for key, value := range nestedExecutables() {
 		environment = append(environment, key+"="+value)
 	}
-	host := liveHost{binary: os.Args[0], environment: environment}
+	host := liveHost{binary: os.Args[0], environment: environment, timings: &liveTimings{}, caseName: "lifecycle"}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	out, err := host.cliContext(ctx, "", "-test.run=^TestLiveCLIProcessFixture$")
+	operations := host.timings.evidence.Operations
+	if len(operations) != 1 || operations[0].Result != "pass" {
+		t.Fatalf("completed timing: %+v", operations)
+	}
 	if err != nil || out != "first\nsecond\nthird\n" {
 		t.Fatalf("output=%q error=%v", out, err)
 	}

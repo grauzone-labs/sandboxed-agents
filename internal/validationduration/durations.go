@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/release"
 )
@@ -19,9 +20,29 @@ import (
 // Context describes categorical observations made before a validation run.
 // Unknown is explicit: elapsed times do not prove the initial cache or image state.
 type Context struct {
-	HostLoad   string `json:"host_load"`
-	BaseImage  string `json:"base_image"`
-	BuildCache string `json:"build_cache"`
+	HostLoad    string    `json:"host_load"`
+	BaseImage   string    `json:"base_image"`
+	BuildCache  string    `json:"build_cache"`
+	Preparation *Interval `json:"-"`
+	PostSuite   *Interval `json:"-"`
+}
+
+// Interval supplies phase boundaries to the collector; timestamps are never retained.
+type Interval struct {
+	Start time.Time
+	End   time.Time
+}
+
+// phaseSeconds validates optional boundaries and returns only their elapsed seconds.
+func phaseSeconds(interval *Interval) (*float64, error) {
+	if interval == nil {
+		return nil, nil
+	}
+	if interval.Start.IsZero() || interval.End.IsZero() || interval.End.Before(interval.Start) {
+		return nil, fmt.Errorf("phase needs ordered start and end timestamps")
+	}
+	seconds := interval.End.Sub(interval.Start).Seconds()
+	return &seconds, nil
 }
 
 // sourceRecord selects comparison facts from the existing release record.
@@ -45,8 +66,10 @@ type caseDuration struct {
 // evidence holds only allowlisted comparison facts and timings, independently of the release gate.
 type evidence struct {
 	sourceRecord
-	Context Context        `json:"context"`
-	Cases   []caseDuration `json:"cases"`
+	Context            Context        `json:"context"`
+	Cases              []caseDuration `json:"cases"`
+	PreparationSeconds *float64       `json:"preparation_seconds,omitempty"`
+	PostSuiteSeconds   *float64       `json:"post_suite_seconds,omitempty"`
 }
 
 // completionLine accepts only immediate, fixed-name cases from Go's verbose output.
@@ -80,6 +103,15 @@ func Collect(log io.Reader, record []byte, state Context) ([]byte, error) {
 	}
 	source.SchemaVersion, source.Kind = 1, "live-suite-durations"
 	result := evidence{sourceRecord: source, Context: state, Cases: []caseDuration{}}
+	var err error
+	result.PreparationSeconds, err = phaseSeconds(state.Preparation)
+	if err != nil {
+		return nil, err
+	}
+	result.PostSuiteSeconds, err = phaseSeconds(state.PostSuite)
+	if err != nil {
+		return nil, err
+	}
 	seen := map[string]bool{}
 	// Fixed completion lines fit in 4 KiB. Discard oversized program lines in
 	// chunks so untrusted output cannot grow memory or hide later completions.
@@ -138,19 +170,10 @@ func Retain(log io.Reader, recordPath string, state Context) (string, error) {
 		return "", fmt.Errorf("expected the platform live-suite record filename")
 	}
 	path := filepath.Join(filepath.Dir(recordPath), "durations-"+source.Platform+".json")
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".durations-*")
-	if err != nil {
+	if err := retainOperationPhases(filepath.Dir(recordPath), source, state); err != nil {
 		return "", err
 	}
-	defer os.Remove(temporary.Name())
-	if _, err := temporary.Write(append(data, '\n')); err != nil {
-		temporary.Close()
-		return "", err
-	}
-	if err := temporary.Close(); err != nil {
-		return "", err
-	}
-	if err := os.Rename(temporary.Name(), path); err != nil {
+	if err := writeEvidence(path, data); err != nil {
 		return "", err
 	}
 	return path, nil

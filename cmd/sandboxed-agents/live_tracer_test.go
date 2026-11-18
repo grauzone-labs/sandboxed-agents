@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -285,6 +286,7 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				"build":                                     {Output: "built image " + tracerTag("none") + "\nexisting sandboxes keep their image until update; list marks them as outdated\n"},
 			}
 			podmanResponses := map[string]lifecycleResponse{
+				"info --format json":                {Output: `{"host":{"cpus":4,"memTotal":4294967296}}`},
 				"* exists *":                        {Exit: 1},
 				"exec --user=0:0 * ssh-host-key":    {Output: tracerHostKey + "\n"},
 				"exec --user=0:0 * ssh-authorize *": {},
@@ -360,6 +362,7 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				t.Fatalf("record=%s; want %s with image fields %v and checks %v", data, result, selected, wantChecks)
 			}
 			assertTracedToolEvidence(t, records, result, failed)
+			assertTracedOperationEvidence(t, records, executableLog, fakes.PodmanLog, selected)
 			builds, created := 0, map[string]bool{}
 			commands := map[string]int{}
 			for _, call := range testutil.Invocations(t, executableLog) {
@@ -455,6 +458,92 @@ func assertTracedToolEvidence(t *testing.T, directory, result string, failed boo
 		want := liveToolCheckpoint{Step: steps[index], Version: versions[index], Channel: channel, Pin: pin, UID: 1000, GID: 1000}
 		if observation != want {
 			t.Fatalf("Tool checkpoint %d=%+v; want %+v", index, observation, want)
+		}
+	}
+}
+
+// assertTracedOperationEvidence proves the nested fake suite retains exactly one
+// sanitized timing per CLI and direct Podman invocation, including failed commands.
+func assertTracedOperationEvidence(t *testing.T, directory, cliLog, podmanLog string, images bool) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(directory, "operations-"+livePlatform()+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence struct {
+		Operations []struct {
+			Case, Source, Operation, Result string
+			Seconds                         float64
+		}
+		Cases []struct {
+			Name, Result       string
+			Seconds            float64
+			UnaccountedSeconds float64 `json:"unaccounted_seconds"`
+		}
+		Engine struct {
+			CPUs        int    `json:"cpus"`
+			MemoryBytes uint64 `json:"memory_bytes"`
+		}
+	}
+	if err := json.Unmarshal(data, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	counts, cases, failures := map[string]int{}, map[string]bool{}, 0
+	rollbackFailures := 0
+	terminalSession := false
+	toolInstall := false
+	sums := map[string]float64{}
+	for _, operation := range evidence.Operations {
+		counts[operation.Source]++
+		cases[operation.Case] = true
+		sums[operation.Case] += operation.Seconds
+		if operation.Source == "cli" && operation.Case == "update" && operation.Operation == "update or rollback" && operation.Result == "fail" {
+			rollbackFailures++
+		}
+		if operation.Source == "cli" && operation.Case == "agent" && operation.Operation == "agent session" && operation.Seconds >= 3 {
+			terminalSession = true
+		}
+		if operation.Source == "cli" && operation.Case == "t3code" && operation.Operation == "Tool install" {
+			toolInstall = true
+		}
+		if operation.Result == "fail" {
+			failures++
+		}
+		if operation.Seconds < 0 || operation.Operation == "" {
+			t.Fatalf("invalid operation: %+v", operation)
+		}
+	}
+	if counts["cli"] != len(testutil.Invocations(t, cliLog)) || counts["podman"] != len(testutil.Invocations(t, podmanLog)) || failures == 0 {
+		t.Fatalf("timings=%v failures=%d; CLI=%d Podman=%d", counts, failures, len(testutil.Invocations(t, cliLog)), len(testutil.Invocations(t, podmanLog)))
+	}
+	if rollbackFailures != 1 || !terminalSession {
+		t.Errorf("rollback failures=%d, terminal session observed=%v", rollbackFailures, terminalSession)
+	}
+	if images && !toolInstall {
+		t.Error("terminal Tool install was not classified")
+	}
+	for _, name := range []string{"preflight", "lifecycle", "update", "agent", "t3code"} {
+		if !cases[name] {
+			t.Errorf("no operations for %s", name)
+		}
+	}
+	if cases["images"] != images {
+		t.Errorf("image timing selected=%v, observed=%v", images, cases["images"])
+	}
+	if len(evidence.Cases) != map[bool]int{false: 5, true: 6}[images] {
+		t.Errorf("case timings: %+v", evidence.Cases)
+	}
+	for _, item := range evidence.Cases {
+		if math.Abs(item.UnaccountedSeconds-(item.Seconds-sums[item.Name])) > 0.000001 {
+			t.Errorf("case time does not reconcile: %+v", item)
+		}
+	}
+	if evidence.Engine.CPUs != 4 || evidence.Engine.MemoryBytes != 4294967296 {
+		t.Errorf("engine facts: %+v", evidence.Engine)
+	}
+	for _, private := range []string{tracerGroup, directory, "sandboxed-agents.", "live-lifecycle", `"` + tracerPort + `"`, "/", `\`, tracerAssetHash, tracerHostKey} {
+		if strings.Contains(string(data), private) {
+			t.Errorf("operation evidence carries host detail %q: %s", private, data)
 		}
 	}
 }

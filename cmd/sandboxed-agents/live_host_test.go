@@ -28,6 +28,8 @@ type liveHost struct {
 	binary, group string
 	environment   []string
 	connection    []string
+	timings       *liveTimings
+	caseName      string
 }
 
 type liveImage struct {
@@ -137,6 +139,7 @@ func (host liveHost) readSSHHostKey(name string) (string, error) {
 	var stdout, stderr bytes.Buffer
 	started := time.Now()
 	err = capture.Run(command, &stdout, &stderr)
+	host.recordOperation("podman", "SSH server check", started, err)
 	elapsed := time.Since(started).Round(time.Millisecond)
 	if err != nil && ctx.Err() != nil {
 		err = fmt.Errorf("%w (%v)", ctx.Err(), err)
@@ -198,6 +201,7 @@ func (host liveHost) cliContext(ctx context.Context, input string, args ...strin
 	command.WaitDelay = time.Second
 	var output liveOutput
 	err := capture.RunOwned(ctx, command, &output, &output)
+	host.recordOperation("cli", liveCLIClass(args), started, err)
 	if err != nil {
 		err = fmt.Errorf("live CLI failed after %s: %w", time.Since(started).Round(time.Millisecond), err)
 		if ctx.Err() != nil {
@@ -224,7 +228,9 @@ func (host liveHost) podman(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	command := host.podmanCommand(ctx, args...)
+	started := time.Now()
 	output, err := command.CombinedOutput()
+	host.recordOperation("podman", host.livePodmanClass(args), started, err)
 	return string(output), err
 }
 
