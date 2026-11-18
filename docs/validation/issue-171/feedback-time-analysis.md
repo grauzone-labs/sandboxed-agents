@@ -55,13 +55,13 @@ The table lists every stage from a local run to publication. "Blocks" names what
 | F5 | `Release reproducibility` / `windows` | after `changes`, in parallel with `linux`; skipped when `run_checks` is false | `blacksmith-2vcpu-windows-2025` | `compare`; merge | Steps: checkout, setup-go, setup-node, CRLF/gofmt check and tag, `go test ./cmd/sandboxed-agents ./internal/cli ./internal/capture ./internal/release/cmd/stable-gate -count=1` plus `go vet ./internal/manualcheck/...`, setup-python, the two trusted-snapshot ACL tests of `./internal/manualcheck`, `go test ./image ./scripts -count=1 -v`, `build-release` and digests |
 | F6 | `Release reproducibility` / `compare` | after `linux` and `windows` | `blacksmith-2vcpu-ubuntu-2404` | merge | Compares the asset hash and the SHA-256 of both executables and the npm tarball between the two runners; skipped when `windows` is skipped |
 | F7 | CodeRabbit review of the pull request head | each pull request head commit | CodeRabbit service | merge: `AGENTS.md` requires a review of the current head with no open finding | **Repeated** for every new head; after fixes the author comments `@coderabbitai review` |
-| F8 | `Release reproducibility` on `main` | push to `main` after the merge | as F3-F6, always full | the stable release check, which requires a successful push run with both the `linux` and `windows` jobs on the exact commit; does not block the merge or a preview tag | **Repeated:** F3-F6 for content the pull request run already checked. A rebase merge gives the commits new SHAs, so the pull request run is not a run "on the exact commit" |
+| F8 | `Release reproducibility` on `main` | push to `main` after the merge | as F3-F6, always full | the validated preview (gate 1 is the offline suite in CI on the commit, which F8 runs on the merged commit) and the stable release check, which requires a successful push run with both the `linux` and `windows` jobs on the exact commit; does not block the merge or the preview tag itself | **Repeated:** F3-F6 for content the pull request run already checked. A rebase merge gives the commits new SHAs, so the pull request run is not a run "on the exact commit" |
 | F9 | Preview tag `vX.Y.Z-preview.YYYYMMDD.N` | maintainer pushes the tag | - | F10, F11 | Release notes `docs/release-notes/X.Y.Z.md` must already be committed |
 | F10 | `Stable release gate` / `gate` (standalone, on tag push) | push of any `v*` tag | `blacksmith-2vcpu-ubuntu-2404` | nothing (the publication depends on the reusable call in F16, not on this run) | On a preview tag it only verifies the tag. On a stable tag it runs the full stable release check, which F16 **repeats** at the same time |
 | F11 | `Release publication` / `publish` (preview) | push of a `v*` tag; `stable_gate` is skipped for a preview tag | `ubuntu-24.04` (GitHub-hosted; npm trusted publishing does not support Blacksmith), environment `release` | the prerelease that the validation records are uploaded to | Rebuilds the tagged commit, attests the five release files, publishes a GitHub prerelease |
 | F12 | Live suite on Linux and on Windows 11, `TestLiveSuite` with image coverage (gate 2) | [live-validation skill](../../../.agents/skills/live-validation/SKILL.md): Yes/No checkpoint, then both SSH aliases, then one host agent per host | the project's Linux host and Windows 11 host, started together | validated preview; the stable release check requires both schema 2 records to name the commit, pass, and report image coverage ran and completed | The two hosts run side by side, so the longer host sets the elapsed time. Each run builds the base image and all toolchain images, and its `build` rebuilds all of them without cache (**repeated** image builds). Image cleanup follows each run |
 | F13 | Manual checklist (gate 3), see the [manual checklist](../../manual-checklist.md) | a person, on a preview, on a real host | disposable host | validated preview (`manual-checklist.json`) | Mapped only; not timed in this analysis |
-| F14 | Upload of the three validation records to the prerelease | maintainer | - | stable release check | - |
+| F14 | Upload of the three validation records to the prerelease | maintainer | - | validated preview (the records on the prerelease); stable release check | - |
 | F15 | Stable tag `vX.Y.Z` on the validated commit | maintainer | - | F10 (second standalone gate run), F16 | - |
 | F16 | `Release publication` / `stable_gate` (reusable call of `stable-release-gate.yml`) then `publish` | push of a stable tag | `stable_gate`: `blacksmith-2vcpu-ubuntu-2404`; `publish`: `ubuntu-24.04` | publication to GitHub, npm, NuGet | `publish` needs `stable_gate`. Inside `publish` the step "Gate the rebuilt stable asset hash before any publication" runs `stable-gate` a third time for the tag, and `build-release` runs in the standalone gate, the reusable gate, and `publish` (**repeated**) |
 
@@ -71,7 +71,7 @@ Thick arrows mark blocking edges. Thin arrows mark order without blocking. Dotte
 
 ```mermaid
 flowchart TD
-  subgraph LOCAL["Developer machine"]
+  subgraph LOCAL["Development machine"]
     F1["F1 Local offline suite"]
     F2["F2 Push to feature branch"]
   end
@@ -152,8 +152,8 @@ The live suite needs only the commit, not the preview tag; the preview tag must 
 ### 2.4 What blocks what
 
 - **Merge** is blocked by F4, F5, and F6 green and by F7 clean on the current head.
-- A **validated preview** is blocked by F9 and F11 (the prerelease the records are uploaded to), F12, F13, and F14. F8 blocks only the stable release check, and F10 blocks nothing.
-- A **stable release** is additionally blocked by F8 and F16.
+- A **validated preview** needs the three gates on its commit ([releases](../../releases.md): gate 1 is the offline suite in CI on that commit): F8 (gate 1, the push run on the merged commit), F12 (gate 2), and F13 (gate 3), and the prerelease from F9 and F11 with the records uploaded in F14. F8 does not block the merge or the preview tag itself, and F10 blocks nothing.
+- A **stable release** is additionally blocked by F15 and F16.
 - **Live validation (F12)** is not a merge requirement by workflow. It is run before merge only when a change needs live proof (live-validation skill).
 
 ### 2.5 Work repeated for the same content
@@ -423,7 +423,7 @@ Sources: S-HIST (the [runs on record](../../maintainers.md#live-runs-on-record))
 | Linux | 6 | `62fff9f` 1,184.75; `6ed41e7` 1,027.72; `dbd5237` 1,944.72; `90ad6ba` 1,638.13; `941caa6` 2,005.158; `0a6ac3f` 1,166.69 | 1,027.72 | 1,411.44 | 1,494.5 | 2,005.16 |
 | Windows 11 | 5 | `62fff9f` 3,079.58; `6ed41e7` 3,121.72; `dbd5237` 4,266.48; `90ad6ba` 4,021.94; `ae4526e` 3,042.17 | 3,042.17 | 3,121.72 | 3,506.4 | 4,266.48 |
 
-The `4018526` pair of 2026-10-31 (Linux 6,997.64, Windows 5,333.46) is on record but left out of these statistics. It is the first six-case run, its Linux time is 3.4 times the next highest, and its context is not recorded. The five-case runs before it are a different suite. Revisions, host state, and contexts differ between all of these runs. They are a sample of what a run has cost, not a controlled series.
+The `4018526` pair of 2026-10-31 (Linux 6,997.64, Windows 5,333.46) is on record but left out of these statistics. It is the first six-case run, its Linux time is 3.5 times the next highest, and its context is not recorded. The five-case runs before it are a different suite. Revisions, host state, and contexts differ between all of these runs. They are a sample of what a run has cost, not a controlled series.
 
 Same-revision pairs of passing runs: 4 (`62fff9f`, `6ed41e7`, `dbd5237`, `90ad6ba`); Windows / Linux ratio 2.60, 3.04, 2.19, 2.46.
 
@@ -488,17 +488,19 @@ Each finding carries a number or is marked unmeasured, and is judged against the
 
 ## 6. Ranked optimization options
 
-**Ranking rule.** Options are ranked by the total feedback time each would have saved over the common observation window of the CI sample (2026-11-06 to 2026-11-18). The saving is measured where a measurement exists, and otherwise it is an estimate or an upper bound with its basis stated; the table says which. An option without a saving of its own is not ranked; it is listed separately below as an enabling observation. The ranking compares window totals, not savings per occurrence, so a large saving per occurrence that is rare ranks below a small saving that recurs. No option below was implemented. Effort is a rough size: S (hours), M (a day or two), L (several days).
+**Ranking rule.** Options are ranked by the total feedback time each would have saved over the common observation window of the CI sample (2026-11-06 to 2026-11-18). The saving is measured where a measurement exists, and otherwise it is an estimate or an upper bound with its basis stated; the table says which. An option without a saving of its own is not ranked; it is listed separately below as an enabling observation. The ranking compares window totals, not savings per occurrence, so a large saving per occurrence that is rare ranks below a small saving that recurs. Options with a window total are ranked by it (O1 to O4). Options without a window total follow, ordered by the strength of their per-run evidence: O5 has a per-run local saving estimated from measured package end times (about 15), O6 is a hypothesis with only a bound (80.2 of summed test time), and O7 is last because its measured saving in feedback time is 0. No option below was implemented. Effort is a rough size: S (hours), M (a day or two), L (several days).
 
 | Rank | Option | Window saving | Path and stage | Effort |
 | ---: | --- | --- | --- | --- |
 | 1 | O1. Fewer pull request heads per change | 5,810, estimate | CI, whole run; CodeRabbit | S (working agreement; no code) |
 | 2 | O2. Establish why the Windows live suite fails in `images` | 5,374.66, measured upper bound | Live, Windows, `images` | M |
-| 3 | O3. Shorten `cmd/sandboxed-agents` on Windows, the critical CI step | 4,440, upper bound; not quantified | CI `windows`, step "Run CLI, capture, and stable gate tests"; offline Windows | S for the measurement, M to L for changes |
-| 4 | O4. Run the Windows job's test invocations side by side | 3,672, upper bound, before the first step's slowdown | CI `windows`, steps 2 and 3 of the test sequence | S to M |
+| 3 | O3. Shorten `cmd/sandboxed-agents` on Windows, the critical CI step | 4,688, upper bound | CI `windows`, step "Run CLI, capture, and stable gate tests"; offline Windows | S for the measurement, M to L for changes |
+| 4 | O4. Run the Windows job's test invocations side by side | 3,032, upper bound, before the first step's slowdown | CI `windows`, steps 2 and 3 of the test sequence | S to M |
 | 5 | O5. Take `TestInstallerHelperSuite` off the local and Linux critical path | no window total (local runs in the window are not recorded) | Offline Linux local; CI `linux` | M |
 | 6 | O6. Review the five offline tests with run-independent durations for deadlines they wait out | not quantified (hypothesis) | Offline both platforms; CI both jobs | S to M |
 | 7 | O7. Drop the standalone `Stable release gate` run on tag push, or the duplicate check inside `publish` | 0, measured | Tag workflows | S |
+
+The order of the first two ranks depends on a scenario. O1's 5,810 assumes one fewer run on each of the 10 branches with two or more runs, which is an assumed scenario size, not a baseline figure; O2's 5,374.66 is measured. With one fewer run on 9 branches (9 x 581 = 5,229) the two would swap.
 
 Enabling observation, not ranked: E1. Record per-operation times in the live suite (live, all cases, both hosts; effort M). It has no saving of its own.
 
@@ -520,21 +522,21 @@ Capture memory and Podman machine state at the failure, not after it, before spe
 
 Measure its tests on a Windows runner first, then address the largest. The candidates named by the Linux data are the nested guard run (107 to 112 on Linux), tests with run-independent durations, and missing `t.Parallel`.
 
-- **Saving and basis:** not quantified on Windows, because no per-test time exists there. Upper bound over the window: the median lead of `windows` over `linux`, 92.5, on each of the 48 full runs, 4,440. The step's median is 382 and `windows` exceeds `linux` by a median 92.5, so up to about 92 of run wall can be gained before `linux` becomes the critical job; beyond that both jobs must shrink. The Linux local share of the nested run is 42 to 44 % of the package.
+- **Saving and basis:** the expected saving is not quantified, because no per-test time exists on Windows. Upper bound over the window: 4,688, the sum, over the 48 full runs, of each run's lead of `windows` over `linux` where `windows` ended later (40 runs; in 7 runs `linux` ended later and 1 run was a tie). Beyond a run's lead, `linux` is the critical job, so that run gains nothing more unless both jobs shrink. The step's median is 382 and `windows` exceeds `linux` by a median 92.5. The Linux local share of the nested run is 42 to 44 % of the package.
 - **Coverage, quality, reliability; gate, record, or documented behaviour touched:** the measurement changes nothing. Narrowing the nested guard trades coverage and must be labelled. Parallel tests risk flakiness through the shared fake process harness, which was not examined. Job names `linux` and `windows` stay.
 
 ### O4. Run the Windows job's test invocations side by side
 
 Run the ACL tests and the image and release tests beside the first test step instead of after it.
 
-- **Saving and basis:** estimate, upper bound over the window: 76.5 on each of the 48 full runs, 3,672, less the unmeasured slowdown of the first step on 2 vCPUs, and capped per run by the same 92.5 lead of `windows` over `linux`. The 76.5 is the median over the 48 runs of each run's sum of the tail's two steps (the step medians are 8 and 68). Basis: section 3.2 and D7.
+- **Saving and basis:** estimate, upper bound over the window: 3,032, the sum, over the 48 full runs, of the smaller of each run's tail (its ACL step plus its image and release step) and its lead of `windows` over `linux`. The uncapped tail sum is 4,037 of `windows` job time. Both figures are before the unmeasured slowdown of the first step on 2 vCPUs. The tail's median is 76.5, the median over the 48 runs of each run's sum of the two steps (the step medians are 8 and 68). Basis: section 3.2 and D7.
 - **Coverage, quality, reliability; gate, record, or documented behaviour touched:** no coverage change if every invocation keeps its environment and `-v`. Log readability drops with interleaved output. Changes the workflow file, not a gate.
 
 ### O5. Take `TestInstallerHelperSuite` off the local and Linux critical path
 
 Run it in its own invocation or CI job beside the others, or parallelize its Python suite.
 
-- **Saving and basis:** local, per run: the last package to end is `internal/manualcheck` (269.9 and 265.7, section 3.1), which is this test. Without it the last package to end is `cmd/sandboxed-agents` at 254.2 and 250.5, so alone it saves about 15 of local wall. Together with a shorter `cmd/sandboxed-agents` the wall could fall to the end of `scripts` on the observed schedule (195.8 and 187.4), about 75; `scripts` might start earlier once a slot is free, which was not measured. The number of local runs in the window is not recorded, so no window total is stated. CI: `internal/manualcheck` has a median 348.9 of package time, about 175 of the 2-vCPU step, but `linux` is the critical job in only 8 of 48 runs, so run wall barely moves until `windows` shrinks.
+- **Saving and basis:** local, per run: the last package to end is `internal/manualcheck` (269.9 and 265.7, section 3.1), which is this test. Without it the last package to end is `cmd/sandboxed-agents` at 254.2 and 250.5, so alone it saves about 15 of local wall. Together with a shorter `cmd/sandboxed-agents` the wall could fall to the end of `scripts` on the observed schedule (195.8 and 187.4), about 75; `scripts` might start earlier once a slot is free, which was not measured. The number of local runs in the window is not recorded, so no window total is stated. CI: `internal/manualcheck` has a median 348.9 of package time, about 175 of the 2-vCPU step, but `linux` ended later in 7 of 48 runs, with 1 tie, so run wall barely moves until `windows` shrinks.
 - **Coverage, quality, reliability; gate, record, or documented behaviour touched:** no coverage change if the suite still runs on every head. A separate job adds runner minutes and one more required job. The stable release check names only `linux` and `windows`, so whether a third job must be required is a decision to flag.
 
 ### O6. Review the five offline tests with run-independent durations for deadlines they wait out
@@ -581,14 +583,14 @@ These are drafts. None is filed; each is filed only after maintainer agreement. 
 - **Type:** Bug.
 - **Problem:** 2 of 3 Windows full-suite attempts on 2026-11-18 failed in `images` (2,194.48 and 3,180.18 lost; [issue #165 live record](../issue-165/live.md)), with no cause established.
 - **Change:** capture Podman machine memory and state at the moment of the failure rather than after the suite, and decide from that evidence whether the failures share a cause.
-- **Success criterion:** a recorded cause, or a recorded statement that the evidence excludes the named candidates, for both failure signatures. Then, over the next N >= 3 Windows full-suite attempts, the number of attempts that fail in `images` without a product defect is recorded against the baseline of 2 of 3. No pass-rate target is set before the cause is known.
+- **Success criterion:** a recorded cause, or a recorded statement of what the captured evidence rules out, for both failure signatures. Then, over the next N >= 3 Windows full-suite attempts, the number of attempts that fail in `images` without a product defect is recorded against the baseline of 2 of 3. No pass-rate target is set before the cause is known.
 - **Out of scope:** repairing or tuning the host without its own authorization.
 
 ### Draft C (from E1): Retain per-operation timings of the live suite
 
 - **Type:** Task.
 - **Problem:** the live suite is 65 % of measured machine time for a release (section 4) and no record says where a case spends it.
-- **Change:** retain, for every CLI invocation the suite makes, its case, its operation class (the classes the live-validation skill already names), and the inclusive elapsed seconds that `liveHost.cliContext` measures; write them sanitized beside `durations-<platform>.json`. The schema 2 record, the release gate, and cancellation stay unchanged.
+- **Change:** retain, for every CLI invocation the suite makes, its case, its operation class (the operation classes the live-validation skill lists for its progress events, [stage 3, step 3](../../../.agents/skills/live-validation/SKILL.md#stage-3-one-dedicated-agent-per-host): image build, sandbox start or restart, SSH server check, smoke, update or rollback, agent install, agent session, rebuild, cleanup, and, while the suite's `t3code` case runs, Tool install, Tool update, Tool delete, and Tool probe), and the inclusive elapsed seconds that `liveHost.cliContext` measures; write them sanitized beside `durations-<platform>.json`. The schema 2 record, the release gate, and cancellation stay unchanged.
 - **Success criterion:** after one passing run per host with image coverage, every CLI invocation of every case has a retained time, the difference between each case's recorded seconds and the sum of its operations is reported per case, and the analysis can state for `images` the seconds spent in initial builds, the no-cache `build`, sandbox starts, smoke checks, and removal. No runtime target is set: the baseline has no per-operation number.
 - **Out of scope:** any optimization, host tuning, and a live run without its own Yes at the checkpoint.
 
