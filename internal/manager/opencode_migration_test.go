@@ -16,7 +16,7 @@ import (
 // openCodePublishedVersions is the registry snapshot used by the pin command fixtures.
 const openCodePublishedVersions = `{"versions":["2.0.0","2.3.0"],"dist-tags.latest":"2.3.0"}`
 
-// legacyOpenCodeHome creates the installation and home data written before the OpenCode package cutover.
+// legacyOpenCodeHome creates an executable legacy command and the installation and home data written before the OpenCode package cutover.
 func legacyOpenCodeHome(t *testing.T, pin string) string {
 	t.Helper()
 	if runtime.GOOS != "linux" {
@@ -38,6 +38,9 @@ func legacyOpenCodeHome(t *testing.T, pin string) string {
 		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.Chmod(filepath.Join(prefix, "lib", "node_modules", "opencode-ai", "cli.js"), 0700); err != nil {
+		t.Fatal(err)
 	}
 	for _, bin := range []string{filepath.Join(prefix, "bin"), filepath.Join(home, ".local", "bin")} {
 		if err := os.MkdirAll(bin, 0700); err != nil {
@@ -133,7 +136,7 @@ func snapshotOpenCodeFiles(t *testing.T, home string, paths ...string) func() {
 	}
 }
 
-// snapshotOpenCodeCommand returns an assertion that the managed link and its usable command retain their targets and bytes.
+// snapshotOpenCodeCommand returns an assertion that the managed link and its usable command retain their targets, bytes, and permissions.
 func snapshotOpenCodeCommand(t *testing.T, home string) func() {
 	t.Helper()
 	command := filepath.Join(home, ".local", "bin", "opencode")
@@ -149,6 +152,11 @@ func snapshotOpenCodeCommand(t *testing.T, home string) func() {
 	if err != nil {
 		t.Fatal(err)
 	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permissions := info.Mode().Perm()
 	return func() {
 		t.Helper()
 		if got, err := os.Readlink(command); err != nil || got != target {
@@ -159,6 +167,11 @@ func snapshotOpenCodeCommand(t *testing.T, home string) func() {
 		}
 		if got, err := os.ReadFile(command); err != nil || string(got) != string(content) {
 			t.Fatalf("command changed=%q error=%v", got, err)
+		}
+		if got, err := os.Stat(resolved); err != nil {
+			t.Fatal(err)
+		} else if got.Mode().Perm() != permissions {
+			t.Fatalf("command permissions changed=%#o want=%#o", got.Mode().Perm(), permissions)
 		}
 	}
 }
@@ -655,7 +668,7 @@ func TestOpenCodeRecoveryAcceptsOwnedOrAbsentSelectedPrefix(t *testing.T) {
 	}
 }
 
-// TestOpenCodeManualRecoveryPreservesSessionGuards proves manual recovery keeps update and disable unforced after a dangling link is removed while enable and working mismatches require force at RunWithEffects.
+// TestOpenCodeManualRecoveryPreservesSessionGuards proves manual recovery keeps update and disable unforced after a dangling link is removed while enable and working mismatches require force, preserving the working command's bytes and permissions on refusal at RunWithEffects.
 func TestOpenCodeManualRecoveryPreservesSessionGuards(t *testing.T) {
 	for _, workingLink := range []bool{false, true} {
 		for _, operation := range []string{"update", "disable", "enable"} {
