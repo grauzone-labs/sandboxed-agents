@@ -1,0 +1,275 @@
+{
+  "schema_version": 1,
+  "kind": "opencode-cutover",
+  "commit": "941caa696a9e8e01e764ffbd2c231d8165beba03",
+  "platform": "windows-11",
+  "suite_result": "fail",
+  "suite_asset_sha256": "123973b0e4405285c5d0ac2b9ee2edd16df6cbc0a41d84cf6ef5f185ef1a9632",
+  "supplement_executable_asset_sha256": "123973b0e4405285c5d0ac2b9ee2edd16df6cbc0a41d84cf6ef5f185ef1a9632",
+  "supplement_asset_matches_suite": true,
+  "package": {
+    "name": "@opencode/cli",
+    "windows_installed_version": "2.3.1",
+    "npm_latest_snapshot": "2.3.1",
+    "npm_versions_count": 1686,
+    "legacy_1_19_6_published": false,
+    "linux_observed_version": "2.3.0",
+    "source_research_scope": "2.3.0 only; no 2.3.1 or 2.3.2 source verification claimed",
+    "lookup_history": [
+      {
+        "observed_at": "initial supplement",
+        "latest": "2.3.1",
+        "version_count": 1686,
+        "legacy_1_19_6_present": false,
+        "windows_installed_for_initial_update_and_force": "2.3.1"
+      },
+      {
+        "observed_at": "closure follow-up",
+        "latest": "2.3.2",
+        "version_count": 1688,
+        "legacy_1_19_6_present": false,
+        "windows_installed_for_force_closure": "2.3.2"
+      }
+    ]
+  },
+  "setup_evidence": {
+    "initial_local_install_command": "npm install --prefix <legacy-prefix> --no-audit --no-fund --no-save opencode-ai@1.19.6",
+    "initial_command_outcome": "3 packages installed without postinstall; wrapper failed layout check (exit 1)",
+    "approved_global_install_command": "npm install --global --prefix <legacy-prefix> --no-audit --no-fund --allow-scripts=opencode-ai opencode-ai@1.19.6",
+    "approved_install_outcome": "genuine version 1.19.6 package and executable checks passed; wrapper returned 127 on trailing CR after all fixture writes and hash output",
+    "npm_script_approval_scope": "one npm command inside disposable sandbox; no host npm configuration changed",
+    "fixture_prerequisites": {
+      "legacy_package_identity_version_and_executable": "verified by fail-fast seed script before fixture writes",
+      "historical_selection_and_managed_link_writes": "initial seed attempt: fail-fast ordering and output after writes establish writes completed before trailing-CR exit; the closure fixture later captured a full pre-refusal snapshot",
+      "dummy_config_sha256": "5992c1ce3e992398b108fe51e0467aa2e380f8ff516d56b7523935421a9d52bf",
+      "dummy_auth_sha256": "2e74b344a384c0698cb506bfe6dee156c8cdd4401016292c3b5a85e02f529d45",
+      "dummy_values_recorded": false
+    }
+  },
+  "migration": {
+    "agents_update_exit_status": 0,
+    "agents_update_output_version": "2.3.1",
+    "agents_run_version_exit_status": 0,
+    "agents_run_version_output": "opencode v2.3.1",
+    "catalog_package_identity": "@opencode/cli",
+    "selection_matches_installed_version": true,
+    "legacy_prefix_removed": true,
+    "config_byte_hash_unchanged_before_proxy": true,
+    "auth_byte_hash_unchanged_before_proxy": true,
+    "config_sha256_before_and_after_update": "5992c1ce3e992398b108fe51e0467aa2e380f8ff516d56b7523935421a9d52bf",
+    "auth_sha256_before_and_after_update": "2e74b344a384c0698cb506bfe6dee156c8cdd4401016292c3b5a85e02f529d45"
+  },
+  "force_migration": {
+    "agents_enable_force_exit_status": 0,
+    "agents_enable_force_output_version": "2.3.1",
+    "agents_run_version_exit_status": 0,
+    "agents_run_version_output": "opencode v2.3.1",
+    "fixture_seed_output_reported_legacy_version": "1.19.6",
+    "config_auth_byte_hashes_after_force_before_proxy": "initial force attempt was unverified; fresh closure force migration verified both byte hashes unchanged"
+  },
+  "pinned_refusals": {
+    "legacy_update_recorded_pin": "1.19.6",
+    "update_exit_status": 1,
+    "update_output": "opencode version 1.19.6 is not published by @opencode/cli; retry agents update --unpin or agents enable --version 2.3.1",
+    "unavailable_requested_version": "999.0.0",
+    "enable_force_exit_status": 1,
+    "enable_force_output": "opencode version 999.0.0 is not published by @opencode/cli; retry agents update --unpin or agents enable --version 2.3.1",
+    "selection_link_file_hash_unchanged_across_refusal": "unverified; no before/after state snapshot was captured before explicit recovery",
+    "npm_install_absence_across_refusal": "unverified; refusal output was captured, but no install-attempt counter/state snapshot was captured",
+    "first_install_unavailable_version_refusal": "performed in closure follow-up: exit1, suggested only agents enable --version 2.3.2; npm audit recorded version lookup only and zero install calls",
+    "selection_link_file_hash_unchanged": "verified in closure follow-up: exact pre/post state equality passed for both refusals",
+    "npm_install_absence": "verified in closure follow-up by in-container npm audit shim: zero install calls for each refusal",
+    "first_attempt_snapshot": "not captured in the initial supplement attempt; closure follow-up has complete before/after snapshots"
+  },
+  "recovery": {
+    "command": "agents update legacy-refuse opencode --unpin",
+    "exit_status": 0,
+    "output_version": "2.3.1",
+    "subsequent_agents_run_version_exit_status": 0,
+    "subsequent_agents_run_version_output": "opencode v2.3.1"
+  },
+  "npm_snapshot": {
+    "command": "npm view --json -- @opencode/cli versions dist-tags.latest",
+    "shape_keys": [
+      "dist-tags.latest",
+      "versions"
+    ],
+    "version_count": 1686,
+    "dist_tags_latest": "2.3.1",
+    "legacy_1_19_6_present": false
+  },
+  "proxy": {
+    "configure_exit_status": 0,
+    "proxy_url": "loopback only",
+    "dummy_client_key_recorded": false,
+    "first_fake_response_attempt": {
+      "format": "non-streaming JSON; incompatible with OpenCode chat stream contract",
+      "agents_run_exit_status": 1,
+      "retry_observation": "11 attempts; stream ended without finish_reason"
+    },
+    "corrected_fake_response": "repository native contract SSE chunks, finish_reason stop, and [DONE]",
+    "agents_run_exit_status": 0,
+    "agents_run_output": "OK",
+    "request_assertions": {
+      "endpoint_path_is_v1_chat_completions": true,
+      "authorization_header_present": true,
+      "requested_model_is_issue165_smoke": true,
+      "prompt_reply_ok_seen": true
+    },
+    "proxy_remove_exit_status": 0,
+    "proxy_endpoint_absent_after_remove": true,
+    "original_model_preserved": true,
+    "original_theme_preserved": true,
+    "original_user_instruction_preserved": true,
+    "auth_sha256_unchanged_after_proxy_remove": true,
+    "config_sha256_before_proxy": "5992c1ce3e992398b108fe51e0467aa2e380f8ff516d56b7523935421a9d52bf",
+    "config_sha256_after_proxy_remove": "88369666a207d12f768e874708004e18d3fcf932ac2554fee9e7695f6ee73e85",
+    "config_semantics_preserved": true,
+    "version_tested": "2.3.1",
+    "not_repeated_for_2_3_2": "successful proxy check was not repeated solely to align package versions"
+  },
+  "not_run_or_unverified": {
+    "mismatched_or_interrupted_managed_link_repair": "valid mismatched managed target repaired in closure follow-up; dangling target was safely refused",
+    "force_migration_config_auth_hash_assertion": "verified unchanged across closure force migration before any proxy setup",
+    "refusal_unchanged_state_and_no_install_assertion": "verified equal snapshots and npm install call count zero for both refusal commands",
+    "first_install_unavailable_version_guidance": "verified: enable --version guidance, no --unpin suggestion"
+  },
+  "historical_initial_observations": {
+    "force_config_auth_byte_assertion": "unverified in the first supplement attempt; closed by targeted follow-up below",
+    "refusal_state_and_no_install_assertion": "unverified in the first supplement attempt; closed by targeted follow-up below",
+    "first_install_unavailable_version": "not performed in the first supplement attempt; performed below",
+    "mismatched_link_repair": "not performed in the first supplement attempt; valid managed mismatch repaired below"
+  },
+  "closure_followup": {
+    "result": "pass",
+    "revision": "941caa696a9e8e01e764ffbd2c231d8165beba03",
+    "platform": "windows-11",
+    "base_image_build": {
+      "up_exit_status": 0,
+      "build_asset_sha256": "123973b0e4405285c5d0ac2b9ee2edd16df6cbc0a41d84cf6ef5f185ef1a9632",
+      "all_dockerfile_steps_used_cache": true
+    },
+    "package_snapshot": {
+      "query_keys": [
+        "dist-tags.latest",
+        "versions"
+      ],
+      "versions_count": 1688,
+      "dist_tags_latest": "2.3.2",
+      "legacy_1_19_6_present": false
+    },
+    "first_install_unavailable": {
+      "requested_version": "999.0.0",
+      "exit_status": 1,
+      "output": "opencode version 999.0.0 is not published by @opencode/cli; retry agents enable --version 2.3.2",
+      "guidance_mentions_enable_version": true,
+      "guidance_mentions_unpin": false,
+      "pre_state": {
+        "selection_present": false,
+        "link_kind": "missing",
+        "config_sha256": null,
+        "auth_sha256": null,
+        "prefix_inventory": []
+      },
+      "post_state": {
+        "selection_present": false,
+        "link_kind": "missing",
+        "config_sha256": null,
+        "auth_sha256": null,
+        "prefix_inventory": []
+      },
+      "pre_post_state_equal": true,
+      "npm_audit_calls": [
+        "view --json -- @opencode/cli versions dist-tags.latest"
+      ],
+      "npm_install_calls": 0
+    },
+    "legacy_fixture": {
+      "package": "opencode-ai",
+      "version": "1.19.6",
+      "install_command": "npm install --global --prefix <legacy-prefix> --no-audit --no-fund --allow-scripts=opencode-ai opencode-ai@1.19.6",
+      "agent_uid": 1000,
+      "legacy_link_and_selection_verified": true,
+      "recorded_pin": "1.19.6",
+      "config_sha256": "5992c1ce3e992398b108fe51e0467aa2e380f8ff516d56b7523935421a9d52bf",
+      "auth_sha256": "2e74b344a384c0698cb506bfe6dee156c8cdd4401016292c3b5a85e02f529d45",
+      "auth_contents_recorded": false
+    },
+    "refusal_state_equality_keys": [
+      "selection bytes and JSON",
+      "recorded pin",
+      "managed link type and target",
+      "config SHA-256",
+      "auth SHA-256",
+      "installation prefix inventory",
+      "package identity and version"
+    ],
+    "recorded_pin_refusal": {
+      "command": "agents update <name> opencode",
+      "exit_status": 1,
+      "output": "opencode version 1.19.6 is not published by @opencode/cli; retry agents update --unpin or agents enable --version 2.3.2",
+      "post_state_equal_to_pre": true,
+      "all_equality_assertions": true,
+      "npm_audit_calls": [
+        "view --json -- @opencode/cli versions dist-tags.latest"
+      ],
+      "npm_install_calls": 0
+    },
+    "requested_unavailable_refusal": {
+      "command": "agents enable <name> opencode --force --version 999.0.0",
+      "exit_status": 1,
+      "output": "opencode version 999.0.0 is not published by @opencode/cli; retry agents update --unpin or agents enable --version 2.3.2",
+      "post_state_equal_to_pre": true,
+      "all_equality_assertions": true,
+      "npm_audit_calls": [
+        "view --json -- @opencode/cli versions dist-tags.latest"
+      ],
+      "npm_install_calls": 0
+    },
+    "force_migration": {
+      "pre_state": {
+        "selection_version": "1.19.6",
+        "pin": "",
+        "selection_prefix": "installation-legacy",
+        "link_target_prefix": "installation-mismatch",
+        "legacy_package": "opencode-ai@1.19.6",
+        "mismatch_prefix_package": "opencode-ai@1.19.6",
+        "config_sha256": "5992c1ce3e992398b108fe51e0467aa2e380f8ff516d56b7523935421a9d52bf",
+        "auth_sha256": "2e74b344a384c0698cb506bfe6dee156c8cdd4401016292c3b5a85e02f529d45"
+      },
+      "dangling_link_attempt": {
+        "exit_status": 1,
+        "result": "refused unmanaged dangling command target outside the requested managed installation"
+      },
+      "valid_mismatched_managed_link_repair": {
+        "exit_status": 0,
+        "output_version": "2.3.2",
+        "agents_run_version_exit_status": 0,
+        "agents_run_version_output": "opencode v2.3.2",
+        "package_identity": "@opencode/cli",
+        "selection_version": "2.3.2",
+        "selection_pin": "empty (field omitted)",
+        "selection_matches_installed_package": true,
+        "managed_link_exists_and_resolves": true,
+        "legacy_prefix_removed": true,
+        "mismatch_prefix_removed": true,
+        "config_sha256_after": "5992c1ce3e992398b108fe51e0467aa2e380f8ff516d56b7523935421a9d52bf",
+        "auth_sha256_after": "2e74b344a384c0698cb506bfe6dee156c8cdd4401016292c3b5a85e02f529d45",
+        "config_byte_hash_unchanged": true,
+        "auth_byte_hash_unchanged": true,
+        "npm_install_calls": 1,
+        "npm_install_identity": "@opencode/cli",
+        "installed_version": "2.3.2",
+        "pin_empty": true,
+        "new_link_is_managed": true
+      }
+    },
+    "sandbox_teardown_pending": false,
+    "cleanup": {
+      "disposable_sandbox_removed": true,
+      "all_sandbox_volumes_removed": true,
+      "followup_base_image_removed_by_full_id": true
+    }
+  },
+  "result": "pass"
+}

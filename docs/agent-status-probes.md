@@ -23,7 +23,7 @@ Checked on 2026-11-01 against the newest npm release of each package. An unpinne
 | `claude` | 2.1.316 | Probe: `yes`, `no`, or `unknown` | `claude auth status --json` ([CLI reference](https://code.claude.com/docs/en/cli-reference#cli-commands)) |
 | `codex` | 0.166.0 | Always `unknown` | `codex login status` ([CLI reference](https://developers.openai.com/codex/cli/reference/#codex-login)) |
 | `copilot` | 1.0.105 | Always `unknown` | None ([command reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#command-line-commands)) |
-| `opencode` | 1.19.5 | Always `unknown` | `opencode auth list` ([CLI docs](https://opencode.ai/docs/cli/#list)) |
+| `opencode` | 1.19.5 (decision); 2.3.0 not evaluated | Always `unknown` | `opencode auth list` ([CLI docs](https://opencode.ai/docs/cli/#list)) |
 
 ### Claude Code
 
@@ -50,6 +50,8 @@ Copilot CLI 1.0.105 has no noninteractive status command: its help and the [comm
 ### OpenCode
 
 `opencode auth list` lists the stored credentials and the provider environment variables that are set ([source of 1.19.5](https://github.com/anomalyco/opencode/blob/v1.19.5/packages/opencode/src/cli/cmd/providers.ts#L248-L297)). It exits 0 even with no credentials, offers no JSON output, and validates nothing, so reading `yes` from a listed credential would infer a sign-in from the presence of a credential. The status stays `unknown`.
+
+That reasoning is for 1.19.5 from `opencode-ai`, the version checked above. The catalog now installs `@opencode/cli`, whose 2.3.0 executable accepted `opencode auth list --format json` in an offline check with dummy credentials ([offline record](validation/issue-165/offline.md)). That shows the option exists and listed the seeded dummy records. It is not a test of the three conditions above and does not show that a listed credential is valid, so no 2.x status command has been evaluated and none is added: the catalog has no status probe for `opencode`, and `signed in` stays `unknown`.
 
 ## Pinned and older versions
 

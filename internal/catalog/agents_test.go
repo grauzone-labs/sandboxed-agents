@@ -16,7 +16,7 @@ func TestDeliveredAgentsShareInstallData(t *testing.T) {
 		{"copilot", "@github/copilot", "copilot"},
 		{"claude", "@anthropic-ai/claude-code", "claude"},
 		{"codex", "@openai/codex", "codex"},
-		{"opencode", "opencode-ai", "opencode"},
+		{"opencode", "@opencode/cli", "opencode"},
 	} {
 		got, err := catalog.Default.ResolveAgent(tc.name)
 		if err != nil || got.Install.Kind != catalog.NPM || got.Install.Package != tc.pkg || got.Command != tc.command || got.Documentation == "" {
