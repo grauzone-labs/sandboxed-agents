@@ -141,24 +141,34 @@ An `enable` or `update` that is killed at the wrong moment, or cut off by a cont
 
 Installing again keeps the pin recorded in the selection. `enable --version X` replaces it with `X`, and `update --unpin` clears it. A change that fails never reports the agent as enabled.
 
-**The selected installation is checked too.** Before `update`, `disable`, `--force`, or an explicit `--version` can remove the installation directory that the selection records, the manager checks that directory by itself, even when the command link is missing. If it exists, it must be one of the manager's own `installation-*` directories holding a recognized package of that agent, with readable regular `package.json` metadata; a foreign, escaping, or damaged directory is refused and nothing changes. A directory that is already gone is accepted. The message begins `refusing selected installation` and ends `manual recovery required: inspect the selected prefix and preserve its files; move it aside only if confirmed to be a damaged managed installation, remove the stale command link, then retry with --force; never delete foreign files`. Handle this refusal first: the dangling-link steps below do not bypass it.
+**The selected installation is checked too.** Before `update`, `disable`, `--force`, or an explicit `--version` can remove the installation directory that the selection records, the manager checks that directory by itself, even when the command link is missing. If it exists, it must be one of the manager's own `installation-*` directories holding a recognized package of that agent, with readable regular `package.json` metadata; a foreign, escaping, or damaged directory is refused and nothing changes. A directory that is already gone is accepted. The message begins `refusing selected installation` and asks for manual recovery: inspect the directory and preserve its files, move it aside only if you have confirmed it is a damaged managed installation, remove only a command link that is confirmed dangling, and never delete foreign files. Handle this refusal first: the dangling-link steps below do not bypass it.
 
 - **A directory you do not recognize.** Stop. Preserve it, do not use `--force`, and do not delete it; the manager cannot restore a third-party directory.
 - **A directory you have confirmed is this agent's damaged managed installation.** Keep its files and rename it, inside the same managed directory and to a name that does not start with `installation-`, so that the path in the message no longer exists. Then look at the command link: if the move left it dangling, remove it with the guarded steps below; if it still works and points to a different installation, leave it unchanged. Retry the command that was refused, keeping its original options (for example `--unpin` or `--version`) and adding `--force`; if it was an `enable`, that is `agents enable agent01 opencode --force`. The manager validates that link on its own, so a foreign or regular-file command is still refused.
 
-**A dangling command link.** An absent link is repaired as the table says. A link that exists but whose target file or installation directory is missing is refused by `enable`, `update`, and `disable` even with `--force`, because the manager cannot tell what it belonged to; the message ends with `manual recovery required: inspect the installation and remove the dangling command link before retrying with --force`. If the refusal instead begins `refusing selected installation`, handle that first, as above. In `shell agent01`, which runs as `agent`, inspect the link, remove only the link, and then retry the command that was refused (shown for `opencode`):
+**A dangling command link.** An absent link is repaired as the table says. A link that exists but whose target file or installation directory is missing is refused by `enable`, `update`, and `disable` even with `--force`, because the manager cannot tell what it belonged to; the message asks for manual recovery, which means removing only a link whose target is confirmed missing and keeping a working link. If the refusal instead begins `refusing selected installation`, handle that first, as above. In `shell agent01`, which runs as `agent`, look at the link and run the script below (shown for `opencode`). It uses Node.js, which the base image carries, and nothing else. It removes the link only when the path is a symbolic link and looking up its target fails with "no such file". Any other result, such as a permission or I/O error, a working link, or a regular file, stops it with nothing removed, and it prints `removed the dangling link` only after the removal has succeeded.
 
 ```text
 ls -l ~/.local/bin/opencode
-if test -L ~/.local/bin/opencode && ! test -e ~/.local/bin/opencode; then
-  rm ~/.local/bin/opencode
-  echo removed the dangling link
-else
-  echo not a dangling link: stop here
-fi
+node - <<'EOF'
+const fs = require('fs');
+const link = process.env.HOME + '/.local/bin/opencode';
+const stop = (why) => { console.log('stop: ' + why + '; nothing was removed'); process.exit(1); };
+let info;
+try { info = fs.lstatSync(link); } catch (e) {
+  if (e.code === 'ENOENT') { console.log('no link there; nothing to remove, retry the refused command'); process.exit(0); }
+  stop('cannot look at the link (' + e.code + ')');
+}
+if (!info.isSymbolicLink()) stop('it is not a symbolic link');
+try { fs.statSync(link); stop('the link works'); } catch (e) {
+  if (e.code !== 'ENOENT') stop('cannot tell whether the target exists (' + e.code + ')');
+}
+try { fs.unlinkSync(link); } catch (e) { stop('could not remove the link (' + e.code + ')'); }
+console.log('removed the dangling link');
+EOF
 ```
 
-The `rm` runs only when the path is a symbolic link whose target is missing. If the block prints `not a dangling link: stop here`, the path is absent, a regular file, or a working link, and nothing was removed. If it is absent, the manager can repair it: retry the command that was refused. Otherwise stop and do not retry `--force`. After `removed the dangling link`, leave the shell and retry the refused command, for `enable` as `sandboxed-agents agents enable agent01 opencode --force`. `rm` removes the link itself and not what it points to; leave the installation and home data directories as they are.
+If the script prints `stop: ...`, nothing was removed: do not retry with `--force`, and fix the cause first (a working link and a regular file are not dangling, and a permission or I/O error has to be resolved). If it prints `no link there`, the link is already absent, which the manager repairs: retry the refused command. After `removed the dangling link`, leave the shell and retry the refused command, keeping its original options and adding `--force`; for `enable` that is `sandboxed-agents agents enable agent01 opencode --force`. The script removes the link itself and not what it points to; leave the installation and home data directories as they are. Its check and removal are not atomic, and anything running as `agent` can change the link in between, as it can change any file in the home data.
 
 A change that inspects an agent's command checks it before it runs npm or changes anything, and refuses an unsafe command, with or without `--force`. `--force` applies only to the managed installation of the same catalog agent. It never bypasses this check: a regular file, a link outside the manager's installations, a link into another agent's installation or package, and a link that escapes its installation are all refused. Read-only commands do not change the command and do not refuse because of a command-link mismatch. `list` reads only the selection. `status` reads the selection and the command link, and runs the status probe only when the link is the selection's managed link; otherwise it shows signed in as `unknown`. A normal `disable` of an agent that is not enabled still reports that there is nothing to disable.
 
