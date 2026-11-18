@@ -15,7 +15,7 @@ func lockLifecycleFile(file *os.File) error {
 // held.
 func lifecycleLockBusy(err error) bool { return errors.Is(err, windows.ERROR_LOCK_VIOLATION) }
 
-// lockSharedFile acquires a blocking exclusive host lock, released when the file is closed.
-func lockSharedFile(file *os.File) error {
+// lockFileWaiting waits for an exclusive Windows lock on the file's first byte, released on close.
+func lockFileWaiting(file *os.File) error {
 	return windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &windows.Overlapped{})
 }

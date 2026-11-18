@@ -16,7 +16,7 @@ func lockLifecycleFile(file *os.File) error {
 // lifecycle locks.
 func lifecycleLockBusy(err error) bool { return false }
 
-// lockSharedFile acquires a blocking exclusive host lock, released when the file is closed.
-func lockSharedFile(file *os.File) error {
+// lockFileWaiting reports that blocking host locking requires a supported host platform.
+func lockFileWaiting(file *os.File) error {
 	return fmt.Errorf("shared locking requires Linux or Windows")
 }

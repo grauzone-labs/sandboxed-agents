@@ -17,7 +17,7 @@ func lifecycleLockBusy(err error) bool {
 	return errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN)
 }
 
-// lockSharedFile acquires a blocking exclusive host lock, released when the file is closed.
-func lockSharedFile(file *os.File) error {
+// lockFileWaiting waits for an exclusive Linux advisory lock, released when the file is closed.
+func lockFileWaiting(file *os.File) error {
 	return unix.Flock(int(file.Fd()), unix.LOCK_EX)
 }

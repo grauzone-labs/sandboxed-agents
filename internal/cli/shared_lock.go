@@ -15,7 +15,7 @@ func acquireImageLock(p podmanTarget, tag string) (*os.File, error) {
 		return nil, err
 	}
 	hash := sha256.Sum256([]byte(tag))
-	return acquireHostLockMode(filepath.Join(root, "locks", "images"), fmt.Sprintf("%x", hash), "image", true)
+	return acquireHostLockWaiting(filepath.Join(root, "locks", "images"), fmt.Sprintf("%x", hash), "image")
 }
 
 // acquirePortAllocationLock waits for the common host port-allocation lock. A new sandbox
@@ -25,5 +25,5 @@ func acquirePortAllocationLock(p podmanTarget) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return acquireHostLockMode(filepath.Join(root, "locks"), "ports", "port allocation", true)
+	return acquireHostLockWaiting(filepath.Join(root, "locks"), "ports", "port allocation")
 }

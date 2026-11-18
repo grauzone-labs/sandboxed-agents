@@ -62,6 +62,15 @@ func prepareUp(request Request, p podmanTarget, output, progress io.Writer) erro
 	if err != nil {
 		return err
 	}
+	// Preserve early port errors without holding the allocation lock during image builds.
+	// This probe is not a claim; only the fresh allocation below selects the actual port.
+	if _, err := allocatePort(p, request.Options["port"]); err != nil {
+		return err
+	}
+	tag, err := ensureImage(p, request.Toolchains, output)
+	if err != nil {
+		return err
+	}
 	portLock, err := acquirePortAllocationLock(p)
 	if err != nil {
 		return err
@@ -72,10 +81,6 @@ func prepareUp(request Request, p podmanTarget, output, progress io.Writer) erro
 		}
 	}()
 	port, err := allocatePort(p, request.Options["port"])
-	if err != nil {
-		return err
-	}
-	tag, err := ensureImage(p, request.Toolchains, output)
 	if err != nil {
 		return err
 	}

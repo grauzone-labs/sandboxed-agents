@@ -2,7 +2,9 @@ package cli_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,6 +50,25 @@ func startSharedCommand(t *testing.T, f *fixture, group string, args ...string) 
 	}
 	go func() { run.done <- run.command.Wait() }()
 	t.Cleanup(func() { _ = run.command.Process.Kill() })
+	return run
+}
+
+// sharedImageLockPath returns the host-state image-tag lock path specified by ADR-0007.
+func sharedImageLockPath(tag string) string {
+	return filepath.Join(os.Getenv("XDG_STATE_HOME"), "sandboxed-agents", "locks", "images", fmt.Sprintf("%x", sha256.Sum256([]byte(tag))))
+}
+
+// startWaitingUp reaches the last sandbox-object query, then waits for an observable lock wait.
+func startWaitingUp(t *testing.T, f *fixture, group, name, lockPath string, options ...string) *sharedCommand {
+	t.Helper()
+	ready := filepath.Join(t.TempDir(), "objects-read")
+	key := "container exists sandboxed-agents-backup." + group + "." + name
+	answer := f.responses[key]
+	answer.ReadyFile = ready
+	f.responses[key] = answer
+	run := startSharedCommand(t, f, group, append([]string{"up", name}, options...)...)
+	waitSharedFile(t, ready)
+	waitSharedLock(t, run, lockPath)
 	return run
 }
 
@@ -112,17 +133,12 @@ func sharedCalls(t *testing.T, f *fixture, prefix string) int {
 func TestSharedImageRebuildBlocksUp(t *testing.T) {
 	f := linuxHost(t)
 	scriptNewSandbox(t, f, "other", "demo")
-	ready, release, second := filepath.Join(t.TempDir(), "building"), filepath.Join(t.TempDir(), "release"), filepath.Join(t.TempDir(), "preflight")
+	ready, release := filepath.Join(t.TempDir(), "building"), filepath.Join(t.TempDir(), "release")
 	f.responses["image ls *"] = response{Output: "[]"}
 	f.responses["build *"] = response{ReadyFile: ready, WaitFor: release}
 	first := startSharedCommand(t, f, "default", "build")
 	waitSharedFile(t, ready)
-	info := f.responses["info --format json"]
-	info.ReadyFile = second
-	f.responses["info --format json"] = info
-	next := startSharedCommand(t, f, "other", "up", "demo")
-	waitSharedFile(t, second)
-	time.Sleep(200 * time.Millisecond)
+	next := startWaitingUp(t, f, "other", "demo", sharedImageLockPath(baseTag(t)))
 	premature := sharedCalls(t, f, "image exists ")
 	releaseSharedFile(t, release)
 	first.finish(t, 0)
@@ -135,33 +151,70 @@ func TestSharedImageRebuildBlocksUp(t *testing.T) {
 	}
 }
 
+// TestSharedUpBuildsDistinctToolchainTagsConcurrently proves up commands overlap builds of
+// different toolchain tags with a prepared base image at the subprocess CLI/fake Podman seam.
+func TestSharedUpBuildsDistinctToolchainTagsConcurrently(t *testing.T) {
+	f := linuxHost(t)
+	scriptNewSandbox(t, f, "default", "dotnet")
+	scriptNewSandbox(t, f, "other", "azure")
+	hash, err := image.Hash(image.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	release := filepath.Join(directory, "release")
+	f.responses["image inspect "+baseTag(t)] = response{Output: `[{"Id":"sha256:base"}]`}
+	for _, toolchain := range []string{"dotnet", "azure"} {
+		tag := image.Tag(hash, []string{toolchain})
+		f.responses["image exists "+tag] = response{Exit: 1}
+		f.responses["build * --tag "+tag+" *"] = response{ReadyFile: filepath.Join(directory, toolchain), WaitFor: release}
+	}
+	f.responses[portInventory] = response{Sequence: []response{{Output: "[]"}, {Output: "[]"}, {Output: "[]"}, {Output: `[{"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}}]`}}}
+	first := startSharedCommand(t, f, "default", "up", "dotnet", "--with", "dotnet")
+	waitSharedFile(t, filepath.Join(directory, "dotnet"))
+	next := startSharedCommand(t, f, "other", "up", "azure", "--with", "azure")
+	// Both external builds must enter before either is released: serial builds cannot pass.
+	waitSharedFile(t, filepath.Join(directory, "azure"))
+	releaseSharedFile(t, release)
+	outputs := first.finish(t, 0) + next.finish(t, 0)
+	if builds := sharedCalls(t, f, "build "); builds != 2 {
+		t.Errorf("builds=%d want one per toolchain tag", builds)
+	}
+	for _, port := range []string{"2222", "2223"} {
+		if strings.Count(outputs, "127.0.0.1:"+port+":22/tcp") != 1 {
+			t.Errorf("expected one claim of port %s: %s", port, outputs)
+		}
+	}
+}
+
 // TestSharedUpBuildsOnceAndClaimsDistinctPorts proves two up commands across controller groups
-// wait before reading ports, build one missing image, and create distinct port claims at the CLI seam.
+// wait on the same image tag, reuse its completed build, and claim distinct ports at the CLI seam.
 func TestSharedUpBuildsOnceAndClaimsDistinctPorts(t *testing.T) {
 	f := linuxHost(t)
 	scriptNewSandbox(t, f, "default", "demo")
 	scriptNewSandbox(t, f, "other", "demo")
-	ready, release, second := filepath.Join(t.TempDir(), "building"), filepath.Join(t.TempDir(), "release"), filepath.Join(t.TempDir(), "preflight")
+	ready, release := filepath.Join(t.TempDir(), "building"), filepath.Join(t.TempDir(), "release")
 	f.responses["build *"] = response{ReadyFile: ready, WaitFor: release}
 	f.responses["image exists "+baseTag(t)] = response{Sequence: []response{{Exit: 1}, {}}}
-	f.responses[portInventory] = response{Sequence: []response{{Output: "[]"}, {Output: `[{"Names":["sandboxed-agents.default.demo"],"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}}]`}}}
+	f.responses[portInventory] = response{Sequence: []response{{Output: "[]"}, {Output: "[]"}, {Output: "[]"}, {Output: `[{"Names":["sandboxed-agents.default.demo"],"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}}]`}}}
 	first := startSharedCommand(t, f, "default", "up", "demo")
 	waitSharedFile(t, ready)
-	info := f.responses["info --format json"]
-	info.ReadyFile = second
-	f.responses["info --format json"] = info
-	next := startSharedCommand(t, f, "other", "up", "demo")
-	waitSharedFile(t, second)
-	time.Sleep(200 * time.Millisecond)
+	next := startWaitingUp(t, f, "other", "demo", sharedImageLockPath(baseTag(t)))
 	premature := sharedCalls(t, f, portInventory)
+	if checks := sharedCalls(t, f, "image exists "+baseTag(t)); checks != 1 {
+		t.Errorf("image checks while first build holds the tag=%d want 1", checks)
+	}
 	releaseSharedFile(t, release)
 	firstOutput := first.finish(t, 0)
 	nextOutput := next.finish(t, 0)
-	if premature != 1 {
-		t.Errorf("port inventories during first build=%d want 1", premature)
+	if premature != 2 {
+		t.Errorf("early port inventories during first build=%d want 2", premature)
 	}
 	if builds := sharedCalls(t, f, "build "); builds != 1 {
 		t.Errorf("builds=%d want 1", builds)
+	}
+	if checks := sharedCalls(t, f, "image exists "+baseTag(t)); checks != 2 {
+		t.Errorf("image checks after completed build=%d want 2", checks)
 	}
 	if !strings.Contains(firstOutput, "127.0.0.1:2222:22/tcp") || !strings.Contains(nextOutput, "127.0.0.1:2223:22/tcp") {
 		t.Fatalf("port claims: first=%s next=%s", firstOutput, nextOutput)
@@ -174,23 +227,18 @@ func TestSharedPortClaimLastsThroughCreate(t *testing.T) {
 	f := linuxHost(t)
 	scriptNewSandbox(t, f, "default", "demo")
 	scriptNewSandbox(t, f, "other", "demo")
-	ready, release, second := filepath.Join(t.TempDir(), "creating"), filepath.Join(t.TempDir(), "release"), filepath.Join(t.TempDir(), "preflight")
+	ready, release := filepath.Join(t.TempDir(), "creating"), filepath.Join(t.TempDir(), "release")
 	f.responses["create --name sandboxed-agents.default.demo *"] = response{ReadyFile: ready, WaitFor: release}
-	f.responses[portInventory] = response{Sequence: []response{{Output: "[]"}, {Output: `[{"Names":["sandboxed-agents.default.demo"],"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}}]`}}}
+	f.responses[portInventory] = response{Sequence: []response{{Output: "[]"}, {Output: "[]"}, {Output: "[]"}, {Output: `[{"Names":["sandboxed-agents.default.demo"],"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}}]`}}}
 	first := startSharedCommand(t, f, "default", "up", "demo")
 	waitSharedFile(t, ready)
-	info := f.responses["info --format json"]
-	info.ReadyFile = second
-	f.responses["info --format json"] = info
-	next := startSharedCommand(t, f, "other", "up", "demo")
-	waitSharedFile(t, second)
-	time.Sleep(200 * time.Millisecond)
+	next := startWaitingUp(t, f, "other", "demo", filepath.Join(os.Getenv("XDG_STATE_HOME"), "sandboxed-agents", "locks", "ports"))
 	premature := sharedCalls(t, f, portInventory)
 	releaseSharedFile(t, release)
 	first.finish(t, 0)
 	output := next.finish(t, 0)
-	if premature != 1 {
-		t.Errorf("port inventories before first creation completes=%d want 1", premature)
+	if premature != 3 {
+		t.Errorf("port inventories before first creation completes=%d want 3 (two early, one locked)", premature)
 	}
 	if !strings.Contains(output, "127.0.0.1:2223:22/tcp") {
 		t.Fatalf("second port claim=%s", output)
@@ -216,7 +264,7 @@ func TestSharedImageFailureReleasesWaitingCommands(t *testing.T) {
 			if writer == "update-all" {
 				f.responses[portInventory] = response{Output: `[{"Names":["sandboxed-agents.default.demo"],"Labels":{"io.sandboxed-agents.owner":"default","io.sandboxed-agents.port":"2222"}}]`}
 			}
-			ready, release, second := filepath.Join(t.TempDir(), "building"), filepath.Join(t.TempDir(), "release"), filepath.Join(t.TempDir(), "preflight")
+			ready, release := filepath.Join(t.TempDir(), "building"), filepath.Join(t.TempDir(), "release")
 			f.responses["image exists "+baseTag(t)] = response{Exit: 1}
 			f.responses["image ls *"] = response{Output: "[]"}
 			f.responses["build *"] = response{ReadyFile: ready, WaitFor: release, Exit: 42, Stderr: "build failure for this command"}
@@ -230,12 +278,7 @@ func TestSharedImageFailureReleasesWaitingCommands(t *testing.T) {
 			first := startSharedCommand(t, f, "default", args...)
 			waitSharedFile(t, ready)
 			before := sharedCalls(t, f, "image exists ")
-			info := f.responses["info --format json"]
-			info.ReadyFile = second
-			f.responses["info --format json"] = info
-			next := startSharedCommand(t, f, "other", "up", "next")
-			waitSharedFile(t, second)
-			time.Sleep(200 * time.Millisecond)
+			next := startWaitingUp(t, f, "other", "next", sharedImageLockPath(baseTag(t)))
 			premature := sharedCalls(t, f, "image exists ") - before
 			releaseSharedFile(t, release)
 			firstOutput := first.finish(t, 1)
@@ -264,10 +307,11 @@ func TestSharedWaitKeepsSameSandboxRefusalImmediate(t *testing.T) {
 	f := linuxHost(t)
 	scriptNewSandbox(t, f, "default", "demo")
 	ready, release := filepath.Join(t.TempDir(), "building"), filepath.Join(t.TempDir(), "release")
-	f.responses["image exists "+baseTag(t)] = response{Exit: 1}
+	f.responses["image ls *"] = response{Output: "[]"}
 	f.responses["build *"] = response{ReadyFile: ready, WaitFor: release}
-	first := startSharedCommand(t, f, "default", "up", "demo")
+	first := startSharedCommand(t, f, "default", "build")
 	waitSharedFile(t, ready)
+	waiter := startWaitingUp(t, f, "default", "demo", sharedImageLockPath(baseTag(t)))
 	before := sharedCalls(t, f, "container exists ")
 	next := startSharedCommand(t, f, "default", "up", "demo")
 	output := next.finish(t, 1)
@@ -279,6 +323,7 @@ func TestSharedWaitKeepsSameSandboxRefusalImmediate(t *testing.T) {
 	}
 	releaseSharedFile(t, release)
 	first.finish(t, 0)
+	waiter.finish(t, 0)
 }
 
 // TestSharedToolchainRebuildBlocksUp proves a toolchain-tag rebuild and ensure use the same
@@ -291,7 +336,7 @@ func TestSharedToolchainRebuildBlocksUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	tag := image.Tag(hash, []string{"dotnet"})
-	ready, release, second := filepath.Join(t.TempDir(), "building"), filepath.Join(t.TempDir(), "release"), filepath.Join(t.TempDir(), "preflight")
+	ready, release := filepath.Join(t.TempDir(), "building"), filepath.Join(t.TempDir(), "release")
 	f.responses["image ls *"] = response{Output: "[]"}
 	f.responses["image inspect "+baseTag(t)] = response{Output: `[{"Id":"sha256:base"}]`}
 	f.responses["image exists "+tag] = response{}
@@ -300,12 +345,7 @@ func TestSharedToolchainRebuildBlocksUp(t *testing.T) {
 	f.responses["build * --tag "+tag+" *"] = response{ReadyFile: ready, WaitFor: release}
 	first := startSharedCommand(t, f, "default", "build", "--with", "dotnet")
 	waitSharedFile(t, ready)
-	info := f.responses["info --format json"]
-	info.ReadyFile = second
-	f.responses["info --format json"] = info
-	next := startSharedCommand(t, f, "other", "up", "demo", "--with", "dotnet")
-	waitSharedFile(t, second)
-	time.Sleep(200 * time.Millisecond)
+	next := startWaitingUp(t, f, "other", "demo", sharedImageLockPath(tag), "--with", "dotnet")
 	premature := sharedCalls(t, f, "image exists "+tag)
 	releaseSharedFile(t, release)
 	first.finish(t, 0)

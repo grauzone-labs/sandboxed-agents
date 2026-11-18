@@ -88,7 +88,7 @@ func buildLabeledImage(p podmanTarget, set []string, hash, baseID string, refres
 	return buildLabeledImageUnderLock(p, set, hash, baseID, refresh, output)
 }
 
-// buildLabeledImageUnderLock builds a tag while its caller holds that tag's shared image lock.
+// buildLabeledImageUnderLock builds a tag while its caller holds that tag's exclusive image-tag lock.
 func buildLabeledImageUnderLock(p podmanTarget, set []string, hash, baseID string, refresh bool, output io.Writer) (string, error) {
 	return image.BuildWithToolchains(context.Background(), nil, set, func(ctx context.Context, args ...string) error {
 		flags := []string{"--label", imageMarkerLabel + "=sandboxed-agents", "--label", assetHashLabel + "=" + hash, "--label", ToolchainsLabel + "=" + toolchainSet(set)}
