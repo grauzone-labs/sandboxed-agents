@@ -18,5 +18,10 @@ func lifecycleLockBusy(err error) bool { return false }
 
 // lockFileWaiting reports that blocking host locking requires a supported host platform.
 func lockFileWaiting(file *os.File) error {
-	return fmt.Errorf("shared locking requires Linux or Windows")
+	return fmt.Errorf("blocking host locking requires Linux or Windows")
+}
+
+// tryFileLock reports that blocking host locking requires a supported host platform.
+func tryFileLock(file *os.File) error {
+	return lockFileWaiting(file)
 }

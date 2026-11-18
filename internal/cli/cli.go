@@ -130,7 +130,7 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		if err != nil {
 			return 1
 		}
-		err = rebuildImages(request, target, stdout)
+		err = rebuildImages(request, target, stdout, stderr)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1

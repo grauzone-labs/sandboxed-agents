@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// waitSharedLock checks the command remains pending after its last object query on hosts
+// waitHostLock checks the command remains pending after its last object query on hosts
 // without Linux's kernel lock inventory; exclusion assertions also inspect fake Podman calls.
-func waitSharedLock(t *testing.T, run *sharedCommand, path string) {
+func waitHostLock(t *testing.T, run *concurrentCommand, path string) {
 	t.Helper()
 	select {
 	case err := <-run.done:

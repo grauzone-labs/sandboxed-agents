@@ -79,8 +79,8 @@ func inspectImage(p podmanTarget, name string) (imageRecord, error) {
 
 // buildLabeledImage builds an image with product, asset, toolchain, and base-image labels and
 // the requested refresh policy.
-func buildLabeledImage(p podmanTarget, set []string, hash, baseID string, refresh bool, output io.Writer) (string, error) {
-	lock, err := acquireImageLock(p, image.Tag(hash, set))
+func buildLabeledImage(p podmanTarget, set []string, hash, baseID string, refresh bool, output, progress io.Writer) (string, error) {
+	lock, err := acquireImageTagLock(p, image.Tag(hash, set), progress)
 	if err != nil {
 		return "", err
 	}
@@ -112,7 +112,7 @@ func buildLabeledImageUnderLock(p podmanTarget, set []string, hash, baseID strin
 }
 
 // rebuildImages discovers images from labels before rebuilding, preserving tags on failed builds.
-func rebuildImages(request Request, p podmanTarget, output io.Writer) error {
+func rebuildImages(request Request, p podmanTarget, output, progress io.Writer) error {
 	hash, err := image.Hash(image.Context())
 	if err != nil {
 		return err
@@ -145,7 +145,7 @@ func rebuildImages(request Request, p podmanTarget, output io.Writer) error {
 			sets[toolchainSet(set)] = set
 		}
 	}
-	baseTag, err := buildLabeledImage(p, nil, hash, "", true, output)
+	baseTag, err := buildLabeledImage(p, nil, hash, "", true, output, progress)
 	if err != nil {
 		return err
 	}
@@ -168,7 +168,7 @@ func rebuildImages(request Request, p podmanTarget, output io.Writer) error {
 	var failures []error
 	var failedSets []string
 	for _, name := range names {
-		tag, err := buildLabeledImage(p, sets[name], hash, base.ID, true, output)
+		tag, err := buildLabeledImage(p, sets[name], hash, base.ID, true, output, progress)
 		if err != nil {
 			failures = append(failures, err)
 			failedSets = append(failedSets, name)
@@ -184,7 +184,7 @@ func rebuildImages(request Request, p podmanTarget, output io.Writer) error {
 }
 
 // ensureImage keeps cached images only when a toolchain image uses the current base.
-func ensureImage(p podmanTarget, set []string, output io.Writer) (string, error) {
+func ensureImage(p podmanTarget, set []string, output, progress io.Writer) (string, error) {
 	hash, err := image.Hash(image.Context())
 	if err != nil {
 		return "", err
@@ -192,13 +192,13 @@ func ensureImage(p podmanTarget, set []string, output io.Writer) (string, error)
 	// Take the toolchain lock before reading the base ID: a waiter must judge the
 	// completed toolchain build against the base that is current after its wait.
 	if len(set) > 0 {
-		lock, err := acquireImageLock(p, image.Tag(hash, set))
+		lock, err := acquireImageTagLock(p, image.Tag(hash, set), progress)
 		if err != nil {
 			return "", err
 		}
 		defer lock.Close()
 	}
-	baseTag, baseID, err := ensureBaseImage(p, hash, len(set) > 0, output)
+	baseTag, baseID, err := ensureBaseImage(p, hash, len(set) > 0, output, progress)
 	if err != nil {
 		return "", err
 	}
@@ -222,12 +222,12 @@ func ensureImage(p podmanTarget, set []string, output io.Writer) (string, error)
 	return buildLabeledImageUnderLock(p, set, hash, baseID, false, output)
 }
 
-// ensureBaseImage checks or builds the base tag under its image lock, returning its immutable
+// ensureBaseImage checks or builds the base tag under its image-tag lock, returning its immutable
 // ID only when a toolchain build needs it. A toolchain ensure already holds its toolchain lock;
 // explicit rebuilds release the base lock before taking a toolchain lock, avoiding a cycle.
-func ensureBaseImage(p podmanTarget, hash string, inspect bool, output io.Writer) (string, string, error) {
+func ensureBaseImage(p podmanTarget, hash string, inspect bool, output, progress io.Writer) (string, string, error) {
 	tag := image.Tag(hash, nil)
-	lock, err := acquireImageLock(p, tag)
+	lock, err := acquireImageTagLock(p, tag, progress)
 	if err != nil {
 		return "", "", err
 	}

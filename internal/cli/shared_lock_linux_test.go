@@ -9,9 +9,9 @@ import (
 	"time"
 )
 
-// waitSharedLock proves the CLI subprocess is blocked in the kernel on the expected file,
+// waitHostLock proves the CLI subprocess is blocked in the kernel on the expected file,
 // rather than merely not scheduled yet, through Linux's external lock inventory.
-func waitSharedLock(t *testing.T, run *sharedCommand, path string) {
+func waitHostLock(t *testing.T, run *concurrentCommand, path string) {
 	t.Helper()
 	info, err := os.Stat(path)
 	if err != nil {

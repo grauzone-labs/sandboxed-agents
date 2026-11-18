@@ -80,7 +80,7 @@ func updateAllSandboxes(request Request, p podmanTarget, stateRoot string, outpu
 		if plan.objects.backup || tags[toolchainSet(plan.set)] != "" {
 			continue
 		}
-		tag, err := ensureImage(p, plan.set, output)
+		tag, err := ensureImage(p, plan.set, output, progress)
 		if err != nil {
 			for _, pending := range plans {
 				fail(pending.request.Name, fmt.Errorf("image builds failed; no sandboxes changed: %w", err))

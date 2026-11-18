@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -92,9 +93,31 @@ func acquireHostLock(dir, name, kind string) (*os.File, error) {
 	return acquireHostLockWith(dir, name, kind, lockLifecycleFile)
 }
 
-// acquireHostLockWaiting opens a regular host lock file and waits for its exclusive OS lock.
-func acquireHostLockWaiting(dir, name, kind string) (*os.File, error) {
-	return acquireHostLockWith(dir, name, kind, lockFileWaiting)
+// acquireHostLockWaiting opens a regular host lock file, reports contention once on progress,
+// and waits for its exclusive OS lock. OS failures name the lock kind and preserve their cause.
+func acquireHostLockWaiting(dir, name, kind string, progress io.Writer) (*os.File, error) {
+	return acquireHostLockWaitingWith(dir, name, kind, progress, tryFileLock, lockFileWaiting)
+}
+
+// acquireHostLockWaitingWith opens a regular host lock file, tries its OS lock without waiting,
+// and reports contention once before waiting with the supplied OS locking functions.
+func acquireHostLockWaitingWith(dir, name, kind string, progress io.Writer, tryLock, waitLock func(*os.File) error) (*os.File, error) {
+	file, err := acquireHostLockWith(dir, name, kind, func(file *os.File) error {
+		err := tryLock(file)
+		if !lifecycleLockBusy(err) {
+			return err
+		}
+		fmt.Fprintf(progress, "waiting for %s lock: %s\n", kind, file.Name())
+		return waitLock(file)
+	})
+	var failure hostLockFailure
+	if errors.As(err, &failure) {
+		return nil, fmt.Errorf("lock %s: %w", kind, failure.cause)
+	}
+	if errors.Is(err, errHostLockBusy) {
+		return nil, fmt.Errorf("lock %s: %w", kind, err)
+	}
+	return file, err
 }
 
 // acquireHostLockWith prepares a regular host lock file and acquires it with lockFile.

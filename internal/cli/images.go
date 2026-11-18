@@ -67,11 +67,11 @@ func prepareUp(request Request, p podmanTarget, output, progress io.Writer) erro
 	if _, err := allocatePort(p, request.Options["port"]); err != nil {
 		return err
 	}
-	tag, err := ensureImage(p, request.Toolchains, output)
+	tag, err := ensureImage(p, request.Toolchains, output, progress)
 	if err != nil {
 		return err
 	}
-	portLock, err := acquirePortAllocationLock(p)
+	portLock, err := acquirePortAllocationLock(p, progress)
 	if err != nil {
 		return err
 	}
