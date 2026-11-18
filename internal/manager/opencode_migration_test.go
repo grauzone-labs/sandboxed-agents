@@ -60,6 +60,33 @@ func legacyOpenCodeHome(t *testing.T, pin string) string {
 	return home
 }
 
+// mismatchedLegacyOpenCodeHome gives a legacy selection a command pointing at a distinct, valid predecessor installation.
+func mismatchedLegacyOpenCodeHome(t *testing.T, pin string) string {
+	t.Helper()
+	home := legacyOpenCodeHome(t, pin)
+	linkLegacyOpenCodeRecovery(t, home)
+	return home
+}
+
+// linkLegacyOpenCodeRecovery replaces the home command with a link to a distinct, valid predecessor prefix and returns that prefix.
+func linkLegacyOpenCodeRecovery(t *testing.T, home string) string {
+	t.Helper()
+	orphanHome := legacyOpenCodeHome(t, "")
+	root := filepath.Join(home, ".local", "share", "sandboxed-agents")
+	orphanPrefix := filepath.Join(root, "installation-interrupted")
+	if err := os.Rename(filepath.Join(orphanHome, ".local", "share", "sandboxed-agents", "installation-legacy"), orphanPrefix); err != nil {
+		t.Fatal(err)
+	}
+	command := filepath.Join(home, ".local", "bin", "opencode")
+	if err := os.Remove(command); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(orphanPrefix, "bin", "opencode"), command); err != nil {
+		t.Fatal(err)
+	}
+	return orphanPrefix
+}
+
 // openCodeRegistry supplies a published package snapshot at the npm process boundary while real manager behavior handles it.
 func openCodeRegistry(t *testing.T, effects manager.Effects, snapshot string, lookupError error, views *int) manager.Effects {
 	t.Helper()
@@ -231,6 +258,75 @@ func TestOpenCodeUnavailablePinsPreserveInstallation(t *testing.T) {
 	}
 }
 
+// TestOpenCodePinRecoveryHintsRetainForce proves refused pins preserve recovery state and print executable forced retries for mismatched, missing, and unselected links at RunWithEffects.
+func TestOpenCodePinRecoveryHintsRetainForce(t *testing.T) {
+	for _, test := range []struct {
+		state, retry, wantPin string
+		wantViews             int
+	}{
+		{state: "mismatched", retry: "update", wantViews: 1},
+		{state: "mismatched", retry: "enable", wantPin: "2.3.0", wantViews: 2},
+		{state: "unselected", retry: "enable", wantPin: "2.3.0", wantViews: 2},
+		{state: "missing", retry: "update", wantViews: 1},
+		{state: "missing", retry: "enable", wantPin: "2.3.0", wantViews: 2},
+	} {
+		t.Run(test.state+"/"+test.retry, func(t *testing.T) {
+			home, version, installs, views := mismatchedLegacyOpenCodeHome(t, "1.19.6"), "2.3.0", 0, 0
+			command := filepath.Join(home, ".local", "bin", "opencode")
+			args := []string{"enable", "opencode", "--force", "--version", "2.99.0"}
+			var unchangedCommand func()
+			if test.state == "missing" {
+				if err := os.Remove(command); err != nil {
+					t.Fatal(err)
+				}
+				args = []string{"update", "opencode"}
+				unchangedCommand = func() {
+					if _, err := os.Lstat(command); !os.IsNotExist(err) {
+						t.Fatalf("refused pin created a command: %v", err)
+					}
+				}
+			} else {
+				unchangedCommand = snapshotOpenCodeCommand(t, home)
+			}
+			if test.state == "unselected" {
+				if err := os.WriteFile(filepath.Join(home, ".local", "share", "sandboxed-agents", "selection.json"), []byte(`{}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			unchangedFiles := snapshotOpenCodeFiles(t, home, ".local/share/sandboxed-agents/selection.json", ".config/opencode/opencode.json", ".local/share/opencode/auth.json", ".local/share/sandboxed-agents/installation-legacy/lib/node_modules/opencode-ai/package.json", ".local/share/sandboxed-agents/installation-interrupted/lib/node_modules/opencode-ai/package.json")
+			effects := openCodeRegistry(t, agentEffects(t, home, &version, &installs), openCodePublishedVersions, nil, &views)
+			output := runAgents(t, effects, 1, args...)
+			_, hints, found := strings.Cut(output, "; retry ")
+			wantEnable := "agents enable NAME opencode --version 2.3.0 --force"
+			wantHints := "agents update NAME opencode --unpin --force or " + wantEnable
+			if test.state == "unselected" {
+				wantHints = wantEnable
+			}
+			if !found || strings.TrimSpace(hints) != wantHints || installs != 0 || views != 1 {
+				t.Fatalf("pin refusal=%s installs=%d views=%d", output, installs, views)
+			}
+			unchangedFiles()
+			unchangedCommand()
+			if prefixes, err := filepath.Glob(filepath.Join(home, ".local", "share", "sandboxed-agents", "installation-*")); err != nil || len(prefixes) != 2 {
+				t.Fatalf("pin refusal changed installation prefixes=%q error=%v", prefixes, err)
+			}
+			retries := strings.Split(strings.TrimSpace(hints), " or ")
+			for _, retry := range retries {
+				fields := strings.Fields(retry)
+				if fields[1] != test.retry {
+					continue
+				}
+				// NAME belongs to the host grammar; the manager receives the operation and agent.
+				runAgents(t, effects, 0, append([]string{fields[1]}, fields[3:]...)...)
+				if got := readAgentStatus(t, effects, "opencode"); !got.Enabled || got.InstalledVersion != "2.3.0" || got.Pin != test.wantPin || installs != 1 || views != test.wantViews {
+					t.Fatalf("retry status=%+v installs=%d views=%d", got, installs, views)
+				}
+				assertOpenCodeSelectedCommand(t, home)
+			}
+		})
+	}
+}
+
 // TestOpenCodeFirstInstallPinGuidanceNamesEnable proves an unpublished first-install pin recommends an available enable version without an unusable unpin command at RunWithEffects.
 func TestOpenCodeFirstInstallPinGuidanceNamesEnable(t *testing.T) {
 	home, version, installs, views := t.TempDir(), "2.3.0", 0, 0
@@ -378,6 +474,7 @@ func TestOpenCodeCutoverRejectsForeignMetadata(t *testing.T) {
 				t.Fatal(err)
 			}
 			unchanged := snapshotOpenCodeState(t, home)
+			unchangedMetadata := snapshotOpenCodeFiles(t, home, ".local/share/sandboxed-agents/installation-legacy/lib/node_modules/opencode-ai/package.json")
 			e := agentEffects(t, home, &version, &installs)
 			if output := runAgents(t, e, 1, args...); !strings.Contains(output, "another package") {
 				t.Fatalf("foreign package refusal=%s", output)
@@ -386,7 +483,134 @@ func TestOpenCodeCutoverRejectsForeignMetadata(t *testing.T) {
 				t.Fatalf("foreign package changed: status=%+v installs=%d", got, installs)
 			}
 			unchanged()
+			unchangedMetadata()
 		})
+	}
+}
+
+// TestOpenCodeMutationsRejectUnownedSelectedPrefix proves a valid recovery link or absent outer link cannot authorize deletion of a foreign or escaping selection before effects at RunWithEffects.
+func TestOpenCodeMutationsRejectUnownedSelectedPrefix(t *testing.T) {
+	for _, kind := range []string{"foreign", "symlink"} {
+		for _, missingLink := range []bool{false, true} {
+			for _, args := range [][]string{{"enable", "opencode", "--force"}, {"update", "opencode", "--force"}, {"disable", "opencode", "--force"}, {"update", "opencode"}, {"disable", "opencode"}} {
+				t.Run(fmt.Sprintf("%s/missing-link=%v/%s", kind, missingLink, strings.Join(args, " ")), func(t *testing.T) {
+					home, version, installs, sessions := mismatchedLegacyOpenCodeHome(t, ""), "2.3.0", 0, 0
+					root := filepath.Join(home, ".local", "share", "sandboxed-agents")
+					prefix := filepath.Join(root, "installation-legacy")
+					var selectedTarget string
+					if kind == "foreign" {
+						if err := os.WriteFile(filepath.Join(prefix, "lib", "node_modules", "opencode-ai", "package.json"), []byte(`{"name":"foreign-package","version":"1.19.6"}`), 0600); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						outside := filepath.Join(t.TempDir(), "installation-outside")
+						if err := os.Rename(prefix, outside); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.Symlink(outside, prefix); err != nil {
+							t.Fatal(err)
+						}
+						selectedTarget = outside
+					}
+					command := filepath.Join(home, ".local", "bin", "opencode")
+					var unchangedCommand func()
+					if missingLink {
+						if err := os.Remove(command); err != nil {
+							t.Fatal(err)
+						}
+						unchangedCommand = func() {
+							if _, err := os.Lstat(command); !os.IsNotExist(err) {
+								t.Fatalf("refusal created a command: %v", err)
+							}
+						}
+					} else {
+						unchangedCommand = snapshotOpenCodeCommand(t, home)
+					}
+					unchangedFiles := snapshotOpenCodeFiles(t, home, ".local/share/sandboxed-agents/selection.json", ".config/opencode/opencode.json", ".local/share/opencode/auth.json", ".local/share/sandboxed-agents/installation-legacy/lib/node_modules/opencode-ai/package.json", ".local/share/sandboxed-agents/installation-legacy/lib/node_modules/opencode-ai/cli.js", ".local/share/sandboxed-agents/installation-interrupted/lib/node_modules/opencode-ai/package.json", ".local/share/sandboxed-agents/installation-interrupted/lib/node_modules/opencode-ai/cli.js")
+					effects := agentEffects(t, home, &version, &installs)
+					start := effects.Start
+					effects.Start = func(process manager.Process) error {
+						if process.Program == "tmux" {
+							sessions++
+						}
+						return start(process)
+					}
+					output := runAgents(t, effects, 1, args...)
+					if !strings.Contains(output, "refusing selected installation") || installs != 0 || sessions != 0 {
+						t.Fatalf("selected-prefix refusal=%s installs=%d sessions=%d", output, installs, sessions)
+					}
+					unchangedFiles()
+					unchangedCommand()
+					if kind == "symlink" {
+						if target, err := os.Readlink(prefix); err != nil || target != selectedTarget {
+							t.Fatalf("selected prefix link changed=%q want=%q error=%v", target, selectedTarget, err)
+						}
+					}
+					if prefixes, err := filepath.Glob(filepath.Join(root, "installation-*")); err != nil || len(prefixes) != 2 {
+						t.Fatalf("refusal changed installation prefixes=%q error=%v", prefixes, err)
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestOpenCodeRecoveryAcceptsOwnedOrAbsentSelectedPrefix proves current, predecessor, and absent selections remain repairable or removable with mismatched or missing outer links at RunWithEffects.
+func TestOpenCodeRecoveryAcceptsOwnedOrAbsentSelectedPrefix(t *testing.T) {
+	for _, kind := range []string{"current", "predecessor", "absent"} {
+		for _, missingLink := range []bool{false, true} {
+			for _, operation := range []string{"enable", "update", "disable"} {
+				t.Run(fmt.Sprintf("%s/missing-link=%v/%s", kind, missingLink, operation), func(t *testing.T) {
+					home, version, installs := legacyOpenCodeHome(t, ""), "2.3.0", 0
+					effects := agentEffects(t, home, &version, &installs)
+					if kind == "current" {
+						runAgents(t, effects, 0, "enable", "opencode", "--force")
+					}
+					command := filepath.Join(home, ".local", "bin", "opencode")
+					target, err := os.Readlink(command)
+					if err != nil {
+						t.Fatal(err)
+					}
+					selectedPrefix := filepath.Dir(filepath.Dir(target))
+					oldPrefixes := []string{selectedPrefix}
+					if kind == "absent" {
+						if err := os.RemoveAll(selectedPrefix); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if missingLink {
+						if err := os.Remove(command); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						oldPrefixes = append(oldPrefixes, linkLegacyOpenCodeRecovery(t, home))
+					}
+					unchanged := snapshotOpenCodeFiles(t, home, ".config/opencode/opencode.json", ".local/share/opencode/auth.json")
+					installs = 0
+					runAgents(t, effects, 0, operation, "opencode", "--force")
+					got := readAgentStatus(t, effects, "opencode")
+					if operation == "disable" {
+						if got.Enabled || got.Pin != "" || installs != 0 {
+							t.Fatalf("recovered disable status=%+v installs=%d", got, installs)
+						}
+						if _, err := os.Lstat(command); !os.IsNotExist(err) {
+							t.Fatalf("disabled command retained: %v", err)
+						}
+					} else {
+						if !got.Enabled || got.InstalledVersion != "2.3.0" || got.Pin != "" || installs != 1 {
+							t.Fatalf("repaired installation status=%+v installs=%d", got, installs)
+						}
+						assertOpenCodeSelectedCommand(t, home)
+					}
+					for _, prefix := range oldPrefixes {
+						if _, err := os.Lstat(prefix); !os.IsNotExist(err) {
+							t.Fatalf("old prefix retained=%q error=%v", prefix, err)
+						}
+					}
+					unchanged()
+				})
+			}
+		}
 	}
 }
 
@@ -441,19 +665,7 @@ func TestOpenCodeForcedEnableRecoversLegacyCommand(t *testing.T) {
 			root := filepath.Join(home, ".local", "share", "sandboxed-agents")
 			oldPrefixes := []string{filepath.Join(root, "installation-legacy")}
 			if test.selected {
-				orphanHome := legacyOpenCodeHome(t, "")
-				orphanPrefix := filepath.Join(root, "installation-interrupted")
-				if err := os.Rename(filepath.Join(orphanHome, ".local", "share", "sandboxed-agents", "installation-legacy"), orphanPrefix); err != nil {
-					t.Fatal(err)
-				}
-				command := filepath.Join(home, ".local", "bin", "opencode")
-				if err := os.Remove(command); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Symlink(filepath.Join(orphanPrefix, "bin", "opencode"), command); err != nil {
-					t.Fatal(err)
-				}
-				oldPrefixes = append(oldPrefixes, orphanPrefix)
+				oldPrefixes = append(oldPrefixes, linkLegacyOpenCodeRecovery(t, home))
 			} else if err := os.WriteFile(filepath.Join(root, "selection.json"), []byte(`{}`), 0600); err != nil {
 				t.Fatal(err)
 			}

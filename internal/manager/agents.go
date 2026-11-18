@@ -231,7 +231,7 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 		if r.operation == "enable" && enabled && r.version == "" {
 			r.version = current.Pin
 		}
-		if err := validatePublishedAgentPin(r, enabled, effects); err != nil {
+		if err := validatePublishedAgentPin(r, enabled, enabled && previous == "", effects); err != nil {
 			return exitStatus(err, stderr)
 		}
 		if r.operation == "enable" && enabled && healthy && r.version == current.Version {
@@ -265,8 +265,8 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 	return 2
 }
 
-// validatePublishedAgentPin checks pins for renamed catalog packages before changes, with recovery guidance for the enabled state.
-func validatePublishedAgentPin(r agentRequest, enabled bool, effects Effects) error {
+// validatePublishedAgentPin checks pins for renamed catalog packages before changes, retaining force in guidance when requested or needed to repair a missing command.
+func validatePublishedAgentPin(r agentRequest, enabled, repairRequired bool, effects Effects) error {
 	if r.version == "" || len(r.definition.Install.PreviousPackages) == 0 {
 		return nil
 	}
@@ -288,9 +288,13 @@ func validatePublishedAgentPin(r agentRequest, enabled bool, effects Effects) er
 	if catalog.ValidatePinVersion(published.Latest) != nil || !slices.Contains(published.Versions, published.Latest) {
 		return fmt.Errorf("cannot check %s pin %s: npm returned no published latest version", r.name, r.version)
 	}
-	guidance := fmt.Sprintf("agents enable NAME %s --version %s", r.name, published.Latest)
+	forceFlag := ""
+	if r.force || repairRequired {
+		forceFlag = " --force"
+	}
+	guidance := fmt.Sprintf("agents enable NAME %s --version %s%s", r.name, published.Latest, forceFlag)
 	if enabled {
-		guidance = fmt.Sprintf("agents update NAME %s --unpin or %s", r.name, guidance)
+		guidance = fmt.Sprintf("agents update NAME %s --unpin%s or %s", r.name, forceFlag, guidance)
 	}
 	return fmt.Errorf("%s version %s is not published by %s; retry %s", r.name, r.version, r.definition.Install.Package, guidance)
 }
@@ -497,9 +501,14 @@ func managedCommandLink(command, expected string) (string, error) {
 	return previous, nil
 }
 
-// mutationCommandLink confines selected and forced recovery commands to current or declared predecessor installations.
+// mutationCommandLink validates selected cleanup prefixes and confines commands to current or declared predecessor installations.
 // Explicit pins and updates verify package identity; healthy means the selection matches and any checked package is current.
 func mutationCommandLink(command, root string, current installation, r agentRequest) (string, bool, error) {
+	if r.operation != "enable" || r.force || r.version != "" {
+		if err := validateSelectedPrefix(root, current.Prefix, r.definition.Install); err != nil {
+			return "", false, fmt.Errorf("refusing selected installation %s: %w", filepath.Join(root, current.Prefix), err)
+		}
+	}
 	previous, err := os.Readlink(command)
 	if os.IsNotExist(err) {
 		return "", false, nil
@@ -524,6 +533,44 @@ func mutationCommandLink(command, root string, current installation, r agentRequ
 	return previous, selected && currentPackage, nil
 }
 
+// validateSelectedPrefix independently checks a prefix that a mutation may remove, accepting an absent selection or already absent directory.
+func validateSelectedPrefix(root, prefixName string, install catalog.Install) error {
+	if prefixName == "" {
+		return nil
+	}
+	if _, err := os.Lstat(filepath.Join(root, prefixName)); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	realPrefix, err := realInstallationPrefix(root, prefixName)
+	if err != nil {
+		return err
+	}
+	_, err = managedPackage(realPrefix, install)
+	return err
+}
+
+// realInstallationPrefix confines a canonical installation directory to its name beneath the resolved managed root.
+func realInstallationPrefix(root, prefixName string) (string, error) {
+	prefix := filepath.Join(root, prefixName)
+	if !filepath.IsAbs(prefix) || filepath.Clean(prefix) != prefix || filepath.Base(prefixName) != prefixName || !strings.HasPrefix(prefixName, "installation-") {
+		return "", errors.New("installation prefix is not a canonical managed path")
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	realPrefix, err := filepath.EvalSymlinks(prefix)
+	if err != nil {
+		return "", err
+	}
+	if realPrefix != filepath.Join(realRoot, prefixName) {
+		return "", errors.New("installation prefix resolves outside its managed directory")
+	}
+	return realPrefix, nil
+}
+
 // validateManagedTarget confines a recovery link and its resolved npm command
 // to one real installation directory and verifies command ownership when package metadata is required.
 func validateManagedTarget(root, target string, definition catalog.Agent, metadataRequired bool) (string, error) {
@@ -538,17 +585,9 @@ func validateManagedTarget(root, target string, definition catalog.Agent, metada
 	if len(parts) != 3 || !strings.HasPrefix(parts[0], "installation-") || parts[1] != "bin" || parts[2] != definition.Command {
 		return "", errors.New("command target is outside the requested managed installation")
 	}
-	realRoot, err := filepath.EvalSymlinks(root)
+	realPrefix, err := realInstallationPrefix(root, parts[0])
 	if err != nil {
 		return "", err
-	}
-	prefix := filepath.Join(root, parts[0])
-	realPrefix, err := filepath.EvalSymlinks(prefix)
-	if err != nil {
-		return "", err
-	}
-	if realPrefix != filepath.Join(realRoot, parts[0]) {
-		return "", errors.New("installation prefix resolves outside its managed directory")
 	}
 	resolved, err := filepath.EvalSymlinks(target)
 	if err != nil {

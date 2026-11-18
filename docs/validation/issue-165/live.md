@@ -41,4 +41,4 @@ A separate, later invocation of the documented suite at the pinned revision `ae4
 - The source and build reading is for 2.3.0 only, not for 2.3.1 or 2.3.2.
 - The cutover supplements and the Linux full suite are for `941caa6`. The Windows full suite pass is for `ae4526e`. Neither is a same-commit pair, a release gate, a manual-checklist record, or a preview validation.
 - No real provider login, real server, or valid credential was used, and no broad first-use or npm-cache observation was made.
-- The source changed after `ae4526e`. Later recovery checks, such as package-identity checks for an explicit `--version` or `update`, the hint wording, and the dangling-link refusal, have offline test coverage only; the records here are historical and do not prove that final source, and no new live run covers it.
+- The source changed after `ae4526e`. Later recovery checks, such as package-identity checks for an explicit `--version` or `update`, the hint wording, the selected-directory check, and the dangling-link refusal, have offline test coverage only; the records here are historical and do not prove that final source, and no new live run covers it.
