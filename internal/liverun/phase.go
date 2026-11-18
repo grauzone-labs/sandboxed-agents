@@ -32,7 +32,7 @@ type Options struct {
 // RunDispatch implements the public phase command interface.
 func (s *Service) RunDispatch(ctx context.Context, args []string, out, diagnostics io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("supply prepare, run, status, or collect")
+		return fmt.Errorf("supply prepare, run, status, collect, or cleanup")
 	}
 	switch args[0] {
 	case "prepare":
@@ -51,6 +51,12 @@ func (s *Service) RunDispatch(ctx context.Context, args []string, out, diagnosti
 		return s.status(ctx, args[1:], out, diagnostics)
 	case "collect":
 		return s.collect(ctx, args[1:], out, diagnostics)
+	case "cleanup":
+		options, err := ParseCleanupArgs(args[1:], diagnostics)
+		if err != nil {
+			return err
+		}
+		return s.Cleanup(ctx, options, out)
 	case "_supervise":
 		return s.supervise(ctx, args[1:])
 	default:
