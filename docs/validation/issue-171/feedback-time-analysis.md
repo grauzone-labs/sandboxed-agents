@@ -38,7 +38,7 @@ The share figures model one clean pass. Real changes repeat stages (sections 3.2
 
 CI timings come from the REST jobs endpoint, not from `gh run view --json jobs`. For run [44382577916](https://github.com/grauzone-labs/sandboxed-agents/actions/runs/44382577916), `gh run view --json jobs` returned a `completedAt` for every job equal to the run's completion and null step times, so its output is unusable for stage timing. The defect was reproduced for this analysis on 2026-11-18 with `gh` version 2.23.0 for that run: every job's `completedAt` was `2026-11-18T19:50:06Z`, the run's completion, and the step `startedAt` and `completedAt` were null. The REST endpoint returned correct timestamps.
 
-Vocabulary follows `CONTEXT.md`: sandbox, image, base image, toolchain, asset hash, controller group, agent, Tool, manager. The project's gate names are used as they appear in [releases](../../releases.md): offline suite (gate 1), live suite (gate 2), manual checklist (gate 3), image coverage, preview, stable release, schema 2 record, validation records, and stable release check.
+Vocabulary follows `CONTEXT.md`: sandbox, image, base image, toolchain, asset hash, controller group, agent, Tool, manager. The three gates are named as in [releases](../../releases.md) (offline suite, live suite, manual checklist) and numbered here in that page's order: offline suite (gate 1), live suite (gate 2), manual checklist (gate 3). "Schema 2 record" follows [`docs/images.md`](../../images.md). Other terms used: image coverage, preview, stable release, validation records, and stable release check.
 
 ## 2. Flow map
 
@@ -152,8 +152,8 @@ The live suite needs only the commit, not the preview tag; the preview tag must 
 ### 2.4 What blocks what
 
 - **Merge** is blocked by F4, F5, and F6 green and by F7 clean on the current head.
-- A **validated preview** is blocked by F8 to F14.
-- A **stable release** is additionally blocked by F16.
+- A **validated preview** is blocked by F9 and F11 (the prerelease the records are uploaded to), F12, F13, and F14. F8 blocks only the stable release check, and F10 blocks nothing.
+- A **stable release** is additionally blocked by F8 and F16.
 - **Live validation (F12)** is not a merge requirement by workflow. It is run before merge only when a change needs live proof (live-validation skill).
 
 ### 2.5 Work repeated for the same content
@@ -173,7 +173,7 @@ The live suite needs only the commit, not the preview tag; the preview tag must 
 
 | Revision | Environment | Cold or warm | n | Source |
 | --- | --- | --- | --- | --- |
-| `df15009`, clean worktree | Development machine, AMD Ryzen 9 5950X (32 logical CPUs), 62 GiB, Debian GNU/Linux 12 (bookworm), kernel 7.2.15, Go 1.27.2 linux/amd64, Node.js v24.21.0, Git 2.39.5, Python 3 and PowerShell 7 present (the installer helper suite ran). Podman 4.3.1 is installed but the offline suite calls no Podman. Default package parallelism (`-p` = 32). Host shared with other work: 1-minute load 2.69 at the start of run 1 and 4.58 at the start of run 2 | Build cache warm (existing `GOCACHE`); test cache bypassed by `-count=1` | 2 | S-OFF, local `go test ./... -count=1 -json` |
+| `df15009`, clean worktree | Development machine, AMD Ryzen 9 5950X (32 logical CPUs visible, under a cgroup CPU quota of 4 CPUs: `cpu.max` 400000 100000; `GOMAXPROCS` 4), 62 GiB, Debian GNU/Linux 12 (bookworm), kernel 7.2.15, Go 1.27.2 linux/amd64, Node.js v24.21.0, Git 2.39.5, Python 3 and PowerShell 7 present (the installer helper suite ran). Podman 4.3.1 is installed but the offline suite calls no Podman. Default package parallelism (`-p` = 4, from `GOMAXPROCS`, not 32). Host shared with other work: 1-minute load 2.69 at the start of run 1 and 4.58 at the start of run 2 | Build cache warm (existing `GOCACHE`); test cache bypassed by `-count=1` | 2 | S-OFF, local `go test ./... -count=1 -json` |
 
 | Stage | Run 1 | Run 2 | Source |
 | --- | ---: | ---: | --- |
@@ -189,8 +189,20 @@ The live suite needs only the commit, not the preview tag; the preview tag must 
 
 - **Two sums.** "Sum of package test time" (827.5 and 806.9) is the sum of the `Elapsed` value that `go test -json` reports for each package. That value includes each package's `TestMain` and fixture setup. The concentration line below uses 824.7 and 805.0: the sum of the `Elapsed` values of the 933 top-level tests only.
 - 933 top-level tests ran in each run; 15 skip events each.
-- Wall equals the longest package. With 32 CPUs every package runs at once, so `internal/manualcheck` (264.6 and 262.7) sets the wall (272.5 and 266.0).
-- **Compilation and link versus test execution.** `go test ./... -count=1 -run '^$'` builds and links every test binary, runs their `TestMain`, and runs no test. It took 1.5 wall with the warm build cache and 15.2 wall with an empty `GOCACHE` (single sample each; load 4.5 during the cold pass). Compile and link are therefore 0.6 % of the wall warm and at most 15.2 cold; test execution is the rest. Caveat: fixture executables that tests build while they run (`go build` inside `TestMain` or a test) count as test time and are not separated.
+- **Four packages run at a time.** The quota limits `go test` to four packages at once; both `-json` runs show at most 4 packages running together. `internal/manualcheck` starts within 5.3 s and is the last package to end (269.9 and 265.7 after the first event), so it sets the wall (272.5 and 266.0). `scripts` waits for a free slot and starts only at about 53. The 269 local figure used in section 4 is therefore a four-way-parallel figure.
+
+  Package start and end, in seconds after the first event of the run (run 1 / run 2):
+
+  | Package | Start | End |
+  | --- | ---: | ---: |
+  | `cmd/sandboxed-agents` | 0.0 / 0.0 | 254.2 / 250.5 |
+  | `internal/cli` | 2.9 / 1.7 | 114.2 / 106.8 |
+  | `internal/manager` | 4.1 / 2.7 | 26.9 / 27.3 |
+  | `internal/manualcheck` | 5.3 / 3.0 | 269.9 / 265.7 |
+  | `internal/release/cmd/stable-gate` | 29.4 / 30.8 | 51.7 / 52.0 |
+  | `scripts` | 53.1 / 52.8 | 195.8 / 187.4 |
+
+- **Compilation and link versus test execution.** `go test ./... -count=1 -run '^$'` builds and links every test binary, runs their `TestMain`, and runs no test. It took 1.5 wall with the warm build cache and 15.2 wall with an empty `GOCACHE` (single sample each, both taken under the same 4-CPU quota; load 4.5 during the cold pass). Compile and link are therefore 0.6 % of the wall warm and at most 15.2 cold; test execution is the rest. Caveat: fixture executables that tests build while they run (`go build` inside `TestMain` or a test) count as test time and are not separated.
 - **Concentration.** 13 top-level tests of 933 took 10 s or more. They account for 564.6 of 824.7 (run 1) and 554.7 of 805.0 (run 2) summed test seconds, 68 to 69 %.
 - **Cache effect of `-count=1`.** It disables the test result cache, so every run executes every test. The build cache still applies (warm 1.5 against cold 15.2 above).
 - **Parallelism inside packages.** No `_test.go` file in `cmd/sandboxed-agents`, `internal/cli`, `internal/manualcheck`, `scripts`, `internal/manager`, `internal/release/cmd/stable-gate`, or `image` calls `t.Parallel()` (count 0 in each, by `grep`). Tests inside a package run one after another. Whether they can safely run in parallel (shared fake process harness, shared fixtures) was not examined.
@@ -237,7 +249,7 @@ Slowest top-level tests (n = 2):
 
 #### Windows
 
-No Windows machine was used. The only Windows machine available to the project besides the runners is the live host, and this analysis contacts no host. The Windows offline baseline is therefore the `windows` CI job; there is no local Windows measurement.
+No Windows machine was used. The only Windows machine available to the project besides the runners is the live host, and this analysis contacts no host. The Windows offline baseline is therefore the `windows` CI job; there is no local Windows measurement. The Windows per-stage offline baseline is CI-derived, and the local Windows run stays a named gap (section 8).
 
 | Revision | Environment | Cold or warm | n | Source |
 | --- | --- | --- | --- | --- |
@@ -256,7 +268,7 @@ No Windows machine was used. The only Windows machine available to the project b
 - The Windows job does not run `go test ./...`. `internal/manager` is Linux-only, `internal/manualcheck` is only vetted plus two ACL tests, and `TestInstallerHelperSuite` does not run on Windows.
 - Per-test times exist only for `image` and `scripts` (run with `-v`). In run [44382577916](https://github.com/grauzone-labs/sandboxed-agents/actions/runs/44382577916): `TestNpmPackageLifecycle` 39.60, `TestOverlayEmbedsStaticLinuxManager` 16.88, `TestNuGetCommandScripts` 16.07 (single sample). For `cmd/sandboxed-agents` and `internal/cli`, the two largest packages, no per-test time exists on Windows. This is a gap. The narrowest observation that closes it is one `go test -json` run of those two packages on a `blacksmith-2vcpu-windows-2025` runner (or with `-v` in a `workflow_dispatch` run), which changes no gate.
 - Cross-platform ratio on the same 8 runs (median): `cmd/sandboxed-agents` 400.3 against 246.8 (1.62x), `internal/cli` 192.7 against 85.7 (2.25x). `scripts` is not comparable: several of its tests are platform-specific.
-- **Historical context only** (different revision, different hosts, not comparable): issue #71 measured at `da065a2` on the two live hosts 166 (Linux, exit 1) and 613 (Windows, exit 1). After its changes, CI at `e2cf633` ran the Linux offline suite step in 80 and the Windows CLI and stable-gate step in 157 (run 38991071304, single sample). The same steps now have medians of 406 and 382 (section 3.2). The suite grew between those revisions. No regression is claimed and no cause was investigated.
+- **Historical context only** (different revision, different hosts, not comparable): issue #71 measured at `da065a2` on the two live hosts 166 (Linux, exit 1) and 613 (Windows, exit 1). After its changes, CI at `e2cf633` ran the Linux offline suite step in 80 and the Windows CLI and stable-gate step in 157 (run [38991071304](https://github.com/grauzone-labs/sandboxed-agents/actions/runs/38991071304), single sample). The same steps now have medians of 406 and 382 (section 3.2). The suite grew between those revisions. No regression is claimed and no cause was investigated.
 
 ### 3.2 GitHub CI on Blacksmith
 
@@ -419,16 +431,16 @@ Same-revision pairs of passing runs: 4 (`62fff9f`, `6ed41e7`, `dbd5237`, `90ad6b
 
 On 2026-11-18 the Windows host ran the full suite three times for [issue #165](https://github.com/grauzone-labs/sandboxed-agents/issues/165):
 
-- `941caa6` failed in `images` after 2,194.48 (a WSL call returned `0xffffffff` during a Podman machine query at the Azure smoke check).
+- `941caa6` failed in `images` after 2,194.48, at the Azure smoke check, during a Podman machine query.
 - `ae4526e` passed in 3,042.17.
-- `0a6ac3f` failed in `images` after 3,180.18 (`cannot allocate memory` at a layer commit in the Azure no-cache rebuild).
+- `0a6ac3f` failed in `images` after 3,180.18, in the Azure no-cache rebuild, at a layer commit.
 
-That is 5,374.66 of suite time in two attempts that produced no passing record, against 3,042.17 for the pass. The [issue #165 live record](../issue-165/live.md) infers no cause for either failure, and neither was repaired or rerun. The Linux host passed both of its runs that day.
+That is 5,374.66 of suite time in two attempts that produced no passing record, against 3,042.17 for the pass. The failure text of each attempt is in the [issue #165 live record](../issue-165/live.md), which infers no cause for either failure; neither was repaired or rerun. The Linux host passed both of its runs that day.
 
 #### What the records cannot attribute
 
 - The stages the issue lists inside a case (image builds, the no-cache `build`, base image and package pulls, npm and runtime downloads, sandbox start and readiness, smoke checks, retries, suite cleanup) have no time in any record. `durations-*.json` holds one inclusive number per case. `liveHost.cliContext` reports elapsed time only for a failed CLI call. This is the conclusion of the [issue #155 analysis](../issue-155/duration-analysis.md) ("attribution is insufficient"), and the three later records do not change it.
-- **The narrowest further observation** is the inclusive elapsed time of every CLI invocation the suite makes, taken at the existing `liveHost.cliContext` seam (which already measures it and discards it on success) and retained per case and operation beside the durations file. It needs no host tuning and no change to the schema 2 record. It is a follow-up (option O2, section 6), not done here.
+- **The narrowest further observation** is the inclusive elapsed time of every CLI invocation the suite makes, taken at the existing `liveHost.cliContext` seam (which already measures it and discards it on success) and retained per case and operation beside the durations file. It needs no host tuning and no change to the schema 2 record. It is a follow-up (enabling observation E1, section 6), not done here.
 - Image cleanup after the suite (62 to 68 images removed one by one in the recorded runs) and the preparation before it (checkout, inventory, headroom check) are outside `TestLiveSuite` and have no recorded time. They are unmeasured.
 - Variation that the records show but cannot explain: Windows `lifecycle` 164.24 to 517.67; `t3code` 180.48 to 474.79 on Linux and 461.09 to 867.23 on Windows; Linux `update` 111.37 to 246.29.
 
@@ -436,9 +448,11 @@ That is 5,374.66 of suite time in two attempts that produced no passing record, 
 
 This is a model of one clean pass, using the medians above. Real changes repeat stages (sections 3.2 and 3.3). The manual checklist and all human waiting are unmeasured and excluded.
 
-**To merge, per pull request head.** The local offline suite takes 269 (mean of 272.5 and 266.0, n = 2). Then the CI run (median 580) and the CodeRabbit review (median 332) run in parallel. The CI run is the longer of the two in 26 of 30 measured heads. Elapsed 269 + 580 = 849: offline 31.7 %, CI 68.3 %, live 0 %. Within the CI run the critical chain is `changes`, then `windows`, then `compare`; `windows` was the later job in 40 of 48 runs. Every further head adds the same 849. The median pull request branch had 3 runs.
+**To merge, per pull request head.** The local offline suite takes 269 (mean of 272.5 and 266.0, n = 2; four packages at a time under the 4-CPU quota, section 3.1). Then the CI run (median 580) and the CodeRabbit review (median 332) run in parallel. The CI run is the longer of the two in 26 of 30 measured heads. Elapsed 269 + 580 = 849: offline 31.7 %, CI 68.3 %, live 0 %. Within the CI run the critical chain is `changes`, then `windows`, then `compare`; `windows` was the later job in 40 of 48 runs. Every further head adds the same 849. The median pull request branch had 3 runs.
 
 **To a validated preview, after the merge.** The push run on `main` (median 561, n = 10) and the preview tag's publication (87 and 89, n = 2) are both shorter than the live suite and can overlap it only partly: the preview tag must exist before records are uploaded, but live runs need only the commit. The longer live host sets the live time: Windows median 3,121.72 (n = 5) against Linux 1,411.44 (n = 6). The critical path is the live suite on Windows, then the manual checklist (unmeasured), then the upload. The push run on `main` is off the critical path as long as it finishes before the live suite does (561 against 3,121.72).
+
+**Shares for the preview path alone.** Measured machine time from the merge to a validated preview, with the stages added one after another, is push run 561 + live suite on Windows 3,121.72 + preview publication 89 = 3,771.72: CI 14.9 %, live 82.8 %, tag workflow 2.4 %. The manual checklist is unmeasured and excluded.
 
 **To a stable release.** Additionally the stable tag's `Release publication` run, 161 (single sample).
 
@@ -467,77 +481,78 @@ Each finding carries a number or is marked unmeasured, and is judged against the
 | D4 | The live `images` case builds every image, then the suite's one `build` rebuilds all of them without cache | Unmeasured: the split inside `images` (776.61 to 1,215.64 Linux, 1,956.40 to 2,149.28 Windows) is not recorded | The rebuild is the image coverage's proof that `build` renews every image and marks sandboxes outdated; a release run must include it. Not removable without changing gate 2 |
 | D5 | Every retained live run started without the base image, so the run's first `up` has to build it before the `images` case's `build` rebuilds it without cache | Unmeasured: no record separates a build from a start; all 7 retained duration records say `base_image: absent` | Follows from image cleanup after each run, which protects the hosts' disks. A kept base image would change what a run measures and the cleanup rules; flag, do not assume |
 | D6 | Superseded pull request heads | 8 cancelled runs, 3,021 summed run wall; 3 failed runs, 1,831; 12 runs for pull request 170 (7,128) | Cancellation already limits it. The repeated heads themselves come from review-fix cycles: each CodeRabbit finding fixed in its own push costs one more CI run |
-| D7 | Serial test invocations in the `windows` job: the ACL tests and the image and release tests start only after the 382-second step ends | Tail median 76.5 (8 + 68) | They are separate invocations because they need different environment variables and `-v`. Running them beside the first step is possible in principle on the same 2 vCPUs; see option O5 |
+| D7 | Serial test invocations in the `windows` job: the ACL tests and the image and release tests start only after the 382-second step ends | Tail median 76.5: the median over the 48 runs of each run's sum of the two steps (the step medians are 8 and 68) | They are separate invocations because they need different environment variables and `-v`. Running them beside the first step is possible in principle on the same 2 vCPUs; see option O4 |
 | D8 | The two live hosts | Already run side by side (live-validation skill, stage 3) | No serial waste; the Windows host sets the time |
 | D9 | CI run and CodeRabbit review | Already parallel; the review was the longer wait in 4 of 30 heads | No serial waste |
 | D10 | The documentation-only skip | Works: 34 against a median 581 (single sample) | Covers `docs/`, `.agents/`, `AGENTS.md` only on pull requests. No further skippable class was found with evidence; extending it was not evaluated |
 
 ## 6. Ranked optimization options
 
-**Ranking rule.** Options are ranked by total feedback-time saving across the three paths per change, using measured numbers where they exist. Where a saving cannot be stated from the baseline, the option says "not quantified" and gives the bound and the observation that would quantify it. Such an option is ranked by its measured bound, and that is said. O1 ranks first because it has the largest measured saving per occurrence, 2,194.48 to 3,180.18 for each avoided failed Windows attempt, although how often such a failure occurs is not established. O2 has no direct saving and is ranked second by its bound: it makes the `images` case attributable (median 1,020.75 on Linux and 2,052.84 on Windows per run), and it is the precondition for every other live saving. O3 follows with a measured 581 per avoided head. No option below was implemented. Effort is a rough size: S (hours), M (a day or two), L (several days).
+**Ranking rule.** Options are ranked by the total feedback time each would have saved over the common observation window of the CI sample (2026-11-06 to 2026-11-18). The saving is measured where a measurement exists, and otherwise it is an estimate or an upper bound with its basis stated; the table says which. An option without a saving of its own is not ranked; it is listed separately below as an enabling observation. The ranking compares window totals, not savings per occurrence, so a large saving per occurrence that is rare ranks below a small saving that recurs. No option below was implemented. Effort is a rough size: S (hours), M (a day or two), L (several days).
 
-| Rank | Option | Path and stage | Effort |
-| ---: | --- | --- | --- |
-| 1 | O1. Establish why the Windows live suite fails in `images` | Live, Windows, `images` | M |
-| 2 | O2. Record per-operation times in the live suite | Live, all cases, both hosts | M |
-| 3 | O3. Fewer pull request heads per change | CI, whole run; CodeRabbit | S (working agreement; no code) |
-| 4 | O4. Shorten `cmd/sandboxed-agents` on Windows, the critical CI step | CI `windows`, step "Run CLI, capture, and stable gate tests"; offline Windows | S for the measurement, M to L for changes |
-| 5 | O5. Run the Windows job's test invocations side by side | CI `windows`, steps 2 and 3 of the test sequence | S to M |
-| 6 | O6. Take `TestInstallerHelperSuite` off the local and Linux critical path | Offline Linux local; CI `linux` | M |
-| 7 | O7. Review the five offline tests with run-independent durations for deadlines they wait out | Offline both platforms; CI both jobs | S to M |
-| 8 | O8. Drop the standalone `Stable release gate` run on tag push, or the duplicate check inside `publish` | Tag workflows | S |
+| Rank | Option | Window saving | Path and stage | Effort |
+| ---: | --- | --- | --- | --- |
+| 1 | O1. Fewer pull request heads per change | 5,810, estimate | CI, whole run; CodeRabbit | S (working agreement; no code) |
+| 2 | O2. Establish why the Windows live suite fails in `images` | 5,374.66, measured upper bound | Live, Windows, `images` | M |
+| 3 | O3. Shorten `cmd/sandboxed-agents` on Windows, the critical CI step | 4,440, upper bound; not quantified | CI `windows`, step "Run CLI, capture, and stable gate tests"; offline Windows | S for the measurement, M to L for changes |
+| 4 | O4. Run the Windows job's test invocations side by side | 3,672, upper bound, before the first step's slowdown | CI `windows`, steps 2 and 3 of the test sequence | S to M |
+| 5 | O5. Take `TestInstallerHelperSuite` off the local and Linux critical path | no window total (local runs in the window are not recorded) | Offline Linux local; CI `linux` | M |
+| 6 | O6. Review the five offline tests with run-independent durations for deadlines they wait out | not quantified (hypothesis) | Offline both platforms; CI both jobs | S to M |
+| 7 | O7. Drop the standalone `Stable release gate` run on tag push, or the duplicate check inside `publish` | 0, measured | Tag workflows | S |
 
-### O1. Establish why the Windows live suite fails in `images`
+Enabling observation, not ranked: E1. Record per-operation times in the live suite (live, all cases, both hosts; effort M). It has no saving of its own.
 
-Capture memory and Podman machine state at the failure, not after it, before spending further full runs.
-
-- **Saving and basis:** the measured cost of the two failed attempts is 2,194.48 and 3,180.18 (5,374.66 together) with no passing record. The saving per avoided failed attempt is one of those. Failure frequency is not established (2 of 3 Windows attempts on one day; the 5 passing runs on record say nothing about attempts that failed and were not recorded), so no expected saving per release is stated.
-- **Coverage, quality, reliability; gate, record, or documented behaviour touched:** improves reliability of gate 2 on Windows; no coverage change. Diagnosis only reads state. Any repair of Podman, WSL, or memory configuration is host tuning and needs its own authorization; it is outside this option.
-
-### O2. Record per-operation times in the live suite
-
-Keep the elapsed time `liveHost.cliContext` already measures for every CLI call and retain it, sanitized, per case and operation beside `durations-<platform>.json`.
-
-- **Saving and basis:** no direct saving. It is the precondition for every live saving: 65 % of measured machine time (section 4) sits in cases whose inside is unmeasured, `images` alone 776.61 to 2,149.28 per run. Basis: section 3.3 (per case, and what the records cannot attribute).
-- **Coverage, quality, reliability; gate, record, or documented behaviour touched:** no coverage change. It adds a sanitized evidence file or fields to the durations file (schema 1, not the schema 2 record); the collector and [`docs/images.md`](../../images.md#retaining-case-durations) change. It must not change the schema 2 record, the release gate, or cancellation. One live run per host, with its own Yes at the checkpoint, is needed to produce the first data.
-
-### O3. Fewer pull request heads per change
+### O1. Fewer pull request heads per change
 
 Fix all findings of one CodeRabbit review in one push, and run the offline suite locally before pushing.
 
-- **Saving and basis:** measured. Each avoided head saves one run, median 581 run wall, and one review cycle, median 332 in parallel. Pull request 170 used 12 runs (7,128). Going from the median 3 runs to 2 saves 581 per pull request.
+- **Saving and basis:** window saving, estimate: one fewer run on each of the 10 pull request branches that had two or more runs, 10 x 581 = 5,810. Basis: section 3.2, repeated heads. Per head, each avoided head saves one run, median 581 run wall, and one review cycle, median 332 in parallel. Pull request 170 used 12 runs (7,128). Going from the median 3 runs to 2 saves 581 per pull request.
 - **Coverage, quality, reliability; gate, record, or documented behaviour touched:** no coverage change: the final head is still fully checked and reviewed. Touches `AGENTS.md` guidance at most; no gate changes.
 
-### O4. Shorten `cmd/sandboxed-agents` on Windows, the critical CI step
+### O2. Establish why the Windows live suite fails in `images`
+
+Capture memory and Podman machine state at the failure, not after it, before spending further full runs.
+
+- **Saving and basis:** window saving, measured upper bound: 5,374.66 if both failed attempts of 2026-11-18 had been avoided (2,194.48 and 3,180.18, with no passing record). The saving per avoided failed attempt is one of those. Failure frequency beyond the window is not established (2 of 3 Windows attempts on one day; the 5 passing runs on record say nothing about attempts that failed and were not recorded), so no expected saving per release is stated.
+- **Coverage, quality, reliability; gate, record, or documented behaviour touched:** improves reliability of gate 2 on Windows; no coverage change. Diagnosis only reads state. Any repair of Podman, WSL, or memory configuration is host tuning and needs its own authorization; it is outside this option.
+
+### O3. Shorten `cmd/sandboxed-agents` on Windows, the critical CI step
 
 Measure its tests on a Windows runner first, then address the largest. The candidates named by the Linux data are the nested guard run (107 to 112 on Linux), tests with run-independent durations, and missing `t.Parallel`.
 
-- **Saving and basis:** not quantified on Windows, because no per-test time exists there. Bound: the step's median is 382 and `windows` exceeds `linux` by a median 92.5, so up to about 92 of run wall can be gained before `linux` becomes the critical job; beyond that both jobs must shrink. The Linux local share of the nested run is 42 to 44 % of the package.
+- **Saving and basis:** not quantified on Windows, because no per-test time exists there. Upper bound over the window: the median lead of `windows` over `linux`, 92.5, on each of the 48 full runs, 4,440. The step's median is 382 and `windows` exceeds `linux` by a median 92.5, so up to about 92 of run wall can be gained before `linux` becomes the critical job; beyond that both jobs must shrink. The Linux local share of the nested run is 42 to 44 % of the package.
 - **Coverage, quality, reliability; gate, record, or documented behaviour touched:** the measurement changes nothing. Narrowing the nested guard trades coverage and must be labelled. Parallel tests risk flakiness through the shared fake process harness, which was not examined. Job names `linux` and `windows` stay.
 
-### O5. Run the Windows job's test invocations side by side
+### O4. Run the Windows job's test invocations side by side
 
 Run the ACL tests and the image and release tests beside the first test step instead of after it.
 
-- **Saving and basis:** estimate: up to the tail's median 76.5 of the `windows` job, less whatever the first step slows down on 2 vCPUs (not measured). Basis: section 3.2 and D7. Run wall gains at most the 92.5 median lead of `windows` over `linux`.
+- **Saving and basis:** estimate, upper bound over the window: 76.5 on each of the 48 full runs, 3,672, less the unmeasured slowdown of the first step on 2 vCPUs, and capped per run by the same 92.5 lead of `windows` over `linux`. The 76.5 is the median over the 48 runs of each run's sum of the tail's two steps (the step medians are 8 and 68). Basis: section 3.2 and D7.
 - **Coverage, quality, reliability; gate, record, or documented behaviour touched:** no coverage change if every invocation keeps its environment and `-v`. Log readability drops with interleaved output. Changes the workflow file, not a gate.
 
-### O6. Take `TestInstallerHelperSuite` off the local and Linux critical path
+### O5. Take `TestInstallerHelperSuite` off the local and Linux critical path
 
 Run it in its own invocation or CI job beside the others, or parallelize its Python suite.
 
-- **Saving and basis:** local: the wall is this test (261 to 263). Alone it saves about 12 (the next package, `cmd/sandboxed-agents`, is 250 to 254). Together with a shorter `cmd/sandboxed-agents` the local wall could fall to the next package, `scripts` (135 to 143), an estimate of about 125 that assumes free CPUs. CI: `internal/manualcheck` has a median 348.9 of package time, about 175 of the 2-vCPU step, but `linux` is the critical job in only 8 of 48 runs, so run wall barely moves until `windows` shrinks.
+- **Saving and basis:** local, per run: the last package to end is `internal/manualcheck` (269.9 and 265.7, section 3.1), which is this test. Without it the last package to end is `cmd/sandboxed-agents` at 254.2 and 250.5, so alone it saves about 15 of local wall. Together with a shorter `cmd/sandboxed-agents` the wall could fall to the end of `scripts` on the observed schedule (195.8 and 187.4), about 75; `scripts` might start earlier once a slot is free, which was not measured. The number of local runs in the window is not recorded, so no window total is stated. CI: `internal/manualcheck` has a median 348.9 of package time, about 175 of the 2-vCPU step, but `linux` is the critical job in only 8 of 48 runs, so run wall barely moves until `windows` shrinks.
 - **Coverage, quality, reliability; gate, record, or documented behaviour touched:** no coverage change if the suite still runs on every head. A separate job adds runner minutes and one more required job. The stable release check names only `linux` and `windows`, so whether a third job must be required is a decision to flag.
 
-### O7. Review the five offline tests with run-independent durations for deadlines they wait out
+### O6. Review the five offline tests with run-independent durations for deadlines they wait out
 
 - **Saving and basis:** hypothesis, not a finding. Bound: 80.2 of summed test time on Linux locally (28.14 + 14.03 + 14.02 + 14.02 + 10.00); about half of that on the 2-vCPU Linux step; unmeasured on Windows. Issue #71 saved about 58 per test with the same kind of change (60.2 to 2.0).
 - **Coverage, quality, reliability; gate, record, or documented behaviour touched:** no coverage change if only test-binary deadlines shorten, as in issue #71's change A1. Production deadlines and their messages stay. [ADR 0008](../../adr/0008-readiness-key-exchange-runs-ssh.md)'s readiness behaviour must not change.
 
-### O8. Drop the standalone `Stable release gate` run on tag push, or the duplicate check inside `publish`
+### O7. Drop the standalone `Stable release gate` run on tag push, or the duplicate check inside `publish`
 
 - **Saving and basis:** measured: 35 run wall (standalone, stable tag), 20 to 23 on preview tags, 8 for the `publish` step; none on the critical path. Saving in feedback time: 0.
 - **Coverage, quality, reliability; gate, record, or documented behaviour touched:** changes the release check's structure and [maintainers](../../maintainers.md#continuous-integration); removes a redundant safeguard. Not recommended on this evidence.
+
+### Enabling observation E1. Record per-operation times in the live suite
+
+Keep the elapsed time `liveHost.cliContext` already measures for every CLI call and retain it, sanitized, per case and operation beside `durations-<platform>.json`.
+
+- **Saving and basis:** no saving of its own, so it is not ranked. It is the precondition for quantifying any live saving beyond O2: 65 % of measured machine time (section 4) sits in cases whose inside is unmeasured, `images` alone 776.61 to 2,149.28 per run. Basis: section 3.3 (per case, and what the records cannot attribute).
+- **Coverage, quality, reliability; gate, record, or documented behaviour touched:** no coverage change. It adds a sanitized evidence file or fields to the durations file (schema 1, not the schema 2 record); the collector and [`docs/images.md`](../../images.md#retaining-case-durations) change. It must not change the schema 2 record, the release gate, or cancellation. One live run per host, with its own Yes at the checkpoint, is needed to produce the first data.
 
 ### Not ranked
 
@@ -554,7 +569,14 @@ An option that would trade coverage for time (dropping a platform, a gate, or im
 
 These are drafts. None is filed; each is filed only after maintainer agreement. Each success criterion is a reduction against, or an observation defined by, this baseline. No runtime target is set where the baseline has no number.
 
-### Draft A (from O1): Diagnose the Windows `images` failures of 2026-11-18
+### Draft A (from O1): Batch review fixes per pull request head
+
+- **Type:** Task (working agreement in `AGENTS.md`).
+- **Problem:** the median pull request branch started 3 CI runs and three branches started 8 to 12 (section 3.2, repeated heads); each run has a median 581 of run wall.
+- **Change:** fix every finding of one CodeRabbit review in one push, after the offline suite passed locally.
+- **Success criterion:** over the next 10 merged pull requests with code changes, the median number of `Release reproducibility` runs per pull request drops from 3 to 2 or fewer, and the maximum is recorded against the baseline maximum of 12, with every merged head still green and reviewed without open findings.
+
+### Draft B (from O2): Diagnose the Windows `images` failures of 2026-11-18
 
 - **Type:** Bug.
 - **Problem:** 2 of 3 Windows full-suite attempts on 2026-11-18 failed in `images` (2,194.48 and 3,180.18 lost; [issue #165 live record](../issue-165/live.md)), with no cause established.
@@ -562,22 +584,15 @@ These are drafts. None is filed; each is filed only after maintainer agreement. 
 - **Success criterion:** a recorded cause, or a recorded statement that the evidence excludes the named candidates, for both failure signatures. Then, over the next N >= 3 Windows full-suite attempts, the number of attempts that fail in `images` without a product defect is recorded against the baseline of 2 of 3. No pass-rate target is set before the cause is known.
 - **Out of scope:** repairing or tuning the host without its own authorization.
 
-### Draft B (from O2): Retain per-operation timings of the live suite
+### Draft C (from E1): Retain per-operation timings of the live suite
 
 - **Type:** Task.
 - **Problem:** the live suite is 65 % of measured machine time for a release (section 4) and no record says where a case spends it.
 - **Change:** retain, for every CLI invocation the suite makes, its case, its operation class (the classes the live-validation skill already names), and the inclusive elapsed seconds that `liveHost.cliContext` measures; write them sanitized beside `durations-<platform>.json`. The schema 2 record, the release gate, and cancellation stay unchanged.
-- **Success criterion:** after one passing run per host with image coverage, at least 95 % of each case's recorded seconds are attributed to named operations on both hosts, and the analysis can state for `images` the seconds spent in initial builds, the no-cache `build`, sandbox starts, smoke checks, and removal. No runtime target is set: the baseline has no per-operation number.
+- **Success criterion:** after one passing run per host with image coverage, every CLI invocation of every case has a retained time, the difference between each case's recorded seconds and the sum of its operations is reported per case, and the analysis can state for `images` the seconds spent in initial builds, the no-cache `build`, sandbox starts, smoke checks, and removal. No runtime target is set: the baseline has no per-operation number.
 - **Out of scope:** any optimization, host tuning, and a live run without its own Yes at the checkpoint.
 
-### Draft C (from O3): Batch review fixes per pull request head
-
-- **Type:** Task (working agreement in `AGENTS.md`).
-- **Problem:** the median pull request branch started 3 CI runs and three branches started 8 to 12 (section 3.2, repeated heads); each run has a median 581 of run wall.
-- **Change:** fix every finding of one CodeRabbit review in one push, after the offline suite passed locally.
-- **Success criterion:** over the next 10 merged pull requests with code changes, the median number of `Release reproducibility` runs per pull request drops from 3 to 2 or fewer, and no pull request exceeds 6 (baseline maximum 12), with every merged head still green and reviewed without open findings.
-
-### Draft D (from O4): Measure and shorten `cmd/sandboxed-agents` on the Windows runner
+### Draft D (from O3): Measure and shorten `cmd/sandboxed-agents` on the Windows runner
 
 - **Type:** Task, two steps.
 - **Problem:** the `windows` job is the later job in 40 of 48 runs, its longest step has a median 382, and that step's length is one package whose tests have no recorded time on Windows.
@@ -585,13 +600,13 @@ These are drafts. None is filed; each is filed only after maintainer agreement. 
 - **Step 2 (change), only after step 1 names the tests:** shorten the largest without removing an assertion, or label any coverage trade explicitly.
 - **Success criterion:** the median of the step "Run CLI, capture, and stable gate tests" over 20 consecutive full runs drops from 382 by at least the seconds step 1 attributes to the changed tests, at unchanged coverage, with identical asset hash and digests in `compare`. The numeric target is set from step 1's data, not before.
 
-### Draft E (from O5): Run the Windows job's test invocations side by side
+### Draft E (from O4): Run the Windows job's test invocations side by side
 
 - **Type:** Task.
-- **Problem:** the ACL tests and the image and release tests wait for the 382-second step (tail median 76.5).
-- **Success criterion:** the median `windows` job execution over 20 consecutive full runs drops from 503 toward 503 - 76.5 = 426.5. The task records the achieved value and is accepted at a reduction of at least 40, with the same tests reported passing and `compare` unchanged.
+- **Problem:** the ACL tests and the image and release tests wait for the 382-second step (tail median 76.5, the median over the 48 runs of each run's sum of the two steps).
+- **Success criterion:** the median `windows` job execution over 20 consecutive full runs is below the baseline 503, and the achieved reduction is recorded against the bound of 76.5; no smaller threshold is set because the slowdown of the first step is not measured. The same tests are reported passing and `compare` is unchanged.
 
-Drafts for O6 and O7 are deliberately not written. O6 moves run wall only after the Windows job shrinks, and O7 is a hypothesis that Draft D's measurement and a reading of the five tests should confirm first. O8 is not recommended.
+Drafts for O5 and O6 are deliberately not written. O5 moves run wall only after the Windows job shrinks, and O6 is a hypothesis that Draft D's measurement and a reading of the five tests should confirm first. O7 is not recommended.
 
 ## 8. Gaps
 
@@ -605,7 +620,7 @@ Each gap is named with the narrowest observation that closes it.
 | Cold-cache CI run | One run after the `setup-go` cache key changes (for example a Go version bump), read from the same REST endpoint |
 | Dependency installation as its own stage in CI | Not separable from the logs; bounded by the setup totals (10 and 34) |
 | CodeRabbit latency for heads without a review object, and after `@coderabbitai review` | Timestamps of CodeRabbit's comments per head from the issue comments API |
-| Stages inside each live case | Per-operation timings (Draft B) |
+| Stages inside each live case | Per-operation timings (Draft C) |
 | Live preparation and image cleanup time | Timestamps the host agents already report at start and after cleanup, retained with the run |
 | Live runs with a present base image or warm build cache | None on record; any such run needs its own decision because image cleanup removes run-built images |
 | Manual checklist duration | Start and end time noted by the person running it |
