@@ -70,14 +70,24 @@ If an `update` failure includes a `retry:` line, it repeats the command you ran,
 
 ## Move OpenCode to its new package
 
-`opencode` is installed from the npm package `@opencode/cli`, OpenCode's v2 distribution; earlier releases installed `opencode-ai`. The agent name, its command, and its `opencode auth login` workflow are still `opencode`. A sandbox that enabled `opencode` before the change keeps working: the manager still recognizes an `opencode-ai` installation as the managed one, under the checks it applies to every installation (the prefix and the package metadata must lie inside the manager's own installation, and the metadata must name the package), and it never installs `opencode-ai` again.
+`opencode` is installed from the npm package `@opencode/cli`, OpenCode's v2 distribution; earlier releases installed `opencode-ai`. The agent name, its command, and its `opencode auth login` workflow are still `opencode`. A sandbox that enabled `opencode` before the change keeps working: the manager still recognizes an `opencode-ai` installation as the managed one, and it never installs `opencode-ai` again. It does not inspect the package of a healthy selected installation. When `--force` or a mismatched command link requires the check, the command must lead to one installation directory of the manager and the package metadata inside it must name `@opencode/cli` or `opencode-ai`; any other package is refused.
 
-Two commands replace an `opencode-ai` installation with `@opencode/cli`:
+**Step 1: update the sandbox.** The manager that runs `agents` commands is part of the sandbox's image, so a sandbox created before the executable you installed keeps an earlier manager, which does not know `@opencode/cli`. After installing the updated `sandboxed-agents`, replace the sandbox's image:
+
+```text
+sandboxed-agents update agent01
+```
+
+This keeps the workspace, home data, and agent selection. It ends running agent sessions, so it refuses while one runs unless you add `--force` ([Updating a sandbox](images.md#updating-a-sandbox)). The `agents` commands below need the sandbox to be running; `sandboxed-agents start agent01` starts it.
+
+**Step 2: migrate, with one of two commands.** Either one is enough; do not run both. `agent01` is the sandbox name and `opencode` the agent:
 
 ```text
 sandboxed-agents agents update agent01 opencode
 sandboxed-agents agents enable agent01 opencode --force
 ```
+
+**Step 3: check.** `sandboxed-agents agents status agent01 opencode` shows the installed version, which now comes from `@opencode/cli`; at the time of writing that is a 2.x version, and a later release of OpenCode may use another major number.
 
 A bare `agents enable agent01 opencode` migrates nothing: on a healthy installation it is the usual no-op, with `opencode-ai` or `@opencode/cli`, and needs no registry. So is `enable --force` on a healthy `@opencode/cli` installation. `enable --force` on an `opencode-ai` installation replaces it, as `update` does, and both check a recorded pin first, as described under **Pins**. `update` without `--force` refuses while an `opencode` session runs; either command with `--force` stops that session first ([Sessions and installation changes](#sessions-and-installation-changes)).
 
@@ -86,19 +96,22 @@ The migration changes the installation and the selection only. It does not touch
 **Pins.** A pin recorded for `opencode-ai`, such as `1.19.5` or `1.19.6`, names a version that `@opencode/cli` does not publish, so the manager does not carry it across the package. For `opencode`, the manager checks a version only when one is requested or an installation is needed: an explicit `--version` on `agents enable`, even one equal to the installed version, and the recorded pin when `agents update` without `--unpin`, `agents enable --force` on an `opencode-ai` installation, or a repair of a missing or mismatched command installs again. A healthy installation with no `--version` and nothing to install is checked against nothing. The check is a read-only `npm view` of the published versions of `@opencode/cli`, run as `agent` with the sandbox's own npm configuration, before any `npm install` and before the session check:
 
 - **The version is published.** The command goes on as for any pin.
-- **The version is not published.** The command exits non-zero before it installs anything. It changes neither the installation, the selection, nor a running session, and it names the newest published version. When `opencode` is not enabled yet, the message names only the `enable` command, because `agents update` needs an enabled agent:
+- **The version is not published.** The command exits non-zero before it installs anything. It changes neither the installation, the selection, nor a running session, and it names the version that npm's `latest` tag points to, which is not necessarily the highest published version. A failed `agents update` prints the manager's message, then a `retry:` line that the host adds to every failed `agents update`. For a recorded pin to `1.19.6`, an example of the error message, which the executable's own formatting may prefix, is:
 
   ```text
-  sandboxed-agents agents enable agent01 opencode --version 2.3.0
+  agents update opencode: opencode version 1.19.6 is not published by @opencode/cli; retry agents update --unpin or agents enable --version 2.3.0; retry: agents update agent01 opencode
   ```
 
-  When `opencode` is already enabled, it also names the other way out, which installs the newest version and clears the pin:
+  The first `retry` is the manager's hint in short form, without sandbox or agent name. The final `retry:` repeats the refused command with the same recorded pin, so running it fails again. Instead, run one of these full commands with your sandbox name, `opencode`, and the version the message names (`2.3.0` is only an example):
 
   ```text
   sandboxed-agents agents update agent01 opencode --unpin
+  sandboxed-agents agents enable agent01 opencode --version 2.3.0
   ```
 
-  `--unpin` is an option of `agents update`, and `--version` an option of `agents enable`. `2.3.0` stands for the newest version the message names.
+  The first installs the `latest` version and clears the pin; the second pins the named version. When `opencode` is not enabled yet, the message names only the `enable` command, because `agents update` needs an enabled agent. `agents enable` adds no `retry:` line.
+
+  `--unpin` is an option of `agents update`, and `--version` an option of `agents enable`. `2.3.0` stands for the version that npm's `latest` tag points to, which the message names.
 - **The lookup fails**, or npm returns no usable list of versions: the command exits non-zero with `cannot check opencode pin X`, before anything changes. It does not say that the pin is unpublished, because it does not know. Retry when the registry is reachable from the sandbox.
 
 `agents update agent01 opencode --unpin` and every unpinned command without `--version` make no lookup.
