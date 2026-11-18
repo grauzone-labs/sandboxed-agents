@@ -7,7 +7,7 @@ This page tells you what the image a sandbox runs in contains, which toolchains 
 The base image is Debian 13 (trixie) slim with Node.js 24 LTS. It contains:
 
 - OpenSSH server and client, Git, GitHub CLI, tmux, `curl`, `jq`, `ripgrep`, `less`, `unzip`, `zip`, `xz-utils`, `file`, `procps`, Bash, coreutils, findutils, `gnupg`, CA certificates, and `libatomic1`, the GCC atomics runtime library that the T3 Code runtime loads.
-- Node.js 24 and npm from the NodeSource repository `node_24.x`, installed after its [signing key check](#signing-key-checks).
+- Node.js 24 from the NodeSource repository `node_24.x`, installed after its [signing key check](#signing-key-checks), and then npm at `npm@latest`, which replaces the npm that the NodeSource package carries. Node.js stays on major version 24. `build` resolves the npm release when it rebuilds the base image. A build that reuses cached layers keeps their npm ([Build, refresh, and reuse](#build-refresh-and-reuse)), and nothing updates npm at sandbox startup. A latest npm whose declared Node.js range excludes the installed Node.js 24 release fails the build ([npm engine requirements](#npm-engine-requirements)). Toolchain images are built on this base image and inherit its npm. Image builds do not affect the host's npm or the npm that the release workflow pins for publishing.
 - Tailscale (`tailscale` and `tailscaled`) from Tailscale's Debian 13 repository, installed after its [signing key check](#signing-key-checks), for the T3 Code Tool's tailnet node ([ADR 0010](adr/0010-t3-code-pairs-over-an-in-sandbox-tailnet-node.md)). The image starts no Tailscale process: the manager starts `tailscaled` as `agent` in userspace networking mode, inside the Tool directory, only after `tools tailscale NAME t3code login`. A sandbox without that login runs no Tailscale process and creates no Tailscale state.
 - The user `agent` with UID and GID 1000, the directory `/workspace` owned by `agent`, and no baked SSH host keys.
 - The in-container manager at `/usr/local/bin/sandboxed-agents-manager`.
@@ -16,6 +16,12 @@ The base image is Debian 13 (trixie) slim with Node.js 24 LTS. It contains:
 ### Installed version manifest
 
 Every image records the versions of what it installed in `/usr/local/share/sandboxed-agents/versions.txt`: `/etc/os-release`, every Debian package with its version, the Node.js and npm versions, and the manager version. A toolchain image rewrites the same file and adds the output of `dotnet --list-sdks`, `playwright --version`, `az version`, and `cc --version` for the toolchains present.
+
+### npm engine requirements
+
+The npm install step passes `--engine-strict`, so npm refuses a latest release whose declared Node.js range excludes the installed Node.js 24 with `EBADENGINE`, and the image build fails. Only the declared range is checked. The build neither falls back to an earlier npm nor moves to another Node.js major version, and no option overrides the floating `npm@latest` choice.
+
+An `EBADENGINE` failure ends the Podman build before Podman tags an image, so the existing tag stays and existing images and sandboxes stay usable ([Build, refresh, and reuse](#build-refresh-and-reuse) covers a failure after tagging), but a new executable with no image yet cannot create a sandbox until an image build succeeds. Rerun `build` later. Each `build` installs the newest `node_24.x` package that NodeSource offers and `npm@latest`; the engine check passes once npm's declared range includes that Node.js 24 release, which can follow either a new npm release or a new NodeSource Node.js 24 release. Passing the check does not guarantee that the rest of the build succeeds.
 
 ### SSH host keys
 
@@ -32,6 +38,8 @@ After the host keys exist, the entrypoint replaces itself with `/usr/sbin/sshd -
 The recipe adds two package repositories beyond Debian's, NodeSource for Node.js and Tailscale's for the `tailscale` package, and pins each repository's signing key by fingerprint. For each one it downloads the key into a temporary file and runs `check-signing-key.sh`, which compares the fingerprint of the one primary key the file must contain with the expected fingerprint: `6F71F525282841EEDAF851B42F59B5F99B1BE0B4` for NodeSource and `2596A99EAAB33821893C0A79458CA832957F5868` for Tailscale. Only after the check passes does it write the keyring, dearmored for NodeSource into `/etc/apt/keyrings/nodesource.gpg` and copied as the binary keyring Tailscale publishes into `/etc/apt/keyrings/tailscale.gpg`, and the apt source line with `signed-by` pointing at that file. A differing fingerprint fails the check and prints the repository's name with the expected and the found fingerprint; a file with other than one primary key fails it and prints the count, the expected fingerprint, and every primary fingerprint found. A failed check fails the image build, and nothing from that repository is installed, because the keyring and the source line are never written.
 
 The pins detect a later change of a key, not a key that was substituted before its first recorded copy. If NodeSource or Tailscale rotates its key, `build` stops and builds no image for any toolchain set, the previous images stay usable under their tags, and `up` cannot build a missing base image until the recipe is updated. The provenance of the expected fingerprints and the rotation procedure are in the [maintainer notes](maintainers.md#repository-signing-keys).
+
+Neither pin covers the replacement npm. The build fetches `npm@latest` from the public npm registry, `registry.npmjs.org`, over HTTPS, and npm checks the downloaded archive against the integrity value in the registry's metadata for that release. No separately pinned signing key, version, or hash applies to this download, and that check does not authenticate the publisher independently of the registry. The NodeSource key covers the NodeSource package, not the npm that replaces its copy.
 
 ## Toolchains
 
@@ -65,17 +73,17 @@ A build materializes the complete context in a temporary directory, with text no
 
 ## Build, refresh, and reuse
 
-`build [--with ...]` always builds anew, so a new build installs current packages. With or without `--with`:
+`build [--with ...]` always builds anew, so a new build installs current packages, including the current `npm@latest`. With or without `--with`:
 
 1. It lists the images that carry the marker label and the asset hash of the running executable and reads each image's toolchain set. The result is every existing toolchain set of this executable, in any controller group. `--with a,b` adds that set when no image exists for it. Images from other executables (other asset hashes) are neither found nor rebuilt.
 2. It rebuilds the base image with `--no-cache --pull=always`, so Podman pulls `debian:trixie-slim` again.
 3. It rebuilds each toolchain set in sorted order on the new base image with `--no-cache --pull=never`, even when the tag already exists.
 
-When the base image fails to build, including a failed key check, `build` stops and builds no toolchain image. When a toolchain image fails to build, `build` continues with the remaining sets, then names the failed sets and exits non-zero. A failed build never replaces its tag, so an image that was not rebuilt stays usable under its tag. A successful rebuild moves the tag to the new image; the previous image loses the tag but still backs the sandboxes created from it.
+When the base image fails to build, including a failed key check, `build` stops and builds no toolchain image. When a toolchain image fails to build, `build` continues with the remaining sets, then names the failed sets and exits non-zero. A build that fails inside Podman does not move its tag, so an image that was not rebuilt stays usable under its tag. Once Podman has built and tagged an image, removing the temporary build context can still fail: `build` then reports the failure and counts the set as failed although the new tag may already have moved, and it does not roll the tag back. Existing sandboxes stay on their old image until `update`. A successful rebuild moves the tag to the new image; the previous image loses the tag but still backs the sandboxes created from it.
 
-Once the base image has been rebuilt, `build` prints that existing sandboxes keep their image until `update` and that `list` marks them as outdated, also when a toolchain image failed. Because images are shared, the rebuild affects the sandboxes of every controller group. `build` followed by `update` brings a sandbox to fresh packages ([Updating a sandbox](#updating-a-sandbox)).
+Once the base image has been rebuilt, `build` prints that existing sandboxes keep their image until `update` and that `list` marks them as outdated, also when a toolchain image failed. Because images are shared, the rebuild affects the sandboxes of every controller group. `build` followed by `update NAME` brings a sandbox to the packages that `build` installed, including the npm that was `latest` when `build` ran ([Updating a sandbox](#updating-a-sandbox)); `build` alone leaves every existing sandbox, running or stopped, as it is.
 
-`up` builds only a missing image and may use the layer cache. A toolchain image counts as missing when its base image label differs from the ID of the current base image, so `up` never creates a sandbox from a toolchain image built on a superseded base. It never rebuilds an existing, current image.
+`up` builds only a missing image and may use the layer cache; `update NAME` and `update --all` build a missing image the same way. None of them promises a fresh `npm@latest` resolution: an existing image or cached layers keep the npm they already hold, and only `build` guarantees a fresh resolution, so run it first when you want the current npm. A toolchain image counts as missing when its base image label differs from the ID of the current base image, so `up` never creates a sandbox from a toolchain image built on a superseded base. It never rebuilds an existing, current image.
 
 ### Recorded set and outdated sandboxes
 
@@ -115,6 +123,8 @@ Recovery restores the sandbox's volumes, configuration, and prior running or sto
 Only two conditions retain the backup and refuse without restoring: a backup without a recorded running state, and an owner conflict, which is reported before anything else. Both change nothing and point to Podman. A backup that stays retained may be the only good container and must not be removed by hand.
 
 A failure during recovery leaves one of two states, and the output tells them apart. If removing the replacement or renaming the backup fails, the output names that step and the retained backup, and the next `update NAME` judges the objects afresh. If the rename succeeded and only starting the restored sandbox fails, the old container is already back under the sandbox's name and stopped; the output says that the sandbox was restored but could not be started and names `start NAME`. A failed removal of the backup after a ready replacement is the `update interrupted` case above, and `update NAME` retries that cleanup.
+
+Recovery builds no image and does not compare the replacement with the current image tag, so a replacement that it completes may come from an older image. After a recovery, check `list` and run `update NAME` again if the sandbox is still marked outdated.
 
 ### Updating every sandbox
 
