@@ -80,6 +80,16 @@ func inspectImage(p podmanTarget, name string) (imageRecord, error) {
 // buildLabeledImage builds an image with product, asset, toolchain, and base-image labels and
 // the requested refresh policy.
 func buildLabeledImage(p podmanTarget, set []string, hash, baseID string, refresh bool, output io.Writer) (string, error) {
+	lock, err := acquireImageLock(p, image.Tag(hash, set))
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	return buildLabeledImageUnderLock(p, set, hash, baseID, refresh, output)
+}
+
+// buildLabeledImageUnderLock builds a tag while its caller holds that tag's shared image lock.
+func buildLabeledImageUnderLock(p podmanTarget, set []string, hash, baseID string, refresh bool, output io.Writer) (string, error) {
 	return image.BuildWithToolchains(context.Background(), nil, set, func(ctx context.Context, args ...string) error {
 		flags := []string{"--label", imageMarkerLabel + "=sandboxed-agents", "--label", assetHashLabel + "=" + hash, "--label", ToolchainsLabel + "=" + toolchainSet(set)}
 		if refresh {
@@ -179,22 +189,21 @@ func ensureImage(p podmanTarget, set []string, output io.Writer) (string, error)
 	if err != nil {
 		return "", err
 	}
-	baseTag := image.Tag(hash, nil)
-	baseExists, err := p.exists(imageResource, baseTag)
-	if err != nil {
-		return "", err
-	}
-	if !baseExists {
-		if _, err := buildLabeledImage(p, nil, hash, "", false, output); err != nil {
+	// Take the toolchain lock before reading the base ID: a waiter must judge the
+	// completed toolchain build against the base that is current after its wait.
+	if len(set) > 0 {
+		lock, err := acquireImageLock(p, image.Tag(hash, set))
+		if err != nil {
 			return "", err
 		}
+		defer lock.Close()
+	}
+	baseTag, baseID, err := ensureBaseImage(p, hash, len(set) > 0, output)
+	if err != nil {
+		return "", err
 	}
 	if len(set) == 0 {
 		return baseTag, nil
-	}
-	base, err := inspectImage(p, baseTag)
-	if err != nil {
-		return "", err
 	}
 	tag := image.Tag(hash, set)
 	exists, err := p.exists(imageResource, tag)
@@ -206,11 +215,37 @@ func ensureImage(p podmanTarget, set []string, output io.Writer) (string, error)
 		if err != nil {
 			return "", err
 		}
-		if current.Labels[baseImageLabel] == base.ID {
+		if current.Labels[baseImageLabel] == baseID {
 			return tag, nil
 		}
 	}
-	return buildLabeledImage(p, set, hash, base.ID, false, output)
+	return buildLabeledImageUnderLock(p, set, hash, baseID, false, output)
+}
+
+// ensureBaseImage checks or builds the base tag under its image lock, returning its immutable
+// ID only when a toolchain build needs it. A toolchain ensure already holds its toolchain lock;
+// explicit rebuilds release the base lock before taking a toolchain lock, avoiding a cycle.
+func ensureBaseImage(p podmanTarget, hash string, inspect bool, output io.Writer) (string, string, error) {
+	tag := image.Tag(hash, nil)
+	lock, err := acquireImageLock(p, tag)
+	if err != nil {
+		return "", "", err
+	}
+	defer lock.Close()
+	exists, err := p.exists(imageResource, tag)
+	if err != nil {
+		return "", "", err
+	}
+	if !exists {
+		if _, err := buildLabeledImageUnderLock(p, nil, hash, "", false, output); err != nil {
+			return "", "", err
+		}
+	}
+	if !inspect {
+		return tag, "", nil
+	}
+	base, err := inspectImage(p, tag)
+	return tag, base.ID, err
 }
 
 // sandboxImageOutdated compares a sandbox's image with the current image for its recorded

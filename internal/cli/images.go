@@ -62,6 +62,15 @@ func prepareUp(request Request, p podmanTarget, output, progress io.Writer) erro
 	if err != nil {
 		return err
 	}
+	portLock, err := acquirePortAllocationLock(p)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if portLock != nil {
+			portLock.Close()
+		}
+	}()
 	port, err := allocatePort(p, request.Options["port"])
 	if err != nil {
 		return err
@@ -109,6 +118,9 @@ func prepareUp(request Request, p podmanTarget, output, progress io.Writer) erro
 		return fail(err)
 	}
 	containerCreated = true
+	// The container now records the claim, so other creations can read it before starting.
+	portLock.Close()
+	portLock = nil
 	if _, err := p.query("start", names.Container); err != nil {
 		return fail(err)
 	}

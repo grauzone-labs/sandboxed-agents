@@ -89,6 +89,12 @@ func acquireSSHConfigLock(dir, group string) (*os.File, error) {
 // lock, a hostLockFailure when the lock call fails otherwise, and an error naming the lock kind
 // when the lock file cannot be prepared.
 func acquireHostLock(dir, name, kind string) (*os.File, error) {
+	return acquireHostLockMode(dir, name, kind, false)
+}
+
+// acquireHostLockMode prepares a regular host lock file and acquires its exclusive OS lock,
+// waiting only when requested. The file stays in place when its descriptor is closed.
+func acquireHostLockMode(dir, name, kind string, wait bool) (*os.File, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create %s lock directory: %w", kind, err)
 	}
@@ -107,7 +113,11 @@ func acquireHostLock(dir, name, kind string) (*os.File, error) {
 		file.Close()
 		return nil, fmt.Errorf("%s lock path is not a regular file: %s", kind, path)
 	}
-	if err := lockLifecycleFile(file); err != nil {
+	lockFile := lockLifecycleFile
+	if wait {
+		lockFile = lockSharedFile
+	}
+	if err := lockFile(file); err != nil {
 		file.Close()
 		if lifecycleLockBusy(err) {
 			return nil, errHostLockBusy
