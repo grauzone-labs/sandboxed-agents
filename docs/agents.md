@@ -87,6 +87,8 @@ sandboxed-agents agents update agent01 opencode
 sandboxed-agents agents enable agent01 opencode --force
 ```
 
+If `agents status agent01 opencode` shows a recorded pin, read **Pins** below before you choose: a pin to a version of `opencode-ai` is refused before anything changes.
+
 **Step 3: check.** `sandboxed-agents agents status agent01 opencode` shows the installed version, which now comes from `@opencode/cli`; at the time of writing that is a 2.x version, and a later release of OpenCode may use another major number.
 
 A bare `agents enable agent01 opencode` migrates nothing: on a healthy installation it is the usual no-op, with `opencode-ai` or `@opencode/cli`, and needs no registry. So is `enable --force` on a healthy `@opencode/cli` installation. `enable --force` on an `opencode-ai` installation replaces it, as `update` does, and both check a recorded pin first, as described under **Pins**. `update` without `--force` refuses while an `opencode` session runs; either command with `--force` stops that session first ([Sessions and installation changes](#sessions-and-installation-changes)).
@@ -139,7 +141,7 @@ An `enable` or `update` that is killed at the wrong moment, or cut off by a cont
 
 Installing again keeps the pin recorded in the selection. `enable --version X` replaces it with `X`, and `update --unpin` clears it. A change that fails never reports the agent as enabled.
 
-**A dangling command link.** An absent link is repaired as the table says. A link that exists but whose target file or installation directory is missing is refused by `enable` and `update` even with `--force`, because the manager cannot tell what it belonged to; the message ends with `manual recovery required: inspect the installation and remove the dangling command link before retrying with --force`. In `shell agent01`, which runs as `agent`, inspect the link, remove only the link, and retry (shown for `opencode`):
+**A dangling command link.** An absent link is repaired as the table says. A link that exists but whose target file or installation directory is missing is refused by `enable`, `update`, and `disable` even with `--force`, because the manager cannot tell what it belonged to; the message ends with `manual recovery required: inspect the installation and remove the dangling command link before retrying with --force`. In `shell agent01`, which runs as `agent`, inspect the link, remove only the link, and then retry the command that was refused (shown for `opencode`):
 
 ```text
 ls -l ~/.local/bin/opencode
@@ -151,7 +153,7 @@ else
 fi
 ```
 
-The `rm` runs only when the path is a symbolic link whose target is missing. If the block prints `not a dangling link: stop here`, the path is a regular file or a working link: stop, remove nothing, and do not retry `--force`. After `removed the dangling link`, leave the shell and run `sandboxed-agents agents enable agent01 opencode --force`. `rm` removes the link itself and not what it points to; leave the installation and home data directories as they are.
+The `rm` runs only when the path is a symbolic link whose target is missing. If the block prints `not a dangling link: stop here`, the path is absent, a regular file, or a working link, and nothing was removed. If it is absent, the manager can repair it: retry the command that was refused. Otherwise stop and do not retry `--force`. After `removed the dangling link`, leave the shell and retry the refused command, for `enable` as `sandboxed-agents agents enable agent01 opencode --force`. `rm` removes the link itself and not what it points to; leave the installation and home data directories as they are.
 
 A change that inspects an agent's command checks it before it runs npm or changes anything, and refuses an unsafe command, with or without `--force`. `--force` applies only to the managed installation of the same catalog agent. It never bypasses this check: a regular file, a link outside the manager's installations, a link into another agent's installation or package, and a link that escapes its installation are all refused. Read-only commands do not change the command and do not refuse because of a command-link mismatch. `list` reads only the selection. `status` reads the selection and the command link, and runs the status probe only when the link is the selection's managed link; otherwise it shows signed in as `unknown`. A normal `disable` of an agent that is not enabled still reports that there is nothing to disable.
 

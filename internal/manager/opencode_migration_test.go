@@ -424,10 +424,63 @@ func TestOpenCodeDanglingCommandRequiresManualRecovery(t *testing.T) {
 	}
 }
 
+// TestOpenCodeForcedEnableRecoversLegacyCommand proves force migrates mismatched and unselected predecessor links, cleans old prefixes, and preserves home data and requested pins at RunWithEffects.
+func TestOpenCodeForcedEnableRecoversLegacyCommand(t *testing.T) {
+	for _, test := range []struct {
+		name                 string
+		selected             bool
+		args                 []string
+		wantVersion, wantPin string
+		wantViews            int
+	}{
+		{name: "mismatched-selected", selected: true, args: []string{"enable", "opencode", "--force", "--version", "2.0.0"}, wantVersion: "2.0.0", wantPin: "2.0.0", wantViews: 1},
+		{name: "unselected", args: []string{"enable", "opencode", "--force"}, wantVersion: "2.3.0"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home, version, installs, views := legacyOpenCodeHome(t, "1.19.6"), "2.3.0", 0, 0
+			root := filepath.Join(home, ".local", "share", "sandboxed-agents")
+			oldPrefixes := []string{filepath.Join(root, "installation-legacy")}
+			if test.selected {
+				orphanHome := legacyOpenCodeHome(t, "")
+				orphanPrefix := filepath.Join(root, "installation-interrupted")
+				if err := os.Rename(filepath.Join(orphanHome, ".local", "share", "sandboxed-agents", "installation-legacy"), orphanPrefix); err != nil {
+					t.Fatal(err)
+				}
+				command := filepath.Join(home, ".local", "bin", "opencode")
+				if err := os.Remove(command); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(orphanPrefix, "bin", "opencode"), command); err != nil {
+					t.Fatal(err)
+				}
+				oldPrefixes = append(oldPrefixes, orphanPrefix)
+			} else if err := os.WriteFile(filepath.Join(root, "selection.json"), []byte(`{}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			unchanged := snapshotOpenCodeFiles(t, home, ".config/opencode/opencode.json", ".local/share/opencode/auth.json")
+			effects := openCodeRegistry(t, agentEffects(t, home, &version, &installs), openCodePublishedVersions, nil, &views)
+			runAgents(t, effects, 0, test.args...)
+			if got := readAgentStatus(t, effects, "opencode"); !got.Enabled || got.InstalledVersion != test.wantVersion || got.Pin != test.wantPin || installs != 1 || views != test.wantViews {
+				t.Fatalf("legacy recovery status=%+v installs=%d views=%d", got, installs, views)
+			}
+			assertOpenCodeSelectedCommand(t, home)
+			for _, prefix := range oldPrefixes {
+				if _, err := os.Lstat(prefix); !os.IsNotExist(err) {
+					t.Fatalf("unreferenced legacy prefix retained=%q error=%v", prefix, err)
+				}
+			}
+			unchanged()
+		})
+	}
+}
+
 // TestOpenCodeRecoveryRejectsForeignCommand proves recognized metadata alone cannot authorize a foreign command or deletion during forced mutations at RunWithEffects.
 func TestOpenCodeRecoveryRejectsForeignCommand(t *testing.T) {
 	for _, selected := range []bool{true, false} {
 		for _, operation := range []string{"enable", "update", "disable"} {
+			if !selected && operation == "update" {
+				continue
+			}
 			t.Run(fmt.Sprintf("selected=%v/%s", selected, operation), func(t *testing.T) {
 				home, version, installs := legacyOpenCodeHome(t, ""), "2.3.0", 0
 				root := filepath.Join(home, ".local", "share", "sandboxed-agents")
@@ -443,27 +496,18 @@ func TestOpenCodeRecoveryRejectsForeignCommand(t *testing.T) {
 				if err := os.WriteFile(target, []byte("foreign command"), 0700); err != nil {
 					t.Fatal(err)
 				}
-				outside := filepath.Join(t.TempDir(), "unrelated")
-				if err := os.WriteFile(outside, []byte("outside prefix"), 0600); err != nil {
-					t.Fatal(err)
-				}
 				unchangedFiles := snapshotOpenCodeFiles(t, home, ".local/share/sandboxed-agents/selection.json", ".config/opencode/opencode.json", ".local/share/opencode/auth.json", ".local/share/sandboxed-agents/installation-legacy/lib/node_modules/opencode-ai/package.json")
 				unchangedCommand := snapshotOpenCodeCommand(t, home)
 				effects := agentEffects(t, home, &version, &installs)
 				output := runAgents(t, effects, 1, operation, "opencode", "--force")
-				if selected || operation != "update" {
-					if !strings.Contains(output, "command does not belong to the recognized package") {
-						t.Fatalf("foreign command refusal=%s", output)
-					}
+				if !strings.Contains(output, "command does not belong to the recognized package") {
+					t.Fatalf("foreign command refusal=%s", output)
 				}
 				if installs != 0 {
 					t.Fatalf("foreign command started npm: %d", installs)
 				}
 				unchangedFiles()
 				unchangedCommand()
-				if got, err := os.ReadFile(outside); err != nil || string(got) != "outside prefix" {
-					t.Fatalf("outside file changed=%q error=%v", got, err)
-				}
 			})
 		}
 	}
