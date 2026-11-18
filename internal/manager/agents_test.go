@@ -15,7 +15,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
 
-// agentEffects requires Linux for the real manager lock, then fakes npm at the process seam while writing installation artifacts into the test home.
+// agentEffects requires Linux for the real manager lock, then fakes npm at the process seam while writing package metadata and npm-style command symlinks into the test home.
 func agentEffects(t *testing.T, home string, version *string, installs *int) manager.Effects {
 	t.Helper()
 	if runtime.GOOS != "linux" {
@@ -58,7 +58,14 @@ func agentEffects(t *testing.T, home string, version *string, installs *int) man
 		if err := os.MkdirAll(filepath.Join(prefix, "bin"), 0700); err != nil {
 			t.Fatal(err)
 		}
-		return os.WriteFile(filepath.Join(prefix, "bin", command), []byte("managed command"), 0700)
+		if err := os.WriteFile(filepath.Join(packagePath, "cli.js"), []byte("managed command"), 0700); err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(filepath.Join(prefix, "bin"), filepath.Join(packagePath, "cli.js"))
+		if err != nil {
+			return err
+		}
+		return os.Symlink(relative, filepath.Join(prefix, "bin", command))
 	}
 	return e
 }

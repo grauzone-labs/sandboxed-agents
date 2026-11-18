@@ -1,0 +1,19 @@
+{
+    "observedUtc":  "2026-11-18T14:37:11.2365608Z",
+    "atFailure":  false,
+    "engineInfoNativeExit":  0,
+    "engineInfoCapturedEarlierPostSuite":  true,
+    "memoryFree":  1517109248,
+    "memoryTotal":  4071215104,
+    "swapFree":  1062244352,
+    "swapTotal":  1073741824,
+    "machineInspectNativeExit":  0,
+    "machineResources":  {
+                             "CPUs":  2,
+                             "DiskSize":  100,
+                             "Memory":  2048,
+                             "USBs":  [
+
+                                      ]
+                         }
+}

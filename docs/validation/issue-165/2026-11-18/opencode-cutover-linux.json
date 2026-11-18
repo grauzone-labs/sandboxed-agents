@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "kind": "opencode-cutover-supplement",
+  "commit": "941caa696a9e8e01e764ffbd2c231d8165beba03",
+  "platform": "linux",
+  "result": "pass",
+  "installed_version": "2.3.0",
+  "catalog_package": "@opencode/cli",
+  "legacy_fixture_version": "1.19.6",
+  "cases": {
+    "unpinned_legacy_update_migration": {"result":"pass","exit_status":0,"selection_matches_installed_version":true,"catalog_package_verified":true,"managed_command_link_verified":true,"legacy_prefix_removed":true,"agents_run_version_exit_status":0,"config_sha256":"a3c8f78047529c391dcae8b4f9dca65457f4b8eaa9b4a387d54768440e8ad893","auth_sha256":"edc22ce8fc6d03f5aa5d72fcb5bf59ea95b929b13aee9aaaa07ce9454ba13fa8"},
+    "force_migration_and_interrupted_link_repair": {"result":"pass","enable_exit_status":0,"selection_matches_installed_version":true,"pin_empty":true,"managed_command_link_verified":true,"legacy_prefix_removed":true,"interrupted_prefix_removed":true,"agents_run_version_exit_status":0,"config_preserved":true,"auth_preserved":true},
+    "recorded_unpublished_pin_refusal": {"result":"pass","exit_status":1,"refused_before_install":true,"selection_link_and_files_unchanged":true,"guidance_includes_unpin_and_published_version":true},
+    "requested_unavailable_version_refusal": {"result":"pass","exit_status":1,"refused_before_install":true,"selection_link_and_files_unchanged":true,"guidance_includes_published_version":true},
+    "npm_catalog_shape": {"result":"pass","keys":["dist-tags.latest","versions"],"versions_count":1685,"latest":"2.3.0","legacy_1_19_6_published":false},
+    "unpin_recovery": {"result":"pass","exit_status":0,"selection_unpinned":true,"installed_version":"2.3.0","agents_run_version_exit_status":0,"legacy_prefix_removed":true,"config_preserved":true,"auth_preserved":true},
+    "first_install_unavailable_version_refusal": {"result":"pass","exit_status":1,"refused_before_install":true,"no_selection_link_or_install_prefix_created":true,"guidance_uses_enable_version_without_unpin":true},
+    "proxy_configure_fake_loopback": {"result":"pass","exit_status":0,"endpoint_configured":true,"client_key_is_dummy":true,"model":"cutover-model","existing_config_and_auth_preserved":true},
+    "proxy_agents_run_nonterminal": {"result":"pass","exit_status":0,"output_contains_ok":true,"fake_server_request":{"method":"POST","endpoint":"/v1/chat/completions","client_key_matched_dummy":true,"model":"cutover-model","stream":true,"prompt_received":true}},
+    "proxy_remove_and_state_restore": {"result":"pass","exit_status":0,"original_model_restored":true,"theme_preserved":true,"existing_provider_preserved":true,"proxy_provider_absent":true,"auth_hash_unchanged":true}
+  }
+}
