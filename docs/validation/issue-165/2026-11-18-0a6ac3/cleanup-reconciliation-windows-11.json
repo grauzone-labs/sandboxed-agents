@@ -1,0 +1,1290 @@
+﻿{
+    "commit":  "0a6ac3f3ff866b88045d6cbfc2b33ec50fb51fac",
+    "platform":  "windows-11",
+    "kind":  "cleanup-reconciliation",
+    "suiteResult":  "fail",
+    "suiteNativeExit":  1,
+    "supplementResult":  "pass",
+    "collectorExit":  0,
+    "baselineImages":  1,
+    "baselineContainers":  0,
+    "precleanupImages":  63,
+    "removedCount":  62,
+    "removedLabelled":  38,
+    "removedUnlabelled":  24,
+    "finalImages":  1,
+    "exactSetDifference":  0,
+    "containersRemaining":  0,
+    "externalContainersRemaining":  0,
+    "volumesRemaining":  0,
+    "groupObjectsRemaining":  0,
+    "machineRunning":  true,
+    "rootless":  true,
+    "before":  {
+                   "hostDriveFreeBytes":  76825726976,
+                   "engineCapacity":  1081101176832,
+                   "engineUsed":  1123786752,
+                   "engineFree":  1079977390080,
+                   "peakAdditionalBound":  70112633030
+               },
+    "after":  {
+                  "hostDriveFreeBytes":  76625354752,
+                  "engineCapacity":  1081101176832,
+                  "engineUsed":  1140625408,
+                  "engineFree":  1079960551424
+              },
+    "retained":  [
+                     {
+                         "id":  "596c6d80c879dc94eae22cb9c59a5e18f66f4f9722e170892324c282b4eb19bc",
+                         "size":  81306826,
+                         "tags":  [
+                                      "docker.io/library/debian:trixie-slim"
+                                  ],
+                         "reason":  "baseline image; protected"
+                     }
+                 ],
+    "removed":  [
+                    {
+                        "id":  "7340900e009fcc0d90cc572cd35649c8996a8d97d6c90ce89914990ac21534a5",
+                        "size":  2752943763,
+                        "tags":  [
+                                     "localhost/sandboxed-agents:playwright-3e0d97adedff0a880e8ed4dcc122643680d828330eb200b092fcade8add15020"
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  8018,
+                                          "token":  "7340900e009f",
+                                          "step":  "STEP 6/6: LABEL"
+                                      },
+                                      {
+                                          "line":  8020,
+                                          "token":  "7340900e009fcc0d90cc572cd35649c8996a8d97d6c90ce89914990ac21534a5",
+                                          "step":  "STEP 6/6: LABEL"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "d59ac6079181f0dac159c63ac482ff31e2f32cd79fe4dd8d6726c427b2b87fea",
+                        "size":  2752943243,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  8015,
+                                          "token":  "d59ac6079181",
+                                          "step":  "STEP 5/6: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "bbfff23839679bc84cf184a53950347ecdaf53ed6f97f0a900b0031886959bd6",
+                        "size":  2752924820,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  8013,
+                                          "token":  "bbfff2383967",
+                                          "step":  "STEP 4/6: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "24c6c5aeb195f34a532441ecf63f8a69a99bd2d1154b9454f792ae05326e0c0c",
+                        "size":  604114382,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  5868,
+                                          "token":  "24c6c5aeb195",
+                                          "step":  "STEP 3/6: ENV"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "04bcc3351fc7c6bbf7e1eab8448fd17f17d2dac6b8b48d421c0f816aa3f607d3",
+                        "size":  604114203,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  5866,
+                                          "token":  "04bcc3351fc7",
+                                          "step":  "STEP 2/6: ENV"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "07dfdaa4cda3976881aad3e531d66e1d6846b6be219575e1dc5b4e11f9990bb2",
+                        "size":  951645398,
+                        "tags":  [
+                                     "localhost/sandboxed-agents:native-3e0d97adedff0a880e8ed4dcc122643680d828330eb200b092fcade8add15020"
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  5860,
+                                          "token":  "07dfdaa4cda3",
+                                          "step":  "STEP 4/4: LABEL"
+                                      },
+                                      {
+                                          "line":  5862,
+                                          "token":  "07dfdaa4cda3976881aad3e531d66e1d6846b6be219575e1dc5b4e11f9990bb2",
+                                          "step":  "STEP 4/4: LABEL"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "f9b5bea21061377c49fc0de6b83253bcfbcc11e03c048878601c0fb490c0fff3",
+                        "size":  951644886,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  5857,
+                                          "token":  "f9b5bea21061",
+                                          "step":  "STEP 3/4: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "012dceb8b48ba4febd2cb26af50afa5eb8f317f5c72e03bfa739215a663236c5",
+                        "size":  951634143,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  5855,
+                                          "token":  "012dceb8b48b",
+                                          "step":  "STEP 2/4: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "9b8d3d7b6f396d2ef01cbb618e765f7eeb0bd122c1214d838ee068ab038be67c",
+                        "size":  1885972099,
+                        "tags":  [
+                                     "localhost/sandboxed-agents:dotnet-3e0d97adedff0a880e8ed4dcc122643680d828330eb200b092fcade8add15020"
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  5415,
+                                          "token":  "9b8d3d7b6f39",
+                                          "step":  "STEP 5/5: LABEL"
+                                      },
+                                      {
+                                          "line":  5417,
+                                          "token":  "9b8d3d7b6f396d2ef01cbb618e765f7eeb0bd122c1214d838ee068ab038be67c",
+                                          "step":  "STEP 5/5: LABEL"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "2e9392aa6b21aedac79312f8743dc2bee9298da68f1b856a202337c563a2eb6e",
+                        "size":  1885971587,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  5412,
+                                          "token":  "2e9392aa6b21",
+                                          "step":  "STEP 4/5: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "d9cb4bf750bb08e398b97970aa5c52b5dba19fb7d1ad7689f68914536ebae8ae",
+                        "size":  1885961867,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  5410,
+                                          "token":  "d9cb4bf750bb",
+                                          "step":  "STEP 3/5: ENV"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "84487cfcbb1eecc55916cd82b7e6d05fa0bf568b87a8aeb653675533654e967b",
+                        "size":  1885961674,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  5408,
+                                          "token":  "84487cfcbb1e",
+                                          "step":  "STEP 2/5: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "959089dc7fe0f85d4503161fa68bb9139431a811f4a3e397dff88e254322b582",
+                        "size":  604129718,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  5159,
+                                          "token":  "959089dc7fe0",
+                                          "step":  "STEP 4/10: ENV"
+                                      },
+                                      {
+                                          "line":  8028,
+                                          "token":  "959089dc7fe0",
+                                          "step":  "STEP 4/10: ENV"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "f3470fe9482a2837fc7f34a593f388ffce4126685968739f6dc3367fc5301f01",
+                        "size":  604129467,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  5157,
+                                          "token":  "f3470fe9482a",
+                                          "step":  "STEP 3/10: COPY"
+                                      },
+                                      {
+                                          "line":  8026,
+                                          "token":  "f3470fe9482a",
+                                          "step":  "STEP 3/10: COPY"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "3df9ea379c47dafa1724f4fe2562a6a8f24e78f0d95962aad3793649b7e4fc2c",
+                        "size":  604122745,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  5155,
+                                          "token":  "3df9ea379c47",
+                                          "step":  "STEP 2/10: COPY"
+                                      },
+                                      {
+                                          "line":  8024,
+                                          "token":  "3df9ea379c47",
+                                          "step":  "STEP 2/10: COPY"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "06318290962e9ec3377353ec74c2b09fc5b8b5506e80b96762558d1c7fa846bf",
+                        "size":  604439910,
+                        "tags":  [
+                                     "localhost/sandboxed-agents:none-3e0d97adedff0a880e8ed4dcc122643680d828330eb200b092fcade8add15020"
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  5149,
+                                          "token":  "06318290962e",
+                                          "step":  "STEP 14/14: LABEL"
+                                      },
+                                      {
+                                          "line":  5151,
+                                          "token":  "06318290962e9ec3377353ec74c2b09fc5b8b5506e80b96762558d1c7fa846bf",
+                                          "step":  "STEP 14/14: LABEL"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "a86570ef65b9f6a4d1633dbd7cc9fd8212faeb21827e10293baba842e04f8613",
+                        "size":  604113267,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  5146,
+                                          "token":  "a86570ef65b9",
+                                          "step":  "STEP 13/14: ENTRYPOINT"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "d9de8ac3b22ca16a11ff48f7a3ec76482eaf05cf94d0b0d21008f47e016fb655",
+                        "size":  604112941,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  5144,
+                                          "token":  "d9de8ac3b22c",
+                                          "step":  "STEP 12/14: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "7e07f8e7c4938b0f7c812c1934fa5aefca2029f405ec688f537ecae8a1be3213",
+                        "size":  603786021,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  5142,
+                                          "token":  "7e07f8e7c493",
+                                          "step":  "STEP 11/14: COPY"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "92dcfa17247d477ac1b96ca4bd7b619948ed792e21df319889fb05e87f473ec6",
+                        "size":  598809311,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  5140,
+                                          "token":  "92dcfa17247d",
+                                          "step":  "STEP 10/14: COPY"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "a404032d378f6628f1c7e08bdf25e7c7254686563a07a5322489ec77c6233f48",
+                        "size":  598804635,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  5138,
+                                          "token":  "a404032d378f",
+                                          "step":  "STEP 9/14: WORKDIR"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "003c17692e67cfbecd806c3e6076568ca738bc8174e5a045c2fd9645d8baaec3",
+                        "size":  598804493,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  5136,
+                                          "token":  "003c17692e67",
+                                          "step":  "STEP 8/14: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "e15d22bcb9b1684f6540fc84a300ea024803f135d942a95b310a003d7a5e63ac",
+                        "size":  516059956,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  5029,
+                                          "token":  "e15d22bcb9b1",
+                                          "step":  "STEP 7/14: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "32a1220ac1822219880bd5d257661f8b526dffdebad827d6fc74d09acf94a595",
+                        "size":  276429452,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  4884,
+                                          "token":  "32a1220ac182",
+                                          "step":  "STEP 6/14: COPY"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "8034c4dfd3186920e3716391fa6c98f8cc67d38c95fbd3f51b68c60b94c2ef23",
+                        "size":  276422235,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  4882,
+                                          "token":  "8034c4dfd318",
+                                          "step":  "STEP 5/14: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "213d3414bf5d4f14f5d4b777bc593185580710361093f239f1ea486f2d7cecb2",
+                        "size":  276397998,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  4880,
+                                          "token":  "213d3414bf5d",
+                                          "step":  "STEP 4/14: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "4f7e14a19b8c3f46e2d9c5c5bf9f59064276f0269deb75f8a83aa2b79a91a082",
+                        "size":  81297528,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  4246,
+                                          "token":  "4f7e14a19b8c",
+                                          "step":  "STEP 3/14: ENV"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "3aece2492186ceb241cce57af936394d1bc88261eb112d72a761a5d5781039be",
+                        "size":  81297364,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  4244,
+                                          "token":  "3aece2492186",
+                                          "step":  "STEP 2/14: ARG"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "36a17dbc55bf6505132775e218d20bf6f01dfee2cb6f44ceb0948890ceda008e",
+                        "size":  1295636255,
+                        "tags":  [
+                                     "localhost/sandboxed-agents:azure-3e0d97adedff0a880e8ed4dcc122643680d828330eb200b092fcade8add15020"
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  4102,
+                                          "token":  "36a17dbc55bf",
+                                          "step":  "STEP 10/10: LABEL"
+                                      },
+                                      {
+                                          "line":  4104,
+                                          "token":  "36a17dbc55bf6505132775e218d20bf6f01dfee2cb6f44ceb0948890ceda008e",
+                                          "step":  "STEP 10/10: LABEL"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "ff3c87866f5aae444c68cb852b4e90da977424f18ad77c4d729d254559934130",
+                        "size":  1295625505,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  4099,
+                                          "token":  "ff3c87866f5a",
+                                          "step":  "STEP 9/10: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "76c4c2ec5e1b71663475a3842dec3e1695d0c7fe82b48f11ca7d6b79c11ed7be",
+                        "size":  1295614762,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  4097,
+                                          "token":  "76c4c2ec5e1b",
+                                          "step":  "STEP 8/10: USER"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "c9ac43612a9ddc789f25118536c5da3c1c217af3fab09f0246a53e1a669ee117",
+                        "size":  1295614657,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  4095,
+                                          "token":  "c9ac43612a9d",
+                                          "step":  "STEP 7/10: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "7c1b6865a011f33dd3c496c7f24e800452a9c7ed7bf902c12fa5e30a3dff8289",
+                        "size":  1295612140,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  4084,
+                                          "token":  "7c1b6865a011",
+                                          "step":  "STEP 6/10: USER"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "5f6da3149dc8905b508e0f692f2a930e7da92f23a8699df74787cc88d6d12935",
+                        "size":  1295612013,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  4082,
+                                          "token":  "5f6da3149dc8",
+                                          "step":  "STEP 5/10: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "945b65a72da0575945c7b6ff8c01c0f8eb39ac50f6974abd0a8b45bba3b63959",
+                        "size":  604129721,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  4000,
+                                          "token":  "945b65a72da0",
+                                          "step":  "STEP 4/10: ENV"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "14cad22886d73797c8bd00dd2ae7d583e3bc4e6cbfc7b01aaf7fe60761226b40",
+                        "size":  604129470,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  3998,
+                                          "token":  "14cad22886d7",
+                                          "step":  "STEP 3/10: COPY"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "1e969c0e7295361d8767cced7c8f216f8315c928e67d094c7f3fca7cb657adb1",
+                        "size":  604122751,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  3996,
+                                          "token":  "1e969c0e7295",
+                                          "step":  "STEP 2/10: COPY"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "483d1f16533dde83d17fd6cba0ee7cd2e80c9e03a7efda9f00b159e171c1c2a3",
+                        "size":  2752961685,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  3980,
+                                          "token":  "483d1f16533d",
+                                          "step":  "STEP 6/6: LABEL"
+                                      },
+                                      {
+                                          "line":  3982,
+                                          "token":  "483d1f16533dde83d17fd6cba0ee7cd2e80c9e03a7efda9f00b159e171c1c2a3",
+                                          "step":  "STEP 6/6: LABEL"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "0107a4038bf1b74ffe00a49b9bd41a49d07a4e0b275fc542c15f45330f057c48",
+                        "size":  2752943245,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  3977,
+                                          "token":  "0107a4038bf1",
+                                          "step":  "STEP 5/6: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "7ef91fcfbecc4d0e024526f7bb5a655b7a827fb77fd99874791f3cfcd203a8a7",
+                        "size":  2752924822,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  3975,
+                                          "token":  "7ef91fcfbecc",
+                                          "step":  "STEP 4/6: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "aa0d730cd14866390e1cfdb01657ba02e9cf4a5f71bbcabc609d57114d604243",
+                        "size":  604114384,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  1830,
+                                          "token":  "aa0d730cd148",
+                                          "step":  "STEP 3/6: ENV"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "7d9771ed03b80913f0b8a976992f5bb31bf9e285ff6cb469a4736749cbe40941",
+                        "size":  604114205,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  1828,
+                                          "token":  "7d9771ed03b8",
+                                          "step":  "STEP 2/6: ENV"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "f15abcd45c4ba2b9f8757b0d2f013938cbfb169c0b039531e633ce970e3b5c90",
+                        "size":  1885981316,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  1813,
+                                          "token":  "f15abcd45c4b",
+                                          "step":  "STEP 5/5: LABEL"
+                                      },
+                                      {
+                                          "line":  1815,
+                                          "token":  "f15abcd45c4ba2b9f8757b0d2f013938cbfb169c0b039531e633ce970e3b5c90",
+                                          "step":  "STEP 5/5: LABEL"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "3c18c832eaa9366acbe65435d1506bb607a21bf37c31b058f65e7919f339c324",
+                        "size":  1885971588,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  1810,
+                                          "token":  "3c18c832eaa9",
+                                          "step":  "STEP 4/5: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "006d04f511433df7d7beab5d5bcf810060643aceddc12ceb7b55bd10af1016d9",
+                        "size":  1885961871,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  1808,
+                                          "token":  "006d04f51143",
+                                          "step":  "STEP 3/5: ENV"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "65b797fde86134e07c636db6ac3400f4d95d83d0c021cd3de8498d750f4a4258",
+                        "size":  1885961674,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  1806,
+                                          "token":  "65b797fde861",
+                                          "step":  "STEP 2/5: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "f9579cb9fb1f5d2f00ae6eb7c162623b0caec7a482a23781ea3fbb01ebdace84",
+                        "size":  951655640,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  1414,
+                                          "token":  "f9579cb9fb1f",
+                                          "step":  "STEP 4/4: LABEL"
+                                      },
+                                      {
+                                          "line":  1416,
+                                          "token":  "f9579cb9fb1f5d2f00ae6eb7c162623b0caec7a482a23781ea3fbb01ebdace84",
+                                          "step":  "STEP 4/4: LABEL"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "b273ff7068b8e181cad0433cfea865967c40e69c21d8edb5105a692f4ba22da7",
+                        "size":  951644888,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  1411,
+                                          "token":  "b273ff7068b8",
+                                          "step":  "STEP 3/4: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "4518744e023927aa74647c1e48c27e03bd16728f9b97b939d12b7119ff44e7e9",
+                        "size":  951634145,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  1409,
+                                          "token":  "4518744e0239",
+                                          "step":  "STEP 2/4: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "1b32c6770acdabe0e547d9d606aa61d7c0f685d116594c3166fe96b8f578dcd8",
+                        "size":  604439912,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible direct build output/asset match",
+                        "proof":  [
+                                      {
+                                          "line":  922,
+                                          "token":  "1b32c6770acd",
+                                          "step":  "STEP 14/14: LABEL"
+                                      },
+                                      {
+                                          "line":  924,
+                                          "token":  "1b32c6770acdabe0e547d9d606aa61d7c0f685d116594c3166fe96b8f578dcd8",
+                                          "step":  "STEP 14/14: LABEL"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "cc65d6384463b2e4b659850b550c6205740f82ca33f91b806432b1ade9c3fca4",
+                        "size":  604113275,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  919,
+                                          "token":  "cc65d6384463",
+                                          "step":  "STEP 13/14: ENTRYPOINT"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "4c53de09bddac1276abf507052bf00e6a836c0b88c6463854166d47fab3d1816",
+                        "size":  604112941,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  917,
+                                          "token":  "4c53de09bdda",
+                                          "step":  "STEP 12/14: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "5f502a099a457e25f1641d71b784a94af58f207ce97ca164b90afb20853b8c17",
+                        "size":  603786021,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  915,
+                                          "token":  "5f502a099a45",
+                                          "step":  "STEP 11/14: COPY"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "f16fb1cac9e4e23772dcf8017db9acc5797a97a0b531587d2e0501ab7b65a0cb",
+                        "size":  598809311,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  913,
+                                          "token":  "f16fb1cac9e4",
+                                          "step":  "STEP 10/14: COPY"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "7eec67181a6baca71f049e670bb9475fe669d21306c0f770daced552fe9c4d21",
+                        "size":  598804635,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  911,
+                                          "token":  "7eec67181a6b",
+                                          "step":  "STEP 9/14: WORKDIR"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "091729cc2b28845dd6a1b18bdcde95cd3c132b302e6976fc1f996ed8746c199d",
+                        "size":  598804493,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  909,
+                                          "token":  "091729cc2b28",
+                                          "step":  "STEP 8/14: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "0df153f742a2d16bc50711fd5633bbb98a4668409a1ac87c80e873fc815b0960",
+                        "size":  516059956,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  802,
+                                          "token":  "0df153f742a2",
+                                          "step":  "STEP 7/14: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "103e50a9b745f694b0195052458404d1ae3c8415701c5a7e046c40785861ad9c",
+                        "size":  276429452,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  657,
+                                          "token":  "103e50a9b745",
+                                          "step":  "STEP 6/14: COPY"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "c7600dddcb74f82ac9b4b4cdc317ce0ba57c7d6a4ee07df990dbe3c9f7c7e92f",
+                        "size":  276422235,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  655,
+                                          "token":  "c7600dddcb74",
+                                          "step":  "STEP 5/14: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "3360e549709b8f765f5019976f2c4d0dfadf5e3affc2f5347548c6d563e7e3e1",
+                        "size":  276397998,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  653,
+                                          "token":  "3360e549709b",
+                                          "step":  "STEP 4/14: RUN"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "936fa98905b4febbd03879c686ad7e0a5fd026996cb585eac87ef5f3daea83e6",
+                        "size":  81297528,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  19,
+                                          "token":  "936fa98905b4",
+                                          "step":  "STEP 3/14: ENV"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    },
+                    {
+                        "id":  "7f6e104b98135a03fdad25abdef3e486d0c8ae4571e00b12fd27a5734a4b56b2",
+                        "size":  81297364,
+                        "tags":  [
+
+                                 ],
+                        "reason":  "eligible unlabelled STEP intermediate; labels via final build flags, no inline LABEL",
+                        "proof":  [
+                                      {
+                                          "line":  17,
+                                          "token":  "7f6e104b9813",
+                                          "step":  "STEP 2/14: ARG"
+                                      }
+                                  ],
+                        "removeExit":  0,
+                        "imageExistsExit":  1,
+                        "noPrune":  true,
+                        "force":  false
+                    }
+                ],
+    "queryNativeExits":  0,
+    "supplementRemoveNativeExit":  0,
+    "groupStateRemaining":  false,
+    "ownEmptyLockFilesRemoved":  2
+}

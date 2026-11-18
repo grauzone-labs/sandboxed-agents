@@ -682,6 +682,10 @@ func TestOpenCodeManualRecoveryPreservesSessionGuards(t *testing.T) {
 					t.Fatal(err)
 				}
 				unchanged := snapshotOpenCodeFiles(t, home, ".local/share/sandboxed-agents/selection.json", ".config/opencode/opencode.json", ".local/share/opencode/auth.json", ".local/share/sandboxed-agents/installation-legacy/preserve.txt")
+				var workingCommandUnchanged func()
+				if workingLink {
+					workingCommandUnchanged = snapshotOpenCodeCommand(t, home)
+				}
 				args := []string{operation, "opencode"}
 				if operation == "update" {
 					args = append(args, "--unpin")
@@ -691,6 +695,9 @@ func TestOpenCodeManualRecoveryPreservesSessionGuards(t *testing.T) {
 				version, installs, views := "2.3.0", 0, 0
 				effects := openCodeRegistry(t, agentEffects(t, home, &version, &installs), openCodePublishedVersions, nil, &views)
 				output := runAgents(t, effects, 1, args...)
+				if workingLink {
+					workingCommandUnchanged()
+				}
 				wantRetry := "then retry the original command and options without adding --force; use --force only if the command-link repair check requires it or you intend to stop a running session"
 				if operation == "enable" {
 					wantRetry = "then retry with --force"
@@ -736,7 +743,11 @@ func TestOpenCodeManualRecoveryPreservesSessionGuards(t *testing.T) {
 						fmt.Fprintln(process.Stdout, "opencode")
 						return nil
 					}
-					if refusal := runAgents(t, unforced, 1, args...); strings.TrimSpace(refusal) != wantForceHint || installs != 0 || views != 0 {
+					refusal := runAgents(t, unforced, 1, args...)
+					if workingLink {
+						workingCommandUnchanged()
+					}
+					if strings.TrimSpace(refusal) != wantForceHint || installs != 0 || views != 0 {
 						t.Fatalf("link repair did not require force: %s installs=%d views=%d", refusal, installs, views)
 					}
 					args = append(args, "--force")
