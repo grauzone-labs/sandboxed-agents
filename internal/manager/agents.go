@@ -265,7 +265,7 @@ func agents(args []string, worker bool, stdout, stderr io.Writer, effects Effect
 	return 2
 }
 
-// validatePublishedAgentPin checks pins for renamed catalog packages before changes, retaining force in guidance when requested or needed to repair a missing command.
+// validatePublishedAgentPin checks renamed-package pins and retains requested force in retries, adding force only to enable for missing-command repair.
 func validatePublishedAgentPin(r agentRequest, enabled, repairRequired bool, effects Effects) error {
 	if r.version == "" || len(r.definition.Install.PreviousPackages) == 0 {
 		return nil
@@ -289,10 +289,14 @@ func validatePublishedAgentPin(r agentRequest, enabled, repairRequired bool, eff
 		return fmt.Errorf("cannot check %s pin %s: npm returned no published latest version", r.name, r.version)
 	}
 	forceFlag := ""
-	if r.force || repairRequired {
+	if r.force {
 		forceFlag = " --force"
 	}
-	guidance := fmt.Sprintf("agents enable NAME %s --version %s%s", r.name, published.Latest, forceFlag)
+	enableForceFlag := forceFlag
+	if repairRequired {
+		enableForceFlag = " --force"
+	}
+	guidance := fmt.Sprintf("agents enable NAME %s --version %s%s", r.name, published.Latest, enableForceFlag)
 	if enabled {
 		guidance = fmt.Sprintf("agents update NAME %s --unpin%s or %s", r.name, forceFlag, guidance)
 	}
@@ -506,7 +510,7 @@ func managedCommandLink(command, expected string) (string, error) {
 func mutationCommandLink(command, root string, current installation, r agentRequest) (string, bool, error) {
 	if r.operation != "enable" || r.force || r.version != "" {
 		if err := validateSelectedPrefix(root, current.Prefix, r.definition.Install); err != nil {
-			return "", false, fmt.Errorf("refusing selected installation %s: %w", filepath.Join(root, current.Prefix), err)
+			return "", false, fmt.Errorf("refusing selected installation %s: %w; manual recovery required: inspect the selected prefix and preserve its files; move it aside only if confirmed to be a damaged managed installation, remove the stale command link, then retry with --force; never delete foreign files", filepath.Join(root, current.Prefix), err)
 		}
 	}
 	previous, err := os.Readlink(command)
@@ -622,7 +626,7 @@ func pathInsideInstallation(prefix, path string) bool {
 	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
-// managedPackage verifies current or known-predecessor package metadata beneath an already verified real installation prefix.
+// managedPackage verifies regular current or known-predecessor package metadata beneath an already verified real installation prefix.
 func managedPackage(realPrefix string, install catalog.Install) (string, error) {
 	for _, pkg := range append([]string{install.Package}, install.PreviousPackages...) {
 		metadataPath, err := filepath.EvalSymlinks(filepath.Join(realPrefix, "lib", "node_modules", pkg, "package.json"))
@@ -634,6 +638,13 @@ func managedPackage(realPrefix string, install catalog.Install) (string, error) 
 		}
 		if !pathInsideInstallation(realPrefix, metadataPath) {
 			return "", errors.New("package metadata resolves outside its installation")
+		}
+		info, err := os.Stat(metadataPath)
+		if err != nil {
+			return "", err
+		}
+		if !info.Mode().IsRegular() {
+			return "", errors.New("package metadata is not a regular file")
 		}
 		data, err := os.ReadFile(metadataPath)
 		if err != nil {

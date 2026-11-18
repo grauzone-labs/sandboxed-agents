@@ -1,13 +1,16 @@
 package manager_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/manager"
 )
@@ -258,7 +261,7 @@ func TestOpenCodeUnavailablePinsPreserveInstallation(t *testing.T) {
 	}
 }
 
-// TestOpenCodePinRecoveryHintsRetainForce proves refused pins preserve recovery state and print executable forced retries for mismatched, missing, and unselected links at RunWithEffects.
+// TestOpenCodePinRecoveryHintsRetainForce proves refused pins preserve recovery state and required force while keeping ordinary missing-link updates unforced at RunWithEffects.
 func TestOpenCodePinRecoveryHintsRetainForce(t *testing.T) {
 	for _, test := range []struct {
 		state, retry, wantPin string
@@ -301,6 +304,8 @@ func TestOpenCodePinRecoveryHintsRetainForce(t *testing.T) {
 			wantHints := "agents update NAME opencode --unpin --force or " + wantEnable
 			if test.state == "unselected" {
 				wantHints = wantEnable
+			} else if test.state == "missing" {
+				wantHints = "agents update NAME opencode --unpin or agents enable NAME opencode --version 2.3.0 --force"
 			}
 			if !found || strings.TrimSpace(hints) != wantHints || installs != 0 || views != 1 {
 				t.Fatalf("pin refusal=%s installs=%d views=%d", output, installs, views)
@@ -317,7 +322,28 @@ func TestOpenCodePinRecoveryHintsRetainForce(t *testing.T) {
 					continue
 				}
 				// NAME belongs to the host grammar; the manager receives the operation and agent.
-				runAgents(t, effects, 0, append([]string{fields[1]}, fields[3:]...)...)
+				retryArgs := append([]string{fields[1]}, fields[3:]...)
+				if test.state == "missing" && test.retry == "update" {
+					busy, queries := effects, 0
+					start := effects.Start
+					busy.Start = func(process manager.Process) error {
+						if process.Program != "tmux" {
+							return start(process)
+						}
+						queries++
+						if queries != 1 || !strings.Contains(strings.Join(process.Args, " "), "list-sessions") {
+							t.Fatalf("unforced retry attempted session mutation or repeated query: %+v", process)
+						}
+						fmt.Fprintln(process.Stdout, "opencode")
+						return nil
+					}
+					if refusal := runAgents(t, busy, 1, retryArgs...); !strings.Contains(refusal, "agent session opencode is running") || queries != 1 || installs != 0 || views != 1 {
+						t.Fatalf("unforced retry bypassed session guard: %s queries=%d installs=%d views=%d", refusal, queries, installs, views)
+					}
+					unchangedFiles()
+					unchangedCommand()
+				}
+				runAgents(t, effects, 0, retryArgs...)
 				if got := readAgentStatus(t, effects, "opencode"); !got.Enabled || got.InstalledVersion != "2.3.0" || got.Pin != test.wantPin || installs != 1 || views != test.wantViews {
 					t.Fatalf("retry status=%+v installs=%d views=%d", got, installs, views)
 				}
@@ -555,7 +581,7 @@ func TestOpenCodeMutationsRejectUnownedSelectedPrefix(t *testing.T) {
 	}
 }
 
-// TestOpenCodeRecoveryAcceptsOwnedOrAbsentSelectedPrefix proves current, predecessor, and absent selections remain repairable or removable with mismatched or missing outer links at RunWithEffects.
+// TestOpenCodeRecoveryAcceptsOwnedOrAbsentSelectedPrefix proves current, predecessor, and absent selections, including metadata symlinks to regular files, remain repairable or removable at RunWithEffects.
 func TestOpenCodeRecoveryAcceptsOwnedOrAbsentSelectedPrefix(t *testing.T) {
 	for _, kind := range []string{"current", "predecessor", "absent"} {
 		for _, missingLink := range []bool{false, true} {
@@ -575,6 +601,18 @@ func TestOpenCodeRecoveryAcceptsOwnedOrAbsentSelectedPrefix(t *testing.T) {
 					oldPrefixes := []string{selectedPrefix}
 					if kind == "absent" {
 						if err := os.RemoveAll(selectedPrefix); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						pkg := "opencode-ai"
+						if kind == "current" {
+							pkg = "@opencode/cli"
+						}
+						metadata := filepath.Join(selectedPrefix, "lib", "node_modules", pkg, "package.json")
+						if err := os.Rename(metadata, metadata+".saved"); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.Symlink("package.json.saved", metadata); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -610,6 +648,139 @@ func TestOpenCodeRecoveryAcceptsOwnedOrAbsentSelectedPrefix(t *testing.T) {
 					unchanged()
 				})
 			}
+		}
+	}
+}
+
+// TestOpenCodeNonregularMetadataRefusesPromptly proves FIFO and directory metadata refuse through RunWithEffects in a bounded child process while preserving metadata and home state.
+func TestOpenCodeNonregularMetadataRefusesPromptly(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("FIFO fixtures require Linux")
+	}
+	const childHomeVariable = "SANDBOXED_AGENTS_TEST_OPENCODE_NONREGULAR_HOME"
+	if home := os.Getenv(childHomeVariable); home != "" {
+		version, installs := "2.3.0", 0
+		fmt.Fprintln(os.Stdout, "manager entered installation checks")
+		output := runAgents(t, agentEffects(t, home, &version, &installs), 1, "enable", "opencode", "--force")
+		if !strings.Contains(output, "package metadata is not a regular file") || installs != 0 {
+			t.Fatalf("nonregular metadata refusal=%s installs=%d", output, installs)
+		}
+		return
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mkfifo, err := exec.LookPath("mkfifo")
+	if err != nil {
+		t.Fatal("FIFO fixture requires mkfifo:", err)
+	}
+	for _, pkg := range []string{"opencode-ai", "@opencode/cli"} {
+		for _, kind := range []string{"fifo", "directory"} {
+			t.Run(pkg+"/"+kind, func(t *testing.T) {
+				home, version, installs := legacyOpenCodeHome(t, ""), "2.3.0", 0
+				if pkg == "@opencode/cli" {
+					runAgents(t, agentEffects(t, home, &version, &installs), 0, "enable", "opencode", "--force")
+				}
+				command := filepath.Join(home, ".local", "bin", "opencode")
+				target, err := os.Readlink(command)
+				if err != nil {
+					t.Fatal(err)
+				}
+				metadata := filepath.Join(filepath.Dir(filepath.Dir(target)), "lib", "node_modules", pkg, "package.json")
+				if err := os.Remove(command); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(metadata); err != nil {
+					t.Fatal(err)
+				}
+				if kind == "fifo" {
+					if output, err := exec.Command(mkfifo, metadata).CombinedOutput(); err != nil {
+						t.Fatalf("mkfifo: %v: %s", err, output)
+					}
+				} else if err := os.Mkdir(metadata, 0700); err != nil {
+					t.Fatal(err)
+				}
+				info, err := os.Lstat(metadata)
+				if err != nil {
+					t.Fatal(err)
+				}
+				unchanged := snapshotOpenCodeFiles(t, home, ".local/share/sandboxed-agents/selection.json", ".config/opencode/opencode.json", ".local/share/opencode/auth.json")
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				child := exec.CommandContext(ctx, executable, "-test.run=^TestOpenCodeNonregularMetadataRefusesPromptly$", "-test.timeout=10s")
+				child.Env = append(os.Environ(), childHomeVariable+"="+home)
+				output, runError := child.CombinedOutput()
+				timedOut := ctx.Err() != nil
+				cancel()
+				if timedOut {
+					t.Errorf("manager blocked on %s metadata; child killed and reaped after 5s: %s", kind, output)
+				} else if runError != nil {
+					t.Errorf("manager did not reject %s metadata: %v: %s", kind, runError, output)
+				}
+				if got, err := os.Lstat(metadata); err != nil || !os.SameFile(info, got) || got.Mode() != info.Mode() {
+					t.Fatalf("nonregular metadata changed: %v", err)
+				}
+				if _, err := os.Lstat(command); !os.IsNotExist(err) {
+					t.Fatalf("refusal created a command: %v", err)
+				}
+				unchanged()
+			})
+		}
+	}
+}
+
+// TestOpenCodeDamagedSelectedPrefixRequiresManualRecovery proves missing metadata and executable refuse mutations with safe manual recovery guidance and preserve state at RunWithEffects.
+func TestOpenCodeDamagedSelectedPrefixRequiresManualRecovery(t *testing.T) {
+	for _, missingLink := range []bool{false, true} {
+		for _, operation := range []string{"enable", "update", "disable"} {
+			t.Run(fmt.Sprintf("missing-link=%v/%s", missingLink, operation), func(t *testing.T) {
+				home, version, installs := legacyOpenCodeHome(t, ""), "2.3.0", 0
+				prefix := filepath.Join(home, ".local", "share", "sandboxed-agents", "installation-legacy")
+				info, err := os.Lstat(prefix)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var removed []string
+				for _, file := range []string{"package.json", "cli.js"} {
+					path := filepath.Join(prefix, "lib", "node_modules", "opencode-ai", file)
+					if err := os.Remove(path); err != nil {
+						t.Fatal(err)
+					}
+					removed = append(removed, path)
+				}
+				command := filepath.Join(home, ".local", "bin", "opencode")
+				if missingLink {
+					if err := os.Remove(command); err != nil {
+						t.Fatal(err)
+					}
+				}
+				unchanged := snapshotOpenCodeFiles(t, home, ".local/share/sandboxed-agents/selection.json", ".config/opencode/opencode.json", ".local/share/opencode/auth.json")
+				output := runAgents(t, agentEffects(t, home, &version, &installs), 1, operation, "opencode", "--force")
+				for _, hint := range []string{"inspect the selected prefix", "preserve its files", "move it aside only if confirmed to be a damaged managed installation", "remove the stale command link", "retry with --force", "never delete foreign files"} {
+					if !strings.Contains(output, hint) {
+						t.Fatalf("damaged-prefix refusal lacks %q: %s", hint, output)
+					}
+				}
+				if got, err := os.Lstat(prefix); err != nil || !os.SameFile(info, got) || !got.IsDir() || installs != 0 {
+					t.Fatalf("damaged prefix changed or installed: error=%v installs=%d", err, installs)
+				}
+				for _, path := range removed {
+					if _, err := os.Lstat(path); !os.IsNotExist(err) {
+						t.Fatalf("refusal recreated %s: %v", path, err)
+					}
+				}
+				if missingLink {
+					if _, err := os.Lstat(command); !os.IsNotExist(err) {
+						t.Fatalf("refusal created command: %v", err)
+					}
+				} else if target, err := os.Readlink(command); err != nil || target != filepath.Join(prefix, "bin", "opencode") {
+					t.Fatalf("damaged command changed=%q error=%v", target, err)
+				}
+				if target, err := os.Readlink(filepath.Join(prefix, "bin", "opencode")); err != nil || target != filepath.Join("..", "lib", "node_modules", "opencode-ai", "cli.js") {
+					t.Fatalf("inner command changed=%q error=%v", target, err)
+				}
+				unchanged()
+			})
 		}
 	}
 }
