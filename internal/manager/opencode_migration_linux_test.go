@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// TestOpenCodeNonregularMetadataRefusesPromptly proves FIFO and directory metadata refuse through RunWithEffects in a bounded child process while preserving metadata and home state.
+// TestOpenCodeNonregularMetadataRefusesPromptly proves FIFO and directory metadata refuse through RunWithEffects in a bounded child process while preserving metadata, installation commands, and home state.
 func TestOpenCodeNonregularMetadataRefusesPromptly(t *testing.T) {
 	const childHomeVariable = "SANDBOXED_AGENTS_TEST_OPENCODE_NONREGULAR_HOME"
 	if home := os.Getenv(childHomeVariable); home != "" {
@@ -38,6 +38,22 @@ func TestOpenCodeNonregularMetadataRefusesPromptly(t *testing.T) {
 				}
 				command := filepath.Join(home, ".local", "bin", "opencode")
 				target, err := os.Readlink(command)
+				if err != nil {
+					t.Fatal(err)
+				}
+				innerTarget, err := os.Readlink(target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resolved, err := filepath.EvalSymlinks(target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				commandInfo, err := os.Stat(resolved)
+				if err != nil || !commandInfo.Mode().IsRegular() {
+					t.Fatalf("fixture command is not regular: %v", err)
+				}
+				content, err := os.ReadFile(resolved)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -76,6 +92,18 @@ func TestOpenCodeNonregularMetadataRefusesPromptly(t *testing.T) {
 				}
 				if _, err := os.Lstat(command); !os.IsNotExist(err) {
 					t.Fatalf("refusal created a command: %v", err)
+				}
+				if got, err := os.Readlink(target); err != nil || got != innerTarget {
+					t.Fatalf("inner command link changed=%q want=%q error=%v", got, innerTarget, err)
+				}
+				if got, err := filepath.EvalSymlinks(target); err != nil || got != resolved {
+					t.Fatalf("resolved command changed=%q want=%q error=%v", got, resolved, err)
+				}
+				if got, err := os.Stat(resolved); err != nil || !got.Mode().IsRegular() || got.Mode() != commandInfo.Mode() {
+					t.Fatalf("command type or mode changed: %v", err)
+				}
+				if got, err := os.ReadFile(resolved); err != nil || string(got) != string(content) {
+					t.Fatalf("command content changed=%q error=%v", got, err)
 				}
 				unchanged()
 			})

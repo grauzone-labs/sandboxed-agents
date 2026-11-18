@@ -649,6 +649,124 @@ func TestOpenCodeRecoveryAcceptsOwnedOrAbsentSelectedPrefix(t *testing.T) {
 	}
 }
 
+// TestOpenCodeManualRecoveryPreservesSessionGuards proves manual recovery keeps update and disable unforced after a dangling link is removed while enable and working mismatches require force at RunWithEffects.
+func TestOpenCodeManualRecoveryPreservesSessionGuards(t *testing.T) {
+	for _, workingLink := range []bool{false, true} {
+		for _, operation := range []string{"update", "disable", "enable"} {
+			t.Run(fmt.Sprintf("working-link=%v/%s", workingLink, operation), func(t *testing.T) {
+				var home string
+				if workingLink {
+					home = mismatchedLegacyOpenCodeHome(t, "1.19.6")
+				} else {
+					home = legacyOpenCodeHome(t, "1.19.6")
+				}
+				prefix := filepath.Join(home, ".local", "share", "sandboxed-agents", "installation-legacy")
+				retainedFile := filepath.Join(prefix, "preserve.txt")
+				if err := os.WriteFile(retainedFile, []byte("confirmed legacy files to preserve"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				for _, file := range []string{"package.json", "cli.js"} {
+					if err := os.Remove(filepath.Join(prefix, "lib", "node_modules", "opencode-ai", file)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				command := filepath.Join(home, ".local", "bin", "opencode")
+				previous, err := os.Readlink(command)
+				if err != nil {
+					t.Fatal(err)
+				}
+				unchanged := snapshotOpenCodeFiles(t, home, ".local/share/sandboxed-agents/selection.json", ".config/opencode/opencode.json", ".local/share/opencode/auth.json", ".local/share/sandboxed-agents/installation-legacy/preserve.txt")
+				args := []string{operation, "opencode"}
+				if operation == "update" {
+					args = append(args, "--unpin")
+				} else if operation == "enable" {
+					args = append(args, "--version", "2.3.0")
+				}
+				version, installs, views := "2.3.0", 0, 0
+				effects := openCodeRegistry(t, agentEffects(t, home, &version, &installs), openCodePublishedVersions, nil, &views)
+				output := runAgents(t, effects, 1, args...)
+				wantRetry := "then retry the original command and options without adding --force; use --force only if the command-link repair check requires it or you intend to stop a running session"
+				if operation == "enable" {
+					wantRetry = "then retry with --force"
+				}
+				if !strings.Contains(output, wantRetry) || installs != 0 || views != 0 {
+					t.Fatalf("manual recovery guidance=%s installs=%d views=%d", output, installs, views)
+				}
+				unchanged()
+				if target, err := os.Readlink(command); err != nil || target != previous {
+					t.Fatalf("refusal changed command=%q error=%v", target, err)
+				}
+				aside := filepath.Join(home, "preserved-opencode")
+				if err := os.Rename(prefix, aside); err != nil {
+					t.Fatal(err)
+				}
+				if !workingLink {
+					if _, err := os.Stat(command); !os.IsNotExist(err) {
+						t.Fatalf("command target was not confirmed missing: %v", err)
+					}
+					if err := os.Remove(command); err != nil {
+						t.Fatal(err)
+					}
+				} else if _, err := os.Stat(command); err != nil {
+					t.Fatal("working recovery command was lost:", err)
+				}
+				preserved := snapshotOpenCodeFiles(t, home, ".config/opencode/opencode.json", ".local/share/opencode/auth.json", "preserved-opencode/preserve.txt")
+				selectionUnchanged := snapshotOpenCodeFiles(t, home, ".local/share/sandboxed-agents/selection.json")
+				if workingLink || operation == "enable" {
+					if refusal := runAgents(t, effects, 1, args...); !strings.Contains(refusal, "--force") || installs != 0 || views != 0 {
+						t.Fatalf("link repair did not require force: %s installs=%d views=%d", refusal, installs, views)
+					}
+					args = append(args, "--force")
+				} else {
+					busy, queries := effects, 0
+					start := effects.Start
+					busy.Start = func(process manager.Process) error {
+						if process.Program != "tmux" {
+							return start(process)
+						}
+						queries++
+						if queries != 1 || !strings.Contains(strings.Join(process.Args, " "), "list-sessions") {
+							t.Fatalf("ordinary retry attempted session mutation or repeated query: %+v", process)
+						}
+						fmt.Fprintln(process.Stdout, "opencode")
+						return nil
+					}
+					if refusal := runAgents(t, busy, 1, args...); !strings.Contains(refusal, "agent session opencode is running") || queries != 1 || installs != 0 || views != 0 {
+						t.Fatalf("ordinary retry bypassed session guard: %s queries=%d installs=%d views=%d", refusal, queries, installs, views)
+					}
+				}
+				selectionUnchanged()
+				preserved()
+				runAgents(t, effects, 0, args...)
+				got := readAgentStatus(t, effects, "opencode")
+				if operation == "disable" {
+					if got.Enabled || got.Pin != "" || installs != 0 || views != 0 {
+						t.Fatalf("manual disable status=%+v installs=%d views=%d", got, installs, views)
+					}
+				} else {
+					wantPin, wantViews := "", 0
+					if operation == "enable" {
+						wantPin, wantViews = "2.3.0", 1
+					}
+					if !got.Enabled || got.InstalledVersion != "2.3.0" || got.Pin != wantPin || installs != 1 || views != wantViews {
+						t.Fatalf("manual repair status=%+v installs=%d views=%d", got, installs, views)
+					}
+					assertOpenCodeSelectedCommand(t, home)
+				}
+				if workingLink {
+					if _, err := os.Lstat(filepath.Dir(filepath.Dir(previous))); !os.IsNotExist(err) {
+						t.Fatalf("working recovery prefix was not cleaned: %v", err)
+					}
+				}
+				if target, err := os.Readlink(filepath.Join(aside, "bin", "opencode")); err != nil || target != filepath.Join("..", "lib", "node_modules", "opencode-ai", "cli.js") {
+					t.Fatalf("held-aside command changed=%q error=%v", target, err)
+				}
+				preserved()
+			})
+		}
+	}
+}
+
 // TestOpenCodeDamagedSelectedPrefixRequiresManualRecovery proves missing metadata and executable refuse mutations with safe manual recovery guidance and preserve state at RunWithEffects.
 func TestOpenCodeDamagedSelectedPrefixRequiresManualRecovery(t *testing.T) {
 	for _, missingLink := range []bool{false, true} {
@@ -705,10 +823,22 @@ func TestOpenCodeDamagedSelectedPrefixRequiresManualRecovery(t *testing.T) {
 	}
 }
 
-// TestOpenCodeDanglingCommandRequiresManualRecovery proves a missing inner npm target refuses mutations with explicit manual recovery guidance at RunWithEffects.
+// TestOpenCodeDanglingCommandRequiresManualRecovery proves dangling-target refusals preserve state and operation-specific retries keep the ordinary update session guard at RunWithEffects.
 func TestOpenCodeDanglingCommandRequiresManualRecovery(t *testing.T) {
-	for _, args := range [][]string{{"enable", "opencode", "--force"}, {"update", "opencode"}, {"disable", "opencode", "--force"}} {
-		t.Run(args[0], func(t *testing.T) {
+	const ordinaryRetry = "retry the original command and options without adding --force; use --force only if the command-link repair check requires it or you intend to stop a running session"
+	for _, test := range []struct {
+		args      []string
+		wantRetry string
+	}{
+		{[]string{"enable", "opencode"}, "retry with --force"},
+		{[]string{"enable", "opencode", "--force"}, "retry with --force"},
+		{[]string{"update", "opencode"}, ordinaryRetry},
+		{[]string{"update", "opencode", "--force"}, "retry with --force"},
+		{[]string{"disable", "opencode"}, ordinaryRetry},
+		{[]string{"disable", "opencode", "--force"}, "retry with --force"},
+	} {
+		args := test.args
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			home, version, installs := legacyOpenCodeHome(t, ""), "2.3.0", 0
 			command := filepath.Join(home, ".local", "bin", "opencode")
 			previous, err := os.Readlink(command)
@@ -725,7 +855,10 @@ func TestOpenCodeDanglingCommandRequiresManualRecovery(t *testing.T) {
 			unchangedFiles := snapshotOpenCodeFiles(t, home, ".local/share/sandboxed-agents/selection.json", ".config/opencode/opencode.json", ".local/share/opencode/auth.json", ".local/share/sandboxed-agents/installation-legacy/lib/node_modules/opencode-ai/package.json")
 			effects := agentEffects(t, home, &version, &installs)
 			output := runAgents(t, effects, 1, args...)
-			if !strings.Contains(output, "manual recovery required") || !strings.Contains(output, "dangling command link") {
+			if !strings.Contains(output, test.wantRetry) {
+				t.Fatalf("dangling command retry guidance=%s", output)
+			}
+			if !strings.Contains(output, "manual recovery required") || !strings.Contains(output, "remove the dangling command link only if its target is confirmed missing") {
 				t.Fatalf("dangling command guidance=%s", output)
 			}
 			if got := readAgentStatus(t, effects, "opencode"); got.InstalledVersion != "1.19.6" || got.Pin != "" || installs != 0 {
@@ -735,6 +868,41 @@ func TestOpenCodeDanglingCommandRequiresManualRecovery(t *testing.T) {
 				t.Fatalf("dangling command link changed=%q error=%v", got, err)
 			}
 			unchangedFiles()
+			if args[0] == "update" && len(args) == 2 {
+				preserved := snapshotOpenCodeFiles(t, home, ".config/opencode/opencode.json", ".local/share/opencode/auth.json")
+				if _, err := os.Stat(command); !os.IsNotExist(err) {
+					t.Fatalf("dangling target was not confirmed missing: %v", err)
+				}
+				if err := os.Remove(command); err != nil {
+					t.Fatal(err)
+				}
+				busy, queries := effects, 0
+				start := effects.Start
+				busy.Start = func(process manager.Process) error {
+					if process.Program != "tmux" {
+						return start(process)
+					}
+					queries++
+					if queries != 1 || !strings.Contains(strings.Join(process.Args, " "), "list-sessions") {
+						t.Fatalf("ordinary dangling-link retry attempted session mutation: %+v", process)
+					}
+					fmt.Fprintln(process.Stdout, "opencode")
+					return nil
+				}
+				if refusal := runAgents(t, busy, 1, args...); !strings.Contains(refusal, "agent session opencode is running") || queries != 1 || installs != 0 {
+					t.Fatalf("ordinary dangling-link retry bypassed session guard: %s queries=%d installs=%d", refusal, queries, installs)
+				}
+				unchangedFiles()
+				if _, err := os.Lstat(command); !os.IsNotExist(err) {
+					t.Fatalf("session refusal created a command: %v", err)
+				}
+				runAgents(t, effects, 0, args...)
+				if got := readAgentStatus(t, effects, "opencode"); !got.Enabled || got.InstalledVersion != "2.3.0" || got.Pin != "" || installs != 1 {
+					t.Fatalf("ordinary dangling-link retry status=%+v installs=%d", got, installs)
+				}
+				assertOpenCodeSelectedCommand(t, home)
+				preserved()
+			}
 		})
 	}
 }

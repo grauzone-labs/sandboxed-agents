@@ -508,9 +508,13 @@ func managedCommandLink(command, expected string) (string, error) {
 // mutationCommandLink validates selected cleanup prefixes and confines commands to current or declared predecessor installations.
 // Explicit pins and updates verify package identity; healthy means the selection matches and any checked package is current.
 func mutationCommandLink(command, root string, current installation, r agentRequest) (string, bool, error) {
+	retry := "retry the original command and options without adding --force; use --force only if the command-link repair check requires it or you intend to stop a running session"
+	if r.operation == "enable" || r.force {
+		retry = "retry with --force"
+	}
 	if r.operation != "enable" || r.force || r.version != "" {
 		if err := validateSelectedPrefix(root, current.Prefix, r.definition.Install); err != nil {
-			return "", false, fmt.Errorf("refusing selected installation %s: %w; manual recovery required: inspect the selected prefix and preserve its files; move it aside only if confirmed to be a damaged managed installation; remove the command link only if its target is confirmed missing; leave a working link in place for the manager to validate and clean up; then retry with --force; never delete foreign files", filepath.Join(root, current.Prefix), err)
+			return "", false, fmt.Errorf("refusing selected installation %s: %w; manual recovery required: inspect the selected prefix and preserve its files; move it aside only if confirmed to be a damaged managed installation; remove the command link only if its target is confirmed missing; leave a working link in place for the manager to validate and clean up; then %s; never delete foreign files", filepath.Join(root, current.Prefix), err, retry)
 		}
 	}
 	previous, err := os.Readlink(command)
@@ -526,7 +530,7 @@ func mutationCommandLink(command, root string, current installation, r agentRequ
 	pkg, err := validateManagedTarget(root, previous, r.definition, metadataRequired)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", false, fmt.Errorf("refusing unmanaged command %s: %w; manual recovery required: inspect the installation and remove the dangling command link before retrying with --force", command, err)
+			return "", false, fmt.Errorf("refusing unmanaged command %s: %w; manual recovery required: inspect the installation and remove the dangling command link only if its target is confirmed missing; then %s", command, err, retry)
 		}
 		return "", false, fmt.Errorf("refusing unmanaged command %s: %w", command, err)
 	}
