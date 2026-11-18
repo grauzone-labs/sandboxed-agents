@@ -106,6 +106,11 @@ func openCodeRegistry(t *testing.T, effects manager.Effects, snapshot string, lo
 	return effects
 }
 
+// isReadOnlyAgentSessionQuery recognizes only the complete read-only tmux session-list command under the agent identity.
+func isReadOnlyAgentSessionQuery(process manager.Process) bool {
+	return process.Program == "tmux" && slices.Equal(process.Args, []string{"-L", "sandboxed-agents", "-f", "/dev/null", "list-sessions", "-F", "#{session_name}"}) && process.Identity == (manager.Identity{UID: 1000, GID: 1000})
+}
+
 // snapshotOpenCodeFiles returns an assertion that the named home files retain their exact bytes.
 func snapshotOpenCodeFiles(t *testing.T, home string, paths ...string) func() {
 	t.Helper()
@@ -329,7 +334,7 @@ func TestOpenCodePinRecoveryHintsRetainForce(t *testing.T) {
 							return start(process)
 						}
 						queries++
-						if queries != 1 || !slices.Equal(process.Args, []string{"-L", "sandboxed-agents", "-f", "/dev/null", "list-sessions", "-F", "#{session_name}"}) || process.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
+						if queries != 1 || !isReadOnlyAgentSessionQuery(process) {
 							t.Fatalf("unforced retry attempted session mutation or repeated query: %+v", process)
 						}
 						fmt.Fprintln(process.Stdout, "opencode")
@@ -718,7 +723,20 @@ func TestOpenCodeManualRecoveryPreservesSessionGuards(t *testing.T) {
 					if workingLink {
 						wantForceHint = "opencode command differs from its selection; retry with --force to repair a managed installation"
 					}
-					if refusal := runAgents(t, effects, 1, args...); strings.TrimSpace(refusal) != wantForceHint || installs != 0 || views != 0 {
+					unforced, queries := effects, 0
+					start := effects.Start
+					unforced.Start = func(process manager.Process) error {
+						if process.Program != "tmux" {
+							return start(process)
+						}
+						queries++
+						if queries > 1 || !isReadOnlyAgentSessionQuery(process) {
+							t.Fatalf("unforced link repair attempted session mutation or invalid query: %+v", process)
+						}
+						fmt.Fprintln(process.Stdout, "opencode")
+						return nil
+					}
+					if refusal := runAgents(t, unforced, 1, args...); strings.TrimSpace(refusal) != wantForceHint || installs != 0 || views != 0 {
 						t.Fatalf("link repair did not require force: %s installs=%d views=%d", refusal, installs, views)
 					}
 					args = append(args, "--force")
@@ -730,7 +748,7 @@ func TestOpenCodeManualRecoveryPreservesSessionGuards(t *testing.T) {
 							return start(process)
 						}
 						queries++
-						if queries != 1 || !slices.Equal(process.Args, []string{"-L", "sandboxed-agents", "-f", "/dev/null", "list-sessions", "-F", "#{session_name}"}) || process.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
+						if queries != 1 || !isReadOnlyAgentSessionQuery(process) {
 							t.Fatalf("ordinary retry attempted session mutation or repeated query: %+v", process)
 						}
 						fmt.Fprintln(process.Stdout, "opencode")
@@ -891,7 +909,7 @@ func TestOpenCodeDanglingCommandRequiresManualRecovery(t *testing.T) {
 						return start(process)
 					}
 					queries++
-					if queries != 1 || !slices.Equal(process.Args, []string{"-L", "sandboxed-agents", "-f", "/dev/null", "list-sessions", "-F", "#{session_name}"}) || process.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
+					if queries != 1 || !isReadOnlyAgentSessionQuery(process) {
 						t.Fatalf("ordinary dangling-link retry attempted session mutation: %+v", process)
 					}
 					fmt.Fprintln(process.Stdout, "opencode")
