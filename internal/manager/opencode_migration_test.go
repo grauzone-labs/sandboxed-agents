@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -328,7 +329,7 @@ func TestOpenCodePinRecoveryHintsRetainForce(t *testing.T) {
 							return start(process)
 						}
 						queries++
-						if queries != 1 || !strings.Contains(strings.Join(process.Args, " "), "list-sessions") {
+						if queries != 1 || !slices.Equal(process.Args, []string{"-L", "sandboxed-agents", "-f", "/dev/null", "list-sessions", "-F", "#{session_name}"}) || process.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
 							t.Fatalf("unforced retry attempted session mutation or repeated query: %+v", process)
 						}
 						fmt.Fprintln(process.Stdout, "opencode")
@@ -713,7 +714,11 @@ func TestOpenCodeManualRecoveryPreservesSessionGuards(t *testing.T) {
 				preserved := snapshotOpenCodeFiles(t, home, ".config/opencode/opencode.json", ".local/share/opencode/auth.json", "preserved-opencode/preserve.txt")
 				selectionUnchanged := snapshotOpenCodeFiles(t, home, ".local/share/sandboxed-agents/selection.json")
 				if workingLink || operation == "enable" {
-					if refusal := runAgents(t, effects, 1, args...); !strings.Contains(refusal, "--force") || installs != 0 || views != 0 {
+					wantForceHint := "opencode command is missing; retry agents enable with --force to repair it"
+					if workingLink {
+						wantForceHint = "opencode command differs from its selection; retry with --force to repair a managed installation"
+					}
+					if refusal := runAgents(t, effects, 1, args...); strings.TrimSpace(refusal) != wantForceHint || installs != 0 || views != 0 {
 						t.Fatalf("link repair did not require force: %s installs=%d views=%d", refusal, installs, views)
 					}
 					args = append(args, "--force")
@@ -725,7 +730,7 @@ func TestOpenCodeManualRecoveryPreservesSessionGuards(t *testing.T) {
 							return start(process)
 						}
 						queries++
-						if queries != 1 || !strings.Contains(strings.Join(process.Args, " "), "list-sessions") {
+						if queries != 1 || !slices.Equal(process.Args, []string{"-L", "sandboxed-agents", "-f", "/dev/null", "list-sessions", "-F", "#{session_name}"}) || process.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
 							t.Fatalf("ordinary retry attempted session mutation or repeated query: %+v", process)
 						}
 						fmt.Fprintln(process.Stdout, "opencode")
@@ -742,6 +747,9 @@ func TestOpenCodeManualRecoveryPreservesSessionGuards(t *testing.T) {
 				if operation == "disable" {
 					if got.Enabled || got.Pin != "" || installs != 0 || views != 0 {
 						t.Fatalf("manual disable status=%+v installs=%d views=%d", got, installs, views)
+					}
+					if _, err := os.Lstat(command); !os.IsNotExist(err) {
+						t.Fatalf("manual disable left a command entry: %v", err)
 					}
 				} else {
 					wantPin, wantViews := "", 0
@@ -883,7 +891,7 @@ func TestOpenCodeDanglingCommandRequiresManualRecovery(t *testing.T) {
 						return start(process)
 					}
 					queries++
-					if queries != 1 || !strings.Contains(strings.Join(process.Args, " "), "list-sessions") {
+					if queries != 1 || !slices.Equal(process.Args, []string{"-L", "sandboxed-agents", "-f", "/dev/null", "list-sessions", "-F", "#{session_name}"}) || process.Identity != (manager.Identity{UID: 1000, GID: 1000}) {
 						t.Fatalf("ordinary dangling-link retry attempted session mutation: %+v", process)
 					}
 					fmt.Fprintln(process.Stdout, "opencode")
