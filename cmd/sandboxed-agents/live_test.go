@@ -45,6 +45,9 @@ var controllerGroupPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 // liveCheckNames are the fixed check identifiers of the record, in run order.
 var liveCheckNames = []string{"preflight", "lifecycle", "update", "agent", "t3code", "images"}
 
+// liveStopAfterFailureEnv opts into stopping before the next case after a failure.
+const liveStopAfterFailureEnv = "SANDBOXED_AGENTS_LIVE_STOP_AFTER_FAILURE"
+
 // liveSuite carries one run's inputs, host, and check results.
 type liveSuite struct {
 	host                                      liveHost
@@ -52,6 +55,7 @@ type liveSuite struct {
 	commit, platform, assetHash               string
 	imagesSelected, imagesRan, imagesComplete bool
 	results                                   map[string]string
+	stopAfterFailure, failed                  bool
 }
 
 // TestLiveSuite runs the live cases against real Podman on the selected host in a dedicated controller group and writes the platform's validation record, only when explicitly opted in.
@@ -70,6 +74,9 @@ func TestLiveSuite(t *testing.T) {
 	suite.run(t, "update", suite.update)
 	suite.run(t, "agent", suite.agent)
 	suite.run(t, "t3code", suite.t3code)
+	if suite.stopAfterFailure && suite.failed {
+		return
+	}
 	if suite.imagesSelected {
 		suite.imagesComplete = suite.run(t, "images", suite.images)
 	} else {
@@ -102,6 +109,7 @@ func newLiveSuite(t *testing.T) *liveSuite {
 		t.Fatalf("%s: %v", liveRecordDirEnv, err)
 	}
 	suite.imagesSelected = os.Getenv(liveImagesEnv) == "1"
+	suite.stopAfterFailure = os.Getenv(liveStopAfterFailureEnv) == "1"
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -130,8 +138,13 @@ func newLiveSuite(t *testing.T) *liveSuite {
 
 // run records a case's result from its subtest outcome.
 func (suite *liveSuite) run(t *testing.T, name string, body func(*testing.T)) bool {
+	if suite.stopAfterFailure && suite.failed {
+		return false
+	}
+	previousHost := suite.host
 	passed := t.Run(name, func(t *testing.T) {
 		suite.host.caseName = name
+		suite.host.report = func(line string) { t.Log(line) }
 		started := time.Now()
 		t.Cleanup(func() {
 			seconds := time.Since(started).Seconds()
@@ -148,8 +161,11 @@ func (suite *liveSuite) run(t *testing.T, name string, body func(*testing.T)) bo
 		})
 		body(t)
 	})
-	suite.host.caseName = "suite"
+	// Restore only case-local state: preflight may select a connection and binary.
+	suite.host.caseName = previousHost.caseName
+	suite.host.report = previousHost.report
 	suite.results[name] = map[bool]string{true: "pass", false: "fail"}[passed]
+	suite.failed = suite.failed || !passed
 	return passed
 }
 

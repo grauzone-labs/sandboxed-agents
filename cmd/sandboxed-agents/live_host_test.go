@@ -25,11 +25,13 @@ import (
 // liveHost runs the executable under test and reads Podman on the live host,
 // in the suite's controller group, for every case of the live suite.
 type liveHost struct {
-	binary, group string
-	environment   []string
-	connection    []string
-	timings       *liveTimings
-	caseName      string
+	binary, group   string
+	environment     []string
+	connection      []string
+	timings         *liveTimings
+	caseName        string
+	operationBounds map[string]time.Duration
+	report          func(string)
 }
 
 type liveImage struct {
@@ -186,24 +188,27 @@ func buildLiveExecutable(t *testing.T, directory string) string {
 
 // cli runs the live executable with the host environment and a bounded execution time.
 func (host liveHost) cli(input string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
-	defer cancel()
-	return host.cliContext(ctx, input, args...)
+	return host.cliContext(context.Background(), input, args...)
 }
 
 // cliContext supervises only the live invocation's host process tree. A deadline does not prove
 // a remote engine operation stopped; report that ambiguity for the suite's existing reconciliation.
 func (host liveHost) cliContext(ctx context.Context, input string, args ...string) (string, error) {
+	operation := liveCLIClass(args)
+	ctx, cancel := context.WithTimeout(ctx, host.operationBound(operation))
+	defer cancel()
 	started := time.Now()
+	host.reportOperation(operation, "started")
 	command := exec.Command(host.binary, args...)
 	command.Env = host.environment
 	command.Stdin = strings.NewReader(input)
 	command.WaitDelay = time.Second
-	var output liveOutput
+	output := liveOutput{stream: host.report}
 	err := capture.RunOwned(ctx, command, &output, &output)
-	host.recordOperation("cli", liveCLIClass(args), started, err)
+	host.recordOperation("cli", operation, started, err)
+	host.reportOperation(operation, fmt.Sprintf("finished after %s", time.Since(started).Round(time.Millisecond)))
 	if err != nil {
-		err = fmt.Errorf("live CLI failed after %s: %w", time.Since(started).Round(time.Millisecond), err)
+		err = fmt.Errorf("live CLI failed after %s (operation %s, bound %s): %w", time.Since(started).Round(time.Millisecond), operation, host.operationBound(operation), err)
 		if ctx.Err() != nil {
 			err = fmt.Errorf("%w; host invocation cancelled; engine operations may still be running: reconcile recorded objects before cleanup", err)
 		}
@@ -225,13 +230,20 @@ func (host liveHost) mustCLI(t *testing.T, input string, args ...string) string 
 
 // podman runs a bounded live Podman command against the selected connection.
 func (host liveHost) podman(args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	operation := host.livePodmanClass(args)
+	ctx, cancel := context.WithTimeout(context.Background(), host.operationBound(operation))
 	defer cancel()
 	command := host.podmanCommand(ctx, args...)
 	started := time.Now()
-	output, err := command.CombinedOutput()
-	host.recordOperation("podman", host.livePodmanClass(args), started, err)
-	return string(output), err
+	host.reportOperation(operation, "started")
+	output := liveOutput{stream: host.report}
+	err := capture.Run(command, &output, &output)
+	host.recordOperation("podman", operation, started, err)
+	host.reportOperation(operation, fmt.Sprintf("finished after %s", time.Since(started).Round(time.Millisecond)))
+	if ctx.Err() != nil {
+		err = fmt.Errorf("live Podman operation %s ended after %s: %w; engine operations may still be running", operation, time.Since(started).Round(time.Millisecond), errors.Join(ctx.Err(), err))
+	}
+	return output.String(), err
 }
 
 // podmanCommand creates a live Podman command bound to the selected connection and clears ambient Windows target overrides.
@@ -455,12 +467,16 @@ func (host liveHost) removeGroupStateOnCleanup(t *testing.T) {
 type liveOutput struct {
 	sync.Mutex
 	buffer bytes.Buffer
+	stream func(string)
 }
 
 // Write appends one captured write atomically with respect to the other stream.
 func (b *liveOutput) Write(data []byte) (int, error) {
 	b.Lock()
 	defer b.Unlock()
+	if b.stream != nil {
+		b.stream(string(data))
+	}
 	return b.buffer.Write(data)
 }
 

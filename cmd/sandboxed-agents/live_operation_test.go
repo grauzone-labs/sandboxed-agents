@@ -93,6 +93,9 @@ type timedLiveTerminal struct {
 	started   time.Time
 	operation string
 	once      sync.Once
+	closeOnce sync.Once
+	test      *testing.T
+	seen      int
 }
 
 // startTerminal measures terminal CLI startup failures as well as successful invocations.
@@ -105,18 +108,45 @@ func (host liveHost) startTerminal(t *testing.T, args ...string) *timedLiveTermi
 			host.recordOperation("cli", liveCLIClass(args), started, fmt.Errorf("terminal startup failed"))
 		}
 	}()
-	terminal := &timedLiveTerminal{liveTerminal: startLiveTerminal(t, host.environment, host.binary, args...), host: host, started: started, operation: liveCLIClass(args)}
+	operation := liveCLIClass(args)
+	host.reportOperation(operation, "started")
+	terminal := &timedLiveTerminal{liveTerminal: startLiveTerminal(t, host.environment, host.binary, args...), host: host, started: started, operation: operation, test: t}
 	ready = true
 	return terminal
 }
 
 // Wait records the first completed invocation after its terminal output drains.
 func (terminal *timedLiveTerminal) Wait(timeout time.Duration) (int, bool) {
-	exit, finished := terminal.liveTerminal.Wait(timeout)
-	if finished {
-		terminal.finish(exit)
+	deadline := time.Now().Add(timeout)
+	for {
+		terminal.Output()
+		left := time.Until(terminal.started.Add(terminal.host.operationBound(terminal.operation)))
+		if left <= 0 {
+			terminal.test.Errorf("live operation %s exceeded class bound %s after %s; host invocation cancelled; engine operations may still be running: reconcile recorded objects before cleanup", terminal.operation, terminal.host.operationBound(terminal.operation), time.Since(terminal.started).Round(time.Millisecond))
+			terminal.Close()
+			return -1, true
+		}
+		wait := max(time.Duration(0), min(100*time.Millisecond, time.Until(deadline), left))
+		exit, finished := terminal.liveTerminal.Wait(wait)
+		terminal.Output()
+		if finished {
+			terminal.finish(exit)
+			return exit, true
+		}
+		if !time.Now().Before(deadline) {
+			return exit, false
+		}
 	}
-	return exit, finished
+}
+
+// Output returns the captured terminal trace and streams only bytes not yet logged.
+func (terminal *timedLiveTerminal) Output() string {
+	output := terminal.liveTerminal.Output()
+	if terminal.host.report != nil && len(output) > terminal.seen {
+		terminal.host.report(output[terminal.seen:])
+		terminal.seen = len(output)
+	}
+	return output
 }
 
 // finish records one result even when the caller waits repeatedly and then closes.
@@ -127,11 +157,13 @@ func (terminal *timedLiveTerminal) finish(exit int) {
 			err = fmt.Errorf("terminal command failed")
 		}
 		terminal.host.recordOperation("cli", terminal.operation, terminal.started, err)
+		terminal.host.reportOperation(terminal.operation, fmt.Sprintf("finished after %s", time.Since(terminal.started).Round(time.Millisecond)))
 	})
 }
 
 // Close records an unfinished invocation as failed after preserving terminal cleanup.
 func (terminal *timedLiveTerminal) Close() {
-	terminal.liveTerminal.Close()
+	terminal.closeOnce.Do(func() { terminal.liveTerminal.Close() })
+	terminal.Output()
 	terminal.finish(-1)
 }
