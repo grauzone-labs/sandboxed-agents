@@ -562,22 +562,52 @@ A run may proceed without a bound only on a decision that the user has made for 
 
 - **Still refused.** An existing bound or observed record that cannot be read; a filesystem with no free space; a bound for this engine that is at least as large as the free space; and a sampled growth, for the same filesystem on this engine, that is at least as large as the free space. These are known insufficiency or unreadable facts, and no decision waives them. `run` repeats the same refusal before it starts the suite.
 - **Still checked.** An admitted bound still has to pass `headroom`, and free space that cannot be read is never accepted.
-- **Which record `prepare` reads.** The helper checks a record's fields and sampled constraints only; it never checks that the `Basis` covers this run's cache state, selected toolchain sets, and dependency versions, and without `-peak-record` it reads `KEY-peak.json` in the coordination root. Verify the covering basis before you pass a record or let the default select one. A record that does not cover the run, or whose basis does not say, is not a reliable bound: the host stays `pending` until a maintainer writes a covering reasoned record and you pass it with `-peak-record`. The user's informed no-bound decision stays available: with it, and only when no covering record exists and the default record and the engine's observed-peak file have been inspected (each readable, or confirmed absent), `-peak-record` may name an absolute, fresh private path that you have confirmed does not exist, which the helper reads as no record and does not create, so the default record is not selected; the observed-peak file is read and checked either way. Never hide, unlink, rename, or edit an existing default record, and never choose a missing path to get past an unreadable bound or observation record or a known insufficiency, including one that a readable default record shows.
+- **Which record `prepare` reads.** The helper checks a record's fields and sampled constraints only; it never checks that the `Basis` covers this run's cache state, selected toolchain sets, and dependency versions, and without `-peak-record` it reads `KEY-peak.json` in the coordination root (the three bullets below say where it is and how to name the files). Verify the covering basis before you pass a record or let the default select one. A record that does not cover the run, or whose basis does not say, is not a reliable bound: the host stays `pending` until a maintainer writes a covering reasoned record and you pass it with `-peak-record`. The user's informed no-bound decision stays available: with it, and only when no covering record exists and the default record and the engine's observed-peak file have been inspected (each readable, or confirmed absent), `-peak-record` may name an absolute, fresh private path that you have confirmed does not exist, which the helper reads as no record and does not create, so the default record is not selected (the examples below use such a fresh per-invocation path, not the stable `peak-bound.json`); the observed-peak file is read and checked either way. Never hide, unlink, rename, or edit an existing default record, and never choose a missing path to get past an unreadable bound or observation record or a known insufficiency, including one that a readable default record shows.
+  - **Coordination root.** `${XDG_CACHE_HOME:-$HOME/.cache}/sandboxed-agents/live-run` on Linux, where `XDG_CACHE_HOME` counts only when it is set to an absolute path, and `$env:LOCALAPPDATA\sandboxed-agents\live-run` on Windows, as the `os.UserCacheDir` of the pinned Go 1.27.2 gives it. If the environment cannot determine the root, or the lookup fails, never confirm a file absent from some other path, and the host stays `pending` under the existing rule.
+  - **`KEY`.** The lowercase hexadecimal SHA-256 of the exact `EngineID` text of the rejected `prepare`'s `preparation.json` of this invocation, with no trailing newline.
+  - **The engine's two files.** `KEY-peak.json` and `KEY-observed-peak.json`, in the coordination root.
 - **Never invented.** No bound, multiplier, or host figure replaces the missing one.
 
-The decision flags belong to `prepare` and are never added without that decision. Only after the coordinator has told the user the measured free space and the risk of exhausting the host, and the user has decided for this invocation, add `-allow-unbounded -unbounded-decision` with the user's decision in their words; `run` repeats the same checks. The text is never invented or generalized from an earlier approval. In Windows PowerShell 5.1 pass it in single quotes and double every single-quote character that PowerShell recognizes inside it, the typographic `‘` and `’` included ([about_Quoting_Rules for 5.1](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_quoting_rules?view=powershell-5.1)); the text may hold no double quote and no backtick there. In Bash pass it in single quotes and write each single quote inside it as `'\''` (close the quote, an escaped quote, reopen it); doubling the quote, as PowerShell does, would silently remove it. Pass the words unchanged. If they cannot be passed unchanged (a double quote or a backtick under PowerShell 5.1, for example), do not alter, shorten, or paraphrase them and do not invent a decision: the host stays `pending` with its existing outcome. The placeholder text below stands for the user's words and is not a decision; the Bash form shows only how an apostrophe in those words is written:
+To compute `KEY`, first set the variable from the exact decoded `EngineID` text in the `preparation.json` of this rejected `prepare`, never from another run; the commands refuse an unset or empty value, add no query, and echo nothing but the hash. In Bash:
+
+```sh
+: "${ENGINE_ID:?set it from EngineID in this invocation preparation.json}" && printf '%s' "$ENGINE_ID" | sha256sum | cut -d' ' -f1
+```
+
+In PowerShell 5.1:
 
 ```powershell
-& $helper prepare -revision $sha -run-dir $runDir -record-dir $recordDir -peak-record (Join-Path $private 'peak-bound.json') -allow-unbounded -unbounded-decision '<the user decision for this invocation, as they stated it>'
+if ([string]::IsNullOrEmpty($engineId)) {
+  throw 'set $engineId from EngineID in this invocation preparation.json'
+} else {
+  $h = [Security.Cryptography.SHA256]::Create()
+  ($h.ComputeHash([Text.Encoding]::UTF8.GetBytes($engineId)) | ForEach-Object { $_.ToString('x2') }) -join ''
+}
+```
+
+The decision flags belong to `prepare` and are never added without that decision. Only after the coordinator has told the user the measured free space and the risk of exhausting the host, and the user has decided for this invocation, add `-allow-unbounded -unbounded-decision` with the user's decision in their words; `run` repeats the same checks. The text is never invented or generalized from an earlier approval. In Windows PowerShell 5.1 pass it in single quotes and double every single-quote character that PowerShell recognizes inside it, the typographic `‘` and `’` included ([about_Quoting_Rules for 5.1](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_quoting_rules?view=powershell-5.1)); the text may hold no double quote and no backtick there. In Bash pass it in single quotes and write each single quote inside it as `'\''` (close the quote, an escaped quote, reopen it); doubling the quote, as PowerShell does, would silently remove it. Pass the words unchanged. If they cannot be passed unchanged (a double quote or a backtick under PowerShell 5.1, for example), do not alter, shorten, or paraphrase them and do not invent a decision: the host stays `pending` with its existing outcome. The placeholder text below stands for the user's words and is not a decision; the Bash form shows only how an apostrophe in those words is written. Both examples pass a fresh per-invocation path, not the default record or the stable `peak-bound.json`, so no existing record there is read as the bound; the blocks stop before `prepare` when the path already exists, and nothing creates it:
+
+```powershell
+$noBound = Join-Path $private "no-bound-$runId.json"
+if (Test-Path -LiteralPath $noBound) {
+  throw 'choose a fresh path: it already exists'
+} else {
+  & $helper prepare -revision $sha -run-dir $runDir -record-dir $recordDir -peak-record $noBound -allow-unbounded -unbounded-decision '<the user decision for this invocation, as they stated it>'
+}
 ```
 
 In Bash:
 
 ```sh
-"$PRIVATE/live-run" prepare -revision "$SHA" \
-  -run-dir "$PRIVATE/run-$RUN_ID" -record-dir "$HOME/live-suite-records/$RUN_ID" \
-  -peak-record "$PRIVATE/peak-bound.json" \
-  -allow-unbounded -unbounded-decision '<the user'\''s decision for this invocation, as they stated it>'
+NO_BOUND="$PRIVATE/no-bound-$RUN_ID.json"
+if [ -e "$NO_BOUND" ]; then
+  echo 'choose a fresh path: it already exists' >&2
+else
+  "$PRIVATE/live-run" prepare -revision "$SHA" \
+    -run-dir "$PRIVATE/run-$RUN_ID" -record-dir "$HOME/live-suite-records/$RUN_ID" \
+    -peak-record "$NO_BOUND" \
+    -allow-unbounded -unbounded-decision '<the user'\''s decision for this invocation, as they stated it>'
+fi
 ```
 
 **Run.** `live-run run -run-dir RUN` starts the suite detached from the session that launched it and returns once the supervisor acknowledges the start, within five minutes, printing `{"started":true,"preparation_seconds":N}`. On Linux the supervisor is a new session; on Windows it is a process detached from the console and in a new process group, and it owns the suite in a job object that ends with it (see the pending note above for what that does and does not show about surviving an SSH session). The supervisor first probes its own session on Windows (see the pending note above) and then repeats every `prepare` check under the held engine lock, because time can pass between the two commands, and replaces `before.json` with that final snapshot, which later comparison and cleanup use. It then runs the suite as documented above, `go test ./cmd/sandboxed-agents -run '^TestLiveSuite$' -timeout 120m -v`, with the live opt-in, the group, the record directory, the image coverage as `prepare` selected it, and `SANDBOXED_AGENTS_LIVE_STOP_AFTER_FAILURE=1` ([early stop](#operation-bounds-and-early-stop)), and it creates the run's private `preflight-timing` channel without any engine query (see "Preflight cost" above). Its output goes as UTF-8 bytes to `suite.log` in the run directory, the private log, so no shell redirection and no PowerShell text encoding is involved. When the suite returns, or when the supervisor is found dead, the run directory holds `exit.json` and `exit-status`, a plain integer: the exit status of `go test`, or 137 with `interrupted` for a supervisor that died. The suite's end time is taken when `go test` returns, before the supervisor finishes its sampling. The supervisor and `status` publish the exit evidence under one lock of the run directory: `status` that finds the supervisor gone first re-reads `exit.json`, keeps an exit that the supervisor published in the meantime, and repairs `exit-status` from it, and it writes 137 with `interrupted` only when no exit evidence exists. An `exit.json` that is malformed or incomplete is reported as unverified, never as a success. A failure to save progress, or to write the private log, never stops the suite's output: the suite's output keeps draining, progress is saved at most once a second unless the case or operation changed, and a lost write to the private log sets `log_verified` false in the exit evidence, after which `collect` and `cleanup` refuse that log. A second `run` is refused while a suite of this helper holds the engine, and accepted once that suite has ended, also after a killed one.
