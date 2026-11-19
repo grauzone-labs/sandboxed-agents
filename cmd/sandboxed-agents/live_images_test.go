@@ -27,36 +27,65 @@ func liveImageCoverage(t *testing.T, suite *liveSuite) {
 	sets := []string{"none", "dotnet", "playwright", "azure", "native"}
 	images := make(map[string]liveImage)
 	tags := make(map[string]string)
-	for _, set := range sets {
-		name := "image-" + set
-		host.cleanupSandbox(t, name)
-		host.mustCLI(t, "", "up", name, "--with", set)
-		key := host.sshHostKey(t, name)
-		host.assertSSHServer(t, name, key)
-		if set == "none" {
-			host.mustCLI(t, "", "stop", name)
-			host.mustCLI(t, "", "start", name)
-			if restarted := host.sshHostKey(t, name); restarted != key {
-				t.Fatalf("restart changed the SSH host key: before=%q after=%q", key, restarted)
+
+	if suite.imageWork == nil {
+		for _, set := range sets {
+			host.cleanupSandbox(t, "image-"+set)
+			images[set], tags[set] = initialLiveImage(t, host, set)
+		}
+	} else {
+		observed := make([]liveImage, len(sets))
+		observedTags := make([]string, len(sets))
+		for _, set := range sets {
+			host.cleanupSandbox(t, "image-"+set)
+		}
+		// This is the last registered cleanup, so it joins other cases before any
+		// image cleanup, including when an initial assertion terminates the case.
+		t.Cleanup(func() { suite.joinIndependent() })
+		t.Run("initial", func(t *testing.T) {
+			for index, set := range sets {
+				t.Run(set, func(t *testing.T) {
+					t.Parallel()
+					if !suite.imageWork.acquire() {
+						t.Skip("not started after an earlier failure")
+					}
+					defer suite.imageWork.release()
+					defer func() {
+						if t.Failed() {
+							suite.imageWork.suite.stateMu.Lock()
+							suite.imageWork.suite.failed = true
+							suite.imageWork.suite.stateMu.Unlock()
+						}
+					}()
+					observed[index], observedTags[index] = initialLiveImage(t, host, set)
+				})
 			}
-			host.assertSSHServer(t, name, key)
+		})
+		if t.Failed() {
+			t.FailNow()
 		}
-		host.mustCLI(t, liveAgentIdentity+liveImageSmoke(set), "shell", name)
-		container := host.inspectContainer(t, name)
-		host.assertNoSwap(t, name, container)
-		if strings.Contains(container.Config.Image, host.group) {
-			t.Fatalf("image tag includes controller group: %q", container.Config.Image)
-		}
-		tags[set] = container.Config.Image
-		images[set] = host.inspectImage(t, container.Config.Image)
-		if !sameImageID(images[set].ID, container.Image) {
-			t.Fatalf("sandbox %s uses %q rather than tagged image %q", name, container.Image, images[set].ID)
+		for index, set := range sets {
+			if observedTags[index] == "" {
+				t.Fatal("image coverage incomplete after an earlier failure")
+			}
+			images[set], tags[set] = observed[index], observedTags[index]
 		}
 	}
+
 	for _, set := range sets {
 		assertLiveImage(t, set, assetHash, images[set], images["none"])
 	}
-	host.assertNoBakedSSHKeys(t, tags["none"])
+	if suite.imageWork == nil {
+		host.assertNoBakedSSHKeys(t, tags["none"])
+	} else {
+		if !suite.imageWork.acquire() {
+			t.Fatal("image coverage incomplete after an earlier failure")
+		}
+		func() { defer suite.imageWork.release(); host.assertNoBakedSSHKeys(t, tags["none"]) }()
+	}
+	if suite.beforeImageRebuild != nil {
+		suite.beforeImageRebuild(t)
+	}
 	// This is the live suite's sole build command. up may build a missing
 	// image, but must not renew an existing image. All five now exist.
 	output := host.mustCLI(t, "", "build")
@@ -97,6 +126,35 @@ func liveImageCoverage(t *testing.T, suite *liveSuite) {
 	}
 	host.assertNoGroupObjects(t)
 	t.Logf("image coverage complete on %s: base and four toolchains, one build; controller group %s", runtime.GOOS, host.group)
+}
+
+// initialLiveImage retains every initial sandbox, SSH, smoke, swap and image
+// identity assertion for one toolchain before the suite's exclusive rebuild.
+func initialLiveImage(t *testing.T, host liveHost, set string) (liveImage, string) {
+	name := "image-" + set
+	host.mustCLI(t, "", "up", name, "--with", set)
+	key := host.sshHostKey(t, name)
+	host.assertSSHServer(t, name, key)
+	if set == "none" {
+		host.mustCLI(t, "", "stop", name)
+		host.mustCLI(t, "", "start", name)
+		if restarted := host.sshHostKey(t, name); restarted != key {
+			t.Fatalf("restart changed the SSH host key: before=%q after=%q", key, restarted)
+		}
+		host.assertSSHServer(t, name, key)
+	}
+	host.mustCLI(t, liveAgentIdentity+liveImageSmoke(set), "shell", name)
+	container := host.inspectContainer(t, name)
+	host.assertNoSwap(t, name, container)
+	if strings.Contains(container.Config.Image, host.group) {
+		t.Fatalf("image tag includes controller group: %q", container.Config.Image)
+	}
+	tag := container.Config.Image
+	image := host.inspectImage(t, container.Config.Image)
+	if !sameImageID(image.ID, container.Image) {
+		t.Fatalf("sandbox %s uses %q rather than tagged image %q", name, container.Image, image.ID)
+	}
+	return image, tag
 }
 
 // assertNoBakedSSHKeys inspects saved live image layers for embedded SSH host keys.

@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,6 +46,10 @@ var controllerGroupPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 // liveCheckNames are the fixed check identifiers of the record, in run order.
 var liveCheckNames = []string{"preflight", "lifecycle", "update", "agent", "t3code", "images"}
 
+// liveOverlapEnv caps independent cases and initial toolchain work; the
+// unmeasured default remains serial on both supported platforms.
+const liveOverlapEnv = "SANDBOXED_AGENTS_LIVE_OVERLAP"
+
 // liveStopAfterFailureEnv opts into stopping before the next case after a failure.
 const liveStopAfterFailureEnv = "SANDBOXED_AGENTS_LIVE_STOP_AFTER_FAILURE"
 
@@ -56,6 +61,12 @@ type liveSuite struct {
 	imagesSelected, imagesRan, imagesComplete bool
 	results                                   map[string]string
 	stopAfterFailure, failed                  bool
+	overlap                                   int
+	stateMu                                   sync.Mutex
+	afterBaseUp                               func()
+	imageWork                                 *liveWork
+	beforeImageRebuild                        func(*testing.T)
+	joinIndependent                           func()
 }
 
 // TestLiveSuite runs the live cases against real Podman on the selected host in a dedicated controller group and writes the platform's validation record, only when explicitly opted in.
@@ -70,6 +81,22 @@ func TestLiveSuite(t *testing.T) {
 	}
 	suite.host.removeGroupStateOnCleanup(t)
 	suite.host.assertNoGroupObjectsOnCleanup(t)
+	if suite.overlap > 1 {
+		var images func(*testing.T, *liveSuite)
+		if suite.imagesSelected {
+			images = func(t *testing.T, local *liveSuite) { local.images(t) }
+		}
+		suite.runConcurrent(t, []liveCase{
+			{"lifecycle", func(t *testing.T, local *liveSuite) { local.lifecycle(t) }},
+			{"update", func(t *testing.T, local *liveSuite) { local.update(t) }},
+			{"agent", func(t *testing.T, local *liveSuite) { local.agent(t) }},
+			{"t3code", func(t *testing.T, local *liveSuite) { local.t3code(t) }},
+		}, images)
+		if !suite.imagesSelected {
+			t.Run("images", func(t *testing.T) { t.Skip("set " + liveImagesEnv + "=1 to select host-wide image rebuild coverage") })
+		}
+		return
+	}
 	suite.run(t, "lifecycle", suite.lifecycle)
 	suite.run(t, "update", suite.update)
 	suite.run(t, "agent", suite.agent)
@@ -91,6 +118,14 @@ func newLiveSuite(t *testing.T) *liveSuite {
 	suite := &liveSuite{host: liveHost{binary: executable, environment: os.Environ()}, results: map[string]string{}}
 	for _, name := range liveCheckNames {
 		suite.results[name] = "not-run"
+	}
+	suite.overlap = 1
+	if value := os.Getenv(liveOverlapEnv); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 {
+			t.Fatal("SANDBOXED_AGENTS_LIVE_OVERLAP must be a positive integer")
+		}
+		suite.overlap = parsed
 	}
 	suite.platform = livePlatform()
 	if suite.platform == "" {
@@ -300,6 +335,7 @@ func (suite *liveSuite) lifecycle(t *testing.T) {
 	const name = "live-lifecycle"
 	host.cleanupSandbox(t, name)
 	host.mustCLI(t, "", "up", name)
+	suite.baseEnsured()
 	host.assertNoSwap(t, name, host.inspectContainer(t, name))
 	key := host.sshHostKey(t, name)
 	host.assertSSHServer(t, name, key)
@@ -333,7 +369,8 @@ func liveSuiteChild(t *testing.T, fakes testutil.Fakes, values map[string]string
 	if err != nil {
 		t.Fatal(err)
 	}
-	environment := map[string]string{testutil.LiveTestsEnv: "1", liveImagesEnv: "", liveRecordDirEnv: ""}
+	t.Setenv("PATH", fakes.Dir)
+	environment := map[string]string{testutil.LiveTestsEnv: "1", liveImagesEnv: "", liveRecordDirEnv: "", liveOverlapEnv: "", liveStopAfterFailureEnv: ""}
 	maps.Copy(environment, values)
 	command := exec.Command(testExecutable, "-test.v", "-test.run=^TestLiveSuite$")
 	command.Env = testutil.Env(testutil.Env(fakes.Env(os.Environ()), nestedExecutables()), environment)

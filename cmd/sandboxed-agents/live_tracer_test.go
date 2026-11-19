@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
@@ -227,15 +228,20 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 		t.Skip("nested offline guard; the outer suite runs the tracer")
 	}
 	sets := []string{"none", "dotnet", "playwright", "azure", "native"}
+	var baselineCLI, baselineEngine []string
 	for _, scenario := range []struct {
 		images, failIdentity bool
 		bindFailure          string
-	}{{false, false, ""}, {true, false, ""}, {false, true, ""}, {false, false, "extra-volume"}, {false, false, "host-bind"}, {false, false, "unsafe-options"}} {
+		overlap              string
+	}{{false, false, "", ""}, {true, false, "", ""}, {false, true, "", ""}, {false, false, "extra-volume", ""}, {false, false, "host-bind", ""}, {false, false, "unsafe-options", ""}, {true, false, "", "1"}, {true, false, "", "2"}} {
 		selected := scenario.images
 		failed := scenario.failIdentity || scenario.bindFailure != ""
 		label := "images-selected-" + strconv.FormatBool(selected) + "-tool-identity-failure-" + strconv.FormatBool(scenario.failIdentity)
 		if scenario.bindFailure != "" {
 			label += "-" + scenario.bindFailure
+		}
+		if scenario.overlap != "" {
+			label += "-overlap-" + scenario.overlap
 		}
 		t.Run(label, func(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
@@ -326,14 +332,72 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 			}
 			records := t.TempDir()
 			executableLog := filepath.Join(fakes.Dir, "sandboxed-agents.jsonl")
-			output, err := liveSuiteChild(t, fakes, map[string]string{
+			values := map[string]string{
 				"SANDBOXED_AGENTS_GROUP": tracerGroup, liveRecordDirEnv: records, liveImagesEnv: map[bool]string{false: "", true: "1"}[selected],
 				"TEST_SANDBOXED_AGENTS_EXECUTABLE": scripted, livePreparedExecutableEnv: scripted,
 				"TEST_SANDBOXED_AGENTS_LOG": executableLog, "TEST_SANDBOXED_AGENTS_RESPONSES": string(executableScript),
 				"TEST_PODMAN_RESPONSES": string(podmanScript),
 				"TEST_SSH_OUTPUT":       "debug1: SSH2_MSG_NEWKEYS received\n", "TEST_SSH_EXIT": "255",
 				"TEST_SSH_KNOWN_HOSTS": "[127.0.0.1]:" + tracerPort + " " + tracerHostKey + "\n",
-			})
+			}
+			values[liveOverlapEnv] = scenario.overlap
+			var output string
+			if scenario.overlap == "2" {
+				cleanupReady := filepath.Join(records, "cleanup-ready")
+				cleanupRelease := filepath.Join(records, "cleanup-release")
+				archiveReady := filepath.Join(records, "archive-ready")
+				buildReady := filepath.Join(records, "build-ready")
+				executableResponses["remove live-lifecycle --volumes --force"] = lifecycleResponse{ReadyFile: cleanupReady, WaitFor: cleanupRelease}
+				executableResponses["up live-update --with native"] = lifecycleResponse{WaitFor: cleanupReady}
+				build := executableResponses["build"]
+				build.ReadyFile = buildReady
+				executableResponses["build"] = build
+				archive := podmanResponses["image save --format docker-archive "+tracerTag("none")]
+				archive.ReadyFile = archiveReady
+				podmanResponses["image save --format docker-archive "+tracerTag("none")] = archive
+				executableScript, _ = json.Marshal(executableResponses)
+				podmanScript, _ = json.Marshal(podmanResponses)
+				values["TEST_SANDBOXED_AGENTS_RESPONSES"] = string(executableScript)
+				values["TEST_PODMAN_RESPONSES"] = string(podmanScript)
+				values[testutil.LiveTestsEnv] = "1"
+				command := fixtureLiveCommand(t, fakes, "TestLiveSuite", values)
+				var log bytes.Buffer
+				command.Stdout, command.Stderr = &log, &log
+				if err := command.Start(); err != nil {
+					t.Fatal(err)
+				}
+				defer func() {
+					if command.ProcessState == nil {
+						command.Process.Kill()
+						command.Wait()
+					}
+				}()
+				waitLiveMarker(t, cleanupReady)
+				// Let initial image coverage reach its last engine operation while another
+				// case is still in cleanup. A missing barrier would start build now.
+				deadline := time.Now().Add(15 * time.Second)
+				for {
+					if _, err := os.Stat(archiveReady); err == nil {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("parallel images did not reach archive while lifecycle cleanup held its slot")
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				time.Sleep(100 * time.Millisecond)
+				if _, err := os.Stat(buildReady); !os.IsNotExist(err) {
+					t.Error("build started while lifecycle cleanup was in flight")
+				}
+				if err := os.WriteFile(cleanupRelease, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+				err = command.Wait()
+				output = log.String()
+			} else {
+				output, err = liveSuiteChild(t, fakes, values)
+			}
+
 			failure := "disagrees with CLI status or containment"
 			if scenario.bindFailure != "" {
 				failure = "unexpected HostConfig.Binds"
@@ -364,6 +428,36 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 			assertTracedToolEvidence(t, records, result, failed)
 			assertTracedOperationEvidence(t, records, executableLog, fakes.PodmanLog, selected)
 			assertTracedEngineFailureEvidence(t, records, fakes.PodmanLog)
+			if selected && !failed {
+				cliCalls, engineCalls := tracedInvocationLines(t, executableLog), tracedInvocationLines(t, fakes.PodmanLog)
+				if scenario.overlap == "" {
+					baselineCLI, baselineEngine = cliCalls, engineCalls
+				} else if scenario.overlap == "1" {
+					if !slices.Equal(cliCalls, baselineCLI) || !slices.Equal(engineCalls, baselineEngine) {
+						t.Fatal("overlap1 changed the default serial invocation sequence")
+					}
+				} else {
+					wantCLI, wantEngine := slices.Clone(baselineCLI), slices.Clone(baselineEngine)
+					slices.Sort(cliCalls)
+					slices.Sort(engineCalls)
+					slices.Sort(wantCLI)
+					slices.Sort(wantEngine)
+					if !slices.Equal(cliCalls, wantCLI) || !slices.Equal(engineCalls, wantEngine) {
+						t.Fatalf("overlap changed invocation coverage: CLI %d/%d engine %d/%d", len(cliCalls), len(wantCLI), len(engineCalls), len(wantEngine))
+					}
+					// All independent CLI cleanup has finished before the sole rebuild.
+					rebuilt := false
+					for _, call := range testutil.Invocations(t, executableLog) {
+						if slices.Equal(call, []string{"build"}) {
+							rebuilt = true
+							continue
+						}
+						if rebuilt && strings.Contains(strings.Join(call, " "), "live-") {
+							t.Fatalf("independent case operation after rebuild began: %v", call)
+						}
+					}
+				}
+			}
 			builds, created := 0, map[string]bool{}
 			commands := map[string]int{}
 			for _, call := range testutil.Invocations(t, executableLog) {
@@ -578,4 +672,19 @@ func assertTracedOperationEvidence(t *testing.T, directory, cliLog, podmanLog st
 			t.Errorf("operation evidence carries host detail %q: %s", private, data)
 		}
 	}
+}
+
+// tracedInvocationLines preserves exact argv order for serial comparisons and
+// supports multiset comparison when independent cases intentionally interleave.
+func tracedInvocationLines(t *testing.T, path string) []string {
+	t.Helper()
+	var lines []string
+	for _, call := range testutil.Invocations(t, path) {
+		data, err := json.Marshal(call)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines = append(lines, string(data))
+	}
+	return lines
 }
