@@ -696,6 +696,7 @@ func TestRunRechecksKnownSpaceDespiteUnboundedDecision(t *testing.T) {
 // TestRunPreflightChannelIsSupplemental proves the detached command creates a
 // fresh query-free private channel, clears ambient tokens, and preserves the
 // suite's exit 7 even when channel creation fails, through the fake host seam.
+// It also proves the command's actual timeout is the 120m measurement window.
 func TestRunPreflightChannelIsSupplemental(t *testing.T) {
 	for _, blocked := range []bool{false, true} {
 		t.Run(fmt.Sprint(blocked), func(t *testing.T) {

@@ -48,7 +48,8 @@
       "15_20": "Case 15 runs 1 to 4 and case 20 runs 1 to 3 are listed under their cases with their copy hashes. The case 15 round that used the uncommitted candidate (run 3) also let the agent read tool metadata and contained a routing-role hint in its harness, so its valid role cannot be attributed to the skill alone; its host briefs lacked the helper-absent branch and a stable request identifier, and case 20 run 2 ignored the frozen layout. The skill prose was sharpened afterwards. Case 15 run 4 and case 20 run 3 read the committed docs27 bytes (06340a2) without a role hint or expectations and passed their listed criteria (six and five); case 15's hypothetical targets omit an explicit reasoning effort and provider instance identifier, and case 20's fixture supplies no host thread identifiers. These runs cover the listed criteria on those bytes only; they say nothing about later bytes.",
       "simulation_scope": "Every run listed for cases 13 to 23, including case 15 run 4, case 20 run 3 and case 21 run 3 on committed docs27, is a fresh Linux-container text-only simulation by one model (gpt-6-luna, effort high, priority tier requested, effective tier not exposed), reading a frozen copy of SKILL.md and docs/images.md, with no host, SSH, Podman, delegation or question tool call. A pass is a pass of the listed expectations on that copy and says nothing about later bytes; no no-skill baseline was observed, and no native, live, all-model or all-host proof exists.",
       "24_25": "Cases 24 and 25 cover the operations-file and preflight-cost paragraph of skill version 1.5.0 (P, S and T, the incomplete block, the 5 % rule). They are text-only fixtures with fictional values. Their first draft had counts that the source semantics cannot produce (126 invocations that held 120 preflight and 7 selection calls with only 6 not entered; 4 not entered beside 5 selection calls); both were corrected in place before any run. Case 24 now has 133 invocations (120 preflight calls, 7 selection calls, 6 neither; preflight not entered 13, selection not entered 126), and case 25 has 85 (74 closed and 1 open preflight, 5 selection, 4 neither, 1 unobserved; preflight not entered 9, selection not entered 79). Case 24 then ran once on the committed docs32 bytes (3e72d3e) and ended partial: its criterion 1 was not met and its criterion 6, a verbatim return of the full operations file, was ungradable because the fixture gave only a summary. The old prompt, criteria and that run are kept under retired_premise; the active prompt says that it is a summary and criterion 6 checks the file name, the supplied facts and the absence of invented rows. Case 25 had never run, so its prompt and criterion 6 were adjusted in place before any run to the same boundary. Neither active case has a run, baseline or pass; a run needs a frozen copy of the exact released bytes without expectations or hints, and an actual run still returns the real file. Case 25 then ran once (2026-11-19 11:16:38 UTC, on the frozen copy of ba94a37 holding the docs32 bytes) and ended partial: its core safety held (incomplete state, no ratio, the open call not zero, no saving), but criteria 3 and 5 were not met (no explicit statement that the unobserved invocation has no measured seconds and that the 9 not-entered scopes are known absences; the next-evidence list and the need for another run's own decision through the coordinator were incomplete); the run is listed under case 25 and is not a baseline or a pass. The skill paragraph was restructured afterwards into focused bullets with an explicit completion contract; neither active case has run on those bytes. Fresh runs on the committed aa39036 bytes (frozen copy skill-evals-docs36-committed) then passed all six listed criteria for the active case 24 (run 2, 11:37:00 UTC) and for case 25 (run 2, 11:38:36 UTC); run 1 of case 25 stays partial as recorded and the retired case 24 run stays under retired_premise. Both are text-only passes of the listed criteria on those bytes only; later edits to the skill or images.md are not covered, and no baseline exists.",
-      "240638e_runs": "Six fresh runs on the committed 240638e bytes (SKILL.md a42b0410\u2026, docs/images.md 5ba701b4\u2026, frozen copy skill-evals-docs40-final, manifest e8c8e1fb\u2026) are listed under their cases: case 18 run 2 passed its five listed criteria, case 21 run 4 its six, case 23 run 2 its four, and case 25 run 3 its six; case 22 run 2 is partial (expectation 2: no explicit statement that a repair is the user's decision through the coordinator) and case 24 run 3 is partial (expectation 6: the supplied schema_version 1 and the explicit zero unobserved, unknown, unattributed and invalid counts were omitted). Partials are not upgraded and no criterion or premise was changed to improve a score, and the passes before this commit's bytes (cases 18, 21 to 25) stay as recorded for their own copies. Metadata corrections, which are not skill behaviour: case 21's child wrongly called its built-in route a user route, and the children of cases 24 and 25 confused the catalog's current option values with the effective session settings (high effort and the priority tier were selected, the effective tier was not exposed, and no actual Standard tier, billing or model change was observed). Case 21's time is its artifact's creation time, 12:19:22 UTC, not the 12:17 of the terminal summary. Every run is a single-model Linux-container text-only simulation; no baseline, dispatch, host, native, live, other-model or later-byte proof exists. Whether the omitted fields or the repair phrase need skill text is left to concrete review findings."
+      "240638e_runs": "Six fresh runs on the committed 240638e bytes (SKILL.md a42b0410\u2026, docs/images.md 5ba701b4\u2026, frozen copy skill-evals-docs40-final, manifest e8c8e1fb\u2026) are listed under their cases: case 18 run 2 passed its five listed criteria, case 21 run 4 its six, case 23 run 2 its four, and case 25 run 3 its six; case 22 run 2 is partial (expectation 2: no explicit statement that a repair is the user's decision through the coordinator) and case 24 run 3 is partial (expectation 6: the supplied schema_version 1 and the explicit zero unobserved, unknown, unattributed and invalid counts were omitted). Partials are not upgraded and no criterion or premise was changed to improve a score, and the passes before this commit's bytes (cases 18, 21 to 25) stay as recorded for their own copies. Metadata corrections, which are not skill behaviour: case 21's child wrongly called its built-in route a user route, and the children of cases 24 and 25 confused the catalog's current option values with the effective session settings (high effort and the priority tier were selected, the effective tier was not exposed, and no actual Standard tier, billing or model change was observed). Case 21's time is its artifact's creation time, 12:19:22 UTC, not the 12:17 of the terminal summary. Every run is a single-model Linux-container text-only simulation; no baseline, dispatch, host, native, live, other-model or later-byte proof exists. Whether the omitted fields or the repair phrase need skill text is left to concrete review findings.",
+      "925341d_runs": "Three fresh runs on the committed 925341d bytes (SKILL.md 8043b136\u2026, docs/images.md 586da1a5\u2026, frozen copy skill-evals-docs43-final, manifest 2087c244\u2026) are listed under their cases and each met all its listed criteria: case 21 run 5 (six), case 22 run 3 (five) and case 24 run 4 (six). Case 22 run 3 and case 24 run 4 met the criteria that the earlier partial runs on the 240638e bytes missed (the repair as the user's decision through the coordinator; the supplied schema version and zero-valued fields); those partials stay recorded and no criterion, prompt or premise changed. These are single-model Linux-container text-only passes of the listed criteria on those bytes only; preservation is inferred from taking no action; the later formatting-only split of SKILL.md step 6 and any later edit are not covered; and no baseline, dispatch, host, native, live, other-model or later-byte proof exists."
     }
   },
   "evals": [
@@ -1144,7 +1145,7 @@
         "Gives `post_suite_seconds` 143.2 as a lower bound that ends before the final collection and publication, never as a total",
         "Leaves the suite's PASS, status 0 and record unchanged by the collection failure, and keeps the private log on the host"
       ],
-      "baseline": "Not run as a no-skill or earlier-version baseline. No observed baseline exists for the revised prompt. Two runs of the revised prompt with skill version 1.5.0 (run 3 on docs27, run 4 on the 240638e bytes) are listed under runs and are not baselines; the runs under retired_premise answered the earlier prompt and do not count for this one.",
+      "baseline": "Not run as a no-skill or earlier-version baseline. No observed baseline exists for the revised prompt. Three runs of the revised prompt with skill version 1.5.0 (run 3 on docs27, run 4 on the 240638e bytes, run 5 on the 925341d bytes) are listed under runs and are not baselines; the runs under retired_premise answered the earlier prompt and do not count for this one.",
       "runs": [
         {
           "date": "2026-11-19",
@@ -1205,6 +1206,37 @@
           "task_ref": "story-173-skill-eval21-luna-r4",
           "attempt": 4,
           "harness_confounds": "No role hint and no expectations were supplied; later edits to SKILL.md or docs/images.md change the bytes this run read. The child's own text called its route an explicit user route; that is wrong: the route is the built-in one and no user override exists. Corrected here only; it is not behaviour of the skill."
+        },
+        {
+          "date": "2026-11-19",
+          "utc": "2026-11-19T12:44:09Z",
+          "host": "T3 Code delegated child, fresh Linux-container text-only simulation (no host, SSH, Podman, delegation or question tool call; hypothetical calls only)",
+          "model": "gpt-6-luna",
+          "effort": "high",
+          "service_tier": "Priority service tier selected for the child; the effective tier was not exposed (verification gap), so no speed is claimed.",
+          "skill_version": "1.5.0",
+          "result": "pass: all 6 listed text-only criteria",
+          "unmet_expectations": [],
+          "ungradable_expectations": [],
+          "copy": {
+            "source_commit": "925341dd0d6e04b6b395e4d9c8108d6c34217c03",
+            "status": "committed 925341d; frozen copy of SKILL.md and docs/images.md plus the active case prompt only, with no expectations, expected output or hint; the SKILL.md bytes precede the later formatting-only split of step 6",
+            "skill_sha256": "8043b13618717c49c4a8179d4af510dc0204e40f7b6312061f64b0a3c32a061d",
+            "images_sha256": "586da1a542c4c7a5763abe51335052c4518a2a12e9b3a6217d51cacb2f2aac2a",
+            "manifest": "skill-evals-docs43-final/manifest.json",
+            "manifest_sha256": "2087c2444f99263e22bef4146b3e81fac9a168da3c37812b8c58baf15028d5c8",
+            "prompt_sha256": "a1c1fc2b6d210fc36cd15ec9333285aeaee5ce04b17619848c5183fed0e09f9a"
+          },
+          "notes": "The final durations row is `unverified` with the collector's exact repeated-case message and no stale numbers; the earlier collect is stated not to confirm the final collection; the two full IDs, tags and sizes, the free bytes, zero skipped images and zero containers are reproduced with the cleanup status unverified; 143.2 seconds is a lower bound and not a total; the PASS and status 0 stay unchanged. No mutation, deletion, rename, rerun or tool use occurred, and preservation is implicit in taking no action. The full paired report layout was not independently graded.",
+          "limitations": "Text-only simulation by one model; the result covers only the listed criteria on this copy and is not proof of universal skill compliance. No observed no-skill baseline, and no actual dispatch, question, host, native, live, other-model, all-host or later-byte proof; preservation of the files and the PASS is inferred from the response taking no mutating action, not from actual host verification; the private artifact names are metadata, not live evidence.",
+          "private_artifacts": [
+            "skill-evals-docs43-final/results/case-21-gpt-6-luna-r5.txt",
+            "skill-evals-docs43-final/results/case-21-r5-assessment.json"
+          ],
+          "response_sha256": "184f51e0d2498c1cc2ff885a52c39e364b55cbb508ba793770820ae4bfa44726",
+          "task_ref": "story-173-skill-eval21-luna-r5",
+          "attempt": 5,
+          "harness_confounds": "No role hint and no expectations were supplied; later edits to SKILL.md or docs/images.md change the bytes this run read."
         }
       ],
       "retired_premise": {
@@ -1329,6 +1361,37 @@
           "task_ref": "story-173-skill-eval22-luna-r2",
           "attempt": 2,
           "harness_confounds": "No role hint and no expectations were supplied; later edits to SKILL.md or docs/images.md change the bytes this run read."
+        },
+        {
+          "date": "2026-11-19",
+          "utc": "2026-11-19T12:42:19Z",
+          "host": "T3 Code delegated child, fresh Linux-container text-only simulation (no host, SSH, Podman, delegation or question tool call; hypothetical calls only)",
+          "model": "gpt-6-luna",
+          "effort": "high",
+          "service_tier": "Priority service tier selected for the child; the effective tier was not exposed (verification gap), so no speed is claimed.",
+          "skill_version": "1.5.0",
+          "result": "pass: all 5 listed text-only criteria",
+          "unmet_expectations": [],
+          "ungradable_expectations": [],
+          "copy": {
+            "source_commit": "925341dd0d6e04b6b395e4d9c8108d6c34217c03",
+            "status": "committed 925341d; frozen copy of SKILL.md and docs/images.md plus the active case prompt only, with no expectations, expected output or hint; the SKILL.md bytes precede the later formatting-only split of step 6",
+            "skill_sha256": "8043b13618717c49c4a8179d4af510dc0204e40f7b6312061f64b0a3c32a061d",
+            "images_sha256": "586da1a542c4c7a5763abe51335052c4518a2a12e9b3a6217d51cacb2f2aac2a",
+            "manifest": "skill-evals-docs43-final/manifest.json",
+            "manifest_sha256": "2087c2444f99263e22bef4146b3e81fac9a168da3c37812b8c58baf15028d5c8",
+            "prompt_sha256": "1542bb1396cd754b9259d76e6a1fd11f5991d3a4d0ff7c412830993bbdc8270f"
+          },
+          "notes": "Cleanup is reported pending with the literal engine cause and no invented after measurement, inventory or removal; the response explicitly makes any repair or start of the service the user's decision through the coordinator and waits, and declines to start the service, to repair or to run `podman rmi`; the earlier successful durations collect is applicable with no post-suite interval; the PASS and status 0 are unchanged with no mutation, and preservation of the private artifacts is implicit in taking no action; no removal, kept or eligibility claim. This run met the criterion (expectation 2) that run 2 on the 240638e bytes did not; run 2 stays recorded as partial.",
+          "limitations": "Text-only simulation by one model; the result covers only the listed criteria on this copy and is not proof of universal skill compliance. No observed no-skill baseline, and no actual dispatch, question, host, native, live, other-model, all-host or later-byte proof; preservation of the files and the PASS is inferred from the response taking no mutating action, not from actual host verification; the private artifact names are metadata, not live evidence.",
+          "private_artifacts": [
+            "skill-evals-docs43-final/results/case-22-gpt-6-luna-r3.txt",
+            "skill-evals-docs43-final/results/case-22-r3-assessment.json"
+          ],
+          "response_sha256": "ea13f00ad0a6679541aabeb56cf5f61e4cb6034c13868bbbda54b65943adf17c",
+          "task_ref": "story-173-skill-eval22-luna-r3",
+          "attempt": 3,
+          "harness_confounds": "No role hint and no expectations were supplied; later edits to SKILL.md or docs/images.md change the bytes this run read."
         }
       ]
     },
@@ -1425,7 +1488,7 @@
         "Says that 3.2 % is below 5 %, so the measurement stops with the finding recorded, and claims no saving and proposes or starts no change to the preflight or any optimization",
         "Names `operations-windows-11.json` as this run's evidence and reports every supplied fact from it as held, invents no operation row or other content that the summary does not give and says that its complete contents were not provided to it, places the figures beside the final report and not as a new table row or column, and leaves the suite's PASS, the durations file and the final report's `done`, `failed` or `pending` unchanged"
       ],
-      "baseline": "Not run as a no-skill or earlier-version baseline. No observed baseline exists for the active prompt. Two runs of the active prompt with skill version 1.5.0 (run 2 pass on the aa39036 bytes, run 3 partial on the 240638e bytes) are listed under runs and are not baselines; the earlier prompt's partial run stays under retired_premise and does not count for this one.",
+      "baseline": "Not run as a no-skill or earlier-version baseline. No observed baseline exists for the active prompt. Three runs of the active prompt with skill version 1.5.0 (run 2 pass on the aa39036 bytes, run 3 partial on the 240638e bytes, run 4 pass on the 925341d bytes) are listed under runs and are not baselines; the earlier prompt's partial run stays under retired_premise and does not count for this one.",
       "runs": [
         {
           "date": "2026-11-19",
@@ -1488,6 +1551,37 @@
           "task_ref": "story-173-skill-eval24-luna-r3",
           "attempt": 3,
           "harness_confounds": "No role hint and no expectations were supplied; later edits to SKILL.md or docs/images.md change the bytes this run read. The child's wording confused the catalog's current option values (defaults) with the effective session settings and claimed a Standard or medium setting without support; the assessment correction is: high effort and the priority tier were selected, the effective tier was not exposed, and no actual Standard tier, billing or model change was observed."
+        },
+        {
+          "date": "2026-11-19",
+          "utc": "2026-11-19T12:40:21Z",
+          "host": "T3 Code delegated child, fresh Linux-container text-only simulation (no host, SSH, Podman, delegation or question tool call; hypothetical calls only)",
+          "model": "gpt-6-luna",
+          "effort": "high",
+          "service_tier": "Priority service tier selected for the child; the effective tier was not exposed (verification gap), so no speed is claimed.",
+          "skill_version": "1.5.0",
+          "result": "pass: all 6 listed text-only criteria",
+          "unmet_expectations": [],
+          "ungradable_expectations": [],
+          "copy": {
+            "source_commit": "925341dd0d6e04b6b395e4d9c8108d6c34217c03",
+            "status": "committed 925341d; frozen copy of SKILL.md and docs/images.md plus the active case prompt only, with no expectations, expected output or hint; the SKILL.md bytes precede the later formatting-only split of step 6",
+            "skill_sha256": "8043b13618717c49c4a8179d4af510dc0204e40f7b6312061f64b0a3c32a061d",
+            "images_sha256": "586da1a542c4c7a5763abe51335052c4518a2a12e9b3a6217d51cacb2f2aac2a",
+            "manifest": "skill-evals-docs43-final/manifest.json",
+            "manifest_sha256": "2087c2444f99263e22bef4146b3e81fac9a168da3c37812b8c58baf15028d5c8",
+            "prompt_sha256": "40929a84612a486e4defc594296f37cc7269716bcbb0b4694e502d8606cba11b"
+          },
+          "notes": "P 96.0 over 120 closed calls (all pass) with the 13 not-entered scopes as known absences, not zero, and the case (41.7) and class (88.4) figures kept apart; S 12.5 over 7 calls separate; T 3000.0 and 3.2 %; 120 closed calls, 133 invocations and 1 run named separately with the revision, 8 cpus, 17179869184 bytes and the context; below 5 % stops with no saving or change; the response includes the supplied schema version, the settings and every supplied zero-valued field, uses summary facts only with no invented rows, keeps the PASS and durations unchanged, and changes no table. This run met expectation 6, which run 3 on the 240638e bytes did not; run 3 stays recorded as partial.",
+          "limitations": "Text-only simulation by one model; the result covers only the listed criteria on this copy and is not proof of universal skill compliance. No observed no-skill baseline, and no actual dispatch, question, host, native, live, other-model, all-host or later-byte proof; preservation of the files and the PASS is inferred from the response taking no mutating action, not from actual host verification; the private artifact names are metadata, not live evidence.",
+          "private_artifacts": [
+            "skill-evals-docs43-final/results/case-24-gpt-6-luna-r4.txt",
+            "skill-evals-docs43-final/results/case-24-r4-assessment.json"
+          ],
+          "response_sha256": "0b3909f0a98e24193993d37ad61489794923c3e0bd15f6db03142274d3822d05",
+          "task_ref": "story-173-skill-eval24-luna-r4",
+          "attempt": 4,
+          "harness_confounds": "No role hint and no expectations were supplied; later edits to SKILL.md or docs/images.md change the bytes this run read."
         }
       ],
       "retired_premise": {
