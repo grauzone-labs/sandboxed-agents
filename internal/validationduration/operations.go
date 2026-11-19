@@ -51,10 +51,17 @@ type Operations struct {
 
 // operationClasses is the fixed live-validation vocabulary, with preflight and
 // inspection for invocations which do not perform a named lifecycle operation.
-var operationClasses = []string{"preflight", "inspection", "image build", "sandbox start or restart", "SSH server check", "smoke", "update or rollback", "agent install", "agent session", "rebuild", "cleanup", "Tool install", "Tool update", "Tool delete", "Tool probe"}
+var operationClasses = []string{"preflight", "inspection", "image build", "image build or sandbox start", "sandbox start or restart", "SSH server check", "smoke", "update or rollback", "agent install", "agent session", "rebuild", "cleanup", "Tool install", "Tool update", "Tool delete", "Tool probe"}
 
 // operationCases permits only fixed suite identifiers, including outer cleanup.
 var operationCases = []string{"suite", "preflight", "lifecycle", "update", "agent", "t3code", "images"}
+
+// OperationClasses returns the authoritative fixed timing vocabulary as an independent slice.
+// The ambiguous up class retains inclusive elapsed time without claiming a build was observed.
+func OperationClasses() []string { return slices.Clone(operationClasses) }
+
+// OperationCases returns the authoritative timing case identifiers as an independent slice.
+func OperationCases() []string { return slices.Clone(operationCases) }
 
 // WriteOperations validates and atomically retains only sanitized timing facts.
 func WriteOperations(directory string, evidence Operations) (string, error) {

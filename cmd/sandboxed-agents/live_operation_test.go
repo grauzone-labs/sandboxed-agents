@@ -2,7 +2,6 @@ package main_test
 
 import (
 	"fmt"
-	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -42,8 +41,8 @@ func liveCLIClass(args []string) string {
 		}
 		return "inspection"
 	case "up":
-		// up includes any required build and readiness; this timing never splits it.
-		return "image build"
+		// This inclusive invocation has no trusted per-invocation build observation.
+		return "image build or sandbox start"
 	case "stop", "start", "restart":
 		return "sandbox start or restart"
 	case "shell":
@@ -75,17 +74,6 @@ func liveCLIClass(args []string) string {
 	return "inspection"
 }
 
-// livePodmanClass labels direct checks without retaining object identities or probes.
-func (host liveHost) livePodmanClass(args []string) string {
-	if host.caseName == "t3code" {
-		return "Tool probe"
-	}
-	if slices.Contains(args, "ssh-host-key") || slices.Contains(args, "cat /proc/1/comm; cat /proc/1/status") {
-		return "SSH server check"
-	}
-	return "inspection"
-}
-
 // timedLiveTerminal adds a single timing to a real terminal without changing its lifetime.
 type timedLiveTerminal struct {
 	*liveTerminal
@@ -98,6 +86,7 @@ type timedLiveTerminal struct {
 	seen      int
 	completed bool
 	result    int
+	lines     liveLineStream
 }
 
 // startTerminal measures terminal CLI startup failures as well as successful invocations.
@@ -113,13 +102,15 @@ func (host liveHost) startTerminal(t *testing.T, args ...string) *timedLiveTermi
 	}()
 	operation := liveCLIClass(args)
 	host.reportOperation(operation, "started")
-	terminal := &timedLiveTerminal{liveTerminal: startLiveTerminal(t, host.environment, host.binary, args...), host: host, started: started, operation: operation, test: t}
+	terminal := &timedLiveTerminal{liveTerminal: startLiveTerminal(t, host.environment, host.binary, args...), host: host, started: started, operation: operation, test: t, lines: liveLineStream{report: host.report}}
 	ready = true
 	return terminal
 }
 
 // Wait records the first completed invocation after its terminal output drains
 // and preserves that result across later waits, including after slow diagnostics.
+// A class deadline ends the owned invocation and reports finished=true with exit=-1;
+// finished describes the host process lifetime, not a successful command result.
 func (terminal *timedLiveTerminal) Wait(timeout time.Duration) (int, bool) {
 	if terminal.completed {
 		return terminal.result, true
@@ -152,7 +143,7 @@ func (terminal *timedLiveTerminal) Wait(timeout time.Duration) (int, bool) {
 func (terminal *timedLiveTerminal) Output() string {
 	output := terminal.liveTerminal.Output()
 	if terminal.host.report != nil && len(output) > terminal.seen {
-		terminal.host.report(output[terminal.seen:])
+		terminal.lines.Write([]byte(output[terminal.seen:]))
 		terminal.seen = len(output)
 	}
 	return output
@@ -161,6 +152,7 @@ func (terminal *timedLiveTerminal) Output() string {
 // finish records one result even when the caller waits repeatedly and then closes.
 func (terminal *timedLiveTerminal) finish(exit int) {
 	terminal.once.Do(func() {
+		terminal.lines.Flush()
 		var err error
 		if exit != 0 {
 			err = fmt.Errorf("terminal command failed")

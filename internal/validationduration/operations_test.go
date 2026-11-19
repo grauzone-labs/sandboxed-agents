@@ -63,9 +63,9 @@ func TestRetainOperationsReconcilesCaseAndPhaseSeconds(t *testing.T) {
 	}
 }
 
-// TestRetainRejectsUnsafeOperationEvidence proves unknown fields, identifiers,
-// mismatched revisions and invalid times cannot cross the supplemental file seam.
-func TestRetainRejectsUnsafeOperationEvidence(t *testing.T) {
+// TestRetainPreservesDurationsWithUnsafeOperations proves invalid optional evidence
+// stays rejected and unchanged while valid case durations survive through Retain.
+func TestRetainPreservesDurationsWithUnsafeOperations(t *testing.T) {
 	const safe = `{"schema_version":1,"kind":"live-suite-operations","commit":"0123456789abcdef0123456789abcdef01234567","platform":"linux","operations":[{"case":"lifecycle","source":"cli","operation":"image build","result":"fail","seconds":2}],"cases":[{"name":"lifecycle","result":"fail","seconds":3,"unaccounted_seconds":1}]}`
 	for _, scenario := range []struct{ name, data string }{
 		{"unknown-output", strings.Replace(safe, `"operations":`, `"output":"private path", "operations":`, 1)},
@@ -85,14 +85,18 @@ func TestRetainRejectsUnsafeOperationEvidence(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, err := validationduration.Retain(strings.NewReader(""), path, validationduration.Context{HostLoad: "unknown", BaseImage: "unknown", BuildCache: "unknown"})
-			if err == nil {
-				t.Fatal("unsafe operation evidence accepted")
+			retained, err := validationduration.Retain(strings.NewReader("    --- FAIL: TestLiveSuite/lifecycle (8.00s)\n"), path, validationduration.Context{HostLoad: "unknown", BaseImage: "unknown", BuildCache: "unknown"})
+			if err == nil || !strings.Contains(err.Error(), "optional operation evidence") || retained != durations {
+				t.Fatalf("optional evidence must report error and retained duration path: path=%q err=%v", retained, err)
 			}
-			for filename, want := range map[string]string{path: record, operations: scenario.data, durations: "earlier durations\n"} {
+			for filename, want := range map[string]string{path: record, operations: scenario.data} {
 				if data, err := os.ReadFile(filename); err != nil || string(data) != want {
 					t.Fatalf("failed collection changed %s: %s; %v", filename, data, err)
 				}
+			}
+			data, err := os.ReadFile(durations)
+			if err != nil || !strings.Contains(string(data), `"name":"lifecycle","result":"fail","seconds":8`) {
+				t.Fatalf("valid duration lost: %q; %v", data, err)
 			}
 		})
 	}

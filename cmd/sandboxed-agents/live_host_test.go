@@ -51,11 +51,11 @@ func (host liveHost) assertSSHServer(t *testing.T, name, hostKey string) {
 	t.Helper()
 	container := host.inspectContainer(t, name)
 	if !container.State.Running || container.Config.User != "0:0" {
-		t.Fatalf("sandbox %s is not running as container root: %+v", name, container)
+		t.Fatalf("sandbox %s is not running as container root: %#v", name, container)
 	}
-	output, err := host.podman("exec", "--user=0:0", cli.DerivedNames(host.group, name).Container, "sh", "-c", "cat /proc/1/comm; cat /proc/1/status")
+	output, err := host.podmanOperation("SSH server check", "exec", "--user=0:0", cli.DerivedNames(host.group, name).Container, "sh", "-c", "cat /proc/1/comm; cat /proc/1/status")
 	if err != nil || !strings.HasPrefix(output, "sshd\n") || !regexp.MustCompile(`(?m)^Uid:\s+0\s+0\s+0\s+0$`).MatchString(output) {
-		t.Fatalf("sandbox PID 1 is not root sshd: %v\n%s", err, output)
+		t.Fatalf("sandbox PID 1 is not root sshd: %v\n%q", err, output)
 	}
 	port := container.Config.Labels[cli.SSHPortLabel]
 	number, err := strconv.ParseUint(port, 10, 16)
@@ -64,7 +64,7 @@ func (host liveHost) assertSSHServer(t *testing.T, name, hostKey string) {
 	}
 	bindings := container.HostConfig.PortBindings["22/tcp"]
 	if len(bindings) != 1 || bindings[0].HostIP != "127.0.0.1" || bindings[0].HostPort != port {
-		t.Fatalf("sandbox SSH is not published only on its recorded loopback port: %+v", bindings)
+		t.Fatalf("sandbox SSH is not published only on its recorded loopback port: %#v", bindings)
 	}
 	directory := t.TempDir()
 	keyFields := strings.Fields(hostKey)
@@ -102,7 +102,7 @@ func (host liveHost) assertSSHServer(t *testing.T, name, hostKey string) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("no completed Ed25519 key exchange for %s on recorded port %s:\n%s", name, port, diagnostics)
+	t.Fatalf("no completed Ed25519 key exchange for %s on recorded port %s:\n%q", name, port, diagnostics)
 }
 
 // Bounds of the live host-key query. The manager waits up to six seconds for the
@@ -182,7 +182,7 @@ func buildLiveExecutable(t *testing.T, directory string) string {
 		output, err := command.CombinedOutput()
 		cancel()
 		if err != nil {
-			t.Fatalf("prepare embedded live executable (go %v): %v\n%s", args, err, output)
+			t.Fatalf("prepare embedded live executable (go %v): %v\n%q", args, err, output)
 		}
 	}
 	return binary
@@ -205,8 +205,9 @@ func (host liveHost) cliContext(ctx context.Context, input string, args ...strin
 	command.Env = host.environment
 	command.Stdin = strings.NewReader(input)
 	command.WaitDelay = time.Second
-	output := liveOutput{stream: host.report}
+	output := liveOutput{lines: liveLineStream{report: host.report}}
 	err := capture.RunOwned(ctx, command, &output, &output)
+	output.Flush()
 	host.recordOperation("cli", operation, started, err)
 	host.reportOperation(operation, fmt.Sprintf("finished after %s", time.Since(started).Round(time.Millisecond)))
 	if err != nil {
@@ -225,22 +226,26 @@ func (host liveHost) mustCLI(t *testing.T, input string, args ...string) string 
 	t.Logf("sandboxed-agents %s", strings.Join(args, " "))
 	output, err := host.cli(input, args...)
 	if err != nil {
-		t.Fatalf("sandboxed-agents %v: %v\n%s", args, err, output)
+		t.Fatalf("sandboxed-agents %v: %v; output %q", args, err, output)
 	}
-	t.Log(output)
 	return output
 }
 
 // podman runs a bounded live Podman command against the selected connection.
 func (host liveHost) podman(args ...string) (string, error) {
-	operation := host.livePodmanClass(args)
+	return host.podmanOperation("inspection", args...)
+}
+
+// podmanOperation attributes a direct read to its caller's fixed operation class.
+func (host liveHost) podmanOperation(operation string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), host.operationBound(operation))
 	defer cancel()
 	command := host.podmanCommand(ctx, args...)
 	started := time.Now()
 	host.reportOperation(operation, "started")
-	output := liveOutput{stream: host.report}
+	output := liveOutput{lines: liveLineStream{report: host.report}}
 	err := capture.Run(command, &output, &output)
+	output.Flush()
 	host.recordOperation("podman", operation, started, err)
 	host.reportOperation(operation, fmt.Sprintf("finished after %s", time.Since(started).Round(time.Millisecond)))
 	if ctx.Err() != nil {
@@ -281,7 +286,7 @@ func (host *liveHost) selectConnection(t *testing.T) {
 		Default bool
 	}
 	if err != nil || json.Unmarshal([]byte(output), &machines) != nil || len(machines) == 0 {
-		t.Fatalf("select live Podman machine: %v\n%s", err, output)
+		t.Fatalf("select live Podman machine: %v\n%q", err, output)
 	}
 	chosen, defaults := machines[0].Name, 0
 	for _, machine := range machines {
@@ -326,11 +331,11 @@ type liveContainer struct {
 func (host liveHost) assertNoSwap(t *testing.T, name string, container liveContainer) {
 	t.Helper()
 	if container.HostConfig.Memory <= 0 || container.HostConfig.MemorySwap != container.HostConfig.Memory {
-		t.Fatalf("sandbox %s does not record a no-swap memory limit: %+v", name, container.HostConfig)
+		t.Fatalf("sandbox %s does not record a no-swap memory limit: %#v", name, container.HostConfig)
 	}
 	output, err := host.podman("exec", "--user=1000:1000", cli.DerivedNames(host.group, name).Container, "cat", "/sys/fs/cgroup/memory.swap.max")
 	if err != nil || strings.TrimSpace(output) != "0" {
-		t.Fatalf("sandbox %s swap is not disabled in its cgroup: %v %s", name, err, output)
+		t.Fatalf("sandbox %s swap is not disabled in its cgroup: %v %q", name, err, output)
 	}
 }
 
@@ -340,7 +345,7 @@ func (host liveHost) inspectContainer(t *testing.T, name string) liveContainer {
 	output, err := host.podman("container", "inspect", cli.DerivedNames(host.group, name).Container)
 	var records []liveContainer
 	if err != nil || json.Unmarshal([]byte(output), &records) != nil || len(records) != 1 || records[0].Image == "" || records[0].Config.Image == "" {
-		t.Fatalf("inspect live sandbox %s: %v\n%s", name, err, output)
+		t.Fatalf("inspect live sandbox %s: %v\n%q", name, err, output)
 	}
 	return records[0]
 }
@@ -351,7 +356,7 @@ func (host liveHost) inspectImage(t *testing.T, tag string) liveImage {
 	output, err := host.podman("image", "inspect", tag)
 	var records []liveImage
 	if err != nil || json.Unmarshal([]byte(output), &records) != nil || len(records) != 1 || records[0].ID == "" {
-		t.Fatalf("inspect live image %s: %v\n%s", tag, err, output)
+		t.Fatalf("inspect live image %s: %v\n%q", tag, err, output)
 	}
 	return records[0]
 }
@@ -367,7 +372,7 @@ func (host liveHost) cleanupSandbox(t *testing.T, name string) {
 	t.Cleanup(func() {
 		output, err := host.cli("", "remove", name, "--volumes", "--force")
 		if err != nil && !strings.Contains(output, "does not exist in this controller group") {
-			t.Errorf("cleanup sandbox %s: %v\n%s", name, err, output)
+			t.Errorf("cleanup sandbox %s: %v\n%q", name, err, output)
 		}
 		host.assertNoSandboxObjects(t, name)
 	})
@@ -382,11 +387,11 @@ func (host liveHost) assertNoSandboxObjects(t *testing.T, name string) {
 		{"container", names.Container}, {"container", names.Backup},
 		{"volume", names.Workspace}, {"volume", names.Home}, {"volume", names.SSH},
 	} {
-		output, err := host.podman(resource.kind, "exists", resource.name)
+		output, err := host.podmanOperation("cleanup", resource.kind, "exists", resource.name)
 		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
 			continue
 		}
-		t.Errorf("left or could not verify %s %s: %v %s", resource.kind, resource.name, err, output)
+		t.Errorf("left or could not verify %s %s: %v %q", resource.kind, resource.name, err, output)
 	}
 }
 
@@ -403,9 +408,9 @@ func (host liveHost) assertNoGroupObjects(t *testing.T) {
 	t.Helper()
 	var leftovers []string
 	for _, query := range [][]string{{"ps", "--all", "--format", "{{.Names}}"}, {"volume", "ls", "--format", "{{.Name}}"}} {
-		output, err := host.podman(query...)
+		output, err := host.podmanOperation("cleanup", query...)
 		if err != nil {
-			t.Errorf("inventory of the controller group's objects: podman %v: %v\n%s", query, err, output)
+			t.Errorf("inventory of the controller group's objects: podman %v: %v\n%q", query, err, output)
 			return
 		}
 		for _, name := range strings.Fields(output) {
@@ -417,7 +422,7 @@ func (host liveHost) assertNoGroupObjects(t *testing.T) {
 		}
 	}
 	if len(leftovers) != 0 {
-		t.Errorf("objects of controller group %s remain: %v", host.group, leftovers)
+		t.Errorf("objects of controller group %s remain: %q", host.group, leftovers)
 	}
 }
 
@@ -438,11 +443,11 @@ func (host liveHost) assertListed(t *testing.T, name, state string) {
 	row, listed := liveListRow(listing, name)
 	switch {
 	case listed && state == "":
-		t.Fatalf("list still shows removed sandbox %s: %s", name, row)
+		t.Fatalf("list still shows removed sandbox %s: %q", name, row)
 	case listed && strings.Fields(row)[1] != state:
-		t.Fatalf("list shows %s as %s; want %s: %s", name, strings.Fields(row)[1], state, row)
+		t.Fatalf("list shows %s as %s; want %s: %q", name, strings.Fields(row)[1], state, row)
 	case !listed && state != "":
-		t.Fatalf("list omitted %s:\n%s", name, listing)
+		t.Fatalf("list omitted %s:\n%q", name, listing)
 	}
 }
 
@@ -473,18 +478,52 @@ func (host liveHost) removeGroupStateOnCleanup(t *testing.T) {
 type liveOutput struct {
 	sync.Mutex
 	buffer bytes.Buffer
-	stream func(string)
+	lines  liveLineStream
 }
 
 // Write appends one captured write atomically with respect to the other stream.
 func (b *liveOutput) Write(data []byte) (int, error) {
 	b.Lock()
 	defer b.Unlock()
-	if b.stream != nil {
-		b.stream(string(data))
-	}
+	b.lines.Write(data)
 	return b.buffer.Write(data)
 }
 
+// Flush emits the final partial payload line after both process streams have drained.
+func (b *liveOutput) Flush() { b.Lock(); defer b.Unlock(); b.lines.Flush() }
+
 // String returns the completed combined trace without racing a stream writer.
 func (b *liveOutput) String() string { b.Lock(); defer b.Unlock(); return b.buffer.String() }
+
+// liveLineStream separates escaped process payload from host operation metadata.
+// Its owner serializes writes; pending memory is bounded even without a newline.
+type liveLineStream struct {
+	report  func(string)
+	pending []byte
+}
+
+// Write streams whole lines or 4096-byte fragments without exposing payload newlines.
+func (lines *liveLineStream) Write(data []byte) {
+	if lines.report == nil {
+		return
+	}
+	for len(data) > 0 {
+		n := min(len(data), 4096-len(lines.pending))
+		if end := bytes.IndexByte(data[:n], '\n'); end >= 0 {
+			n = end + 1
+		}
+		lines.pending = append(lines.pending, data[:n]...)
+		data = data[n:]
+		if len(lines.pending) == 4096 || lines.pending[len(lines.pending)-1] == '\n' {
+			lines.Flush()
+		}
+	}
+}
+
+// Flush publishes a bounded, ASCII-escaped payload record, including a final partial line.
+func (lines *liveLineStream) Flush() {
+	if len(lines.pending) > 0 && lines.report != nil {
+		lines.report("live output: " + strconv.QuoteToASCII(string(lines.pending)))
+		lines.pending = lines.pending[:0]
+	}
+}

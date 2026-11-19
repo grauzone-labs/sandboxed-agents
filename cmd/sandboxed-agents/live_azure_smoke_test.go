@@ -55,7 +55,7 @@ esac
 			command.Env = append(os.Environ(), "PATH="+directory+string(os.PathListSeparator)+os.Getenv("PATH"), "TMPDIR="+directory)
 			output, err := command.CombinedOutput()
 			if (err != nil) != (failure != "") {
-				t.Fatalf("smoke failure=%q: error=%v\n%s", failure, err, output)
+				t.Fatalf("smoke failure=%q: error=%v\n%q", failure, err, output)
 			}
 			if failure == "" && !strings.Contains(string(output), "1.0.10") {
 				t.Fatalf("smoke omitted extension version: %s", output)

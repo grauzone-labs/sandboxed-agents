@@ -77,7 +77,7 @@ func (suite *liveSuite) t3code(t *testing.T) {
 		terminal := host.startTerminal(t, "tools", "enable", name, "t3code")
 		defer terminal.Close()
 		if exit, finished := terminal.Wait(15 * time.Minute); !finished || exit != 0 {
-			t.Fatalf("tools enable terminal: finished=%v exit=%d\n%s", finished, exit, terminal.Output())
+			t.Fatalf("tools enable terminal: finished=%v exit=%d\n%q", finished, exit, terminal.Output())
 		}
 	}()
 	observe("default-enable-terminal-closed", "latest", "")
@@ -105,7 +105,7 @@ func (suite *liveSuite) t3code(t *testing.T) {
 	}
 	output := host.mustCLI(t, "", "update", name, "--with", "native")
 	if !strings.Contains(output, "updated") {
-		t.Fatalf("sandbox replacement was not reported: %s", output)
+		t.Fatalf("sandbox replacement was not reported: %q", output)
 	}
 	replacement := host.inspectContainer(t, name)
 	if sameImageID(replacement.Image, baseline.Image) || replacement.Config.Labels[cli.ToolchainsLabel] != "native" {
@@ -115,31 +115,31 @@ func (suite *liveSuite) t3code(t *testing.T) {
 	failing := failingLiveUpdateHost(t, host, replacement.Config.Labels[cli.SSHPortLabel])
 	output, err := failing.cli("", "update", name, "--with", "none", "--force")
 	if err == nil || !strings.Contains(output, "readiness wait failed") || !strings.Contains(output, "restored sandbox") {
-		t.Fatalf("forced sandbox rollback: %v %s", err, output)
+		t.Fatalf("forced sandbox rollback: %v %q", err, output)
 	}
 	restored := host.inspectContainer(t, name)
 	if !sameImageID(restored.Image, replacement.Image) || restored.Config.Labels[cli.ToolchainsLabel] != "native" {
 		t.Fatal("rollback did not restore the native toolchain image")
 	}
 	if output, err := host.podman("container", "exists", cli.DerivedNames(host.group, name).Backup); err == nil {
-		t.Fatalf("rollback left a backup container: %s", output)
+		t.Fatalf("rollback left a backup container: %q", output)
 	}
 	previous := observe("sandbox-rollback-restored", "", latest)
 	host.mustCLI(t, "", "check", name)
 	for attempt := range 2 {
 		output := host.mustCLI(t, "", "tools", "delete", name, "t3code")
 		if attempt == 1 && strings.TrimSpace(output) != "t3code not enabled; nothing to delete" {
-			t.Fatalf("second Tool delete did not report its idempotent result: %s", output)
+			t.Fatalf("second Tool delete did not report its idempotent result: %q", output)
 		}
 		if output := host.mustCLI(t, "", "tools", "status", name, "t3code"); strings.TrimSpace(output) != "t3code: not enabled" {
-			t.Fatalf("deleted Tool still enabled: %s", output)
+			t.Fatalf("deleted Tool still enabled: %q", output)
 		}
 		args := []string{"deleted"}
 		for _, pid := range previous.PIDs {
 			args = append(args, strconv.Itoa(pid))
 		}
 		if output := host.toolProbe(t, name, args...); strings.TrimSpace(output) != `{"deleted":true}` {
-			t.Fatalf("delete was not verified: %s", output)
+			t.Fatalf("delete was not verified: %q", output)
 		}
 	}
 	host.mustCLI(t, "", "tools", "enable", name, "t3code")
@@ -191,9 +191,9 @@ func (host liveHost) toolProbe(t *testing.T, name string, args ...string) string
 		t.Fatal(err)
 	}
 	command := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent", cli.DerivedNames(host.group, name).Container, "node", "-e", strings.ReplaceAll(string(script), "\n", " ")}
-	output, err := host.podman(append(command, args...)...)
+	output, err := host.podmanOperation("Tool probe", append(command, args...)...)
 	if err != nil {
-		t.Fatalf("Tool probe %v: %v\n%s", args, err, output)
+		t.Fatalf("Tool probe %v: %v\n%q", args, err, output)
 	}
 	return output
 }
@@ -212,7 +212,7 @@ func (host liveHost) runningTool(t *testing.T, name, channel, pin string) liveTo
 		wantPin = "none"
 	}
 	if match == nil || catalog.ValidateVersion(match[1]) != nil || match[2] != wantChannel || match[3] != wantPin {
-		t.Fatalf("Tool status did not retain channel %s / pin %s with a running service: %s", wantChannel, wantPin, output)
+		t.Fatalf("Tool status did not retain channel %s / pin %s with a running service: %q", wantChannel, wantPin, output)
 	}
 	if pin != "" && match[1] != pin {
 		t.Fatalf("pinned Tool runs %s; want %s", match[1], pin)
@@ -220,10 +220,10 @@ func (host liveHost) runningTool(t *testing.T, name, channel, pin string) liveTo
 	var status liveToolObservation
 	output = host.toolProbe(t, name, "running")
 	if err := json.Unmarshal([]byte(output), &status); err != nil {
-		t.Fatalf("read Tool probe: %v %s", err, output)
+		t.Fatalf("read Tool probe: %v %q", err, output)
 	}
 	if status.Version != match[1] || status.Channel != channel || status.Pin != pin || status.UID != 1000 || status.GID != 1000 || status.HTTPStatus < 100 || status.HTTPStatus > 599 || status.SupervisorPID <= 1 || status.ServicePID <= 1 || !slices.Contains(status.PIDs, status.SupervisorPID) || !slices.Contains(status.PIDs, status.ServicePID) {
-		t.Fatalf("Tool service observation disagrees with CLI status or containment: %+v", status)
+		t.Fatalf("Tool service observation disagrees with CLI status or containment: %#v", status)
 	}
 	return status
 }
@@ -235,7 +235,7 @@ func (host liveHost) failedToolUpdate(t *testing.T, name string) {
 	host.toolProbe(t, name, "break-install")
 	output, err := host.cli("", "tools", "update", name, "t3code")
 	if err == nil || !strings.Contains(output, ".next-") || !strings.Contains(strings.ToLower(output), "permission denied") {
-		t.Fatalf("expected deterministic Tool staging failure: %v %s", err, output)
+		t.Fatalf("expected deterministic Tool staging failure: %v %q", err, output)
 	}
 }
 

@@ -276,10 +276,15 @@ func (suite *liveSuite) preflight(t *testing.T) {
 			MemoryBytes uint64 `json:"memTotal"`
 		} `json:"host"`
 	}
+	var engine *validationduration.Engine
 	if capacityErr != nil || json.Unmarshal([]byte(capacity), &info) != nil || info.Host.CPUs <= 0 || info.Host.MemoryBytes == 0 {
-		t.Fatalf("read engine capacity: %v", capacityErr)
+		t.Log("engine capacity unavailable")
+	} else {
+		engine = &validationduration.Engine{CPUs: info.Host.CPUs, MemoryBytes: info.Host.MemoryBytes}
 	}
-	suite.host.timings.evidence.Engine = &validationduration.Engine{CPUs: info.Host.CPUs, MemoryBytes: info.Host.MemoryBytes}
+	suite.host.timings.Lock()
+	suite.host.timings.evidence.Engine = engine
+	suite.host.timings.Unlock()
 	if prepared := os.Getenv(livePreparedExecutableEnv); prepared != "" {
 		suite.host.binary = prepared
 	} else {
@@ -288,7 +293,7 @@ func (suite *liveSuite) preflight(t *testing.T) {
 	version := suite.host.mustCLI(t, "", "version")
 	hashes := regexp.MustCompile(`(?m)^asset-sha256 ([a-f0-9]{64})\r?$`).FindStringSubmatch(version)
 	if len(hashes) != 2 {
-		t.Fatalf("version omitted the asset hash: %s", version)
+		t.Fatalf("version omitted the asset hash: %q", version)
 	}
 	suite.assetHash = hashes[1]
 }
@@ -362,7 +367,7 @@ func TestLiveSuiteOptInSelectsOnlyExplicitOne(t *testing.T) {
 			calls := testutil.Invocations(t, fakes.PodmanLog)
 			if value != "1" {
 				if selected || err != nil || len(calls) != 0 || !strings.Contains(output, "--- SKIP: TestLiveSuite") {
-					t.Fatalf("unexpected live selection for %q: selected=%v err=%v calls=%v\n%s", value, selected, err, calls, output)
+					t.Fatalf("unexpected live selection for %q: selected=%v err=%v calls=%v\n%q", value, selected, err, calls, output)
 				}
 				if entries, err := os.ReadDir(records); err != nil || len(entries) != 0 {
 					t.Fatalf("skipped suite wrote %v", entries)
@@ -371,7 +376,7 @@ func TestLiveSuiteOptInSelectsOnlyExplicitOne(t *testing.T) {
 			}
 			// The empty fake prerequisite answers fail the preflight, so the opted-in run fails without any mutation.
 			if !selected || err == nil || len(calls) == 0 || !strings.Contains(output, "--- FAIL: TestLiveSuite/preflight") {
-				t.Fatalf("opt-in: selected=%v err=%v calls=%v\n%s", selected, err, calls, output)
+				t.Fatalf("opt-in: selected=%v err=%v calls=%v\n%q", selected, err, calls, output)
 			}
 			assertOnlyPreflightQueries(t, fakes)
 		})
@@ -459,7 +464,7 @@ func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 			const group = "live-offline-redaction"
 			output, err := liveSuiteChild(t, fakes, map[string]string{"SANDBOXED_AGENTS_GROUP": group, liveRecordDirEnv: records, liveImagesEnv: selection})
 			if err == nil {
-				t.Fatalf("offline live run passed:\n%s", output)
+				t.Fatalf("offline live run passed:\n%q", output)
 			}
 			for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
 				for _, argument := range call {
@@ -479,7 +484,7 @@ func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 			}
 			var fields map[string]json.RawMessage
 			if err := json.Unmarshal(data, &fields); err != nil {
-				t.Fatalf("record is not one JSON object: %v\n%s", err, data)
+				t.Fatalf("record is not one JSON object: %v\n%q", err, data)
 			}
 			want := map[string]string{
 				"schema_version": "2", "kind": `"live-suite"`, "commit": `"` + commit + `"`,
@@ -493,7 +498,7 @@ func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 				got[key] = string(value)
 			}
 			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("record fields=%v\nwant %v\noutput:\n%s", got, want, output)
+				t.Fatalf("record fields=%v\nwant %v\noutput:\n%q", got, want, output)
 			}
 			// A host or account named like a fixed word of the record, such as a
 			// user called agent, cannot be told from that word and is not a leak.

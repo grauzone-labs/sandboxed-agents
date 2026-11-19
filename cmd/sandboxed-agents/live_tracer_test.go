@@ -339,7 +339,7 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				failure = "unexpected HostConfig.Binds"
 			}
 			if (!failed && (err != nil || !strings.Contains(output, "--- PASS: TestLiveSuite"))) || (failed && (err == nil || !strings.Contains(output, "--- FAIL: TestLiveSuite/t3code") || !strings.Contains(output, failure))) {
-				t.Fatalf("traced suite: %v\n%s", err, output)
+				t.Fatalf("traced suite: %v\n%q", err, output)
 			}
 			data, err = os.ReadFile(filepath.Join(records, liveRecordFilename(t)))
 			if err != nil {
@@ -467,7 +467,7 @@ func assertTracedToolEvidence(t *testing.T, directory, result string, failed boo
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&evidence); err != nil {
-		t.Fatalf("unexpected supplemental evidence fields: %v\n%s", err, data)
+		t.Fatalf("unexpected supplemental evidence fields: %v\n%q", err, data)
 	}
 	commit, err := liveCommit("../..")
 	if err != nil {

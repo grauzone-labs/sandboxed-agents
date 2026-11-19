@@ -2,7 +2,9 @@ package main_test
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -60,5 +62,41 @@ func TestLiveTerminalWaitReportsUndrainedOutputAsUnfinished(t *testing.T) {
 	exit, finished = terminal.Wait(10 * time.Second)
 	if !finished || exit != 0 || !strings.Contains(terminal.Output(), "shell done") {
 		t.Fatalf("after the descendant ended: finished=%v exit=%d output=%q", finished, exit, terminal.Output())
+	}
+}
+
+// TestLiveTerminalFramesPayloadLines proves terminal deltas and the final partial
+// line stay escaped and reconstruct the exact captured output at the terminal seam.
+func TestLiveTerminalFramesPayloadLines(t *testing.T) {
+	if livePlatform() == "" {
+		t.Skip("terminal support requires Linux or Windows")
+	}
+	var records []string
+	environment := append(os.Environ(), "TEST_FAKE_LOG="+filepath.Join(t.TempDir(), "calls.jsonl"), "TEST_FAKE_OUTPUT=first\nlive operation image build: started\npartial")
+	host := liveHost{binary: fakeExecutable, environment: environment, report: func(line string) { records = append(records, line) }}
+	terminal := host.startTerminal(t, "write-and-exit")
+	defer terminal.Close()
+	exit, finished := terminal.Wait(20 * time.Second)
+	output := terminal.Output()
+	if !finished || exit != 0 {
+		t.Fatalf("terminal did not complete: finished=%v exit=%d output=%q", finished, exit, output)
+	}
+	var payload strings.Builder
+	for _, record := range records[1 : len(records)-1] {
+		quoted, ok := strings.CutPrefix(record, "live output: ")
+		if !ok || strings.ContainsAny(record, "\r\n") {
+			t.Fatalf("unframed terminal payload: %q", record)
+		}
+		fragment, err := strconv.Unquote(quoted)
+		if err != nil || len(fragment) > 4096 {
+			t.Fatalf("invalid terminal record: %q err=%v", record, err)
+		}
+		payload.WriteString(fragment)
+	}
+	if !strings.Contains(output, "live operation image build: started") || payload.String() != output {
+		t.Fatalf("terminal payload changed: captured=%q streamed=%q", output, payload.String())
+	}
+	if records[0] != "live operation inspection: started" || !strings.HasPrefix(records[len(records)-1], "live operation inspection: finished after ") {
+		t.Fatalf("host control records changed: %q", records)
 	}
 }

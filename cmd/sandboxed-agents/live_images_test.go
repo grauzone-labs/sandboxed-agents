@@ -43,12 +43,12 @@ func liveImageCoverage(t *testing.T, suite *liveSuite) {
 		container := host.inspectContainer(t, name)
 		host.assertNoSwap(t, name, container)
 		if strings.Contains(container.Config.Image, host.group) {
-			t.Fatalf("image tag includes controller group: %s", container.Config.Image)
+			t.Fatalf("image tag includes controller group: %q", container.Config.Image)
 		}
 		tags[set] = container.Config.Image
 		images[set] = host.inspectImage(t, container.Config.Image)
 		if !sameImageID(images[set].ID, container.Image) {
-			t.Fatalf("sandbox %s uses %s rather than tagged image %s", name, container.Image, images[set].ID)
+			t.Fatalf("sandbox %s uses %q rather than tagged image %q", name, container.Image, images[set].ID)
 		}
 	}
 	for _, set := range sets {
@@ -61,18 +61,18 @@ func liveImageCoverage(t *testing.T, suite *liveSuite) {
 	suite.imagesRan = true
 	for _, fragment := range []string{"keep", "image", "update", "list", "outdated"} {
 		if !strings.Contains(strings.ToLower(output), fragment) {
-			t.Fatalf("build omitted %q from its keep-images/update/list guidance:\n%s", fragment, output)
+			t.Fatalf("build omitted %q from its keep-images/update/list guidance:\n%q", fragment, output)
 		}
 	}
 	rebuilt := make(map[string]liveImage)
 	for _, set := range sets {
 		rebuilt[set] = host.inspectImage(t, tags[set])
 		if sameImageID(rebuilt[set].ID, images[set].ID) {
-			t.Errorf("build did not replace the %s image (%s)", set, images[set].ID)
+			t.Errorf("build did not replace the %s image (%q)", set, images[set].ID)
 		}
 		container := host.inspectContainer(t, "image-"+set)
 		if !sameImageID(container.Image, images[set].ID) {
-			t.Errorf("build replaced existing sandbox image for %s: got %s; want %s", set, container.Image, images[set].ID)
+			t.Errorf("build replaced existing sandbox image for %s: got %q; want %q", set, container.Image, images[set].ID)
 		}
 	}
 	for _, set := range sets {
@@ -84,9 +84,9 @@ func liveImageCoverage(t *testing.T, suite *liveSuite) {
 		name := "image-" + set
 		row, listed := liveListRow(listing, name)
 		if !listed {
-			t.Errorf("list omitted %s:\n%s", name, listing)
+			t.Errorf("list omitted %s:\n%q", name, listing)
 		} else if !strings.Contains(strings.ToLower(row), "outdated") {
-			t.Errorf("list did not mark %s outdated: %s", name, row)
+			t.Errorf("list did not mark %s outdated: %q", name, row)
 		}
 	}
 	for _, set := range sets {
@@ -160,10 +160,10 @@ func (host liveHost) assertNoBakedSSHKeys(t *testing.T, tag string) {
 	waitErr := command.Wait()
 	processErr = waitErr
 	if err != io.EOF || drainErr != nil || waitErr != nil || layers == 0 {
-		t.Fatalf("read base image layer archive: tar=%v drain=%v process=%v layers=%d\n%s", err, drainErr, waitErr, layers, stderr.String())
+		t.Fatalf("read base image layer archive: tar=%v drain=%v process=%v layers=%d\n%q", err, drainErr, waitErr, layers, stderr.String())
 	}
 	if len(keys) != 0 {
-		t.Errorf("base image layers contain baked SSH host keys: %v", keys)
+		t.Errorf("base image layers contain baked SSH host keys: %q", keys)
 	}
 }
 
@@ -183,13 +183,13 @@ func assertLiveImage(t *testing.T, set, assetHash string, actual, base liveImage
 		return
 	}
 	if sameImageID(actual.ID, base.ID) {
-		t.Errorf("%s image has the base image ID %s", set, actual.ID)
+		t.Errorf("%s image has the base image ID %q", set, actual.ID)
 	}
 	if !sameImageID(actual.Config.Labels["io.sandboxed-agents.base-image"], base.ID) {
-		t.Errorf("%s image base label = %q; want %s", set, actual.Config.Labels["io.sandboxed-agents.base-image"], base.ID)
+		t.Errorf("%s image base label = %q; want %q", set, actual.Config.Labels["io.sandboxed-agents.base-image"], base.ID)
 	}
 	if len(base.RootFS.Layers) == 0 || len(actual.RootFS.Layers) <= len(base.RootFS.Layers) || !slices.Equal(actual.RootFS.Layers[:min(len(actual.RootFS.Layers), len(base.RootFS.Layers))], base.RootFS.Layers) {
-		t.Errorf("%s image does not extend the base layers: base=%v toolchain=%v", set, base.RootFS.Layers, actual.RootFS.Layers)
+		t.Errorf("%s image does not extend the base layers: base=%q toolchain=%q", set, base.RootFS.Layers, actual.RootFS.Layers)
 	}
 }
 

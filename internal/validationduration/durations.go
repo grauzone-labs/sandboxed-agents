@@ -148,7 +148,9 @@ func Collect(log io.Reader, record []byte, state Context) ([]byte, error) {
 	return json.Marshal(result)
 }
 
-// Retain writes timing evidence beside a schema 2 record without modifying it.
+// Retain writes case durations beside a schema 2 record without modifying it.
+// A nonempty path with an error means durations were retained but optional operation
+// evidence could not be updated; invalid optional evidence remains untouched.
 func Retain(log io.Reader, recordPath string, state Context) (string, error) {
 	record, err := os.ReadFile(recordPath)
 	if err != nil {
@@ -170,11 +172,11 @@ func Retain(log io.Reader, recordPath string, state Context) (string, error) {
 		return "", fmt.Errorf("expected the platform live-suite record filename")
 	}
 	path := filepath.Join(filepath.Dir(recordPath), "durations-"+source.Platform+".json")
-	if err := retainOperationPhases(filepath.Dir(recordPath), source, state); err != nil {
-		return "", err
-	}
 	if err := writeEvidence(path, data); err != nil {
 		return "", err
+	}
+	if err := retainOperationPhases(filepath.Dir(recordPath), source, state); err != nil {
+		return path, fmt.Errorf("case durations retained; optional operation evidence: %w", err)
 	}
 	return path, nil
 }

@@ -46,10 +46,12 @@ func run(args []string, input io.Reader, output, diagnostics io.Writer) error {
 		return err
 	}
 	path, err := validationduration.Retain(input, *record, validationduration.Context{HostLoad: *host, BaseImage: *base, BuildCache: *cache, Preparation: preparation, PostSuite: postSuite})
-	if err != nil {
-		return err
+	if path != "" {
+		_, writeErr := fmt.Fprintln(output, path)
+		if writeErr != nil {
+			return writeErr
+		}
 	}
-	_, err = fmt.Fprintln(output, path)
 	return err
 }
 

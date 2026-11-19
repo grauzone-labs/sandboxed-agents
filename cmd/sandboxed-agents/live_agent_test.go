@@ -57,7 +57,7 @@ func (suite *liveSuite) agent(t *testing.T) {
 		t.Fatalf("after detaching: enabled=%v session=%v; want a running session", enabled, session)
 	}
 	if output := host.mustCLI(t, "", "agents", "session", name, agent, "--stop"); !strings.Contains(output, "stopped session "+agent) {
-		t.Fatalf("session stop did not name the session:\n%s", output)
+		t.Fatalf("session stop did not name the session:\n%q", output)
 	}
 	if enabled, _, session := host.agentStatus(t, name, agent); !enabled || session {
 		t.Fatalf("after stop: enabled=%v session=%v; want no session", enabled, session)
@@ -76,7 +76,7 @@ func (host liveHost) agentStatus(t *testing.T, name, agent string) (bool, string
 	output := host.mustCLI(t, "", "agents", "status", name, agent)
 	match := agentStatusPattern.FindStringSubmatch(output)
 	if match == nil {
-		t.Fatalf("unreadable agents status:\n%s", output)
+		t.Fatalf("unreadable agents status:\n%q", output)
 	}
 	if match[1] == "not enabled" {
 		return false, "", false

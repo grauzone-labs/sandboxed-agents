@@ -391,11 +391,11 @@ func TestLiveEngineFailureRetainsSanitizedSnapshot(t *testing.T) {
 	command.Env = testutil.Env(fakes.Env(os.Environ()), values)
 	output, err := command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "original engine failure sentinel") || !strings.Contains(string(output), "exit status 23") || !strings.Contains(string(output), "--- FAIL: TestLiveEngineFailureFixture/images") {
-		t.Fatalf("original failure changed: %v\n%s", err, output)
+		t.Fatalf("original failure changed: %v\n%q", err, output)
 	}
 	data, err = os.ReadFile(filepath.Join(directory, "engine-failures-"+livePlatform()+".json"))
 	if err != nil {
-		t.Fatalf("no immediate engine failure evidence: %v\n%s", err, output)
+		t.Fatalf("no immediate engine failure evidence: %v\n%q", err, output)
 	}
 	var evidence struct {
 		SchemaVersion          int `json:"schema_version"`

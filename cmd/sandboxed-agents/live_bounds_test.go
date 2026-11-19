@@ -8,11 +8,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
+	"github.com/grauzone-labs/sandboxed-agents/internal/validationduration"
 )
 
 // TestLiveOperationClassBoundStreamsBeforeCompletion proves a stalled process is
@@ -82,7 +84,7 @@ func TestLiveDirectPodmanBoundStreamsOutput(t *testing.T) {
 	started := time.Now()
 	output, err := host.podman("info")
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "inspection") || time.Since(started) > 2*time.Second || !strings.Contains(output, "engine query started") {
-		t.Fatalf("direct engine query: %v\n%s", err, output)
+		t.Fatalf("direct engine query: %v\n%q", err, output)
 	}
 	found := false
 	for len(stream) > 0 {
@@ -134,7 +136,7 @@ func TestLiveTerminalClassBoundRetainsProgress(t *testing.T) {
 	started := time.Now()
 	output, err := command.CombinedOutput()
 	if err == nil || time.Since(started) > 2*time.Second || !strings.Contains(string(output), "install progress") || !strings.Contains(string(output), "Tool install exceeded class bound") {
-		t.Fatalf("terminal fixture: %v\n%s", err, output)
+		t.Fatalf("terminal fixture: %v\n%q", err, output)
 	}
 }
 
@@ -146,7 +148,7 @@ func TestLiveBoundSuiteFixture(t *testing.T) {
 	}
 	suite := newLiveSuite(t)
 	suite.host.binary = os.Getenv(livePreparedExecutableEnv)
-	suite.host.operationBounds = map[string]time.Duration{"image build": 300 * time.Millisecond}
+	suite.host.operationBounds = map[string]time.Duration{"image build or sandbox start": 300 * time.Millisecond}
 	suite.host.removeGroupStateOnCleanup(t)
 	suite.host.assertNoGroupObjectsOnCleanup(t)
 	root := os.Getenv("XDG_STATE_HOME")
@@ -204,8 +206,8 @@ func TestLiveBoundFailureRetainsRecordsAndCleansUp(t *testing.T) {
 			command := exec.Command(os.Args[0], "-test.v", "-test.run=^TestLiveBoundSuiteFixture$")
 			command.Env = testutil.Env(fakes.Env(os.Environ()), values)
 			output, err := command.CombinedOutput()
-			if err == nil || !strings.Contains(string(output), "--- PASS: TestLiveBoundSuiteFixture/preflight") || !strings.Contains(string(output), "operation image build") {
-				t.Fatalf("bounded suite: %v\n%s", err, output)
+			if err == nil || !strings.Contains(string(output), "--- PASS: TestLiveBoundSuiteFixture/preflight") || !strings.Contains(string(output), "operation image build or sandbox start") {
+				t.Fatalf("bounded suite: %v\n%q", err, output)
 			}
 			data, err = os.ReadFile(filepath.Join(directory, liveRecordFilename(t)))
 			if err != nil {
@@ -255,4 +257,37 @@ func TestLiveBoundFailureRetainsRecordsAndCleansUp(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestLiveBoundsCoverTimingVocabulary proves harness bounds and cases exactly match
+// the collector's authoritative vocabulary, so a new or misspelled class cannot hide.
+func TestLiveBoundsCoverTimingVocabulary(t *testing.T) {
+	classes := validationduration.OperationClasses()
+	if len(classes) != len(liveOperationBounds) {
+		t.Fatalf("bounds/classes differ: %v / %v", liveOperationBounds, classes)
+	}
+	for _, class := range classes {
+		bound, ok := liveOperationBounds[class]
+		if !ok || bound <= 0 || bound >= 120*time.Minute {
+			t.Errorf("class %q has missing or invalid bound: %v", class, bound)
+		}
+	}
+	cases := append([]string{"suite"}, liveCheckNames...)
+	if !slices.Equal(cases, validationduration.OperationCases()) {
+		t.Fatalf("harness/collector case vocabulary differs: %v / %v", cases, validationduration.OperationCases())
+	}
+	if liveOperationBounds["image build or sandbox start"] != 30*time.Minute {
+		t.Fatal("ambiguous inclusive up bound changed")
+	}
+}
+
+// TestLiveUnknownClassRefusesExecution proves a typo cannot silently receive the
+// default inspection deadline at the harness operation-bound seam.
+func TestLiveUnknownClassRefusesExecution(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("unknown operation class silently accepted")
+		}
+	}()
+	(liveHost{}).operationBound("image biuld")
 }

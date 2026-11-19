@@ -62,3 +62,22 @@ func TestRunRetainsPreparationAndPostSuiteSeconds(t *testing.T) {
 		t.Fatalf("phase evidence: %s", data)
 	}
 }
+
+// TestRunReportsRetainedDurationsWhenOptionalEvidenceIsInvalid proves the command
+// returns the independent durations path and an explicit optional-evidence error.
+func TestRunReportsRetainedDurationsWhenOptionalEvidenceIsInvalid(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "live-suite-linux.json")
+	const source = `{"schema_version":2,"kind":"live-suite","commit":"0123456789abcdef0123456789abcdef01234567","platform":"linux","result":"fail","image_part_selected":false,"image_part_ran":false,"image_coverage_complete":false,"checks":[]}`
+	if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "operations-linux.json"), []byte(`{"partial":`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output, diagnostics bytes.Buffer
+	err := run([]string{"-record", path}, strings.NewReader("    --- FAIL: TestLiveSuite/preflight (19.58s)\n"), &output, &diagnostics)
+	if err == nil || !strings.Contains(err.Error(), "optional operation evidence") || output.String() != filepath.Join(directory, "durations-linux.json")+"\n" {
+		t.Fatalf("output=%q err=%v", output.String(), err)
+	}
+}
