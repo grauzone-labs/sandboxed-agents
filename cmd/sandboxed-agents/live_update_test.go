@@ -74,7 +74,9 @@ func (suite *liveSuite) update(t *testing.T) {
 
 // failingLiveUpdateHost prepares the suite's forced readiness failure: ssh
 // fails only for the readiness probe of the given port and otherwise runs the
-// real program, so Podman's own machine transport keeps working.
+// real program, so Podman's own machine transport keeps working. Only the
+// precisely expected rollback call uses this copy; timings remain enabled while
+// failure sampling is suppressed, and the caller still asserts its failure.
 func failingLiveUpdateHost(t *testing.T, host liveHost, port string) liveHost {
 	t.Helper()
 	realSSH, err := exec.LookPath("ssh")
@@ -98,6 +100,7 @@ func failingLiveUpdateHost(t *testing.T, host liveHost, port string) liveHost {
 		t.Fatal(err)
 	}
 	failing := host
+	failing.failures = nil
 	failing.environment = testutil.Env(host.environment, map[string]string{"PATH": dir + string(os.PathListSeparator) + os.Getenv("PATH"), "TEST_SSH_LOG": filepath.Join(dir, "ssh.jsonl"), "TEST_SSH_OUTPUT": "", "TEST_SSH_RESPONSES": "", "TEST_SSH_KNOWN_HOSTS": "", "TEST_SSH_EXIT": "255", "TEST_SSH_REAL_EXECUTABLE": realSSH, "TEST_SSH_FAIL_PORT": port})
 	return failing
 }

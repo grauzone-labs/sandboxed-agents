@@ -12,7 +12,7 @@ import (
 var liveOperationBounds = map[string]time.Duration{
 	"preflight":                    5 * time.Minute,
 	"inspection":                   2 * time.Minute,
-	"image build":                  30 * time.Minute,
+	"image archive":                10 * time.Minute,
 	"image build or sandbox start": 30 * time.Minute,
 	"sandbox start or restart":     10 * time.Minute,
 	"SSH server check":             2 * time.Minute,

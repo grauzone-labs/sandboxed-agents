@@ -417,9 +417,9 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 	}
 }
 
-// assertTracedEngineFailureEvidence proves the expected rollback still passes its
-// case while retaining a sample, and every sample has one timed engine read rather
-// than observing normal negative exists probes, at the nested suite file seam.
+// assertTracedEngineFailureEvidence proves intentional rollback and staging
+// failures produce no false samples or probes, while the preflight capacity
+// read remains present, at the nested suite file and fake process seams.
 func assertTracedEngineFailureEvidence(t *testing.T, directory, podmanLog string) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(directory, "engine-failures-"+livePlatform()+".json"))
@@ -432,22 +432,14 @@ func assertTracedEngineFailureEvidence(t *testing.T, directory, podmanLog string
 	if err := decoder.Decode(&evidence); err != nil {
 		t.Fatal(err)
 	}
-	rollback, queries := 0, 0
-	for _, sample := range evidence.Samples {
-		if sample.Case == "update" && sample.Operation == "update or rollback" {
-			rollback++
-		}
-		if sample.Source != "cli" || sample.Result != "fail" || sample.EngineQuery != "verified" || sample.MachineQuery != "not-applicable" || sample.MachineState != "unknown" || sample.CPUs == nil || *sample.CPUs != 4 || sample.MemoryBytes == nil || *sample.MemoryBytes != 4294967296 || sample.FreeMemoryBytes == nil || *sample.FreeMemoryBytes != 123456789 || sample.SwapBytes == nil || *sample.SwapBytes != 0 || sample.FreeSwapBytes == nil || *sample.FreeSwapBytes != 0 {
-			t.Fatalf("unexpected rollback/diagnostic sample: %+v", sample)
-		}
-	}
+	queries := 0
 	for _, call := range testutil.Invocations(t, podmanLog) {
 		if slices.Equal(call, []string{"info", "--format", "json"}) {
 			queries++
 		}
 	}
-	if rollback != 1 || queries != len(evidence.Samples)+1 {
-		t.Fatalf("rollback samples=%d info queries=%d samples=%d; want one rollback and one capacity read beyond diagnostic reads", rollback, queries, len(evidence.Samples))
+	if len(evidence.Samples) != 0 || evidence.SamplesTruncated || queries != 1 {
+		t.Fatalf("expected failures produced samples or probes: samples=%+v truncated=%v info queries=%d; want no samples and one capacity read", evidence.Samples, evidence.SamplesTruncated, queries)
 	}
 	for _, private := range []string{tracerGroup, directory, "private-engine-sentinel", "/private/engine/path", "sandboxed-agents.", "live-update"} {
 		if strings.Contains(string(data), private) {

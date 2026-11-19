@@ -51,7 +51,7 @@ type Operations struct {
 
 // operationClasses is the fixed live-validation vocabulary, with preflight and
 // inspection for invocations which do not perform a named lifecycle operation.
-var operationClasses = []string{"preflight", "inspection", "image build", "image build or sandbox start", "sandbox start or restart", "SSH server check", "smoke", "update or rollback", "agent install", "agent session", "rebuild", "cleanup", "Tool install", "Tool update", "Tool delete", "Tool probe"}
+var operationClasses = []string{"preflight", "inspection", "image archive", "image build or sandbox start", "sandbox start or restart", "SSH server check", "smoke", "update or rollback", "agent install", "agent session", "rebuild", "cleanup", "Tool install", "Tool update", "Tool delete", "Tool probe"}
 
 // operationCases permits only fixed suite identifiers, including outer cleanup.
 var operationCases = []string{"suite", "preflight", "lifecycle", "update", "agent", "t3code", "images"}

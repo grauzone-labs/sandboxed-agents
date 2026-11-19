@@ -22,15 +22,17 @@ type liveEngineFailures struct {
 	sync.Mutex
 	directory string
 	evidence  liveEngineFailureEvidence
+	reserved  int
 }
 
 // liveEngineFailureEvidence identifies supplemental observations from one suite.
 type liveEngineFailureEvidence struct {
-	SchemaVersion int                       `json:"schema_version"`
-	Kind          string                    `json:"kind"`
-	Commit        string                    `json:"commit"`
-	Platform      string                    `json:"platform"`
-	Samples       []liveEngineFailureSample `json:"samples"`
+	SchemaVersion    int                       `json:"schema_version"`
+	Kind             string                    `json:"kind"`
+	Commit           string                    `json:"commit"`
+	Platform         string                    `json:"platform"`
+	Samples          []liveEngineFailureSample `json:"samples"`
+	SamplesTruncated bool                      `json:"samples_truncated"`
 }
 
 // liveEngineFailureSample contains fixed vocabulary and measured numeric facts.
@@ -77,6 +79,22 @@ func (host liveHost) observeFailure(source, operation string, err error) {
 	if (!slices.Contains(liveCheckNames, host.caseName) && host.caseName != "suite") || !knownOperation || !slices.Contains([]string{"cli", "podman"}, source) {
 		return
 	}
+	// Reserve before probing: completed and in-flight snapshots share the same
+	// four-slot run budget (at most eight queries and 32 s of snapshot budgets).
+	// Persist suppression once; further failures incur neither queries nor writes.
+	failures.Lock()
+	if failures.reserved == 4 {
+		if !failures.evidence.SamplesTruncated {
+			failures.evidence.SamplesTruncated = true
+			if failures.persist() != nil && host.report != nil {
+				host.report("live engine failure evidence could not be persisted")
+			}
+		}
+		failures.Unlock()
+		return
+	}
+	failures.reserved++
+	failures.Unlock()
 	sample := liveEngineFailureSample{Case: host.caseName, Source: source, Operation: operation, Result: "fail", EngineQuery: "unverified", MachineQuery: "not-applicable", MachineState: "unknown"}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
@@ -97,24 +115,10 @@ func (host liveHost) observeFailure(source, operation string, err error) {
 	}
 	if failures.evidence.Platform != "windows-11" || selected {
 		data, ok := host.engineDiagnosticQuery(ctx, "info", "--format", "json")
-		var info struct {
-			Host struct {
-				CPUs      *uint64 `json:"cpus"`
-				MemTotal  *uint64 `json:"memTotal"`
-				MemFree   *uint64 `json:"memFree"`
-				SwapTotal *uint64 `json:"swapTotal"`
-				SwapFree  *uint64 `json:"swapFree"`
-			} `json:"host"`
-		}
-		if ok && json.Unmarshal(data, &info) == nil {
-			facts := info.Host
-			if facts.CPUs != nil && *facts.CPUs > 0 {
-				sample.CPUs = facts.CPUs
-			}
-			if facts.MemTotal != nil && *facts.MemTotal > 0 {
-				sample.MemoryBytes = facts.MemTotal
-			}
-			sample.FreeMemoryBytes, sample.SwapBytes, sample.FreeSwapBytes = facts.MemFree, facts.SwapTotal, facts.SwapFree
+		facts, err := decodeLiveEngineFacts(data)
+		if ok && err == nil {
+			sample.CPUs, sample.MemoryBytes = facts.CPUs, facts.MemoryBytes
+			sample.FreeMemoryBytes, sample.SwapBytes, sample.FreeSwapBytes = facts.FreeMemoryBytes, facts.SwapBytes, facts.FreeSwapBytes
 			if sample.CPUs != nil && sample.MemoryBytes != nil && sample.FreeMemoryBytes != nil && sample.SwapBytes != nil && sample.FreeSwapBytes != nil {
 				sample.EngineQuery = "verified"
 			}

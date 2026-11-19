@@ -19,7 +19,7 @@ func TestRetainOperationsReconcilesCaseAndPhaseSeconds(t *testing.T) {
 		SchemaVersion: 1, Kind: "live-suite-operations", Commit: "0123456789abcdef0123456789abcdef01234567", Platform: "linux",
 		Engine: &validationduration.Engine{CPUs: 4, MemoryBytes: 4294967296},
 		Operations: []validationduration.Operation{
-			{Case: "lifecycle", Source: "cli", Operation: "image build", Result: "pass", Seconds: 2},
+			{Case: "lifecycle", Source: "cli", Operation: "image build or sandbox start", Result: "pass", Seconds: 2},
 			{Case: "lifecycle", Source: "podman", Operation: "inspection", Result: "fail", Seconds: 3},
 		},
 		Cases: []validationduration.OperationCase{{Name: "lifecycle", Result: "fail", Seconds: 8}},
@@ -66,11 +66,11 @@ func TestRetainOperationsReconcilesCaseAndPhaseSeconds(t *testing.T) {
 // TestRetainPreservesDurationsWithUnsafeOperations proves invalid optional evidence
 // stays rejected and unchanged while valid case durations survive through Retain.
 func TestRetainPreservesDurationsWithUnsafeOperations(t *testing.T) {
-	const safe = `{"schema_version":1,"kind":"live-suite-operations","commit":"0123456789abcdef0123456789abcdef01234567","platform":"linux","operations":[{"case":"lifecycle","source":"cli","operation":"image build","result":"fail","seconds":2}],"cases":[{"name":"lifecycle","result":"fail","seconds":3,"unaccounted_seconds":1}]}`
+	const safe = `{"schema_version":1,"kind":"live-suite-operations","commit":"0123456789abcdef0123456789abcdef01234567","platform":"linux","operations":[{"case":"lifecycle","source":"cli","operation":"image build or sandbox start","result":"fail","seconds":2}],"cases":[{"name":"lifecycle","result":"fail","seconds":3,"unaccounted_seconds":1}]}`
 	for _, scenario := range []struct{ name, data string }{
 		{"unknown-output", strings.Replace(safe, `"operations":`, `"output":"private path", "operations":`, 1)},
 		{"private-case", strings.Replace(safe, `"case":"lifecycle"`, `"case":"private-sandbox"`, 1)},
-		{"private-operation", strings.Replace(safe, `"operation":"image build"`, `"operation":"/private/command"`, 1)},
+		{"private-operation", strings.Replace(safe, `"operation":"image build or sandbox start"`, `"operation":"/private/command"`, 1)},
 		{"negative-time", strings.Replace(safe, `"seconds":2`, `"seconds":-2`, 1)},
 		{"revision", strings.Replace(safe, "0123456789abcdef0123456789abcdef01234567", strings.Repeat("a", 40), 1)},
 		{"trailing-object", safe + `{}`},
@@ -111,5 +111,18 @@ func TestCollectRejectsIncompletePhaseBoundaries(t *testing.T) {
 		if _, err := validationduration.Collect(strings.NewReader(""), []byte(record), state); err == nil {
 			t.Fatal("invalid phase interval accepted")
 		}
+	}
+}
+
+// TestWriteOperationsRejectsUnobservedBuildClass proves a class that no current
+// invocation observes cannot be published through the sanitized evidence seam.
+func TestWriteOperationsRejectsUnobservedBuildClass(t *testing.T) {
+	directory := t.TempDir()
+	_, err := validationduration.WriteOperations(directory, validationduration.Operations{SchemaVersion: 1, Kind: "live-suite-operations", Commit: "0123456789abcdef0123456789abcdef01234567", Platform: "linux", Operations: []validationduration.Operation{{Case: "images", Source: "cli", Operation: "image build", Result: "pass", Seconds: 2}}})
+	if err == nil {
+		t.Fatal("unobserved build-only duration was accepted")
+	}
+	if _, err := os.Stat(filepath.Join(directory, "operations-linux.json")); !os.IsNotExist(err) {
+		t.Fatalf("invalid class published evidence: %v", err)
 	}
 }

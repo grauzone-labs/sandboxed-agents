@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -438,5 +439,193 @@ func TestLiveEngineFailureRetainsSanitizedSnapshot(t *testing.T) {
 	}
 	if calls := testutil.Invocations(t, fakes.PodmanLog); !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("unexpected diagnostic probes: %v", calls)
+	}
+}
+
+// TestLiveEngineFailureCapsConcurrentDeadEngineProbes proves one run admits only
+// four snapshots, exposes suppression, and preserves failures and timing at the
+// fake process and sanitized file seams even when concurrent queries stall.
+func TestLiveEngineFailureCapsConcurrentDeadEngineProbes(t *testing.T) {
+	host, fakes := newEngineFailureHost(t, map[string]lifecycleResponse{
+		"--connection private-selected container inspect private-object": {Exit: 23, Output: "private-original"},
+		"machine inspect private-selected":                               {DelayAfterOutputMS: 30000},
+		"--connection private-selected info --format json":               {DelayAfterOutputMS: 30000},
+	}, "windows-11")
+	host.connection = []string{"--connection", "private-selected"}
+	var group sync.WaitGroup
+	results := make(chan bool, 12)
+	started := time.Now()
+	for range 12 {
+		group.Go(func() {
+			output, err := host.podman("container", "inspect", "private-object")
+			exit, ok := err.(*exec.ExitError)
+			results <- ok && exit.ExitCode() == 23 && output == "private-original"
+		})
+	}
+	group.Wait()
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("concurrent diagnostic budget exceeded: %s", elapsed)
+	}
+	for range 12 {
+		if !<-results {
+			t.Fatal("diagnostics replaced original result")
+		}
+	}
+	evidence := readEngineFailureEvidence(t, host)
+	data, err := os.ReadFile(filepath.Join(host.failures.directory, "engine-failures-windows-11.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(evidence.Samples) != 4 || string(fields["samples_truncated"]) != "true" {
+		t.Fatalf("unbounded or silently incomplete failure coverage: %s", data)
+	}
+	for _, sample := range evidence.Samples {
+		if sample.EngineQuery != "unverified" || sample.MachineQuery != "unverified" || sample.CPUs != nil || sample.MemoryBytes != nil {
+			t.Fatalf("dead engine facts fabricated: %+v", sample)
+		}
+	}
+	calls := testutil.Invocations(t, fakes.PodmanLog)
+	if len(calls) != 20 || len(host.timings.evidence.Operations) != 20 {
+		t.Fatalf("probe budget exceeded or timings lost: calls=%d timings=%d", len(calls), len(host.timings.evidence.Operations))
+	}
+	// The exhausted run must issue neither another query nor another rewrite.
+	if _, err := host.podman("container", "inspect", "private-object"); exitStatus(t, err) != 23 {
+		t.Fatalf("suppression changed original result: %v", err)
+	}
+	after, err := os.ReadFile(filepath.Join(host.failures.directory, "engine-failures-windows-11.json"))
+	if err != nil || string(after) != string(data) || len(testutil.Invocations(t, fakes.PodmanLog)) != 21 {
+		t.Fatalf("exhausted run queried or changed evidence: %v", err)
+	}
+}
+
+// TestLiveEngineFailureExpectedRollbackKeepsOtherDiagnostics proves the precise
+// injected rollback omits a false sample while later failures remain observable
+// and both invocations keep their timings at the fake CLI and Podman seams.
+func TestLiveEngineFailureExpectedRollbackKeepsOtherDiagnostics(t *testing.T) {
+	host, fakes := newEngineFailureHost(t, map[string]lifecycleResponse{
+		"container inspect private-object": {Exit: 23, Output: "private-original"},
+		"info --format json":               {Output: `{"host":{"cpus":4,"memTotal":100,"memFree":0,"swapTotal":0,"swapFree":0}}`},
+	}, "linux")
+	program := filepath.Join(t.TempDir(), "sandboxed-agents")
+	if runtime.GOOS == "windows" {
+		program += ".exe"
+	}
+	data, err := os.ReadFile(fakeExecutable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(program, data, 0700); err != nil {
+		t.Fatal(err)
+	}
+	host.binary = program
+	host.environment = testutil.Env(host.environment, map[string]string{
+		"TEST_SANDBOXED_AGENTS_LOG":  filepath.Join(t.TempDir(), "cli.jsonl"),
+		"TEST_SANDBOXED_AGENTS_EXIT": "23", "TEST_SANDBOXED_AGENTS_OUTPUT": "readiness wait failed; restored sandbox",
+	})
+	failing := failingLiveUpdateHost(t, host, "2222")
+	output, err := failing.cli("", "update", "demo", "--force")
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 23 || output != "readiness wait failed; restored sandbox" {
+		t.Fatalf("expected rollback result changed: %v %q", err, output)
+	}
+	if entries, err := os.ReadDir(host.failures.directory); err != nil || len(entries) != 0 {
+		t.Fatalf("intentional rollback produced a false failure sample: %v %v", entries, err)
+	}
+	if _, err := host.podman("container", "inspect", "private-object"); exitStatus(t, err) != 23 {
+		t.Fatalf("subsequent failure changed: %v", err)
+	}
+	evidence := readEngineFailureEvidence(t, host)
+	if len(evidence.Samples) != 1 || evidence.Samples[0].Source != "podman" || len(testutil.Invocations(t, fakes.PodmanLog)) != 2 || len(host.timings.evidence.Operations) != 3 || host.timings.evidence.Operations[0].Result != "fail" {
+		t.Fatalf("other diagnostics/timings hidden: %+v %+v", evidence, host.timings.evidence.Operations)
+	}
+}
+
+// TestLiveEngineFailureExpectedToolFixture exercises the actual expected Tool
+// failure assertion inside a recorded case for its fake-process parent test.
+func TestLiveEngineFailureExpectedToolFixture(t *testing.T) {
+	if os.Getenv("TEST_LIVE_EXPECTED_TOOL_FAILURE") != "1" {
+		return
+	}
+	suite := newLiveSuite(t)
+	suite.host.binary = os.Getenv(livePreparedExecutableEnv)
+	suite.run(t, "t3code", func(t *testing.T) { suite.host.failedToolUpdate(t, "demo") })
+}
+
+// TestLiveEngineFailureExpectedToolKeepsCaseVerdict proves intentional staging
+// failure omits probes while a wrong failure still fails the original assertion,
+// preserves schema 2 and repair, and retains timings at the nested suite seam.
+func TestLiveEngineFailureExpectedToolKeepsCaseVerdict(t *testing.T) {
+	if livePlatform() == "" {
+		t.Skip("live records require Linux or Windows")
+	}
+	for _, scenario := range []struct {
+		name, output, result string
+	}{
+		{"expected", ".next-private: permission denied", "pass"},
+		{"wrong-failure", "private-original", "fail"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			fakes := testutil.Install(t, fakeExecutable)
+			t.Setenv("PATH", fakes.Dir)
+			directory := t.TempDir()
+			program := filepath.Join(t.TempDir(), "sandboxed-agents")
+			if runtime.GOOS == "windows" {
+				program += ".exe"
+			}
+			data, err := os.ReadFile(fakeExecutable)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(program, data, 0700); err != nil {
+				t.Fatal(err)
+			}
+			responses, _ := json.Marshal(map[string]lifecycleResponse{"tools update demo t3code": {Exit: 23, Output: scenario.output}})
+			podmanResponses, _ := json.Marshal(map[string]lifecycleResponse{"exec * break-install": {}, "exec * repair-install": {}, "info --format json": {}})
+			values := nestedExecutables()
+			for key, value := range map[string]string{
+				"TEST_LIVE_EXPECTED_TOOL_FAILURE": "1", liveRecordDirEnv: directory, "SANDBOXED_AGENTS_GROUP": "engine-fixture", livePreparedExecutableEnv: program,
+				"TEST_SANDBOXED_AGENTS_LOG": filepath.Join(directory, "commands.jsonl"), "TEST_SANDBOXED_AGENTS_RESPONSES": string(responses), "TEST_PODMAN_RESPONSES": string(podmanResponses),
+			} {
+				values[key] = value
+			}
+			command := exec.Command(os.Args[0], "-test.v", "-test.run=^TestLiveEngineFailureExpectedToolFixture$")
+			command.Env = testutil.Env(fakes.Env(os.Environ()), values)
+			output, err := command.CombinedOutput()
+			if (err == nil) != (scenario.result == "pass") || (scenario.result == "fail" && (!strings.Contains(string(output), "expected deterministic Tool staging failure") || !strings.Contains(string(output), "private-original") || !strings.Contains(string(output), "exit status 23"))) {
+				t.Fatalf("original assertion changed: %v\n%q", err, output)
+			}
+			data, err = os.ReadFile(filepath.Join(directory, "engine-failures-"+livePlatform()+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var evidence liveEngineFailureEvidence
+			if err := json.Unmarshal(data, &evidence); err != nil || len(evidence.Samples) != 0 {
+				t.Fatalf("expected call sampled: %s %v", data, err)
+			}
+			calls := testutil.Invocations(t, fakes.PodmanLog)
+			if len(calls) != 2 || calls[0][len(calls[0])-1] != "break-install" || calls[1][len(calls[1])-1] != "repair-install" {
+				t.Fatalf("probes added or repair lost: %v", calls)
+			}
+			data, err = os.ReadFile(filepath.Join(directory, liveRecordFilename(t)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var record map[string]json.RawMessage
+			if err := json.Unmarshal(data, &record); err != nil || len(record) != 9 || string(record["schema_version"]) != "2" || string(record["result"]) != strconv.Quote(scenario.result) || !strings.Contains(string(record["checks"]), `{"name":"t3code","result":`+strconv.Quote(scenario.result)+`}`) {
+				t.Fatalf("original case/schema changed: %s %v", data, err)
+			}
+			data, err = os.ReadFile(filepath.Join(directory, "operations-"+livePlatform()+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var timings validationduration.Operations
+			if err := json.Unmarshal(data, &timings); err != nil || len(timings.Operations) != 3 || timings.Operations[1].Source != "cli" || timings.Operations[1].Result != "fail" {
+				t.Fatalf("expected invocation timings lost: %s %v", data, err)
+			}
+		})
 	}
 }

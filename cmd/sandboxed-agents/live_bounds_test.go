@@ -291,3 +291,93 @@ func TestLiveUnknownClassRefusesExecution(t *testing.T) {
 	}()
 	(liveHost{}).operationBound("image biuld")
 }
+
+// TestLiveImageArchiveReportsBoundedOperation proves the real image-layer check
+// names its archive work and emits both progress markers at the fake Podman seam.
+func TestLiveImageArchiveReportsBoundedOperation(t *testing.T) {
+	fakes := testutil.Install(t, fakeExecutable)
+	t.Setenv("PATH", fakes.Dir)
+	responses, err := json.Marshal(map[string]lifecycleResponse{"image save --format docker-archive fixture-image": {Output: tracerArchive(t)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reports []string
+	host := liveHost{caseName: "images", timings: &liveTimings{}, environment: testutil.Env(fakes.Env(os.Environ()), map[string]string{"TEST_PODMAN_RESPONSES": string(responses)}), report: func(line string) { reports = append(reports, line) }}
+	host.assertNoBakedSSHKeys(t, "fixture-image")
+	operations := host.timings.evidence.Operations
+	if len(operations) != 1 || operations[0].Operation != "image archive" || operations[0].Source != "podman" || operations[0].Result != "pass" {
+		t.Fatalf("image archive attribution: %+v", operations)
+	}
+	if !slices.Equal(reports, []string{"live operation image archive: started", "live operation image archive: finished"}) {
+		t.Fatalf("image archive progress: %q", reports)
+	}
+	if host.operationBound("image archive") != 10*time.Minute {
+		t.Fatal("image archive did not retain its existing ten-minute budget")
+	}
+}
+
+// TestLiveToolFaultInjectionIsUpdateWork proves fixture mutation and repair do
+// not masquerade as read-only probes in timings at the scripted process seams.
+func TestLiveToolFaultInjectionIsUpdateWork(t *testing.T) {
+	fakes := testutil.Install(t, fakeExecutable)
+	t.Setenv("PATH", fakes.Dir)
+	cliResponses, err := json.Marshal(map[string]lifecycleResponse{"tools update demo t3code": {Exit: 1, Output: "mkdir npm/.next-fixture: permission denied\n"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	program := filepath.Join(t.TempDir(), "sandboxed-agents")
+	if runtime.GOOS == "windows" {
+		program += ".exe"
+	}
+	data, err := os.ReadFile(fakeExecutable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(program, data, 0700); err != nil {
+		t.Fatal(err)
+	}
+	host := liveHost{binary: program, group: "fixture", caseName: "t3code", timings: &liveTimings{}, environment: testutil.Env(fakes.Env(os.Environ()), map[string]string{"TEST_SANDBOXED_AGENTS_EXECUTABLE": program, "TEST_SANDBOXED_AGENTS_LOG": filepath.Join(t.TempDir(), "cli.jsonl"), "TEST_SANDBOXED_AGENTS_RESPONSES": string(cliResponses)})}
+	host.failedToolUpdate(t, "demo")
+	operations := host.timings.evidence.Operations
+	if len(operations) != 3 {
+		t.Fatalf("mutation/update/repair timings: %+v", operations)
+	}
+	for _, operation := range operations {
+		if operation.Operation != "Tool update" {
+			t.Errorf("fixture mutation classified as read-only work: %+v", operation)
+		}
+	}
+	if operations[0].Source != "podman" || operations[0].Result != "pass" || operations[1].Source != "cli" || operations[1].Result != "fail" || operations[2].Source != "podman" || operations[2].Result != "pass" {
+		t.Fatalf("fixture outcomes changed: %+v", operations)
+	}
+}
+
+// TestLiveImageArchiveDeadlineFixture exercises archive cancellation and reporting
+// at the real layer-inspection seam under a short, test-owned class budget.
+func TestLiveImageArchiveDeadlineFixture(t *testing.T) {
+	if os.Getenv("TEST_LIVE_ARCHIVE_BOUND") != "1" {
+		return
+	}
+	host := liveHost{environment: os.Environ(), operationBounds: map[string]time.Duration{"image archive": 100 * time.Millisecond}, report: func(line string) { t.Log(line) }}
+	host.assertNoBakedSSHKeys(t, "fixture-image")
+}
+
+// TestLiveImageArchiveDeadlineKeepsLastOperation proves a stalled image save ends
+// at its class bound and emits a final marker through a nested fake-process seam.
+func TestLiveImageArchiveDeadlineKeepsLastOperation(t *testing.T) {
+	fakes := testutil.Install(t, fakeExecutable)
+	responses, err := json.Marshal(map[string]lifecycleResponse{"image save --format docker-archive fixture-image": {Output: tracerArchive(t), DelayAfterOutputMS: 3000}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := nestedExecutables()
+	values["TEST_LIVE_ARCHIVE_BOUND"] = "1"
+	values["TEST_PODMAN_RESPONSES"] = string(responses)
+	command := exec.Command(os.Args[0], "-test.v", "-test.run=^TestLiveImageArchiveDeadlineFixture$")
+	command.Env = testutil.Env(fakes.Env(os.Environ()), values)
+	started := time.Now()
+	output, err := command.CombinedOutput()
+	if err == nil || time.Since(started) > 2*time.Second || !strings.Contains(string(output), "live operation image archive: started") || !strings.Contains(string(output), "live operation image archive: finished") || !strings.Contains(string(output), "engine operations may still be running") {
+		t.Fatalf("archive bound/progress mismatch: %v after %s\n%s", err, time.Since(started), output)
+	}
+}

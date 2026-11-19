@@ -138,7 +138,7 @@ func (suite *liveSuite) t3code(t *testing.T) {
 		for _, pid := range previous.PIDs {
 			args = append(args, strconv.Itoa(pid))
 		}
-		if output := host.toolProbe(t, name, args...); strings.TrimSpace(output) != `{"deleted":true}` {
+		if output := host.toolProbe(t, name, "Tool probe", args...); strings.TrimSpace(output) != `{"deleted":true}` {
 			t.Fatalf("delete was not verified: %q", output)
 		}
 	}
@@ -183,15 +183,16 @@ func (suite *liveSuite) writeToolEvidence(t *testing.T, evidence liveToolEvidenc
 	}
 }
 
-// toolProbe runs the test fixture as agent inside the disposable sandbox, with no host mount or credentials.
-func (host liveHost) toolProbe(t *testing.T, name string, args ...string) string {
+// toolProbe runs the test fixture as agent with explicit read or mutation attribution,
+// inside the disposable sandbox with no host mount or credentials.
+func (host liveHost) toolProbe(t *testing.T, name, operation string, args ...string) string {
 	t.Helper()
 	script, err := os.ReadFile("testdata/live_t3code_probe.js")
 	if err != nil {
 		t.Fatal(err)
 	}
 	command := []string{"exec", "--user=1000:1000", "--env", "HOME=/home/agent", cli.DerivedNames(host.group, name).Container, "node", "-e", strings.ReplaceAll(string(script), "\n", " ")}
-	output, err := host.podmanOperation("Tool probe", append(command, args...)...)
+	output, err := host.podmanOperation(operation, append(command, args...)...)
 	if err != nil {
 		t.Fatalf("Tool probe %v: %v\n%q", args, err, output)
 	}
@@ -218,7 +219,7 @@ func (host liveHost) runningTool(t *testing.T, name, channel, pin string) liveTo
 		t.Fatalf("pinned Tool runs %s; want %s", match[1], pin)
 	}
 	var status liveToolObservation
-	output = host.toolProbe(t, name, "running")
+	output = host.toolProbe(t, name, "Tool probe", "running")
 	if err := json.Unmarshal([]byte(output), &status); err != nil {
 		t.Fatalf("read Tool probe: %v %q", err, output)
 	}
@@ -231,9 +232,12 @@ func (host liveHost) runningTool(t *testing.T, name, channel, pin string) liveTo
 // failedToolUpdate forces a pinned repair to fail at staging, restores the fixture damage, and requires the named failure.
 func (host liveHost) failedToolUpdate(t *testing.T, name string) {
 	t.Helper()
-	defer host.toolProbe(t, name, "repair-install")
-	host.toolProbe(t, name, "break-install")
-	output, err := host.cli("", "tools", "update", name, "t3code")
+	defer host.toolProbe(t, name, "Tool update", "repair-install")
+	host.toolProbe(t, name, "Tool update", "break-install")
+	// This one call intentionally fails; retain timings and the original assertion.
+	expected := host
+	expected.failures = nil
+	output, err := expected.cli("", "tools", "update", name, "t3code")
 	if err == nil || !strings.Contains(output, ".next-") || !strings.Contains(strings.ToLower(output), "permission denied") {
 		t.Fatalf("expected deterministic Tool staging failure: %v %q", err, output)
 	}

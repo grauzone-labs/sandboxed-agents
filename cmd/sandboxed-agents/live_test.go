@@ -270,17 +270,12 @@ func (suite *liveSuite) preflight(t *testing.T) {
 	suite.host.mustCLI(t, "", "check")
 	suite.host.selectConnection(t)
 	capacity, capacityErr := suite.host.podman("info", "--format", "json")
-	var info struct {
-		Host struct {
-			CPUs        int    `json:"cpus"`
-			MemoryBytes uint64 `json:"memTotal"`
-		} `json:"host"`
-	}
+	facts, factsErr := decodeLiveEngineFacts([]byte(capacity))
 	var engine *validationduration.Engine
-	if capacityErr != nil || json.Unmarshal([]byte(capacity), &info) != nil || info.Host.CPUs <= 0 || info.Host.MemoryBytes == 0 {
+	if capacityErr != nil || factsErr != nil || facts.CPUs == nil || facts.MemoryBytes == nil || *facts.CPUs > uint64(^uint(0)>>1) {
 		t.Log("engine capacity unavailable")
 	} else {
-		engine = &validationduration.Engine{CPUs: info.Host.CPUs, MemoryBytes: info.Host.MemoryBytes}
+		engine = &validationduration.Engine{CPUs: int(*facts.CPUs), MemoryBytes: *facts.MemoryBytes}
 	}
 	suite.host.timings.Lock()
 	suite.host.timings.evidence.Engine = engine

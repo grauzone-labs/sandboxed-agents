@@ -2,8 +2,8 @@ package main_test
 
 import (
 	"archive/tar"
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"runtime"
@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/capture"
 )
 
 // Image coverage has a separate opt-in because build renews images for every
@@ -103,24 +105,30 @@ func (host liveHost) assertNoBakedSSHKeys(t *testing.T, tag string) {
 	// Saving the image reads its actual layers. Looking inside the running
 	// sandbox would instead read its /etc/ssh volume and could mistake freshly
 	// generated host keys for image contents. Stream without storing the archive.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), host.operationBound("image archive"))
 	defer cancel()
-	command := host.podmanCommand(ctx, "image", "save", "--format", "docker-archive", tag)
+	command := host.podmanCommand(context.Background(), "image", "save", "--format", "docker-archive", tag)
+	// RunOwned owns cancellation; the command has no separate context watcher.
+	command.Cancel = nil
 	started := time.Now()
+	host.reportOperation("image archive", "started")
 	processErr := fmt.Errorf("image save did not finish")
 	defer func() {
-		host.recordOperation("podman", "inspection", started, processErr)
-		host.observeFailure("podman", "inspection", processErr)
+		host.reportOperation("image archive", "finished")
+		host.recordOperation("podman", "image archive", started, processErr)
+		host.observeFailure("podman", "image archive", processErr)
 	}()
-	var stderr bytes.Buffer
-	command.Stderr = &stderr
-	stream, err := command.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := command.Start(); err != nil {
-		t.Fatalf("read base image layers: %v", err)
-	}
+	stderr := liveOutput{lines: liveLineStream{report: host.report}}
+	stream, writer := io.Pipe()
+	defer stream.Close()
+	done := make(chan error, 1)
+	go func() {
+		err := capture.RunOwned(ctx, command, writer, &stderr)
+		stderr.Flush()
+		writer.Close()
+		done <- err
+	}()
+	var err error
 	archive := tar.NewReader(stream)
 	layers := 0
 	var keys []string
@@ -157,7 +165,10 @@ func (host liveHost) assertNoBakedSSHKeys(t *testing.T, tag string) {
 	// Consume trailing archive padding before waiting: a writer may still have
 	// bytes after the tar end marker and must not block on its stdout pipe.
 	_, drainErr := io.Copy(io.Discard, stream)
-	waitErr := command.Wait()
+	waitErr := <-done
+	if ctx.Err() != nil {
+		waitErr = fmt.Errorf("live Podman operation image archive ended after %s: %w; engine operations may still be running", time.Since(started).Round(time.Millisecond), errors.Join(ctx.Err(), waitErr))
+	}
 	processErr = waitErr
 	if err != io.EOF || drainErr != nil || waitErr != nil || layers == 0 {
 		t.Fatalf("read base image layer archive: tar=%v drain=%v process=%v layers=%d\n%q", err, drainErr, waitErr, layers, stderr.String())
