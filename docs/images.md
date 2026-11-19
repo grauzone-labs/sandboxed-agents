@@ -356,9 +356,26 @@ When an unexpected operation fails, the suite can record what the engine reports
 
 ### Running a live run with the host commands
 
-`./internal/liverun/cmd/live-run` is a repository-owned helper with the phases `prepare`, `run`, `status`, `collect`, and `cleanup`. It replaces the scripts a host agent would otherwise write anew for each run. Run it on the host, from the checkout under test, on Linux or Windows 11, after the decision to start a live run has been made: the [live-validation skill](../.agents/skills/live-validation/SKILL.md) gates that decision, and the helper does not. It fetches no source, pushes nothing, changes no host configuration, and starts or repairs no Podman machine, and a stopped machine is reported with the engine's own message. Only `cleanup` removes anything, and only the images that a private primary record proves this run built: its final images and the intermediates that carry this invocation's builder-controlled label. Each phase prints one sanitized JSON result with no group, sandbox, container, volume, or image name and no path, except where `cleanup` lists immutable image IDs. Raw output, paths, and object identities stay in the private run directory.
+`./internal/liverun/cmd/live-run` is a repository-owned helper with the phases `prepare`, `run`, `status`, `collect`, and `cleanup`. It replaces the scripts a host agent would otherwise write anew for each run. Run it on the host, from the checkout under test, on Linux or Windows 11, after the decision to start a live run has been made: the [live-validation skill](../.agents/skills/live-validation/SKILL.md) gates that decision, and the helper does not. It fetches no source, pushes nothing, changes no host configuration, and starts or repairs no Podman machine, and a stopped machine is reported with a fixed kind and reason, the engine's own message staying in the private diagnostic. Only `cleanup` removes anything, and only the images that a private primary record proves this run built: its final images and the intermediates that carry this invocation's builder-controlled label. Each phase prints one sanitized JSON result with no group, sandbox, container, volume, or image name and no path, except where `cleanup` lists immutable image IDs. Raw output, paths, and object identities stay in the private run directory.
 
-**What is verified and what is pending.** Offline tests with fake `podman`, `go`, and filesystem answers cover every check below, the exclusion between runs, the detached run, the sanitized outputs, and the cleanup rules, and the helper and its tests compile for Windows. On Linux, a fixture kills the launching session and its process group with a hangup signal and the suite still ends with its own exit status. On Windows, `DETACHED_PROCESS` and `CREATE_NEW_PROCESS_GROUP` detach the supervisor from the launching console and process group but not from a job object that the host's SSH session may own, so the helper also reads the launching process's immediate job: sanitized facts `InJob`, `KillOnClose`, `Breakaway` and `SilentBreakaway`. `prepare` does so before any engine or build query and refuses a job that allows neither explicit nor silent breakaway with `check session-detachment failed`. `run` repeats the read and adds `CREATE_BREAKAWAY_FROM_JOB` only for a job with explicit breakaway (silent breakaway needs no flag); a denial when the process is created is the same named failure. The supervisor then probes itself before any build and refuses to continue if it remains in any inherited job or if the query is unverified, because the immediate job does not reveal outer nested jobs and a breakaway can leave the process inside a restrictive outer one; `run` reports that failure by name. Nothing is elevated, scheduled, or changed in the host's job policy. A fixture that closes real kill-on-close jobs around a suspended launcher (cases without a job, with explicit and silent breakaway, with a restrictive job, and with a restrictive outer job) compiles for Windows and is in the Windows pull-request test list; it has not run natively here, it skips with a named prerequisite where the CI parent itself forbids isolation, and neither the compile, the test list, nor a skip shows that a run survives the end of an SSH session. That survival, in Windows PowerShell 5.1 as a non-administrator, is not shown. The suite's own process runs in a job that ends with it; that path compiles for Windows and has not run there. Nothing here has run against real Podman output, and no timing is measured: the seconds that `prepare` and `run` report, which images the build proof covers, and the final inventory await authorized live runs on both hosts. Do not read a cross-compile as that proof, do not read a Linux fixture as proof for Windows, and do not read any of this as a speedup.
+**What is verified and what is pending.**
+
+- **Offline.** Tests with fake `podman`, `go`, and filesystem answers cover every check below, the exclusion between runs, the detached run, the sanitized outputs, and the cleanup rules, and the helper and its tests compile for Windows.
+- **Linux fixture.** A fixture kills the launching session and its process group with a hangup signal, and the suite still ends with its own exit status.
+- **Not run.** Nothing here has run against real Podman output, and no timing is measured: the seconds that `prepare` and `run` report, which images the build proof covers, and the final inventory await authorized live runs on both hosts. Do not read a cross-compile as that proof, do not read a Linux fixture as proof for Windows, and do not read any of this as a speedup.
+
+**Linux: survival of the SSH session is not shown.** The fixture shows that the supervisor, in a new session, outlives a hangup. It does not show that a run outlives a real SSH disconnect under systemd-logind. The systemd documentation says that when `KillUserProcesses=` applies to a user, "the scope unit corresponding to the session and all processes inside that scope will be terminated" at logout, and that `KillExcludeUsers=` can override it per user. Lingering (`loginctl enable-linger`) keeps the user's manager after logouts; the documentation does not say that it moves a process that was started inside an SSH session out of that session's scope, and this page does not claim it does. `prepare` does not read this policy. Read the host's logind policy without changing it, keep the SSH session connected until `status` shows `ended`, and report a run that the end of the session stopped as the status `137` with `interrupted`, never as a suite result. Changing the host's session or linger configuration is the user's decision, outside this invocation. Proving survival needs a real disconnect on that host under that policy.
+
+**Windows: session detachment.**
+
+- **Console and group.** `DETACHED_PROCESS` and `CREATE_NEW_PROCESS_GROUP` detach the supervisor from the launching console and process group, but not from a job object that the host's SSH session may own.
+- **Job facts.** The helper therefore reads the launching process's immediate job, as sanitized facts `InJob`, `KillOnClose`, `Breakaway` and `SilentBreakaway`. `prepare` does so before any engine or build query and refuses a job that allows neither explicit nor silent breakaway with `check session-detachment failed`.
+- **Launch.** `run` repeats the read and adds `CREATE_BREAKAWAY_FROM_JOB` only for a job with explicit breakaway (silent breakaway needs no flag); a denial when the process is created is the same named failure.
+- **Supervisor.** The supervisor probes itself before any build and refuses to continue if it remains in any inherited job or if the query is unverified, because the immediate job does not reveal outer nested jobs and a breakaway can leave the process inside a restrictive outer one. `run` reports that failure by name.
+- **No host change.** Nothing is elevated, scheduled, or changed in the host's job policy.
+- **Fixture.** A fixture that closes real kill-on-close jobs around a suspended launcher (cases without a job, with explicit and silent breakaway, with a restrictive job, and with a restrictive outer job) compiles for Windows and is in the Windows pull-request test list. It has not run natively here, and it skips with a named prerequisite where the CI parent itself forbids isolation.
+- **Not shown.** Neither the compile, the test list, nor a skip shows that a run survives the end of an SSH session. A native host disconnect, in Windows PowerShell 5.1 as a non-administrator, must prove that against the host's actual job policy; until it does, survival is pending.
+- **Suite process.** The suite's own process runs in a job that ends with it; that path compiles for Windows and has not run there.
 
 **Build the helper in the checkout.** Build it from the checkout at the target revision so that its code matches the suite it starts, and write the binary into the private directory, outside the checkout.
 
@@ -378,19 +395,52 @@ New-Item -ItemType Directory -Force $private | Out-Null
 go build -o (Join-Path $private 'live-run.exe') ./internal/liverun/cmd/live-run
 ```
 
-**Use two fresh directories for every run.** Choose a new unique `RUN_ID` first, for example `RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"`; the examples below use `$RUN_ID` in the directory names, and nothing else sets it. The private run directory is new for each run and single use: `prepare` creates it with mode `0700`, it holds the suite log, the snapshots, and every diagnostic, and a run directory whose suite has started is refused. The record directory is a second fresh directory that receives the schema 2 record and the sanitized files, and `prepare` refuses one that already holds `live-suite-linux.json` or `live-suite-windows-11.json`, so an earlier invocation's record cannot pass for this one. Neither directory may lie inside the other, and neither may lie inside the checkout, so that the run itself leaves no untracked file there. Keep the private directory out of anything that is shared.
+**Use two fresh directories for every run.** Choose a new unique `RUN_ID` first, for example `RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"`; the examples below use `$RUN_ID` in the directory names, and nothing else sets it. The private run directory is new for each run and single use: `prepare` creates it with mode `0700`, it holds the suite log, the snapshots, and every diagnostic, and a run directory whose suite has started is refused. After any failed `run`, including a startup refusal, use a new `RUN_ID` and new private and record directories: a `run` that was attempted leaves `launching.json` in its run directory, and a retry there is refused with `run directory already launched`. Run `prepare` and `run` from the same shell, with the same `PATH` and Go environment (`GOTOOLCHAIN` included), because `run` repeats the Go and engine checks in the environment it starts from and refuses a toolchain that differs. The record directory is a second fresh directory that receives the schema 2 record and the sanitized files, and `prepare` refuses one that already holds `live-suite-linux.json` or `live-suite-windows-11.json`, so an earlier invocation's record cannot pass for this one. Neither directory may lie inside the other, and neither may lie inside the checkout, so that the run itself leaves no untracked file there. Keep the private directory out of anything that is shared.
 
 **Prepare.** `prepare` takes the exact 40-character revision, the run directory, the record directory, and the peak record described below:
+
+Run each phase from its own block, in order, in one shell session, and continue only after the check that follows the block. A native command that fails does not stop Windows PowerShell 5.1, and a pasted run of several blocks would not stop either, so a block is never pasted together with the next one. First set the variables once per run. Replace the placeholder revision with the real one; nothing else sets it, and `RUN_ID` and `$runId` must be new for every run.
+
+On Linux, in Bash:
+
+```sh
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+SHA="<the 40-character revision under test>"
+```
+
+On Windows, in PowerShell 5.1, with `$private` as defined above:
+
+```powershell
+$runId = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+$sha = '<the 40-character revision under test>'
+$helper = Join-Path $private 'live-run.exe'
+$runDir = Join-Path $private "run-$runId"
+$recordDir = Join-Path $env:USERPROFILE "live-suite-records\$runId"
+```
+
+Then run `prepare`. In Bash:
 
 ```sh
 "$PRIVATE/live-run" prepare -revision "$SHA" \
   -run-dir "$PRIVATE/run-$RUN_ID" -record-dir "$HOME/live-suite-records/$RUN_ID" \
-  -peak-record "$PRIVATE/peak-bound.json" -host-load idle
+  -peak-record "$PRIVATE/peak-bound.json"
+echo "prepare exit status: $?"
 ```
+
+In PowerShell:
+
+```powershell
+& $helper prepare -revision $sha -run-dir $runDir -record-dir $recordDir -peak-record (Join-Path $private 'peak-bound.json')
+"prepare exit status: $LASTEXITCODE"
+```
+
+**Gate after `prepare`.** Go on to `run` only when the printed exit status is `0` and `prepare` printed `{"Prepared":true}`. Any other result is a refusal: read its printed check name, and start no `run`.
+
+The example omits `-host-load`, so the record says `unknown`, which is the default. Add `-host-load idle` or `-host-load shared` only when you looked at what else runs on the host; copying `idle` without that look would record a value that nothing shows.
 
 `-checkout` defaults to the current directory, `-group` to `live`, and `-images` to `true`, which selects the image coverage that a release run requires; `-images=false` leaves it out. `-host-load` takes `idle`, `shared`, or `unknown` as [observed before the suite starts](#retaining-case-durations), and defaults to `unknown`; the helper infers no value from the host. `prepare` checks, in this order, and stops at the first check that fails, before any build or test starts:
 
-- **`revision`** and **`checkout-clean`**: `HEAD` equals the revision, and `git status` with all untracked and all ignored entries shows nothing: a modified tracked file, an untracked file, and an ignored file each refuse the claimed revision, because each could change what the suite builds or runs. The helper deletes none of them; `cleanup` repeats this check before it removes anything.
+- **`revision`** and **`checkout-clean`**: `HEAD` equals the revision, and `git status` with all untracked and all ignored entries shows nothing: a modified tracked file, an untracked file, and an ignored file each refuse the claimed revision, because each could change what the suite builds or runs. The helper deletes none of them, and `cleanup` repeats this check before it removes anything. After such a refusal never clean the user's checkout: make a new temporary checkout of the revision, build the helper there, and run every phase from it.
 - **`go-pin`** and **`go-version`**: the effective `go env GOVERSION` equals the exact patch version that `go.mod` pins, so the asset hashes of two hosts can match.
 - **`record-directory`**: the record directory is usable and holds no suite record.
 - **`engine`**: one rootless engine answers. On Windows that is the default WSL2 machine, which must be running and rootless.
@@ -398,7 +448,7 @@ go build -o (Join-Path $private 'live-run.exe') ./internal/liverun/cmd/live-run
 - **`filesystem`**, **`storage-measurement`**, and **`inventory`**: the free space of every measured filesystem, `podman system df`, and the whole-engine inventory of images and containers in one pass, with full image IDs. On Linux the filesystem is the one that holds Podman's storage. On Windows there are two: the host drive that holds the machine's virtual disk, found from the user's own WSL registry entry and read without administrator rights, and the machine's storage filesystem, read with a bounded `df` over the SSH endpoint that `podman machine inspect` reports, with a private `known_hosts` file.
 - **`peak-bound`** and **`headroom`**: a reasoned peak record that admits a bound, as described below, exists and names this engine, and every measured filesystem has strictly more free bytes than that bound. A run without such a record proceeds only on the invocation-specific decision below.
 
-A failure prints `check NAME failed; private diagnostic retained` and keeps the engine's own message in `diagnostic.txt` of the run directory. The `engine` check adds a fixed kind and a fixed reason, `check engine failed; KIND: REASON; private diagnostic retained`. The kind is `engine unreachable`, `machine stopped`, `malformed target`, `ambiguous target`, or `unsafe target`; the reason is one of a short list (connection refused, connection timed out, permission denied, machine stopped with a note to start it outside this command, engine address unavailable, or that the selected engine did not answer and its connection is to be checked), and an unrecognized message gets the last one. Paths, host names, and tokens of the raw message stay in the private diagnostic. A rejection by `peak-bound` or `headroom` also prints the free bytes of each filesystem role and the expected bytes, or that there is no reliable bound; the host is then `pending`, and the suite is not started. A failed run of `prepare` can be repeated with the same run directory until a suite has started in it. When the headroom was insufficient and you removed, in one pass, the images that an earlier run's record marks eligible, run `prepare` again after that removal: its fresh whole-engine inventory and free-space measurement replace the earlier ones as the before records, the bound is selected again for that state, and there is no second removal pass. The inventory, the `system df` text, and the free space are kept in `preparation.json` in the run directory, also after a headroom rejection, so a rejected preparation still leaves the before measurement.
+A failure prints `check NAME failed; private diagnostic retained` and keeps the engine's own message in `diagnostic.txt` of the run directory. The `engine` check adds a fixed kind and a fixed reason, `check engine failed; KIND: REASON; private diagnostic retained`. The kind is `engine unreachable`, `machine stopped`, `malformed target`, `ambiguous target`, or `unsafe target`; the reason is one of a short list (connection refused, connection timed out, permission denied, machine stopped with a note to start it outside this command, engine address unavailable, or that the selected engine did not answer and its connection is to be checked), and an unrecognized message gets the last one. Paths, host names, and tokens of the raw message stay in the private diagnostic. A rejection by `peak-bound` or `headroom` also prints the free bytes of each filesystem role and the expected bytes, or that there is no reliable bound; the host is then `pending`, and the suite is not started. A failed `prepare` can be repeated with the same run directory until a `run` has been attempted in it; after any failed `run`, use new directories as described above. When the headroom was insufficient and you removed, in one pass, the images that an earlier run's record marks eligible, run `prepare` again after that removal: its fresh whole-engine inventory and free-space measurement replace the earlier ones as the before records, the bound is selected again for that state, and there is no second removal pass. The inventory, the `system df` text, and the free space are kept in `preparation.json` in the run directory, also after a headroom rejection, so a rejected preparation still leaves the before measurement.
 
 **The peak record.** The headroom rule needs a bound on the peak additional space the run needs before any cleanup. The helper measures; it does not decide the bound. During the suite the supervisor samples the free bytes of every measured filesystem about every ten seconds and writes the facts to `peak.json` in the run directory and to the engine's `KEY-observed-peak.json` in the coordination root, where `KEY` is the hexadecimal SHA-256 of the engine identity. It never writes or replaces the admitted bound `KEY-peak.json`, and it never touches a file passed as `-peak-record`. The facts are the revision, the engine, each filesystem's role and path, its free bytes at the start and at its lowest sample, the growth between them, the number of samples, the nominal interval, and the start and end times. A record whose sampling stopped early or failed is marked incomplete, and a sampling failure never changes the suite's exit. The helper always writes `PeakAdditionalBytes` as 0: a sampled lowest value is an observation, not an upper bound, because it misses space taken and freed between two samples, other writers on the same filesystem, and the variation of a later run. The helper never derives a bound from the net growth after cleanup, from a multiplier, or from a fixed figure.
 
@@ -420,6 +470,22 @@ A run may proceed without a bound only on a decision that the user has made for 
 
 `preparation_seconds` runs from the start of the `prepare` invocation to the start of the suite. It therefore includes the time between the two commands and any repeated `prepare`, and it is the number the collector later receives. It is not a measurement of the checks alone.
 
+Start the suite from its own block. In Bash:
+
+```sh
+"$PRIVATE/live-run" run -run-dir "$PRIVATE/run-$RUN_ID"
+echo "run exit status: $?"
+```
+
+In PowerShell:
+
+```powershell
+& $helper run -run-dir $runDir
+"run exit status: $LASTEXITCODE"
+```
+
+**Gate after `run`.** Go on to `status` only when the printed exit status is `0` and `run` printed `{"started":true,...}`. Any other result is a startup refusal or a failure: report the text that `run` printed, and after any failed `run` start over with a new `RUN_ID` and new directories as described above.
+
 **Status.** `live-run status -run-dir RUN` reads the private files and prints one JSON object with these fields, and no raw log line:
 
 | Field | Meaning |
@@ -431,13 +497,73 @@ A run may proceed without a bound only on a decision that the user has made for 
 | `exit_code`, `interrupted` | Present once the suite has ended. |
 | `log_verified`, `peak_recorded`, `peak_bound_available` | Present once the suite has ended: whether the private log is complete, whether this run's sampled peak record was written, and whether a reasoned bound exists for this engine: the `-peak-record` file or `KEY-peak.json` is admissible and the latest observed record does not contradict it. The sampled record never makes the last one true; the two values refer to different files. |
 
-The case and operation come from the marker lines and `-v` case lines that [the suite streams](#operation-bounds-and-early-stop), and the classes are the fixed vocabulary of the [operation timings](#operation-timings). A `live output: ` record is quoted program output and never classifies an operation, and a command line is recognized only when `sandboxed-agents` leads it after the log's own prefix. An `up` shows as `image build or sandbox start`: the helper does not guess from a raw line whether an image was built. Asset-hash lines in the output can supply a comparison-context hint, never ownership of an image. A silent log keeps its last observation while the age grows; a silence is not a pass, not a finished operation, and not the next one. The values describe the latest observation and do not say that other cases are idle.
+The case and operation come from the marker lines and `-v` case lines that [the suite streams](#operation-bounds-and-early-stop), and the classes are the fixed vocabulary of the [operation timings](#operation-timings). A `live output: ` record is quoted program output and never classifies an operation, and a command line is recognized only when `sandboxed-agents` leads it after the log's own prefix. An `up` shows as `image build or sandbox start`: the helper does not guess from a raw line whether an image was built. Asset-hash lines in the output can supply a comparison-context hint, never ownership of an image. A silent log keeps its last observation while the age grows; a silence is not a pass, not a finished operation, and not the next one. The values describe the latest observation and do not say that other cases are idle. Before the suite has started, `running` is false even while the supervisor is still preparing, which can take more than five minutes on Windows. A `status` that shows `ended` with exit status 1, no case, operation `unknown`, and an output age of `-1` right after a failed `run` is the supervisor's startup refusal, not a suite result; the failure that `run` printed names it.
+
+Poll from its own block, and run it again and again; it returns at once and does not wait. In Bash:
+
+```sh
+"$PRIVATE/live-run" status -run-dir "$PRIVATE/run-$RUN_ID"
+```
+
+In PowerShell:
+
+```powershell
+& $helper status -run-dir $runDir
+```
+
+**Gate before `collect`.** Repeat the block until its output shows `"ended":true`. One call that shows `"ended":false`, or one that you did not read, is not the end of the suite: run no `collect` and no `cleanup` while the suite is running.
 
 **Collect.** After `status` shows `ended`, `live-run collect -run-dir RUN` runs the durations collector on `suite.log` with the record, and passes the preparation start and end from the run. It takes the three comparison values from the final `before.json` alone and the asset hash from the log's preflight output: `host_load` is the value given to `prepare`, and `base_image` and `build_cache` follow the [rules above](#retaining-case-durations), with `unknown` when the snapshot or the hash is missing. It refuses a private log that the run marked unverified. It prints `durations_file` (the file name only), `collected`, `optional_operation_evidence_unverified`, and the three values. Only exit status 0 with `collected` true and that file name confirm this invocation's collection. When `optional_operation_evidence_unverified` is true, the collector retained this run's case durations but could not update the optional `operations-<platform>.json`, which stays as it was: the durations file is current and the operations evidence is unverified, and both are reported as that. After any other failure the collector's message is in `diagnostic.txt`, the command exits non-zero, and an earlier `durations-<platform>.json` in the record directory is not this run's. `collect` takes no post-suite interval; the next phase does.
 
-**Cleanup.** `live-run cleanup -run-dir RUN` removes the images this invocation built and left unused, by the rules of the skill's [image cleanup](../.agents/skills/live-validation/SKILL.md#image-cleanup), which this command applies and does not change. Run it with the run directory prepared and run for this invocation, after the suite has ended, whether it passed, failed, or was interrupted. Repeat `-retain sha256:FULL_IMAGE_ID`, with a full 64-hexadecimal image ID, for each image the user asked to keep; a tag, a prefix, or any other argument is refused. The command starts no suite and no machine, takes the engine lock, and refuses while an owned suite is still running. It checks the saved artifacts, the revision of the checkout, and that the engine is the one of the snapshot before it inventories the engine, and it rechecks the engine, every container reference of the whole engine, and the checkout, with the same strict clean check as `prepare`, before each `podman rmi --no-prune ID`. It never runs a prune, a reset, or a forced removal, and it removes no container, volume, group state, log, or checkout.
+After `status` has shown `"ended":true`, collect from its own block. In Bash:
 
-**Build proof.** An image is proven only by a private primary record, never by what the suite prints. The supervisor creates the private `build-evidence` directory in the run directory, with a manifest that binds the revision, the engine, and an unpredictable invocation identity, and hands its location to the suite in the environment variable `SANDBOXED_AGENTS_LIVE_BUILD_EVIDENCE_DIR`; it is an internal channel, not a command option of the product, and it is never copied into a workspace or sandbox. When that variable is set, the executable's own build adds `--iidfile` to its `podman build`, and then, still under the image-tag lock, reads the engine identity and the built tag's ID and asset-hash label with read-only queries. Only when the ID from the file, the ID from the tag, the asset hash, and the engine of the manifest all agree does it publish one event under a random file name, so concurrent builds never overwrite each other. Without the variable a build runs with exactly its former flags, cache, and queries, and a failure of any evidence step changes neither the build nor the suite's result. Events are read as strict typed JSON of at most 64 KiB each, at most 16 MiB and 10,000 files together. A file that is malformed, foreign to the invocation, or incomplete is not admitted and is reported as an unverified item, while the other valid events are still read; an invalid manifest admits nothing.
+```sh
+"$PRIVATE/live-run" collect -run-dir "$PRIVATE/run-$RUN_ID"
+echo "collect exit status: $?"
+```
+
+In PowerShell:
+
+```powershell
+& $helper collect -run-dir $runDir
+"collect exit status: $LASTEXITCODE"
+```
+
+**Gate after `collect`.** The collection is confirmed only by exit status `0` with `collected` true and the file name, as above; report anything else as unverified. A failed `collect` leaves the suite's result unchanged, and `cleanup` runs the final collection again.
+
+**Cleanup.** `live-run cleanup -run-dir RUN` removes the images this invocation built and left unused, by the rules of the skill's [image cleanup](../.agents/skills/live-validation/SKILL.md#image-cleanup), which this command applies and does not change.
+
+- **When and for which images.** Run it with the run directory prepared and run for this invocation, after the suite has ended, whether it passed, failed, or was interrupted. Repeat `-retain sha256:FULL_IMAGE_ID`, with a full 64-hexadecimal image ID, for each image the user asked to keep; a tag, a prefix, or any other argument is refused.
+- **Before it inventories.** The command starts no suite and no machine, takes the engine lock, and refuses while an owned suite is still running. It checks the saved artifacts, the revision of the checkout, and that the engine is the one of the snapshot.
+- **Before each removal.** It rechecks the engine, every container reference of the whole engine, and the checkout, with the same strict clean check as `prepare`, before each `podman rmi --no-prune ID`.
+- **Never.** It never runs a prune, a reset, or a forced removal, and it removes no container, volume, group state, log, or checkout.
+- **An earlier run.** To clean the images that an earlier run left, pass that run's own private directory; the command needs that run's checkout at its original revision and strictly clean, and ends with `cleanup: pending` otherwise.
+- **A log that is not verified.** When `log_verified` is false the command stops with `cleanup: pending (private suite log unverified)`, writes no report and removes nothing. The images stay as left behind; report that line and remove none of them by hand.
+- **After a pending stop.** A `cleanup` that stops as pending before its report leaves no sanitized before or after measurement: `prepare` printed only that it succeeded and kept the before measurement in the private `preparation.json`, and `status` shows only current free space. Report the missing side as unverified.
+- **Leftovers.** The report counts only the containers left on the engine. The product's read-only `list`, run with `SANDBOXED_AGENTS_GROUP` set to the run's group, shows leftover sandboxes of that group, and a sandbox of which only volumes remain shows as `volumes only`. The group's host state has no supported read, so what no such command shows is reported as unverified.
+
+Clean up from its own block, only after `status` has shown `"ended":true`; add one `-retain sha256:FULL_IMAGE_ID` for each image the user asked to keep. In Bash:
+
+```sh
+"$PRIVATE/live-run" cleanup -run-dir "$PRIVATE/run-$RUN_ID"
+echo "cleanup exit status: $?"
+```
+
+In PowerShell:
+
+```powershell
+& $helper cleanup -run-dir $runDir
+"cleanup exit status: $LASTEXITCODE"
+```
+
+**Gate after `cleanup`.** Exit status `0` means `complete`. A non-zero status is `partial`, `unverified`, or `pending`: report the printed line and the sanitized report as they are, and remove no image by hand.
+
+**Build proof.** An image is proven only by a private primary record, never by what the suite prints.
+
+- **Channel.** The supervisor creates the private `build-evidence` directory in the run directory, with a manifest that binds the revision, the engine, and an unpredictable invocation identity, and hands its location to the suite in the environment variable `SANDBOXED_AGENTS_LIVE_BUILD_EVIDENCE_DIR`. It is an internal channel, not a command option of the product, and it is never copied into a workspace or sandbox.
+- **Final images.** When that variable is set, the executable's own build adds `--iidfile` to its `podman build`, and then, still under the image-tag lock, reads the engine identity and the built tag's ID and asset-hash label with read-only queries. Only when the ID from the file, the ID from the tag, the asset hash, and the engine of the manifest all agree does it publish one event under a random file name, so concurrent builds never overwrite each other.
+- **Ordinary builds.** Without the variable a build runs with exactly its former flags, cache, and queries, and a failure of any evidence step changes neither the build nor the suite's result.
+- **Reading.** Events are read as strict typed JSON of at most 64 KiB each, at most 16 MiB and 10,000 files together. A file that is malformed, foreign to the invocation, or incomplete is not admitted and is reported as an unverified item, while the other valid events are still read; an invalid manifest admits nothing.
 
 Output proves nothing. A `STEP` line, a result line, a `COMMIT` line, an operation marker, or a whole forged build window in the suite's output, whether it comes from the suite's own commands, a smoke check, an agent, or a Tool, is data and grants no ownership; `cleanup` no longer parses it for proof. An image that carries a tag outside the project's canonical tags, or a mix of such tags and project tags, is skipped as foreign. Each recorded ID is resolved against the full inventory of the engine, matches exactly one image, and is confirmed by `podman image inspect`, in batches of at most 64 IDs with a per-ID query only for a batch that failed or came back incomplete; a failed query leaves the image unverified, never absent. The full ID, step, and source stay in the private `build-record.json`.
 
@@ -447,7 +573,14 @@ Output proves nothing. A `STEP` line, a result line, a `COMMIT` line, an operati
 
 What the channel covers is not shown. Whether the installed Podman and its build engine apply `--layer-label` to every intermediate they commit, whether cached layers without the current label remain, how many IDs stay unknown, the real `--iidfile` output, and the final inventories are all pending authorized live runs on both hosts. The report must show the skipped sizes, and no complete provenance is claimed.
 
-Each attempt writes a new `cleanup-RANDOM` directory in the run directory, mode `0700`, with the queries, inventories, build record, removal plan, final inventory, and raw measurements, all private. The command prints the sanitized report and writes the same report to `cleanup-linux.json` or `cleanup-windows-11.json` in the record directory. The report holds the suite's exit code and whether it was interrupted; the removed, skipped, and unverified images, with immutable IDs, canonical project tags, byte sizes (with `size_verified`), and a fixed reason or query category; the before and after free space by filesystem role and a four-row allowlist of `podman system df`; the number of containers left on the engine; `post_suite_seconds`; and `collected` with `durations_file`. Its `status` is `complete` only when every query and the reconciliation succeeded and every image of the run is accounted for. It is `partial` when an image remains only because no primary record proves it: the command exits non-zero with `cleanup: partial (unproven images retained; see sanitized cleanup report)`, the report lists each retained image with its size, and a successful final collection still counts. Incomplete, malformed, or failed producer evidence, or an inconsistent asset identity, makes it `unverified` while the independently proven images are still removed. Otherwise it is `unverified`, the command exits non-zero, and the report says what is unverified, independent of the suite's result; a `collected` true with `optional_operation_evidence_unverified` shows as a fixed unverified item, `case durations retained; optional operation evidence unverified`, and never certifies an earlier file. An engine that does not answer ends the command with `cleanup: pending (engine unreachable: REASON; private diagnostic retained)` and no removal, where `REASON` is one of the fixed reasons of the `engine` check; a target that is stopped, ambiguous, unsafe, or malformed is reported by its own kind instead of as unreachability, and other saved evidence that is missing, incomplete, or changed ends it with a `cleanup: pending (...)` that names the cause. Private JSON files are capped at 16 MiB, the sanitized report at 4 MiB, and `suite.log` at 64 MiB; a plan that does not fit is refused before any removal.
+Each attempt writes a new `cleanup-RANDOM` directory in the run directory, mode `0700`, with the queries, inventories, build record, removal plan, final inventory, and raw measurements, all private. The command prints the sanitized report and writes the same report to `cleanup-linux.json` or `cleanup-windows-11.json` in the record directory.
+
+- **What the report holds.** The suite's exit code and whether it was interrupted; the removed, skipped, and unverified images, with immutable IDs, canonical project tags, byte sizes (with `size_verified`), and a fixed reason or query category; the before and after free space by filesystem role and a four-row allowlist of `podman system df`; the number of containers left on the engine; `post_suite_seconds`; and `collected` with `durations_file`.
+- **`complete`.** Every query and the reconciliation succeeded and every image of the run is accounted for.
+- **`partial`.** An image remains only because no primary record proves it. The command exits non-zero with `cleanup: partial (unproven images retained; see sanitized cleanup report)`, the report lists each retained image with its size, and a successful final collection still counts.
+- **`unverified`.** Incomplete, malformed, or failed producer evidence, or an inconsistent asset identity, gives this status while the independently proven images are still removed; so does any other query or reconciliation that did not succeed. The command exits non-zero and the report says what is unverified, independent of the suite's result. A `collected` true with `optional_operation_evidence_unverified` shows as a fixed unverified item, `case durations retained; optional operation evidence unverified`, and never certifies an earlier file.
+- **`pending`.** An engine that does not answer ends the command with `cleanup: pending (engine unreachable: REASON; private diagnostic retained)` and no removal, where `REASON` is one of the fixed reasons of the `engine` check. A target that is stopped, ambiguous, unsafe, or malformed is reported by its own kind instead of as unreachability, and other saved evidence that is missing, incomplete, or changed ends it with a `cleanup: pending (...)` that names the cause.
+- **Limits.** Private JSON files are capped at 16 MiB, the sanitized report at 4 MiB, and `suite.log` at 64 MiB; a plan that does not fit is refused before any removal.
 
 `cleanup` also runs the final durations collection, with both the preparation interval and the post-suite interval, and replaces the file that `collect` wrote. The post-suite interval starts at the `EndedAt` time in `exit.json`, so it includes an earlier `collect`, and it ends once the engine is reconciled, the after measurements are taken, and the preliminary cleanup report is saved. It ends before the final collector call and the publication of the report, which cannot count their own duration, so `post_suite_seconds` is a lower bound on the time after the suite and never a total that includes everything. Only a true `collected` and the named durations file confirm this invocation's final collection; a failed final collection is reported as unverified and never confirms an earlier file. When `cleanup` stops before that collection, for example because the engine is unreachable, the file of the earlier successful `collect` has no post-suite interval and is the only collection of the run.
 
