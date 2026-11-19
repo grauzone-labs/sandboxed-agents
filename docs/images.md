@@ -159,7 +159,7 @@ The live suite also checks the swap limit: a new sandbox's `podman inspect` show
 
 The suite's `t3code` case also checks service restore on a real successful replacement from the base image to `native` and on a forced readiness rollback to that replacement. It verifies the Tool's pin, live HTTP service, and UID/GID 1000 after both, and compares the sandbox's publish, network, hardening, resource limits, and three volumes with their pre-enable values. This adds no Tailscale login or phone reachability coverage; those remain manually recorded ([live suite](releases.md#live-suite)).
 
-**Use a new record directory for each run.** Running by hand, set `SANDBOXED_AGENTS_LIVE_RECORD_DIR` to a new, empty directory for every invocation, and never reuse one: a directory left by an earlier run can keep that run's files, including `engine-failures-<platform>.json`, which then are not this run's evidence ([Whose file it is](#engine-failure-snapshots)). The block that runs the suite below sets a new `RUN_ID` (`$runId` in PowerShell) itself and builds the directory `$HOME/live-suite-records/$RUN_ID` (`live-suite-records\$runId` under `$env:USERPROFILE`) from it. The collector block that follows uses that same value and directory from the same shell session, so paste it into the session that ran the suite and never set a second ID there: its `-record` path has to name the record that this run wrote, and its first line stops when no ID is set.
+**Use a new record directory for each run.** Running by hand, set `SANDBOXED_AGENTS_LIVE_RECORD_DIR` to a new, empty directory for every invocation, and never reuse one: a directory left by an earlier run can keep that run's files, including `engine-failures-<platform>.json`, which then are not this run's evidence ([Whose file it is](#engine-failure-snapshots)). The block that runs the suite below sets a new `RUN_ID` (`$runId` in PowerShell) itself and builds the directory `$HOME/live-suite-records/$RUN_ID` (`live-suite-records\$runId` under `$env:USERPROFILE`) from it. The collector block that follows uses that same value and directory from the same shell session, so paste it into the session that ran the suite and never set a second ID there: its `-record` path has to name the record that this run wrote, and the block stops when no ID is set.
 
 Because `build` renews every image of the current executable on the Podman host, the coverage has its own opt-in beside the suite's variables, `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1`:
 
@@ -272,8 +272,7 @@ The revision, the platform (`linux` or `windows-11`), and the selected coverage 
 On Linux:
 
 ```sh
-: "${RUN_ID:?use the RUN_ID that the suite block of this same run set}"
-go run ./internal/validationduration/cmd/retain-durations \
+: "${RUN_ID:?use the RUN_ID that the suite block of this same run set}" && go run ./internal/validationduration/cmd/retain-durations \
   -record "$HOME/live-suite-records/$RUN_ID/live-suite-linux.json" \
   -host-load idle -base-image absent -build-cache cold \
   < "$PRIVATE/live-suite-linux.log"
@@ -296,8 +295,7 @@ Use the values you observed in place of `idle`, `absent`, and `cold`. The collec
 On Linux:
 
 ```sh
-: "${RUN_ID:?use the RUN_ID that the suite block of this same run set}"
-go run ./internal/validationduration/cmd/retain-durations \
+: "${RUN_ID:?use the RUN_ID that the suite block of this same run set}" && go run ./internal/validationduration/cmd/retain-durations \
   -record "$HOME/live-suite-records/$RUN_ID/live-suite-linux.json" \
   -host-load idle -base-image absent -build-cache cold \
   -preparation-start "$PREP_START" -preparation-end "$PREP_END" \
