@@ -173,14 +173,14 @@ func toolEffects(t *testing.T, home string, registry toolRegistry, run *toolRun)
 				fmt.Fprintln(p.Stdout, version)
 				return nil
 			}
-			if len(p.Args) == 6 && strings.Join(p.Args[:3], " ") == "install --global --prefix" && p.Args[4] == "--" {
+			if len(p.Args) == 7 && strings.Join(p.Args[:3], " ") == "install --global --prefix" && p.Args[4] == "--allow-scripts=t3" && p.Args[5] == "--" {
 				run.installs++
-				run.installSpecs = append(run.installSpecs, p.Args[5])
+				run.installSpecs = append(run.installSpecs, p.Args[6])
 				if run.installFailure {
 					fmt.Fprintln(p.Stderr, "npm error network failure")
 					return childExit(1)
 				}
-				prefix, version := p.Args[3], strings.TrimPrefix(p.Args[5], "t3@")
+				prefix, version := p.Args[3], strings.TrimPrefix(p.Args[6], "t3@")
 				packagePath := filepath.Join(prefix, "lib", "node_modules", "t3")
 				if err := os.MkdirAll(packagePath, 0700); err != nil {
 					t.Fatal(err)

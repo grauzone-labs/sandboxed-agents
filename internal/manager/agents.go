@@ -359,7 +359,8 @@ func installAgent(root string, r agentRequest, effects Effects, stderr io.Writer
 }
 
 // installNPMPackage installs a catalog npm package into a prefix as agent, at the requested exact
-// version when one is given, and verifies the installed version and command before returning the version.
+// version when one is given, allowing that package's own install scripts, and verifies the installed
+// version and command before returning the version.
 func installNPMPackage(prefix, name string, install catalog.Install, command, version string, effects Effects, stderr io.Writer) (string, error) {
 	if install.Kind != catalog.NPM {
 		return "", fmt.Errorf("unsupported installation kind %q", install.Kind)
@@ -368,7 +369,10 @@ func installNPMPackage(prefix, name string, install catalog.Install, command, ve
 	if version != "" {
 		packageSpec += "@" + version
 	}
-	err := effects.Start(Process{Program: "npm", Args: []string{"install", "--global", "--prefix", prefix, "--", packageSpec}, Identity: agentIdentity, EnvironmentPolicy: NPMEnvironment, Stdout: stderr, Stderr: stderr})
+	// npm 12 runs a package's install scripts only when a policy names the package. Catalog packages may ship a
+	// placeholder command that their own install script replaces, so the catalog package itself is allowed; the
+	// scripts of its dependencies stay under npm's default policy.
+	err := effects.Start(Process{Program: "npm", Args: []string{"install", "--global", "--prefix", prefix, "--allow-scripts=" + install.Package, "--", packageSpec}, Identity: agentIdentity, EnvironmentPolicy: NPMEnvironment, Stdout: stderr, Stderr: stderr})
 	if err != nil {
 		return "", fmt.Errorf("%s installation failed: %w", name, err)
 	}

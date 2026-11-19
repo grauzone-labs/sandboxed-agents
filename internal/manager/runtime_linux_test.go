@@ -261,7 +261,7 @@ func TestProductionNpmUsesAgentHomeAndCredentials(t *testing.T) {
 					t.Errorf("inherited npm override %s", key)
 				}
 			}
-			if len(command.Args) != 7 || command.Args[1] != "install" || command.Args[2] != "--global" || command.Args[3] != "--prefix" || command.Args[5] != "--" || command.Args[6] != "@openai/codex" {
+			if len(command.Args) != 8 || command.Args[1] != "install" || command.Args[2] != "--global" || command.Args[3] != "--prefix" || command.Args[5] != "--allow-scripts=@openai/codex" || command.Args[6] != "--" || command.Args[7] != "@openai/codex" {
 				t.Fatalf("npm args=%q", command.Args)
 			}
 			prefix := command.Args[4]
