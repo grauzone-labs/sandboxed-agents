@@ -81,3 +81,30 @@ func TestRunReportsRetainedDurationsWhenOptionalEvidenceIsInvalid(t *testing.T) 
 		t.Fatalf("output=%q err=%v", output.String(), err)
 	}
 }
+
+// TestRunCollectsPrivatePreflightChannel proves the offline flag reaches the
+// typed operations collector and missing observations stay absent without
+// leaking the private directory, at the command's files/stdin seam.
+func TestRunCollectsPrivatePreflightChannel(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "live-suite-linux.json")
+	const source = `{"schema_version":2,"kind":"live-suite","commit":"0123456789abcdef0123456789abcdef01234567","platform":"linux","result":"fail","image_part_selected":false,"image_part_ran":false,"image_coverage_complete":false,"checks":[]}`
+	if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	operations := filepath.Join(directory, "operations-linux.json")
+	if err := os.WriteFile(operations, []byte(`{"schema_version":1,"kind":"live-suite-operations","commit":"0123456789abcdef0123456789abcdef01234567","platform":"linux","operations":[],"cases":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out, diagnostics bytes.Buffer
+	if err := run([]string{"-record", path, "-preflight-dir", filepath.Join(directory, "private-channel")}, strings.NewReader(""), &out, &diagnostics); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(operations)
+	if err != nil || !strings.Contains(string(data), `"state":"not-collected"`) || !strings.Contains(string(data), `"channel-unavailable"`) || strings.Contains(string(data), "private-channel") || strings.Contains(string(data), "suite_seconds") {
+		t.Fatalf("optional channel evidence %s, %v", data, err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != source {
+		t.Fatal("collector changed suite record")
+	}
+}

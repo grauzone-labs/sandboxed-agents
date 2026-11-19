@@ -10,6 +10,7 @@ import (
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
 	"github.com/grauzone-labs/sandboxed-agents/internal/checks"
+	"github.com/grauzone-labs/sandboxed-agents/internal/preflighttiming"
 )
 
 // version is overridden with -ldflags -X for release builds.
@@ -28,6 +29,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 // host state root that cannot be resolved exits 2 with the generic usage line, since help
 // cannot fix it.
 func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
+	timing := preflighttiming.Open(os.Getenv)
+	defer timing.Returned()
 	host = host.defaults()
 	var stateRoot string
 	var request Request
@@ -71,14 +74,14 @@ func RunWithHost(args []string, stdout, stderr io.Writer, host Host) int {
 		return 0
 	}
 	checkedTarget := func() (podmanTarget, error) {
-		target, err := preflight(host)
+		target, err := preflighttiming.Observe(timing, preflighttiming.Preflight, func() (podmanTarget, error) { return preflight(host) })
 		if err != nil {
 			fmt.Fprintln(stderr, "step 2:", err)
 		}
 		return target, err
 	}
 	selectedTarget := func() (podmanTarget, error) {
-		target, err := selectTarget(host)
+		target, err := preflighttiming.Observe(timing, preflighttiming.TargetSelection, func() (podmanTarget, error) { return selectTarget(host) })
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 		}

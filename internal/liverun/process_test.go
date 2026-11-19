@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
+	"github.com/grauzone-labs/sandboxed-agents/internal/preflighttiming"
 )
 
 // TestMain exposes offline executable fixtures for the detached supervisor and fake host programs. It exercises the prepare/run/status commands and owned process artifacts seam.
@@ -104,7 +105,7 @@ func hostFixture(role string, args []string) int {
 			return 0
 		}
 		if args[0] == "test" {
-			data, _ := json.Marshal(map[string]string{"overlap": os.Getenv(liverun.CaseOverlapEnv), "build_jobs": os.Getenv(liverun.BuildJobsEnv)})
+			data, _ := json.Marshal(map[string]string{"overlap": os.Getenv(liverun.CaseOverlapEnv), "build_jobs": os.Getenv(liverun.BuildJobsEnv), "preflight_dir": os.Getenv(preflighttiming.DirEnv), "preflight_token": os.Getenv(preflighttiming.TokenEnv)})
 			if err := os.WriteFile(filepath.Join(root, "suite-inputs.json"), data, 0600); err != nil {
 				return 2
 			}
@@ -683,5 +684,58 @@ func TestRunRechecksKnownSpaceDespiteUnboundedDecision(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestRunPreflightChannelIsSupplemental proves the detached command creates a
+// fresh query-free private channel, clears ambient tokens, and preserves the
+// suite's exit 7 even when channel creation fails, through the fake host seam.
+func TestRunPreflightChannelIsSupplemental(t *testing.T) {
+	for _, blocked := range []bool{false, true} {
+		t.Run(fmt.Sprint(blocked), func(t *testing.T) {
+			root, private, _ := fixtureSetup(t)
+			t.Setenv(preflighttiming.TokenEnv, "ambient-token")
+			if blocked {
+				if err := os.Mkdir(filepath.Join(private, "preflight-timing"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			binary, _ := os.Executable()
+			if data, err := exec.Command(binary, "run", "-run-dir", private).CombinedOutput(); err != nil {
+				t.Fatalf("start: %v %s", err, data)
+			}
+			waitFixture(t, filepath.Join(root, "suite-ready"))
+			// Release before reporting assertions, preserving the fixture's owned cleanup.
+			if err := os.WriteFile(filepath.Join(root, "release"), nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			waitFixture(t, filepath.Join(private, "exit.json"))
+			var inputs map[string]string
+			if err := json.Unmarshal(mustReadFile(t, filepath.Join(root, "suite-inputs.json")), &inputs); err != nil {
+				t.Fatal(err)
+			}
+			if inputs["preflight_token"] != "" {
+				t.Fatal("suite inherited a process token")
+			}
+			if blocked {
+				if inputs["preflight_dir"] != "" {
+					t.Fatal("failed channel still enabled")
+				}
+				if _, err := os.Stat(filepath.Join(private, "preflight-timing-unverified")); err != nil {
+					t.Fatal("observation loss unmarked")
+				}
+			} else {
+				if inputs["preflight_dir"] != filepath.Join(private, "preflight-timing") {
+					t.Fatalf("channel not passed: %v", inputs)
+				}
+				if _, err := preflighttiming.Read(inputs["preflight_dir"], strings.Repeat("a", 40)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var ended struct{ Code int }
+			if err := json.Unmarshal(mustReadFile(t, filepath.Join(private, "exit.json")), &ended); err != nil || ended.Code != 7 {
+				t.Fatalf("original exit changed: %+v %v", ended, err)
+			}
+		})
 	}
 }

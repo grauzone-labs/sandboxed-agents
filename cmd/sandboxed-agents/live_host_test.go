@@ -20,6 +20,7 @@ import (
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/capture"
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
+	"github.com/grauzone-labs/sandboxed-agents/internal/preflighttiming"
 )
 
 // liveHost runs the executable under test and reads Podman on the live host,
@@ -28,6 +29,7 @@ type liveHost struct {
 	binary, group   string
 	environment     []string
 	connection      []string
+	ledger          *preflighttiming.Ledger
 	timings         *liveTimings
 	failures        *liveEngineFailures
 	caseName        string
@@ -219,15 +221,19 @@ func (host liveHost) cliContext(ctx context.Context, input string, args ...strin
 			defer func() { <-host.removals }()
 		}
 	}
+	var token string
 	if err == nil {
+		environment, issued := host.timingEnvironment(operation)
+		token = issued
 		command := exec.Command(host.binary, args...)
-		command.Env = host.environment
+		command.Env = environment
 		command.Stdin = strings.NewReader(input)
 		command.WaitDelay = time.Second
 		err = capture.RunOwned(ctx, command, &output, &output)
 	}
 	output.Flush()
-	host.recordOperation("cli", operation, started, err)
+	seconds := host.recordOperation("cli", operation, started, err)
+	host.finishTiming(token, seconds, err)
 	host.reportOperation(operation, fmt.Sprintf("finished after %s", time.Since(started).Round(time.Millisecond)))
 	if err != nil {
 		err = fmt.Errorf("live CLI failed after %s (operation %s, bound %s): %w", time.Since(started).Round(time.Millisecond), operation, host.operationBound(operation), err)

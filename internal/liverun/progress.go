@@ -293,7 +293,7 @@ func (s *Service) collect(ctx context.Context, args []string, out, diagnostics i
 	record := filepath.Join(o.RecordDir, "live-suite-"+platform+".json")
 	bounded, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	collectorArgs := []string{"run", "./internal/validationduration/cmd/retain-durations", "-record", record, "-host-load", load, "-base-image", base, "-build-cache", cache}
+	collectorArgs := []string{"run", "./internal/validationduration/cmd/retain-durations", "-record", record, "-preflight-dir", filepath.Join(directory, "preflight-timing"), "-host-load", load, "-base-image", base, "-build-cache", cache}
 	var started startedRun
 	if readJSON(filepath.Join(directory, "started.json"), &started) == nil && !started.PreparationStart.IsZero() && !started.PreparationEnd.IsZero() {
 		collectorArgs = append(collectorArgs, "-preparation-start", started.PreparationStart.Format(time.RFC3339Nano), "-preparation-end", started.PreparationEnd.Format(time.RFC3339Nano))

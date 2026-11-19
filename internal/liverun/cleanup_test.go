@@ -430,7 +430,7 @@ func TestCleanupChildrenBeforeParents(t *testing.T) {
 			continue
 		}
 		args := strings.Join(call.Args, " ")
-		for _, flag := range []string{"-post-suite-start", "-post-suite-end", "-preparation-start", "-preparation-end"} {
+		for _, flag := range []string{"-post-suite-start", "-post-suite-end", "-preparation-start", "-preparation-end", "-preflight-dir"} {
 			if !strings.Contains(args, flag) {
 				t.Fatalf("collector omitted %s", flag)
 			}
@@ -701,5 +701,30 @@ func TestCleanupBatchesPrimaryInspections(t *testing.T) {
 	}
 	if inspections != 1 || len(cleanupRemoved(fake)) != 2 {
 		t.Fatalf("inspections=%d removals=%v", inspections, cleanupRemoved(fake))
+	}
+}
+
+// TestCollectForwardsPreflightWithoutHostQueries proves the independent collect
+// command passes this run's private observation path to the existing collector
+// and performs no host query through the injected process boundary.
+func TestCollectForwardsPreflightWithoutHostQueries(t *testing.T) {
+	svc, fake, options := cleanupHarness(t)
+	fake.calls = nil
+	var out bytes.Buffer
+	if err := svc.RunDispatch(context.Background(), []string{"collect", "-run-dir", options.RunDir}, &out, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.calls) != 1 || fake.calls[0].Program != "go" {
+		t.Fatalf("collect added host work: %+v", fake.calls)
+	}
+	args := fake.calls[0].Args
+	found := false
+	for i, arg := range args {
+		if arg == "-preflight-dir" && i+1 < len(args) && args[i+1] == filepath.Join(options.RunDir, "preflight-timing") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("collector not forwarded: %v", args)
 	}
 }

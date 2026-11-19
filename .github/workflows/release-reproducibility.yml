@@ -137,7 +137,7 @@ jobs:
       - name: Run CLI, capture, live-run, and stable gate tests
         shell: pwsh
         run: |
-          go test ./cmd/sandboxed-agents ./internal/cli ./internal/capture ./internal/liverun ./internal/release/cmd/stable-gate -count=1
+          go test ./cmd/sandboxed-agents ./internal/cli ./internal/capture ./internal/preflighttiming ./internal/liverun ./internal/release/cmd/stable-gate -count=1
           if ($LASTEXITCODE -ne 0) { throw 'Windows command, CLI, capture, live-run, or stable gate tests failed' }
           go vet ./internal/manualcheck/...
           if ($LASTEXITCODE -ne 0) { throw 'Windows compile check of the manual-checklist runner failed' }

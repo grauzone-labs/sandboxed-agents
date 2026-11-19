@@ -152,7 +152,7 @@ func (s *Service) finishCleanup(ctx context.Context, r *cleanupRun, log []byte, 
 	load, base, cache := classifyContext(r.before, asset)
 	platform := s.platformName()
 	record := filepath.Join(r.options.RecordDir, "live-suite-"+platform+".json")
-	args := []string{"run", "./internal/validationduration/cmd/retain-durations", "-record", record, "-host-load", load, "-base-image", base, "-build-cache", cache, "-preparation-start", r.started.PreparationStart.Format(time.RFC3339Nano), "-preparation-end", r.started.PreparationEnd.Format(time.RFC3339Nano), "-post-suite-start", r.ended.EndedAt.Format(time.RFC3339Nano), "-post-suite-end", end.Format(time.RFC3339Nano)}
+	args := []string{"run", "./internal/validationduration/cmd/retain-durations", "-record", record, "-preflight-dir", filepath.Join(r.options.RunDir, "preflight-timing"), "-host-load", load, "-base-image", base, "-build-cache", cache, "-preparation-start", r.started.PreparationStart.Format(time.RFC3339Nano), "-preparation-end", r.started.PreparationEnd.Format(time.RFC3339Nano), "-post-suite-start", r.ended.EndedAt.Format(time.RFC3339Nano), "-post-suite-end", end.Format(time.RFC3339Nano)}
 	bounded, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	data, collectErr := s.Executor.Execute(bounded, Invocation{Program: "go", Args: args, Dir: r.options.Checkout, Env: hostEnvironment(s.Platform, nil), Input: log})

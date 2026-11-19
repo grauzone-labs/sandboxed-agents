@@ -20,11 +20,12 @@ import (
 // Context describes categorical observations made before a validation run.
 // Unknown is explicit: elapsed times do not prove the initial cache or image state.
 type Context struct {
-	HostLoad    string    `json:"host_load"`
-	BaseImage   string    `json:"base_image"`
-	BuildCache  string    `json:"build_cache"`
-	Preparation *Interval `json:"-"`
-	PostSuite   *Interval `json:"-"`
+	PreflightDir string    `json:"-"`
+	HostLoad     string    `json:"host_load"`
+	BaseImage    string    `json:"base_image"`
+	BuildCache   string    `json:"build_cache"`
+	Preparation  *Interval `json:"-"`
+	PostSuite    *Interval `json:"-"`
 }
 
 // Interval supplies phase boundaries to the collector; timestamps are never retained.

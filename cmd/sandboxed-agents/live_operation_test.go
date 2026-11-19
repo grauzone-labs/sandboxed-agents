@@ -15,10 +15,11 @@ type liveTimings struct {
 	evidence validationduration.Operations
 }
 
-// recordOperation appends one process result, discarding all command details.
-func (host liveHost) recordOperation(source, operation string, started time.Time, err error) {
+// recordOperation appends one process result and returns its exact inclusive
+// seconds for correlation, discarding all command details.
+func (host liveHost) recordOperation(source, operation string, started time.Time, err error) float64 {
 	if host.timings == nil {
-		return
+		return time.Since(started).Seconds()
 	}
 	host.timings.Lock()
 	defer host.timings.Unlock()
@@ -26,7 +27,9 @@ func (host liveHost) recordOperation(source, operation string, started time.Time
 	if err != nil {
 		result = "fail"
 	}
-	host.timings.evidence.Operations = append(host.timings.evidence.Operations, validationduration.Operation{Case: host.caseName, Source: source, Operation: operation, Result: result, Seconds: time.Since(started).Seconds()})
+	seconds := time.Since(started).Seconds()
+	host.timings.evidence.Operations = append(host.timings.evidence.Operations, validationduration.Operation{Case: host.caseName, Source: source, Operation: operation, Result: result, Seconds: seconds})
+	return seconds
 }
 
 // liveCLIClass assigns only fixed operation names; no argument is retained.
@@ -80,6 +83,7 @@ type timedLiveTerminal struct {
 	host      liveHost
 	started   time.Time
 	operation string
+	token     string
 	once      sync.Once
 	closeOnce sync.Once
 	test      *testing.T
@@ -93,16 +97,18 @@ type timedLiveTerminal struct {
 func (host liveHost) startTerminal(t *testing.T, args ...string) *timedLiveTerminal {
 	t.Helper()
 	started := time.Now()
+	operation := liveCLIClass(args)
+	environment, token := host.timingEnvironment(operation)
 	ready := false
 	defer func() {
 		if !ready {
-			host.recordOperation("cli", liveCLIClass(args), started, fmt.Errorf("terminal startup failed"))
+			seconds := host.recordOperation("cli", operation, started, fmt.Errorf("terminal startup failed"))
+			host.finishTiming(token, seconds, fmt.Errorf("terminal startup failed"))
 			host.observeFailure("cli", liveCLIClass(args), fmt.Errorf("terminal startup failed"))
 		}
 	}()
-	operation := liveCLIClass(args)
 	host.reportOperation(operation, "started")
-	terminal := &timedLiveTerminal{liveTerminal: startLiveTerminal(t, host.environment, host.binary, args...), host: host, started: started, operation: operation, test: t, lines: liveLineStream{report: host.report}}
+	terminal := &timedLiveTerminal{liveTerminal: startLiveTerminal(t, environment, host.binary, args...), host: host, started: started, operation: operation, token: token, test: t, lines: liveLineStream{report: host.report}}
 	ready = true
 	return terminal
 }
@@ -157,7 +163,8 @@ func (terminal *timedLiveTerminal) finish(exit int) {
 		if exit != 0 {
 			err = fmt.Errorf("terminal command failed")
 		}
-		terminal.host.recordOperation("cli", terminal.operation, terminal.started, err)
+		seconds := terminal.host.recordOperation("cli", terminal.operation, terminal.started, err)
+		terminal.host.finishTiming(terminal.token, seconds, err)
 		terminal.host.reportOperation(terminal.operation, fmt.Sprintf("finished after %s", time.Since(terminal.started).Round(time.Millisecond)))
 		terminal.host.observeFailure("cli", terminal.operation, err)
 	})

@@ -38,18 +38,20 @@ type OperationCase struct {
 // Operations is supplemental evidence independent of schema 2 and the release gate.
 // Negative unaccounted time is retained: overlapping invocations can exceed wall time.
 type Operations struct {
-	SchemaVersion      int             `json:"schema_version"`
-	Kind               string          `json:"kind"`
-	Commit             string          `json:"commit"`
-	Platform           string          `json:"platform"`
-	CaseOverlap        int             `json:"case_overlap,omitempty"`
-	BuildJobs          int             `json:"build_jobs,omitempty"`
-	GoTestParallel     int             `json:"go_test_parallel,omitempty"`
-	Engine             *Engine         `json:"engine,omitempty"`
-	Operations         []Operation     `json:"operations"`
-	Cases              []OperationCase `json:"cases"`
-	PreparationSeconds *float64        `json:"preparation_seconds,omitempty"`
-	PostSuiteSeconds   *float64        `json:"post_suite_seconds,omitempty"`
+	SchemaVersion      int               `json:"schema_version"`
+	Kind               string            `json:"kind"`
+	Commit             string            `json:"commit"`
+	Platform           string            `json:"platform"`
+	CaseOverlap        int               `json:"case_overlap,omitempty"`
+	BuildJobs          int               `json:"build_jobs,omitempty"`
+	GoTestParallel     int               `json:"go_test_parallel,omitempty"`
+	Engine             *Engine           `json:"engine,omitempty"`
+	Operations         []Operation       `json:"operations"`
+	Cases              []OperationCase   `json:"cases"`
+	PreparationSeconds *float64          `json:"preparation_seconds,omitempty"`
+	PostSuiteSeconds   *float64          `json:"post_suite_seconds,omitempty"`
+	SuiteSeconds       *float64          `json:"suite_seconds,omitempty"`
+	Preflight          *PreflightSummary `json:"preflight,omitempty"`
 }
 
 // operationClasses is the fixed live-validation vocabulary, with preflight and
@@ -103,7 +105,7 @@ func validateOperations(evidence Operations) error {
 	if evidence.Engine != nil && (evidence.Engine.CPUs <= 0 || evidence.Engine.MemoryBytes == 0) {
 		return fmt.Errorf("invalid engine capacity")
 	}
-	for _, seconds := range []*float64{evidence.PreparationSeconds, evidence.PostSuiteSeconds} {
+	for _, seconds := range []*float64{evidence.PreparationSeconds, evidence.PostSuiteSeconds, evidence.SuiteSeconds} {
 		if seconds != nil && !validSeconds(*seconds) {
 			return fmt.Errorf("invalid phase duration")
 		}
@@ -112,6 +114,9 @@ func validateOperations(evidence Operations) error {
 		if !slices.Contains(operationCases, operation.Case) || !slices.Contains([]string{"cli", "podman"}, operation.Source) || !slices.Contains(operationClasses, operation.Operation) || !slices.Contains([]string{"pass", "fail"}, operation.Result) || !validSeconds(operation.Seconds) {
 			return fmt.Errorf("invalid sanitized operation")
 		}
+	}
+	if err := validatePreflight(evidence.Preflight, evidence.SuiteSeconds); err != nil {
+		return err
 	}
 	seen := map[string]bool{}
 	for _, item := range evidence.Cases {
@@ -182,6 +187,16 @@ func retainOperationPhases(directory string, source sourceRecord, state Context)
 		if err != nil {
 			return err
 		}
+	}
+	if state.PreflightDir != "" {
+		lost := evidence.Preflight != nil && evidence.Preflight.LedgerUnverified
+		channel := state.PreflightDir
+		// A suite which refused its ledger cannot be made measurable by a later
+		// reread of that refused directory, even when its old manifest matches.
+		if evidence.Preflight != nil && slices.Contains(evidence.Preflight.Reasons, "channel-unavailable") {
+			channel = ""
+		}
+		evidence.Preflight = CollectPreflight(channel, evidence.Commit, evidence.SuiteSeconds, lost)
 	}
 	_, err = WriteOperations(directory, evidence)
 	return err

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
+	"github.com/grauzone-labs/sandboxed-agents/internal/preflighttiming"
 	"github.com/grauzone-labs/sandboxed-agents/internal/release"
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 	"github.com/grauzone-labs/sandboxed-agents/internal/validationduration"
@@ -107,6 +108,7 @@ func TestLiveSuite(t *testing.T) {
 // newLiveSuite checks the run's inputs, resolves the checkout's commit from the
 // git metadata files, and writes the failing record, all before any program runs.
 func newLiveSuite(t *testing.T) *liveSuite {
+	started := time.Now()
 	t.Helper()
 	suite := &liveSuite{host: liveHost{binary: executable, environment: os.Environ(), removals: make(chan struct{}, 1)}, results: map[string]string{}}
 	for _, name := range liveCheckNames {
@@ -140,6 +142,15 @@ func newLiveSuite(t *testing.T) *liveSuite {
 	if err != nil {
 		t.Fatalf("resolve the checkout's commit: %v", err)
 	}
+	timingDirectory := os.Getenv(preflighttiming.DirEnv)
+	if timingDirectory != "" {
+		if os.Getenv("TEST_SANDBOXED_AGENTS_EXECUTABLE") == "" && os.Getenv(livePreparedExecutableEnv) == "" {
+			suite.host.ledger, _ = preflighttiming.OpenLedger(timingDirectory, suite.commit)
+		}
+		if suite.host.ledger == nil {
+			t.Log("preflight timing unavailable")
+		}
+	}
 	suite.buildDirectory = t.TempDir()
 	suite.host.timings = &liveTimings{evidence: validationduration.Operations{SchemaVersion: 1, Kind: "live-suite-operations", Commit: suite.commit, Platform: suite.platform, CaseOverlap: suite.overlap, BuildJobs: suite.buildJobs, GoTestParallel: liveGoTestParallel(t), Operations: []validationduration.Operation{}, Cases: []validationduration.OperationCase{}}}
 	suite.host.caseName = "suite"
@@ -156,6 +167,21 @@ func newLiveSuite(t *testing.T) *liveSuite {
 	t.Cleanup(func() {
 		suite.host.timings.Lock()
 		defer suite.host.timings.Unlock()
+		// This monotonic endpoint includes case/group cleanup and the final schema-2
+		// write, excluding only this last operations serialization and write.
+		seconds := 0.0
+		suite.host.timings.evidence.SuiteSeconds = &seconds
+		if timingDirectory != "" {
+			collectionDirectory, lost := "", false
+			if suite.host.ledger != nil {
+				collectionDirectory, lost = timingDirectory, suite.host.ledger.Unverified()
+			}
+			// Retain a refused channel explicitly; collection must not reuse its files.
+			suite.host.timings.evidence.Preflight = validationduration.CollectPreflight(collectionDirectory, suite.commit, &seconds, lost)
+			suite.host.ledger.Close()
+		}
+
+		seconds = time.Since(started).Seconds()
 		if _, err := validationduration.WriteOperations(suite.recordDirectory, suite.host.timings.evidence); err != nil {
 			t.Errorf("write operation timings: %v", err)
 		}

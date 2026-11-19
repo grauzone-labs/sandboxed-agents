@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/capture"
+	"github.com/grauzone-labs/sandboxed-agents/internal/preflighttiming"
 )
 
 // exitEvidence records the suite's actual exit status, or a detected interrupted supervisor.
@@ -225,6 +226,11 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 		buildDirectory = ""
 		_ = os.WriteFile(filepath.Join(directory, "build-evidence-unverified"), []byte("trusted build channel unavailable\n"), 0600)
 	}
+	preflightDirectory, timingErr := preflighttiming.Create(directory, options.Revision)
+	if timingErr != nil {
+		preflightDirectory = ""
+		_ = os.WriteFile(filepath.Join(directory, "preflight-timing-unverified"), []byte("preflight timing channel unavailable\n"), 0600)
+	}
 	suite := exec.Command("go", "test", "./cmd/sandboxed-agents", "-run", "^TestLiveSuite$", "-timeout", "120m", "-v")
 	suite.Dir = options.Checkout
 	images := "0"
@@ -236,6 +242,8 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 		CaseOverlapEnv:                strconv.Itoa(options.Overlap),
 		BuildJobsEnv:                  strconv.Itoa(options.BuildJobs),
 		BuildEvidenceEnv:              buildDirectory,
+		preflighttiming.DirEnv:        preflightDirectory,
+		preflighttiming.TokenEnv:      "",
 		"SANDBOXED_AGENTS_LIVE_TESTS": "1", "SANDBOXED_AGENTS_GROUP": options.Group,
 		"SANDBOXED_AGENTS_LIVE_RECORD_DIR": options.RecordDir, "SANDBOXED_AGENTS_LIVE_IMAGES_TESTS": images,
 	})

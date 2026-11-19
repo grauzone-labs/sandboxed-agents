@@ -24,6 +24,7 @@ func run(args []string, input io.Reader, output, diagnostics io.Writer) error {
 	flags := flag.NewFlagSet("retain-durations", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
 	record := flags.String("record", "", "existing live-suite-<platform>.json from this run")
+	preflightDir := flags.String("preflight-dir", "", "private preflight observation channel for this run")
 	host := flags.String("host-load", "unknown", "observed host load before the run: idle, shared, unknown")
 	base := flags.String("base-image", "unknown", "base image before the run: present, absent, unknown")
 	cache := flags.String("build-cache", "unknown", "build cache before the run: warm, cold, unknown")
@@ -45,7 +46,7 @@ func run(args []string, input io.Reader, output, diagnostics io.Writer) error {
 	if err != nil {
 		return err
 	}
-	path, err := validationduration.Retain(input, *record, validationduration.Context{HostLoad: *host, BaseImage: *base, BuildCache: *cache, Preparation: preparation, PostSuite: postSuite})
+	path, err := validationduration.Retain(input, *record, validationduration.Context{PreflightDir: *preflightDir, HostLoad: *host, BaseImage: *base, BuildCache: *cache, Preparation: preparation, PostSuite: postSuite})
 	if path != "" {
 		_, writeErr := fmt.Fprintln(output, path)
 		if writeErr != nil {
