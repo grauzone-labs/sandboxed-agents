@@ -65,11 +65,11 @@ To move the floor to a candidate version, the test must pass against that versio
 
 ## Live runs on record
 
-The live suite is `TestLiveSuite` ([releases](releases.md#live-suite)). Before the suite existed, the live coverage was the test `TestLiveImages`, which the suite's `images` and `update` cases replaced. Every run below ran on the project's two hosts. The first table gives the versions historically recorded for those hosts; it is not extended to the `6ed41e7` run, whose own known versions are in [its section](#issue-114-session-rendering-evidence), and the other rows may differ from it too:
+The live suite is `TestLiveSuite` ([releases](releases.md#live-suite)). Before the suite existed, the live coverage was the test `TestLiveImages`, which the suite's `images` and `update` cases replaced. Every run below ran on the project's two hosts. The first table gives the versions historically recorded for those hosts, and its CPU and memory figures are the hosts' own, not those of the Podman engine a run used (see [engine capacity](#engine-capacity-and-the-windows-images-failures)); it is not extended to the `6ed41e7` run, whose own known versions are in [its section](#issue-114-session-rendering-evidence), and the other rows may differ from it too:
 
 | | Linux host | Windows host |
 |---|---|---|
-| System | Debian 13.6 (trixie), kernel 7.0.14-20-pve, amd64, 8 vCPU, 16 GiB | Windows 11 (build 10.0.26300.9457), x64, 8 vCPU, 16 GiB; WSL 2.7.12.0, kernel 6.18.33.2-2 |
+| System (host figures) | Debian 13.6 (trixie), kernel 7.0.14-20-pve, amd64, 8 vCPU, 16 GiB | Windows 11 (build 10.0.26300.9457), x64, 8 vCPU, 16 GiB; WSL 2.7.12.0, kernel 6.18.33.2-2 |
 | Podman | 5.4.2, rootless, cgroup v2, `systemd` cgroup manager | client 5.8.3; rootless WSL2 machine with Podman 5.8.9, cgroup v2, `cgroupfs` manager |
 | Go, OpenSSH | 1.27.2; OpenSSH 10.0p2 (Debian-7+deb13u4) | 1.27.2; OpenSSH for Windows 9.5p2 |
 
@@ -171,6 +171,26 @@ Read-only `list-clients` and `list-panes` queries ran with the client still atta
 - **Evidence for the first two criteria.** A1 and B1 are screenshots without metadata; A2 and B2 are metadata plus the user's reports, without matching captures. The first records the agent (OpenCode 1.19.4), the emulator (Omarchy default terminal, executable and version unidentified), the client `TERM` as tmux saw it (`xterm`), the second pair's columns and rows (172 by 80 for the client), and that matched sizes make a resize unnecessary to explain the difference. The second names the cause, confirms the fix, and documents the working configuration. With the third and fourth criteria above, all four criteria are addressed by the recorded evidence.
 - **Scope.** It reproduces the behaviour of the old attach by running tmux directly. It did not rebuild or retest the originally released preview and does not show that every historical report had this cause. The flags were tested as a pair, never individually, so no claim says which flag accounts for which missing element. Same session is measured for A2 and B2 only. The first pair's dimensions were not measured, and the A1 screenshot's tmux clock (08:53) precedes the session creation time that the second pair reports (08:58:03), so A1 and B1 may be other instances. The outer `TERM` and locale on the Windows side and the emulator's version were not measured.
 - **Record.** [`tmux-cause-comparison.json`](validation/issue-114/tmux-cause-comparison.json) holds the commands, the verbatim client and pane lines of A2 and B2, the regression results, and the two screenshots' opaque attachment IDs; the screenshots stay in the originating conversation. The hosts keep their sandboxes and images, and no cleanup was performed.
+
+### Engine capacity and the Windows `images` failures
+
+The 8 vCPU and 16 GiB of the host table are the hosts' hardware, not the capacity of the Podman engine that served a run. Session transcripts show the Windows Podman machine configured with 2 CPUs and 2,048 MB on 2026-11-17 and with 4 CPUs and 4 GiB on 2026-11-18. They are transcript observations, not repository records and not measurements taken at a failure, and they are no capacity recommendation. A run that completes its preflight read records the selected engine's actual `cpus` and `memory_bytes` in [`operations-<platform>.json`](images.md#operation-timings). The read is supplemental and best effort: where it did not happen or failed, the capacity is unverified, the preflight and every case verdict are unchanged, and it is never zero and never taken from the host table.
+
+**Baseline on record.** Five Windows full-suite attempts on 2026-11-17 and 2026-11-18 reached `images`. One passed (`ae4526e`), one ran into the 120-minute timeout (`881221c`), and three failed there with an engine error: at `941caa6` a Podman machine query reported a WSL `0xffffffff` failure, at `0a6ac3f` the Azure no-cache rebuild reported `cannot allocate memory`, and at `e9645f5` an out-of-memory failure, which exists only in a session transcript and has no repository record. The only memory snapshot on record was taken after the suite, so it shows nothing of memory or swap at any of these failures. These reports establish neither a shared cause nor a memory requirement.
+
+**What a new run records.** The suite now takes a read-only [engine failure snapshot](images.md#engine-failure-snapshots) of CPU, memory, swap, and machine state each time an operation fails, in `engine-failures-<platform>.json` beside the schema 2 record. It is supplemental, it changes no case result and no schema 2 field, and a sample taken at a rollback that a passing case forces is not a product failure. The offline tests prove only this recording path against fake processes: they do not reproduce or rule out any of the three signatures, and they say nothing about what capacity the image coverage needs.
+
+**Pending: cause, capacity, and the next three attempts.**
+
+- **Cause.** No cause is recorded. No authorized run on the Windows host has yet reproduced the reported symptom with these snapshots, so no signature is explained or ruled out.
+- **Capacity.** What engine memory and CPUs the image coverage needs, and any change to the Podman machine, WSL, or host memory, is a decision for the maintainer that waits for that evidence. This page proposes none.
+- **Next three Windows attempts.** Over the next three separately authorized Windows full-suite attempts with image coverage, retain the schema 2 record, `operations-windows-11.json`, and `engine-failures-windows-11.json` of each, and record whether it reached `images` and how `images` ended: passed, failed with a demonstrated product defect, failed with an engine signature and no demonstrated product defect, or unverified. Compare the count of the last kind with the three of five above. A fake-process test is not an attempt.
+
+| Attempt | Revision and date | Reached `images` | `images` result and classification | Evidence |
+|---|---|---|---|---|
+| 1 | pending | pending | pending | pending |
+| 2 | pending | pending | pending | pending |
+| 3 | pending | pending | pending | pending |
 
 ### Not covered by any run
 
