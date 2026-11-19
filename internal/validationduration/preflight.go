@@ -200,10 +200,14 @@ func summarizePreflight(summary *PreflightSummary, suiteSeconds *float64, channe
 
 // validateScope permits seconds only for an actually returned, classified scope.
 func validateScope(scope ScopeTiming) bool {
-	if scope.State == preflighttiming.StateClosed {
-		return scope.Outcome != "" && preflighttiming.ValidCompletion(scope.Outcome, scope.Seconds)
+	switch scope.State {
+	case preflighttiming.StateOpen, preflighttiming.StateClosed:
+		return scope.ValidObservation()
+	case preflighttiming.StateNotEntered, preflighttiming.StateUnknown, preflighttiming.StateUnobserved:
+		return scope.Outcome == "" && scope.Seconds == nil
+	default:
+		return false
 	}
-	return slices.Contains([]preflighttiming.State{preflighttiming.StateOpen, preflighttiming.StateNotEntered, preflighttiming.StateUnknown, preflighttiming.StateUnobserved}, scope.State) && scope.Outcome == "" && scope.Seconds == nil
 }
 
 // validatePreflight checks rows and independently reconciles the published summary.

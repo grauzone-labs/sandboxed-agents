@@ -19,13 +19,7 @@ type Journal struct {
 
 // validPhase preserves the distinction between entered-open and returned intervals.
 func validPhase(phase *Phase) bool {
-	if phase == nil {
-		return true
-	}
-	if phase.State == StateOpen {
-		return phase.Outcome == "" && phase.Seconds == nil
-	}
-	return phase.State == StateClosed && phase.Outcome != "" && ValidCompletion(phase.Outcome, phase.Seconds)
+	return phase == nil || phase.ValidObservation()
 }
 
 // Read joins a bounded channel for a revision; unavailable channels never imply zero work.

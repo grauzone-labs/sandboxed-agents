@@ -132,7 +132,8 @@ func TestLedgerConcurrentLaunchesAndIOLoss(t *testing.T) {
 }
 
 // TestJournalRejectsForeignAndUnsafeFiles proves bounded strict reads exclude
-// stale runs, links, payload fields, repeat observations and oversized records.
+// stale runs, links, payload fields, collector-only classifications, repeat
+// observations and oversized records at the public journal reader seam.
 func TestJournalRejectsForeignAndUnsafeFiles(t *testing.T) {
 	dir, ledger := observedChannel(t)
 	_, token, err := ledger.Launch("preflight", "preflight")
@@ -151,8 +152,8 @@ func TestJournalRejectsForeignAndUnsafeFiles(t *testing.T) {
 	if err = json.Unmarshal(data, &base); err != nil {
 		t.Fatal(err)
 	}
-	for index, kind := range []string{"foreign", "payload", "repeated", "oversized"} {
-		next := strings.Repeat(string(rune('d'+index)), 32)
+	for index, kind := range []string{"foreign", "payload", "repeated", "oversized", "not-entered", "unknown", "unobserved"} {
+		next := fmt.Sprintf("%032x", index+20)
 		copy := map[string]any{}
 		for key, value := range base {
 			copy[key] = value
@@ -163,8 +164,8 @@ func TestJournalRejectsForeignAndUnsafeFiles(t *testing.T) {
 			copy["run"] = strings.Repeat("f", 64)
 		case "payload":
 			copy["output"] = "secret host path"
-		case "repeated":
-			copy["preflight"] = map[string]string{"state": "repeated"}
+		case "repeated", "not-entered", "unknown", "unobserved":
+			copy["preflight"] = map[string]string{"state": kind}
 		}
 		encoded, _ := json.Marshal(copy)
 		if kind == "oversized" {
@@ -177,7 +178,7 @@ func TestJournalRejectsForeignAndUnsafeFiles(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(dir, ".tmp-ignored"), []byte("unfinished"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	expected := 4
+	expected := 7
 	if err = os.Symlink(filepath.Join(dir, "inv-"+token+".json"), filepath.Join(dir, "inv-"+strings.Repeat("1", 32)+".json")); err == nil {
 		expected++
 	}

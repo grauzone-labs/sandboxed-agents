@@ -43,3 +43,17 @@ func ValidCompletion(result string, seconds *float64) bool {
 	}
 	return (result == OutcomePass || result == OutcomeFail) && seconds != nil && ValidSeconds(*seconds)
 }
+
+// ValidObservation accepts only an entered-open phase without completion data
+// or a closed phase with a bounded returned outcome. Collector classifications
+// and repeated observations are not part of this journal grammar.
+func (phase Phase) ValidObservation() bool {
+	switch phase.State {
+	case StateOpen:
+		return phase.Outcome == "" && phase.Seconds == nil
+	case StateClosed:
+		return phase.Outcome != "" && ValidCompletion(phase.Outcome, phase.Seconds)
+	default:
+		return false
+	}
+}

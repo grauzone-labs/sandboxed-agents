@@ -282,3 +282,56 @@ func TestPreflightUnavailableMarkerRejectsAValidOldJournal(t *testing.T) {
 		t.Fatalf("unavailable channel reused old observations: %+v", after)
 	}
 }
+
+// TestPreflightAggregateAboveWindowSurvivesRetain proves individually valid
+// intervals may accumulate beyond the suite window, with separate P/S totals,
+// complete state and unchanged core/schema2 at WriteOperations and Retain seams.
+func TestPreflightAggregateAboveWindowSurvivesRetain(t *testing.T) {
+	pEach, sEach, pInclusive, sInclusive := 6000.0, 4000.0, 6200.0, 4500.0
+	pTotal, sTotal, suiteSeconds := 12000.0, 8000.0, 7000.0
+	evidence := validationduration.Operations{
+		SchemaVersion: 1, Kind: "live-suite-operations", Commit: "0123456789abcdef0123456789abcdef01234567", Platform: "linux", CaseOverlap: 4, SuiteSeconds: &suiteSeconds,
+		Operations: []validationduration.Operation{
+			{Case: "lifecycle", Source: "cli", Operation: "preflight", Result: "pass", Seconds: 6200},
+			{Case: "update", Source: "cli", Operation: "preflight", Result: "pass", Seconds: 6200},
+			{Case: "agent", Source: "cli", Operation: "inspection", Result: "pass", Seconds: 4500},
+			{Case: "t3code", Source: "cli", Operation: "inspection", Result: "pass", Seconds: 4500},
+		}, Cases: []validationduration.OperationCase{},
+		Preflight: &validationduration.PreflightSummary{State: "complete", Reasons: []string{}, Invocations: 4,
+			Preflight:       validationduration.ScopeTotals{Measured: 2, Pass: 2, NotEntered: 2, Seconds: &pTotal},
+			TargetSelection: validationduration.ScopeTotals{Measured: 2, Pass: 2, NotEntered: 2, Seconds: &sTotal},
+			Rows: []validationduration.PreflightRow{
+				{Sequence: 1, Case: "lifecycle", Operation: "preflight", Result: "pass", Seconds: &pInclusive, Preflight: validationduration.ScopeTiming{State: "closed", Outcome: "pass", Seconds: &pEach}, TargetSelection: validationduration.ScopeTiming{State: "not-entered"}},
+				{Sequence: 2, Case: "update", Operation: "preflight", Result: "pass", Seconds: &pInclusive, Preflight: validationduration.ScopeTiming{State: "closed", Outcome: "pass", Seconds: &pEach}, TargetSelection: validationduration.ScopeTiming{State: "not-entered"}},
+				{Sequence: 3, Case: "agent", Operation: "inspection", Result: "pass", Seconds: &sInclusive, Preflight: validationduration.ScopeTiming{State: "not-entered"}, TargetSelection: validationduration.ScopeTiming{State: "closed", Outcome: "pass", Seconds: &sEach}},
+				{Sequence: 4, Case: "t3code", Operation: "inspection", Result: "pass", Seconds: &sInclusive, Preflight: validationduration.ScopeTiming{State: "not-entered"}, TargetSelection: validationduration.ScopeTiming{State: "closed", Outcome: "pass", Seconds: &sEach}},
+			},
+		},
+	}
+	directory := t.TempDir()
+	operations, err := validationduration.WriteOperations(directory, evidence)
+	if err != nil {
+		t.Fatalf("valid accumulated totals rejected: %v", err)
+	}
+	recordPath := filepath.Join(directory, "live-suite-linux.json")
+	if err := os.WriteFile(recordPath, []byte(record), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validationduration.Retain(strings.NewReader(""), recordPath, validationduration.Context{HostLoad: "unknown", BaseImage: "unknown", BuildCache: "unknown"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(operations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got validationduration.Operations
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Preflight == nil || got.Preflight.State != "complete" || len(got.Preflight.Reasons) != 0 || got.Preflight.Preflight.Seconds == nil || *got.Preflight.Preflight.Seconds != 12000 || got.Preflight.TargetSelection.Seconds == nil || *got.Preflight.TargetSelection.Seconds != 8000 || !reflect.DeepEqual(got, evidence) {
+		t.Fatalf("accumulated scopes or independent evidence changed: %s", data)
+	}
+	if data, err := os.ReadFile(recordPath); err != nil || string(data) != record {
+		t.Fatal("schema2 changed")
+	}
+}
