@@ -122,25 +122,19 @@ func TestBuildChannelDisabledPreservesBuildAPI(t *testing.T) {
 	}
 }
 
-// TestLayerAttemptsHaveDistinctProducerIdentity proves the CaptureLayerBuildResult/typed artifact seam cannot attribute one nonce to multiple build attempts.
-func TestLayerAttemptsHaveDistinctProducerIdentity(t *testing.T) {
+// TestSingleCommitAttemptsHaveDistinctIdentity proves separate failed producers retain unique typed attempts at the private artifact seam.
+func TestSingleCommitAttemptsHaveDistinctIdentity(t *testing.T) {
 	o, before, directory := buildChannelFixture(t)
 	asset := strings.Repeat("e", 64)
-	labels := []string{}
 	for _, kind := range []string{"none", "dotnet"} {
-		err := CaptureLayerBuildResult(directory, "localhost/sandboxed-agents:"+kind+"-"+asset, asset, func(iid, label string) error {
-			labels = append(labels, label)
-			return fmt.Errorf("fixture build failure")
-		}, func(string) (string, error) { return "", nil })
+		err := CaptureSingleCommitBuild(directory, "localhost/sandboxed-agents:"+kind+"-"+asset, asset, false, func(string) error { return fmt.Errorf("actual build failure") }, func(string) (string, error) { t.Fatal("missing iid inspected"); return "", nil })
 		if err == nil {
-			t.Fatal("actual build failure lost")
+			t.Fatal("failure lost")
 		}
 	}
-	if len(labels) != 2 || labels[0] == labels[1] {
-		t.Fatalf("attempts shared one identity: %v", labels)
-	}
-	results, err := readBuildResults(o, before)
-	if err != nil || len(results) != 2 {
-		t.Fatalf("attempt authority lost: %v %v", results, err)
+	paths, err := filepath.Glob(filepath.Join(directory, "attempt-*.json"))
+	state := readBuildChannel(o, before)
+	if err != nil || len(paths) != 2 || !state.Open || state.Err != nil {
+		t.Fatalf("attempt identity lost: %v %+v", paths, state)
 	}
 }

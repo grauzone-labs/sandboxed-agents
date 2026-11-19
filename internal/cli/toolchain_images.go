@@ -114,13 +114,13 @@ func buildLabeledImageWithRunner(p podmanTarget, set []string, hash, baseID stri
 			flags = append(flags, "--pull=never", "--build-arg", "BASE_IMAGE="+baseID, "--label", baseImageLabel+"="+baseID)
 		}
 		args = append(append(append([]string{}, args[:len(args)-1]...), flags...), args[len(args)-1])
-		return withBuildEvidence(p, image.Tag(hash, set), hash, func(iid, layerLabel string) error {
+		return withBuildEvidence(p, image.Tag(hash, set), hash, args, func(iid, layerPolicy string) error {
 			buildArgs := args
 			if iid != "" {
 				buildArgs = append(append(append([]string{}, args[:len(args)-1]...), "--iidfile", iid), args[len(args)-1])
 			}
-			if layerLabel != "" {
-				buildArgs = append(append(append([]string{}, buildArgs[:len(buildArgs)-1]...), "--layer-label", layerLabel), buildArgs[len(buildArgs)-1])
+			if layerPolicy != "" {
+				buildArgs = append(append(append([]string{}, buildArgs[:len(buildArgs)-1]...), layerPolicy), buildArgs[len(buildArgs)-1])
 			}
 			return run(buildArgs...)
 		})

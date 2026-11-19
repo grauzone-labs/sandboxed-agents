@@ -14,6 +14,9 @@ import (
 	"time"
 )
 
+// legacyInvocationLabel supplies inheritable metadata solely as hostile test data.
+const legacyInvocationLabel = "io.sandboxed-agents.live-build-invocation"
+
 // TestCleanupRejectsForgedBuildOutput proves Cleanup retains foreign and unscoped results at the engine boundary. It exercises the Cleanup command seam.
 func TestCleanupRejectsForgedBuildOutput(t *testing.T) {
 	for _, scope := range []string{"smoke", "Tool install", "agent session", "none", "split", "nested", "unfinished", "foreign", "mixed", "forged-window"} {
@@ -153,9 +156,9 @@ func TestCleanupConsumesPrimaryBuildChannel(t *testing.T) {
 	if err := os.Mkdir(directory, 0700); err != nil {
 		t.Fatal(err)
 	}
-	cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 1, "Invocation": strings.Repeat("f", 64), "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
+	cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 2, "Invocation": strings.Repeat("f", 64), "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
 	tag := "localhost/sandboxed-agents:none-" + strings.Repeat("e", 64)
-	err := liverun.CaptureBuildResult(directory, tag, strings.Repeat("e", 64), func(iid string) error { return os.WriteFile(iid, []byte(id+"\n"), 0600) }, func(string) (string, error) { return id, nil })
+	err := liverun.CaptureSingleCommitBuild(directory, tag, strings.Repeat("e", 64), false, func(iid string) error { return os.WriteFile(iid, []byte(id+"\n"), 0600) }, func(string) (string, error) { return id, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +171,7 @@ func TestCleanupConsumesPrimaryBuildChannel(t *testing.T) {
 	if got := cleanupRemoved(fake); len(got) != 1 || got[0] != id {
 		t.Fatalf("primary result lost or raw output authorized: %v %v %s", got, err, &out)
 	}
-	if !strings.Contains(out.String(), `"status":"partial"`) || !strings.Contains(out.String(), "missing exact build proof") {
+	if !strings.Contains(out.String(), `"status":"complete"`) || !strings.Contains(out.String(), "not committed by this run's builds") {
 		t.Fatalf("unknown intermediate not accounted for: %s", &out)
 	}
 }
@@ -281,23 +284,23 @@ func TestCleanupIncompleteProducerKeepsIndependentProof(t *testing.T) {
 			if err := os.Mkdir(directory, 0700); err != nil {
 				t.Fatal(err)
 			}
-			cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 1, "Invocation": strings.Repeat("f", 64), "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
+			cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 2, "Invocation": strings.Repeat("f", 64), "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
 			id := "sha256:" + strings.Repeat("b", 64)
 			unknown := "sha256:" + strings.Repeat("d", 64)
 			asset := strings.Repeat("e", 64)
 			fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id), unknown: cleanupImageFixture(unknown)}
 			tag := "localhost/sandboxed-agents:none-" + asset
-			if err := liverun.CaptureBuildResult(directory, tag, asset, func(path string) error { return os.WriteFile(path, []byte(id), 0600) }, func(string) (string, error) { return id, nil }); err != nil {
+			if err := liverun.CaptureSingleCommitBuild(directory, tag, asset, false, func(path string) error { return os.WriteFile(path, []byte(id), 0600) }, func(string) (string, error) { return id, nil }); err != nil {
 				t.Fatal(err)
 			}
 			if leftover == "returned-failure" {
 				sentinel := fmt.Errorf("actual build failure")
-				if err := liverun.CaptureBuildResult(directory, tag, asset, func(string) error { return sentinel }, func(string) (string, error) { t.Fatal("inspected failed build"); return "", nil }); err != sentinel {
+				if err := liverun.CaptureSingleCommitBuild(directory, tag, asset, false, func(string) error { return sentinel }, func(string) (string, error) { t.Fatal("inspected failed build"); return "", nil }); err != sentinel {
 					t.Fatal("build error changed", err)
 				}
-				pending, _ := filepath.Glob(filepath.Join(directory, ".pending-*"))
-				if len(pending) != 0 {
-					t.Fatal("returned failed build left marker")
+				pending, _ := filepath.Glob(filepath.Join(directory, "attempt-*"))
+				if len(pending) == 0 {
+					t.Fatal("unconfirmed failed build lost its open attempt")
 				}
 			} else if strings.HasPrefix(leftover, "iid-") {
 				if err := os.Mkdir(filepath.Join(directory, leftover), 0700); err != nil {
@@ -320,8 +323,8 @@ func TestCleanupIncompleteProducerKeepsIndependentProof(t *testing.T) {
 	}
 }
 
-// TestCleanupRequiresBuilderLayerAttempt proves the Cleanup seam audits layer correlation without owning inherited images, then admits an independent primary full ID.
-func TestCleanupRequiresBuilderLayerAttempt(t *testing.T) {
+// TestCleanupRequiresPrimaryResultDespiteInheritedLabel proves the Cleanup seam retains inherited-label candidates without primary ownership, then admits an independent primary full ID.
+func TestCleanupRequiresPrimaryResultDespiteInheritedLabel(t *testing.T) {
 	svc, fake, options := cleanupHarness(t)
 	svc.BuildEvidence = nil
 	directory := filepath.Join(options.RunDir, "build-evidence")
@@ -329,18 +332,18 @@ func TestCleanupRequiresBuilderLayerAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	asset := strings.Repeat("e", 64)
-	cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 1, "Invocation": strings.Repeat("f", 64), "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
+	cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 2, "Invocation": strings.Repeat("f", 64), "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
 	id := "sha256:" + strings.Repeat("b", 64)
 	cached := "sha256:" + strings.Repeat("c", 64)
 	image := cleanupImageFixture(id)
 	image.RepoTags = nil
 	old := cleanupImageFixture(cached)
 	old.RepoTags = nil
-	old.Labels[liverun.BuildInvocationLabel] = strings.Repeat("0", 64)
+	old.Labels[legacyInvocationLabel] = strings.Repeat("0", 64)
 	tag := "localhost/sandboxed-agents:none-" + asset
-	if err := liverun.CaptureLayerBuildResult(directory, tag, asset, func(iid, label string) error {
+	if err := liverun.CaptureSingleCommitBuild(directory, tag, asset, false, func(iid string) error {
 		image.Created = time.Now().UTC()
-		image.Labels[liverun.BuildInvocationLabel] = strings.TrimPrefix(label, liverun.BuildInvocationLabel+"=")
+		image.Labels[legacyInvocationLabel] = strings.Repeat("f", 64)
 		return nil
 	}, func(string) (string, error) { return id, nil }); err != nil {
 		t.Fatal(err)
@@ -348,10 +351,10 @@ func TestCleanupRequiresBuilderLayerAttempt(t *testing.T) {
 	fake.images = map[string]cleanupFakeImage{id: image, cached: old}
 	var out bytes.Buffer
 	_ = svc.Cleanup(context.Background(), options, &out)
-	if len(cleanupRemoved(fake)) != 0 || !strings.Contains(out.String(), "inheritable layer metadata") {
+	if len(cleanupRemoved(fake)) != 0 || !strings.Contains(out.String(), "missing exact build proof") {
 		t.Fatalf("label correlation became ownership: %s", &out)
 	}
-	if err := liverun.CaptureBuildResult(directory, tag, asset, func(iid string) error { return os.WriteFile(iid, []byte(id), 0600) }, func(string) (string, error) { return id, nil }); err != nil {
+	if err := liverun.CaptureSingleCommitBuild(directory, tag, asset, false, func(iid string) error { return os.WriteFile(iid, []byte(id), 0600) }, func(string) (string, error) { return id, nil }); err != nil {
 		t.Fatal(err)
 	}
 	out.Reset()
@@ -408,18 +411,18 @@ func TestInheritedAttemptLabelsNeverGrantOwnership(t *testing.T) {
 	}
 	asset := strings.Repeat("e", 64)
 	invocation := strings.Repeat("f", 64)
-	cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 1, "Invocation": invocation, "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
+	cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 2, "Invocation": invocation, "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
 	tagged := "sha256:" + strings.Repeat("b", 64)
 	foreign := "sha256:" + strings.Repeat("c", 64)
-	err := liverun.CaptureLayerBuildResult(directory, "localhost/sandboxed-agents:none-"+asset, asset, func(iid, label string) error {
-		nonce := strings.TrimPrefix(label, liverun.BuildInvocationLabel+"=")
+	err := liverun.CaptureSingleCommitBuild(directory, "localhost/sandboxed-agents:none-"+asset, asset, false, func(iid string) error {
+		nonce := strings.Repeat("f", 64)
 		a := cleanupImageFixture(tagged)
 		a.Created = time.Now().UTC()
-		a.Labels[liverun.BuildInvocationLabel] = nonce
+		a.Labels[legacyInvocationLabel] = nonce
 		b := cleanupImageFixture(foreign)
 		b.Created = time.Now().UTC()
 		b.RepoTags = nil
-		b.Labels[liverun.BuildInvocationLabel] = nonce
+		b.Labels[legacyInvocationLabel] = nonce
 		fake.images = map[string]cleanupFakeImage{tagged: a, foreign: b}
 		return nil
 	}, func(string) (string, error) { t.Fatal("missing iid reached final inspection"); return "", nil })
@@ -551,7 +554,7 @@ func TestCleanupTimingLossIsSupplemental(t *testing.T) {
 	}
 }
 
-// TestCleanupDeduplicatesPrimaryResults proves the producer-to-Cleanup artifact seam records and removes one immutable ID once across independent primary result events.
+// TestCleanupDeduplicatesPrimaryResults proves the producer-to-Cleanup artifact seam records one immutable ID once and retains it when distinct attempts return the same ID.
 func TestCleanupDeduplicatesPrimaryResults(t *testing.T) {
 	svc, fake, options := cleanupHarness(t)
 	svc.BuildEvidence = nil
@@ -561,23 +564,23 @@ func TestCleanupDeduplicatesPrimaryResults(t *testing.T) {
 	}
 	asset := strings.Repeat("e", 64)
 	id := "sha256:" + strings.Repeat("b", 64)
-	cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 1, "Invocation": strings.Repeat("f", 64), "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
+	cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 2, "Invocation": strings.Repeat("f", 64), "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
 	for _, kind := range []string{"none", "dotnet"} {
-		if err := liverun.CaptureBuildResult(directory, "localhost/sandboxed-agents:"+kind+"-"+asset, asset, func(iid string) error { return os.WriteFile(iid, []byte(id), 0600) }, func(string) (string, error) { return id, nil }); err != nil {
+		if err := liverun.CaptureSingleCommitBuild(directory, "localhost/sandboxed-agents:"+kind+"-"+asset, asset, false, func(iid string) error { return os.WriteFile(iid, []byte(id), 0600) }, func(string) (string, error) { return id, nil }); err != nil {
 			t.Fatal(err)
 		}
 	}
 	fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id)}
 	var out bytes.Buffer
-	if err := svc.Cleanup(context.Background(), options, &out); err != nil || len(cleanupRemoved(fake)) != 1 {
-		t.Fatalf("primary results not handled once: %v %s", err, &out)
+	if err := svc.Cleanup(context.Background(), options, &out); err == nil || len(cleanupRemoved(fake)) != 0 || !strings.Contains(out.String(), "reuse not excluded") {
+		t.Fatalf("repeated primary ID was not retained: %v %s", err, &out)
 	}
 	paths, err := filepath.Glob(filepath.Join(options.RunDir, "cleanup-*", "build-record.json"))
 	if err != nil || len(paths) != 1 {
 		t.Fatalf("private build record missing: %v %v", paths, err)
 	}
-	var records []struct{ FullID string }
-	if err := json.Unmarshal(mustReadFile(t, paths[0]), &records); err != nil || len(records) != 1 || records[0].FullID != id {
+	var records []struct{ Token string }
+	if err := json.Unmarshal(mustReadFile(t, paths[0]), &records); err != nil || len(records) != 1 || records[0].Token != id {
 		t.Fatalf("duplicate primary attribution retained: %v %+v", err, records)
 	}
 }

@@ -10,14 +10,17 @@ import (
 	"time"
 )
 
-// BuildResult carries a primary immutable result or audit-only attempt from the trusted builder channel, never suite stdout.
-// Source and Step identify the producer evidence; production final results use iidfile plus inspect, while layer metadata grants no ownership.
+// BuildResult carries a primary immutable result or a typed single-commit attempt from the trusted builder channel, never suite stdout.
+// Source and Step identify the producer evidence; production final results use iidfile plus inspect, with policy and reproducibility facts.
 type BuildResult struct {
+	Policy          string
+	Reproducibility string
+	LayerInvocation string `json:",omitempty"` // Legacy v1 metadata is decoded but never grants ownership.
+	Outcome         string
 	ID              string
 	Step            string
 	Source          string
 	Asset           string
-	LayerInvocation string
 	AttemptID       string
 	PublishedAt     time.Time
 	EndedAt         time.Time
@@ -77,6 +80,9 @@ func resolveBuildRecord(proofs []buildProof, images []cleanupImage) []buildProof
 	}
 	for i := range proofs {
 		proof := &proofs[i]
+		if proof.Reason != "" {
+			continue
+		}
 		id := canonicalImageID(proof.Token)
 		image, present := byID[id]
 		switch {
@@ -216,36 +222,35 @@ func uniqueBuildRecord(records []buildProof) []buildProof {
 	return result
 }
 
-// unownedLayerCandidates records correlation for audit; inheritable metadata never grants image ownership.
-func unownedLayerCandidates(attempts []BuildResult, images []cleanupImage, primary []buildProof) []buildProof {
-	proven := map[string]bool{}
-	for _, proof := range primary {
-		if proof.FullID != "" {
-			proven[proof.FullID] = true
+// accountBuildCoverage classifies retained unknowns without granting any image deletion authority.
+func accountBuildCoverage(run *cleanupRun, plan []CleanupItem, record []buildProof, images []cleanupImage, state buildChannelState) {
+	external := map[string]bool{}
+	for _, image := range images {
+		_, assetPresent := image.Labels[cleanupAssetLabel]
+		_, productPresent := image.Labels["io.sandboxed-agents.image"]
+		external[image.ID] = state.Inputs[image.ID] && image.Verified && !assetPresent && !productPresent
+	}
+	before := map[string]bool{}
+	receipted := map[string]bool{}
+	for _, image := range run.before.Images {
+		before[canonicalImageID(image.ID)] = true
+	}
+	for _, proof := range record {
+		if fullImageID(proof.Token) {
+			receipted[canonicalImageID(proof.Token)] = true
 		}
 	}
-	seen := map[string]bool{}
-	records := []buildProof{}
-	for _, attempt := range attempts {
-		if attempt.Source != buildLayerSource || attempt.LayerInvocation == "" {
+	for i := range plan {
+		item := &plan[i]
+		if before[item.ID] || receipted[item.ID] || !item.SizeVerified {
 			continue
 		}
-		for _, image := range images {
-			if !image.Verified || proven[image.ID] || seen[image.ID] || image.Labels[BuildInvocationLabel] != attempt.LayerInvocation {
-				continue
+		if state.Complete && !state.Open || external[item.ID] {
+			if item.Reason == "missing exact build proof" || item.Reason == "foreign or mixed image tags" {
+				item.Reason = "not committed by this run's builds"
 			}
-			reason := "inheritable layer metadata lacks independent primary ownership proof"
-			for _, tag := range image.RepoTags {
-				if tag != "<none>:<none>" {
-					reason = "tagged image requires its own primary iid result"
-				}
-			}
-			if image.Created.Before(attempt.PublishedAt) || !attempt.EndedAt.IsZero() && image.Created.After(attempt.EndedAt) {
-				reason = "label candidate outside attempt window; no primary ownership proof"
-			}
-			records = append(records, buildProof{Token: image.ID, Step: "label-correlated candidate for " + attempt.Step, Result: attempt.Source, Reason: reason})
-			seen[image.ID] = true
+		} else if (state.Open || !state.Complete) && item.Reason == "foreign or mixed image tags" {
+			run.report.Status = "partial"
 		}
 	}
-	return records
 }

@@ -43,6 +43,7 @@ type CleanupSpace struct {
 
 // CleanupReport is bounded coordinator evidence; detailed engine output remains in the run directory.
 type CleanupReport struct {
+	BuildPolicy         string             `json:"build_policy,omitempty"`
 	Status              string             `json:"status"`
 	SuiteExitCode       int                `json:"suite_exit_code"`
 	Interrupted         bool               `json:"interrupted"`

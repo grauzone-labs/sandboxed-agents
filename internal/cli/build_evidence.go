@@ -6,16 +6,15 @@ import (
 	"fmt"
 	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
 
-// withBuildEvidence captures primary final IDs and optional per-attempt audit metadata under the image-tag lock.
+// withBuildEvidence captures primary final IDs under the image-tag lock with the opted-in single-commit policy.
 // Telemetry remains supplemental; stdout and RUN output never authorize publication or removal.
-func withBuildEvidence(p podmanTarget, tag, hash string, build func(string, string) error) error {
+func withBuildEvidence(p podmanTarget, tag, hash string, args []string, build func(string, string) error) error {
 	directory := os.Getenv(liverun.BuildEvidenceEnv)
-	if directory != "" && confirmBuildTarget(p, directory) != nil {
+	if directory == "" || confirmBuildTarget(p, directory) != nil {
 		return build("", "")
 	}
 	inspect := func(name string) (string, error) {
@@ -31,10 +30,11 @@ func withBuildEvidence(p podmanTarget, tag, hash string, build func(string, stri
 		record, err := decodeBuildInspection(output, hash)
 		return record, err
 	}
-	if directory != "" && layerEvidenceSupported(p) {
-		return liverun.CaptureLayerBuildResult(directory, tag, hash, build, inspect)
-	}
-	return liverun.CaptureBuildResult(directory, tag, hash, func(iid string) error { return build(iid, "") }, inspect)
+	return liverun.CaptureSingleCommitBuild(directory, tag, hash, reproducibleBuild(p.environment(), args), func(iid string) error {
+		buildErr := build(iid, "--layers=false")
+		recordRegistryFrom(p, directory, args)
+		return buildErr
+	}, inspect)
 }
 
 // decodeBuildInspection verifies the primary final ID and expected asset label on the inspected tag.
@@ -61,54 +61,79 @@ func confirmBuildTarget(p podmanTarget, directory string) error {
 	return liverun.ConfirmBuildEngine(directory, identity)
 }
 
-// layerEvidenceSupported probes the trusted client help and both version sides before optional layer metadata is requested.
-// Versioned Podman 4.7 sources implement the flag and remote layerLabel parameter; older/unknown sides retain iid-only behavior.
-func layerEvidenceSupported(p podmanTarget) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	data, err := p.queryContext(ctx, time.Second, "version", "--format", "json")
-	var version struct {
-		Client *struct{ Version string }
-		Server *struct{ Version string }
-	}
-	if err != nil || json.Unmarshal([]byte(data), &version) != nil || version.Client == nil || !layerVersionKnown(version.Client.Version) {
-		return false
-	}
-	if version.Server != nil {
-		if !layerVersionKnown(version.Server.Version) {
-			return false
-		}
-	} else if p.connection != "" || p.host.Platform == "windows" {
-		return false
-	}
-	help, err := p.queryContext(ctx, time.Second, "build", "--help")
-	if err != nil {
-		return false
-	}
-	for _, word := range strings.Fields(help) {
-		if word == "--layer-label" || strings.HasPrefix(word, "--layer-label=") {
+// reproducibleBuild detects explicit config-timestamp controls without using time as ownership evidence.
+func reproducibleBuild(environment, args []string) bool {
+	for _, value := range environment {
+		if strings.HasPrefix(value, "SOURCE_DATE_EPOCH=") {
 			return true
+		}
+	}
+	for _, arg := range args {
+		for _, flag := range []string{"--timestamp", "--source-date-epoch", "--rewrite-timestamp", "--omit-timestamp"} {
+			if arg == flag || strings.HasPrefix(arg, flag+"=") {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-// layerVersionKnown admits only documented release versions at or after known client/server layer-label support.
-func layerVersionKnown(version string) bool {
-	if strings.ContainsAny(version, "-+") {
-		return false
+// recordRegistryFrom retains only an inspected literal registry FROM identity from the actual materialized recipe.
+// It excludes product-labelled images and never attributes a pull or grants deletion authority.
+func recordRegistryFrom(p podmanTarget, directory string, args []string) {
+	reference := literalRegistryFrom(args)
+	if reference == "" || confirmBuildTarget(p, directory) != nil {
+		return
 	}
-	fields := strings.Split(version, ".")
-	if len(fields) != 3 {
-		return false
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	data, err := p.queryContext(ctx, time.Second, "image", "inspect", reference)
+	if err != nil {
+		return
 	}
-	values := make([]int, 3)
-	for i, field := range fields {
-		n, err := strconv.Atoi(field)
-		if err != nil || n < 0 {
-			return false
+	var images []imageRecord
+	if json.Unmarshal([]byte(data), &images) != nil || len(images) != 1 {
+		return
+	}
+	if _, present := images[0].Labels[assetHashLabel]; present {
+		return
+	}
+	if _, present := images[0].Labels[imageMarkerLabel]; present {
+		return
+	}
+	_ = liverun.RecordRegistryBuildInput(directory, reference, images[0].ID)
+}
+
+// literalRegistryFrom reads one bounded single-stage recipe; unresolved/unsupported references provide no exclusion.
+func literalRegistryFrom(args []string) string {
+	path := ""
+	for i, arg := range args {
+		if arg == "--file" && i+1 < len(args) {
+			path = args[i+1]
+			break
 		}
-		values[i] = n
 	}
-	return values[0] > 4 || values[0] == 4 && values[1] >= 7
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 64*1024 {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	reference := ""
+	stages := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && strings.EqualFold(fields[0], "FROM") {
+			stages++
+			if len(fields) == 2 {
+				reference = fields[1]
+			}
+		}
+	}
+	if stages != 1 || reference == "" || strings.ContainsAny(reference, "${}") || strings.HasPrefix(reference, "localhost/") {
+		return ""
+	}
+	return reference
 }

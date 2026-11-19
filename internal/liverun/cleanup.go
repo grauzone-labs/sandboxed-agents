@@ -121,12 +121,42 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 	// Stdout and operation markers are attacker-controlled data, even inside apparent build windows.
 	// Until a trusted producer supplies primary evidence, no stdout token grants ownership.
 	trusted := []buildProof{}
-	results, proofErr := readBuildResults(run.options, run.before)
+	state := buildChannelState{}
+	var results []BuildResult
+	var proofErr error
 	if s.BuildEvidence != nil {
 		results, proofErr = s.BuildEvidence(ctx, run.options.RunDir)
+	} else {
+		state = readBuildChannel(run.options, run.before)
+		results, proofErr = state.Results, state.Err
+		run.report.BuildPolicy = "unverified"
+		if state.Complete {
+			run.report.BuildPolicy = SingleCommitPolicy
+		} else if state.SingleCommitKnown {
+			run.report.BuildPolicy = "single-commit-and-unverified"
+		} else if state.LegacyKnown {
+			run.report.BuildPolicy = "legacy-or-unverified"
+		}
 	}
 	if proofErr != nil {
 		run.report.Unverified = append(run.report.Unverified, CleanupItem{Reason: "some trusted build evidence incomplete or invalid; only independent primary results admitted", Query: "private build-result channel"})
+	}
+	blocked := map[string]bool{}
+	observedAttempt := map[string]string{}
+	for id := range state.Inputs {
+		blocked[id] = true
+	}
+	if s.BuildEvidence == nil {
+		for _, r := range results {
+			id := canonicalImageID(r.ID)
+			if previous, ok := observedAttempt[id]; ok && previous != r.AttemptID {
+				blocked[id] = true
+			}
+			observedAttempt[id] = r.AttemptID
+			if r.Policy != SingleCommitPolicy || r.Reproducibility != "default-timestamps" {
+				blocked[canonicalImageID(r.ID)] = true
+			}
+		}
 	}
 	boundAsset := ""
 	for _, result := range results {
@@ -134,21 +164,25 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 			run.report.Unverified = append(run.report.Unverified, CleanupItem{Reason: "trusted asset identity inconsistent; no ownership admitted from contradictory invocation scope", Query: "private build-result channel"})
 			results = nil
 			trusted = nil
+			state.Complete = false
+			state.Open = true
 			break
 		}
 		boundAsset = result.Asset
 		if result.Source == "" || result.Step == "" {
 			continue
 		}
-		if result.Source != buildLayerSource {
-			trusted = append(trusted, buildProof{Token: result.ID, Step: result.Step, Result: result.Source})
+		proof := buildProof{Token: result.ID, Step: result.Step, Result: result.Source}
+		if s.BuildEvidence == nil && blocked[canonicalImageID(result.ID)] {
+			proof.Reason = "primary result reuse not excluded; retained"
 		}
+		trusted = append(trusted, proof)
 	}
 	if len(results) > 0 {
 		asset = results[0].Asset
 	}
 	record := uniqueBuildRecord(resolveBuildRecord(trusted, current))
-	record = append(record, unownedLayerCandidates(results, current, record)...)
+
 	if err = cleanupWriteJSON(filepath.Join(run.directory, "build-record.json"), record, cleanupPrivateLimit); err != nil {
 		return fmt.Errorf("cleanup: pending (cannot retain build record)")
 	}
@@ -160,6 +194,9 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 	plan := cleanupPlan(run.before, current, record, asset, options.Retain)
 	if err = cleanupWriteJSON(filepath.Join(run.directory, "removal-plan.json"), plan, cleanupSummaryLimit/2); err != nil {
 		return fmt.Errorf("cleanup: pending (cannot retain removal plan)")
+	}
+	if s.BuildEvidence == nil {
+		accountBuildCoverage(run, plan, record, current, state)
 	}
 	for index, item := range plan {
 		if item.Reason != "" {

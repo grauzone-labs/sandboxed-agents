@@ -28,8 +28,8 @@ func TestMain(m *testing.M) {
 		if len(os.Args) > 2 && os.Args[1] == "_fixture-producer" {
 			directory := os.Args[2]
 			asset := strings.Repeat("e", 64)
-			err := liverun.CaptureLayerBuildResult(directory, "localhost/sandboxed-agents:none-"+asset, asset, func(iid, label string) error {
-				if err := os.WriteFile(filepath.Join(filepath.Dir(directory), "producer-ready"), []byte(label), 0600); err != nil {
+			err := liverun.CaptureSingleCommitBuild(directory, "localhost/sandboxed-agents:none-"+asset, asset, false, func(iid string) error {
+				if err := os.WriteFile(filepath.Join(filepath.Dir(directory), "producer-ready"), []byte("producer started"), 0600); err != nil {
 					return err
 				}
 				for {
@@ -559,7 +559,7 @@ func TestKilledProducerDoesNotBlockIndependentCleanup(t *testing.T) {
 				t.Fatal(err)
 			}
 			invocation := strings.Repeat("f", 64)
-			cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 1, "Invocation": invocation, "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
+			cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 2, "Invocation": invocation, "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
 			binary, _ := os.Executable()
 			ctx := context.Background()
 			cancel := func() {}
@@ -588,10 +588,10 @@ func TestKilledProducerDoesNotBlockIndependentCleanup(t *testing.T) {
 			unknown := "sha256:" + strings.Repeat("d", 64)
 			image := cleanupImageFixture(intermediate)
 			image.RepoTags = nil
-			image.Labels[liverun.BuildInvocationLabel] = strings.TrimPrefix(string(mustReadFile(t, filepath.Join(options.RunDir, "producer-ready"))), liverun.BuildInvocationLabel+"=")
+			image.Labels[legacyInvocationLabel] = strings.TrimPrefix(string(mustReadFile(t, filepath.Join(options.RunDir, "producer-ready"))), legacyInvocationLabel+"=")
 			final := "sha256:" + strings.Repeat("a", 64)
 			asset := strings.Repeat("e", 64)
-			if err := liverun.CaptureBuildResult(directory, "localhost/sandboxed-agents:none-"+asset, asset, func(path string) error { return os.WriteFile(path, []byte(final), 0600) }, func(string) (string, error) { return final, nil }); err != nil {
+			if err := liverun.CaptureSingleCommitBuild(directory, "localhost/sandboxed-agents:none-"+asset, asset, false, func(path string) error { return os.WriteFile(path, []byte(final), 0600) }, func(string) (string, error) { return final, nil }); err != nil {
 				t.Fatal(err)
 			}
 			fake.images = map[string]cleanupFakeImage{intermediate: image, unknown: cleanupImageFixture(unknown), final: cleanupImageFixture(final)}
