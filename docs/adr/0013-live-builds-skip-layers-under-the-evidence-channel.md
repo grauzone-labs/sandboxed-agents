@@ -25,7 +25,7 @@ This ADR records two decisions, and only these two.
 
 ## Consequences
 
-- Builds in a live run read no layer cache and write no per-instruction intermediate images. Their images carry one new layer per stage. Their durations are not like for like with the earlier baselines of the story, so every report names the layer policy beside its seconds.
+- Once the engine is confirmed, builds in a live run read no layer cache and write no per-instruction intermediate images; a build whose engine could not be confirmed keeps the default layers. Their images carry one new layer per stage. Their durations are not like for like with the earlier baselines of the story, so every report names the layer policy beside its seconds.
 - A live run started through `live-run` no longer exercises Podman's default layer policy, which ordinary `build`, `up`, and `update` keep. The direct `go test` commands of the release runbook set no evidence channel, so they keep the default layers; the schema 2 record does not say which policy a run used.
 - How a registry base is recognised (only from a known literal `FROM` input that the selected engine confirms by inspection, never from the look of a tag; it retains the image and attributes no pull or deletion) and how the timestamp variable is detected per platform are operator details of `docs/images.md`, not further decisions.
 - The live check for baked-in SSH host keys can no longer see a file that one instruction creates and a later instruction deletes, because a build now keeps one layer per stage. An offline check of the recipe, that the SSH host keys are removed in the instruction that installs the SSH server, stands in for that case.
