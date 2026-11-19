@@ -114,7 +114,7 @@ func (host liveHost) assertNoBakedSSHKeys(t *testing.T, tag string) {
 	host.reportOperation("image archive", "started")
 	processErr := fmt.Errorf("image save did not finish")
 	defer func() {
-		host.reportOperation("image archive", "finished")
+		host.reportOperation("image archive", fmt.Sprintf("finished after %s", time.Since(started).Round(time.Millisecond)))
 		host.recordOperation("podman", "image archive", started, processErr)
 		host.observeFailure("podman", "image archive", processErr)
 	}()

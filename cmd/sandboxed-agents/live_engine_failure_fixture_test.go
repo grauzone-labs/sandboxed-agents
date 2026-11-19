@@ -556,17 +556,20 @@ func TestLiveEngineFailureExpectedToolFixture(t *testing.T) {
 }
 
 // TestLiveEngineFailureExpectedToolKeepsCaseVerdict proves intentional staging
-// failure omits probes while a wrong failure still fails the original assertion,
-// preserves schema 2 and repair, and retains timings at the nested suite seam.
+// failure omits probes while wrong failure or unexpected success is sampled and
+// still fails the original assertion, preserving schema 2, repair and timings at
+// the nested fake CLI and sanitized record seam.
 func TestLiveEngineFailureExpectedToolKeepsCaseVerdict(t *testing.T) {
 	if livePlatform() == "" {
 		t.Skip("live records require Linux or Windows")
 	}
 	for _, scenario := range []struct {
 		name, output, result string
+		exit                 int
 	}{
-		{"expected", ".next-private: permission denied", "pass"},
-		{"wrong-failure", "private-original", "fail"},
+		{"expected", ".next-private: permission denied", "pass", 23},
+		{"wrong-failure", "cannot allocate memory; private-original", "fail", 23},
+		{"unexpected-success", "private-original", "fail", 0},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
@@ -583,8 +586,8 @@ func TestLiveEngineFailureExpectedToolKeepsCaseVerdict(t *testing.T) {
 			if err := os.WriteFile(program, data, 0700); err != nil {
 				t.Fatal(err)
 			}
-			responses, _ := json.Marshal(map[string]lifecycleResponse{"tools update demo t3code": {Exit: 23, Output: scenario.output}})
-			podmanResponses, _ := json.Marshal(map[string]lifecycleResponse{"exec * break-install": {}, "exec * repair-install": {}, "info --format json": {}})
+			responses, _ := json.Marshal(map[string]lifecycleResponse{"tools update demo t3code": {Exit: scenario.exit, Output: scenario.output}})
+			podmanResponses, _ := json.Marshal(map[string]lifecycleResponse{"exec * break-install": {}, "exec * repair-install": {}, "info --format json": {Output: `{"host":{"cpus":4,"memTotal":100,"memFree":0,"swapTotal":0,"swapFree":0}}`}})
 			values := nestedExecutables()
 			for key, value := range map[string]string{
 				"TEST_LIVE_EXPECTED_TOOL_FAILURE": "1", liveRecordDirEnv: directory, "SANDBOXED_AGENTS_GROUP": "engine-fixture", livePreparedExecutableEnv: program,
@@ -595,7 +598,7 @@ func TestLiveEngineFailureExpectedToolKeepsCaseVerdict(t *testing.T) {
 			command := exec.Command(os.Args[0], "-test.v", "-test.run=^TestLiveEngineFailureExpectedToolFixture$")
 			command.Env = testutil.Env(fakes.Env(os.Environ()), values)
 			output, err := command.CombinedOutput()
-			if (err == nil) != (scenario.result == "pass") || (scenario.result == "fail" && (!strings.Contains(string(output), "expected deterministic Tool staging failure") || !strings.Contains(string(output), "private-original") || !strings.Contains(string(output), "exit status 23"))) {
+			if (err == nil) != (scenario.result == "pass") || (scenario.result == "fail" && (!strings.Contains(string(output), "expected deterministic Tool staging failure") || !strings.Contains(string(output), "private-original") || (scenario.exit != 0 && !strings.Contains(string(output), "exit status 23")))) {
 				t.Fatalf("original assertion changed: %v\n%q", err, output)
 			}
 			data, err = os.ReadFile(filepath.Join(directory, "engine-failures-"+livePlatform()+".json"))
@@ -603,11 +606,27 @@ func TestLiveEngineFailureExpectedToolKeepsCaseVerdict(t *testing.T) {
 				t.Fatal(err)
 			}
 			var evidence liveEngineFailureEvidence
-			if err := json.Unmarshal(data, &evidence); err != nil || len(evidence.Samples) != 0 {
-				t.Fatalf("expected call sampled: %s %v", data, err)
+			wantSamples, diagnosticReads := 0, 0
+			if scenario.result == "fail" {
+				wantSamples = 1
+				if livePlatform() == "linux" {
+					diagnosticReads = 1
+				}
+			}
+			if err := json.Unmarshal(data, &evidence); err != nil || len(evidence.Samples) != wantSamples || evidence.SamplesTruncated {
+				t.Fatalf("expected/mismatched call sampled incorrectly: %s %v", data, err)
+			}
+			if wantSamples == 1 {
+				sample := evidence.Samples[0]
+				if sample.Case != "t3code" || sample.Source != "cli" || sample.Operation != "Tool update" || sample.Result != "fail" || strings.Contains(string(data), "private-original") || strings.Contains(string(data), "cannot allocate memory") {
+					t.Fatalf("mismatched failure lost attribution or leaked output: %s", data)
+				}
+				if diagnosticReads == 1 && (sample.EngineQuery != "verified" || sample.CPUs == nil || *sample.CPUs != 4 || sample.MemoryBytes == nil || *sample.MemoryBytes != 100) {
+					t.Fatalf("mismatched failure facts lost: %s", data)
+				}
 			}
 			calls := testutil.Invocations(t, fakes.PodmanLog)
-			if len(calls) != 2 || calls[0][len(calls[0])-1] != "break-install" || calls[1][len(calls[1])-1] != "repair-install" {
+			if len(calls) != 2+diagnosticReads || calls[0][len(calls[0])-1] != "break-install" || calls[len(calls)-1][len(calls[len(calls)-1])-1] != "repair-install" {
 				t.Fatalf("probes added or repair lost: %v", calls)
 			}
 			data, err = os.ReadFile(filepath.Join(directory, liveRecordFilename(t)))
@@ -623,7 +642,7 @@ func TestLiveEngineFailureExpectedToolKeepsCaseVerdict(t *testing.T) {
 				t.Fatal(err)
 			}
 			var timings validationduration.Operations
-			if err := json.Unmarshal(data, &timings); err != nil || len(timings.Operations) != 3 || timings.Operations[1].Source != "cli" || timings.Operations[1].Result != "fail" {
+			if err := json.Unmarshal(data, &timings); err != nil || len(timings.Operations) != 3+diagnosticReads || timings.Operations[1].Source != "cli" || timings.Operations[1].Result != map[bool]string{true: "pass", false: "fail"}[scenario.exit == 0] {
 				t.Fatalf("expected invocation timings lost: %s %v", data, err)
 			}
 		})

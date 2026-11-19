@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -39,4 +40,43 @@ func waitHostLock(t *testing.T, run *concurrentCommand, path string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("CLI pid %s never blocked on %s", pid, path)
+}
+
+// TestInterruptWaitingImageLockReleasesLifecycle proves SIGINT ends an up blocked
+// on an image-tag lock without creating sandbox objects and lets the same sandbox
+// retry, through the Linux subprocess CLI, kernel lock inventory and fake Podman seams.
+func TestInterruptWaitingImageLockReleasesLifecycle(t *testing.T) {
+	f := linuxHost(t)
+	scriptNewSandbox(t, f, "other", "demo")
+	ready, release := filepath.Join(t.TempDir(), "building"), filepath.Join(t.TempDir(), "release")
+	f.responses["image ls *"] = response{Output: "[]"}
+	f.responses["build *"] = response{ReadyFile: ready, WaitFor: release}
+	holder := startConcurrentCommand(t, f, "default", "build")
+	waitHandshakeFile(t, ready)
+	lockPath := imageTagLockPath(baseTag(t))
+	before, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiter := startWaitingUp(t, f, "other", "demo", lockPath)
+	if err := waiter.command.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	waiter.finish(t, -1)
+	assertWaitingNotice(t, waiter, "image-tag")
+	if countPodmanCalls(t, f, "volume create ") != 0 || countPodmanCalls(t, f, "create ") != 0 {
+		t.Fatal("interrupted lock waiter created sandbox objects")
+	}
+	after, err := os.Stat(lockPath)
+	if err != nil || !os.SameFile(before, after) {
+		t.Fatalf("interrupt removed or replaced persistent lock: %v", err)
+	}
+	releaseHandshakeFile(t, release)
+	holder.finish(t, 0)
+	retry := startConcurrentCommand(t, f, "other", "up", "demo")
+	retry.finish(t, 0)
+	assertWaitingNotice(t, retry, "")
+	if countPodmanCalls(t, f, "volume create ") != 3 || countPodmanCalls(t, f, "create ") != 1 {
+		t.Fatal("retry did not acquire released lifecycle and image locks exactly once")
+	}
 }

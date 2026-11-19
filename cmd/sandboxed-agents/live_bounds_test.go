@@ -308,8 +308,12 @@ func TestLiveImageArchiveReportsBoundedOperation(t *testing.T) {
 	if len(operations) != 1 || operations[0].Operation != "image archive" || operations[0].Source != "podman" || operations[0].Result != "pass" {
 		t.Fatalf("image archive attribution: %+v", operations)
 	}
-	if !slices.Equal(reports, []string{"live operation image archive: started", "live operation image archive: finished"}) {
+	if len(reports) != 2 || reports[0] != "live operation image archive: started" || !strings.HasPrefix(reports[1], "live operation image archive: finished after ") {
 		t.Fatalf("image archive progress: %q", reports)
+	}
+	elapsed, err := time.ParseDuration(strings.TrimPrefix(reports[1], "live operation image archive: finished after "))
+	if err != nil || elapsed < 0 {
+		t.Fatalf("archive marker has no valid elapsed duration: %q (%v)", reports[1], err)
 	}
 	if host.operationBound("image archive") != 10*time.Minute {
 		t.Fatal("image archive did not retain its existing ten-minute budget")

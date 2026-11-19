@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,6 +50,11 @@ func (suite *liveSuite) update(t *testing.T) {
 	failing := failingLiveUpdateHost(t, host, base.Config.Labels[cli.SSHPortLabel])
 	output, err = failing.cli("", "update", name, "--with", "native", "--force")
 	if err == nil || !strings.Contains(output, "readiness wait failed") || !strings.Contains(output, "restored sandbox") {
+		failure := err
+		if failure == nil {
+			failure = errors.New("unexpected rollback result")
+		}
+		host.observeFailure("cli", "update or rollback", failure)
 		t.Fatalf("forced rollback: %v %q", err, output)
 	}
 	restored := host.inspectContainer(t, name)
