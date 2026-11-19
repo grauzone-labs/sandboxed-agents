@@ -22,7 +22,9 @@ func freeSpace(path string) (uint64, error) {
 func lockFile(file *os.File) error { return unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB) }
 
 // detachCommand isolates the supervisor from the launching SSH terminal.
-func detachCommand(cmd *exec.Cmd) { cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} }
+func detachCommand(cmd *exec.Cmd, _ SessionPolicy) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+}
 
 // processIdentity returns the Linux process start tick, excluding dead and zombie processes.
 func processIdentity(pid int) (string, error) {
@@ -85,3 +87,6 @@ func suiteAlive(ref processRef) bool {
 
 // abortSuite terminates only the process group created for this owned suite.
 func abortSuite(cmd *exec.Cmd) error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+
+// sessionJobPolicy reports no Windows job for a Linux process.
+func sessionJobPolicy() (SessionPolicy, error) { return SessionPolicy{}, nil }

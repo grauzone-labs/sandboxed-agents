@@ -11,24 +11,17 @@ import (
 
 // withBuildEvidence captures only primary final identities while the caller holds the image-tag lock.
 // Telemetry remains supplemental; stdout and RUN output never authorize publication or removal.
-func withBuildEvidence(p podmanTarget, tag, hash string, build func(string) error) error {
-	return liverun.CaptureBuildResult(os.Getenv(liverun.BuildEvidenceEnv), tag, hash, build, func(name string) (string, error) {
+func withBuildEvidence(p podmanTarget, tag, hash string, build func(string, string) error) error {
+	directory := os.Getenv(liverun.BuildEvidenceEnv)
+	if directory != "" && confirmBuildTarget(p, directory) != nil {
+		return build("", "")
+	}
+	return liverun.CaptureLayerBuildResult(directory, tag, hash, build, func(name string) (string, error) {
+		if err := confirmBuildTarget(p, directory); err != nil {
+			return "", err
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		info, err := p.queryContext(ctx, time.Second, "info", "--format", "json")
-		if err != nil {
-			return "", err
-		}
-		var engine struct {
-			Host  struct{ Hostname string }
-			Store struct{ GraphRoot string }
-		}
-		if json.Unmarshal([]byte(info), &engine) != nil || engine.Host.Hostname == "" || engine.Store.GraphRoot == "" {
-			return "", fmt.Errorf("build engine identity unverified")
-		}
-		if err = liverun.ConfirmBuildEngine(os.Getenv(liverun.BuildEvidenceEnv), engine.Host.Hostname+":"+engine.Store.GraphRoot); err != nil {
-			return "", err
-		}
 		output, err := p.queryContext(ctx, time.Second, "image", "inspect", name)
 		if err != nil {
 			return "", err
@@ -45,4 +38,19 @@ func decodeBuildInspection(output, hash string) (string, error) {
 		return "", fmt.Errorf("build result inspection unverified")
 	}
 	return records[0].ID, nil
+}
+
+// confirmBuildTarget binds builder-controlled metadata to the actual selected primary engine query.
+func confirmBuildTarget(p podmanTarget, directory string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	info, err := p.queryContext(ctx, time.Second, "info", "--format", "json")
+	if err != nil {
+		return err
+	}
+	identity, _, err := liverun.EngineIdentity([]byte(info))
+	if err != nil {
+		return err
+	}
+	return liverun.ConfirmBuildEngine(directory, identity)
 }

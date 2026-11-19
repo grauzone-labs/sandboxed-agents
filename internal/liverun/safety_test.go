@@ -10,9 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
-// TestCleanupRejectsForgedBuildOutput proves Cleanup retains foreign and unscoped results at the engine boundary.
+// TestCleanupRejectsForgedBuildOutput proves Cleanup retains foreign and unscoped results at the engine boundary. It exercises the Cleanup command seam.
 func TestCleanupRejectsForgedBuildOutput(t *testing.T) {
 	for _, scope := range []string{"smoke", "Tool install", "agent session", "none", "split", "nested", "unfinished", "foreign", "mixed", "forged-window"} {
 		t.Run(scope, func(t *testing.T) {
@@ -64,7 +65,7 @@ func TestCleanupRejectsForgedBuildOutput(t *testing.T) {
 	}
 }
 
-// TestPrepareRejectsLockRootOverride proves command callers cannot select a second coordination namespace.
+// TestPrepareRejectsLockRootOverride proves command callers cannot select a second coordination namespace. It exercises the prepare command at the injected host boundary seam.
 func TestPrepareRejectsLockRootOverride(t *testing.T) {
 	svc, _, args, _ := commandHarness(t)
 	args = append(args, "-lock-root", t.TempDir())
@@ -74,7 +75,7 @@ func TestPrepareRejectsLockRootOverride(t *testing.T) {
 	}
 }
 
-// TestPrepareRejectsUntrackedAndIgnoredInputs proves git source status stops preparation before any build.
+// TestPrepareRejectsUntrackedAndIgnoredInputs proves git source status stops preparation before any build. It exercises the prepare command at the injected host boundary seam.
 func TestPrepareRejectsUntrackedAndIgnoredInputs(t *testing.T) {
 	for _, status := range []string{"?? injected.go\n", "?? image/embedded.txt\n", "!! ignored.go\n"} {
 		svc, fake, args, run := commandHarness(t)
@@ -140,7 +141,7 @@ func TestEngineFailureReasonsAreActionableAndPrivate(t *testing.T) {
 	}
 }
 
-// TestCleanupConsumesPrimaryBuildChannel proves iidfile publication reaches cleanup without granting authority to forged suite output.
+// TestCleanupConsumesPrimaryBuildChannel proves iidfile publication reaches cleanup without granting authority to forged suite output. It exercises the Cleanup command seam.
 func TestCleanupConsumesPrimaryBuildChannel(t *testing.T) {
 	svc, fake, options := cleanupHarness(t)
 	svc.BuildEvidence = nil
@@ -171,7 +172,7 @@ func TestCleanupConsumesPrimaryBuildChannel(t *testing.T) {
 	}
 }
 
-// TestRunAndCleanupRejectDifferentStoredCoordinationRoot proves legacy private options cannot split exclusion between phases.
+// TestRunAndCleanupRejectDifferentStoredCoordinationRoot proves legacy private options cannot split exclusion between phases. It exercises the prepare/run/status commands and owned process artifacts seam.
 func TestRunAndCleanupRejectDifferentStoredCoordinationRoot(t *testing.T) {
 	svc, fake, options := cleanupHarness(t)
 	var stored liverun.Options
@@ -215,14 +216,14 @@ func (h optionalCollectorHost) Execute(ctx context.Context, in liverun.Invocatio
 	return h.Executor.Execute(ctx, in)
 }
 
-// TestCollectSeparatesRetainedCasesFromOptionalEvidence proves current case durations stay confirmed while invalid optional evidence is surfaced privately.
+// TestCollectSeparatesRetainedCasesFromOptionalEvidence proves current case durations stay confirmed while invalid optional evidence is surfaced privately. It exercises the collect command and retained artifacts seam.
 func TestCollectSeparatesRetainedCasesFromOptionalEvidence(t *testing.T) {
 	svc, fake, args, run := commandHarness(t)
 	var out bytes.Buffer
 	if err := svc.RunDispatch(context.Background(), args, &out, &out); err != nil {
 		t.Fatal(err)
 	}
-	cleanupArtifact(t, run, "exit.json", map[string]any{"Code": 0})
+	cleanupArtifact(t, run, "exit.json", map[string]any{"Code": 0, "Interrupted": false, "EndedAt": "2026-01-01T00:00:00Z"})
 	if err := os.WriteFile(filepath.Join(run, "suite.log"), []byte("suite fixture\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +244,7 @@ func TestCollectSeparatesRetainedCasesFromOptionalEvidence(t *testing.T) {
 	}
 }
 
-// TestPrivateLogFailureRemainsUnverified proves status preserves the suite code while collect and cleanup refuse incomplete log evidence.
+// TestPrivateLogFailureRemainsUnverified proves status preserves the suite code while collect and cleanup refuse incomplete log evidence. It exercises the prepare/run/status commands and owned process artifacts seam.
 func TestPrivateLogFailureRemainsUnverified(t *testing.T) {
 	svc, fake, options := cleanupHarness(t)
 	var ended map[string]any
@@ -266,5 +267,128 @@ func TestPrivateLogFailureRemainsUnverified(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"log_verified":false`) || !strings.Contains(out.String(), `"exit_code":0`) {
 		t.Fatalf("actual suite outcome or evidence loss hidden: %s", &out)
+	}
+}
+
+// TestCleanupIncompleteProducerKeepsIndependentProof proves the Cleanup seam still reports and removes primary-proven images after failed or interrupted producers.
+func TestCleanupIncompleteProducerKeepsIndependentProof(t *testing.T) {
+	for _, leftover := range []string{"returned-failure", ".pending-orphan", "iid-orphan", ".publish-orphan", "result-malformed.json"} {
+		t.Run(leftover, func(t *testing.T) {
+			svc, fake, options := cleanupHarness(t)
+			svc.BuildEvidence = nil
+			directory := filepath.Join(options.RunDir, "build-evidence")
+			if err := os.Mkdir(directory, 0700); err != nil {
+				t.Fatal(err)
+			}
+			cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 1, "Invocation": strings.Repeat("f", 64), "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
+			id := "sha256:" + strings.Repeat("b", 64)
+			unknown := "sha256:" + strings.Repeat("d", 64)
+			asset := strings.Repeat("e", 64)
+			fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id), unknown: cleanupImageFixture(unknown)}
+			tag := "localhost/sandboxed-agents:none-" + asset
+			if err := liverun.CaptureBuildResult(directory, tag, asset, func(path string) error { return os.WriteFile(path, []byte(id), 0600) }, func(string) (string, error) { return id, nil }); err != nil {
+				t.Fatal(err)
+			}
+			if leftover == "returned-failure" {
+				sentinel := fmt.Errorf("actual build failure")
+				if err := liverun.CaptureBuildResult(directory, tag, asset, func(string) error { return sentinel }, func(string) (string, error) { t.Fatal("inspected failed build"); return "", nil }); err != sentinel {
+					t.Fatal("build error changed", err)
+				}
+				pending, _ := filepath.Glob(filepath.Join(directory, ".pending-*"))
+				if len(pending) != 0 {
+					t.Fatal("returned failed build left marker")
+				}
+			} else if strings.HasPrefix(leftover, "iid-") {
+				if err := os.Mkdir(filepath.Join(directory, leftover), 0700); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.WriteFile(filepath.Join(directory, leftover), []byte(`{"forged":"sentinel /secret"}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var out bytes.Buffer
+			err := svc.Cleanup(context.Background(), options, &out)
+			if got := cleanupRemoved(fake); len(got) != 1 || got[0] != id {
+				t.Fatalf("independent proof lost: %v err=%v report=%s", got, err, &out)
+			}
+			if err == nil || !strings.Contains(out.String(), unknown) || !strings.Contains(out.String(), `"after"`) || strings.Contains(out.String(), "sentinel") {
+				t.Fatalf("incomplete cleanup not safely reported: %v %s", err, &out)
+			}
+		})
+	}
+}
+
+// TestCleanupRequiresBuilderLayerAttempt proves the Cleanup seam admits only nonce-labelled intermediates with an authorized primary attempt and retains cached/foreign/unknown IDs.
+func TestCleanupRequiresBuilderLayerAttempt(t *testing.T) {
+	svc, fake, options := cleanupHarness(t)
+	svc.BuildEvidence = nil
+	directory := filepath.Join(options.RunDir, "build-evidence")
+	if err := os.Mkdir(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	invocation := strings.Repeat("f", 64)
+	asset := strings.Repeat("e", 64)
+	cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 1, "Invocation": invocation, "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
+	id := "sha256:" + strings.Repeat("b", 64)
+	cached := "sha256:" + strings.Repeat("c", 64)
+	unknown := "sha256:" + strings.Repeat("d", 64)
+	image := cleanupImageFixture(id)
+	image.RepoTags = nil
+	image.Labels["io.sandboxed-agents.live-build-invocation"] = invocation
+	old := cleanupImageFixture(cached)
+	old.RepoTags = nil
+	old.Labels["io.sandboxed-agents.live-build-invocation"] = strings.Repeat("0", 64)
+	fake.images = map[string]cleanupFakeImage{id: image, cached: old, unknown: cleanupImageFixture(unknown)}
+	var out bytes.Buffer
+	_ = svc.Cleanup(context.Background(), options, &out)
+	if len(cleanupRemoved(fake)) != 0 {
+		t.Fatal("label alone granted ownership")
+	}
+	cleanupArtifact(t, directory, "attempt-primary.json", map[string]any{"Version": 1, "Invocation": invocation, "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage", "Result": map[string]any{"ID": "", "Step": "COMMIT localhost/sandboxed-agents:none-" + asset, "Source": "podman --layer-label + exact image inspect", "Asset": asset, "LayerInvocation": invocation}})
+	out.Reset()
+	err := svc.Cleanup(context.Background(), options, &out)
+	if got := cleanupRemoved(fake); len(got) != 1 || got[0] != id {
+		t.Fatalf("primary intermediate not isolated: %v %v %s", got, err, &out)
+	}
+	if !strings.Contains(out.String(), cached) || !strings.Contains(out.String(), unknown) {
+		t.Fatal("unproven IDs omitted")
+	}
+}
+
+// TestStatusLeavesConsistentExitTextUntouched proves the status command seam repairs inconsistencies without rewriting already-authoritative plain status.
+func TestStatusLeavesConsistentExitTextUntouched(t *testing.T) {
+	svc, _, options := cleanupHarness(t)
+	path := filepath.Join(options.RunDir, "exit-status")
+	stamp := time.Date(2000, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := os.Chtimes(path, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := svc.RunDispatch(context.Background(), []string{"status", "-run-dir", options.RunDir}, &out, &out); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(stamp) {
+		t.Fatal("status query rewrote consistent plain exit evidence")
+	}
+}
+
+// TestCleanupContradictoryAssetScopeStillReports proves the Cleanup seam retains every image and emits after-measurement when primary invocation assets contradict each other.
+func TestCleanupContradictoryAssetScopeStillReports(t *testing.T) {
+	svc, fake, options := cleanupHarness(t)
+	id := "sha256:" + strings.Repeat("b", 64)
+	other := "sha256:" + strings.Repeat("c", 64)
+	fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id), other: cleanupImageFixture(other)}
+	svc.BuildEvidence = func(context.Context, string) ([]liverun.BuildResult, error) {
+		return []liverun.BuildResult{{ID: id, Step: "primary", Source: "trusted fixture", Asset: strings.Repeat("e", 64)}, {ID: other, Step: "primary", Source: "trusted fixture", Asset: strings.Repeat("f", 64)}}, nil
+	}
+	var out bytes.Buffer
+	err := svc.Cleanup(context.Background(), options, &out)
+	if err == nil || len(cleanupRemoved(fake)) != 0 || !strings.Contains(out.String(), `"after"`) || !strings.Contains(out.String(), "trusted asset identity inconsistent") {
+		t.Fatalf("contradictory scope lost audit or granted ownership: %v %s", err, &out)
 	}
 }

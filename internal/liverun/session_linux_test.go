@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// TestRunSurvivesLaunchingSessionHangup proves the owned supervisor escapes the launching session and its SIGHUP.
+// TestRunSurvivesLaunchingSessionHangup proves the owned supervisor escapes the launching session and its SIGHUP. It exercises the prepare/run/status commands and owned process artifacts seam.
 func TestRunSurvivesLaunchingSessionHangup(t *testing.T) {
 	root, private, _ := fixtureSetup(t)
 	binary, _ := os.Executable()

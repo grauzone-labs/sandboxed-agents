@@ -13,6 +13,7 @@ type Snapshot struct {
 	SystemDF   string
 	HostLoad   string
 	TakenAt    time.Time
+	Session    SessionPolicy
 }
 
 // Disk retains one filesystem's private identity and available bytes.
@@ -66,3 +67,7 @@ type machineSSH struct {
 	Port           int
 	RemoteUsername string
 }
+
+// SessionPolicy retains sanitized facts about the launching process's immediate Windows job.
+// An immediate-job observation cannot attest the limits of outer nested jobs.
+type SessionPolicy struct{ InJob, KillOnClose, Breakaway, SilentBreakaway bool }

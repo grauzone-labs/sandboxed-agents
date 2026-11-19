@@ -2,7 +2,6 @@ package liverun
 
 import (
 	"context"
-	"math"
 	"path/filepath"
 	"strings"
 	"time"
@@ -31,41 +30,19 @@ func peakPath(o Options, engine string) string {
 	return filepath.Join(o.LockRoot, engineKey(engine)+"-peak.json")
 }
 
-// admissiblePeak requires sample provenance and explicit component coverage beyond a sampled maximum.
+// observedPeakPath separates sampled facts from the maintainer-admitted bound at peakPath.
+func observedPeakPath(o Options, engine string) string {
+	return filepath.Join(o.LockRoot, engineKey(engine)+"-observed-peak.json")
+}
+
+// admissiblePeak preserves the original reasoned host-bound record contract.
+// Optional sampled facts constrain a supplied bound; a sampled maximum alone is never minted into one.
 func admissiblePeak(p PeakRecord, before Snapshot) bool {
-	if p.EngineID != before.EngineID || p.PeakAdditionalBytes == 0 || strings.TrimSpace(p.Basis) == "" || !revisionLine.MatchString(p.Revision) || !p.SamplingComplete || p.SampleStartedAt.IsZero() || p.SampleEndedAt.Before(p.SampleStartedAt) || p.SampleEndedAt.After(time.Now()) || p.SampleIntervalSeconds <= 0 || p.SampleContext == "" || len(p.Filesystems) != len(before.Disks) {
+	if p.EngineID != before.EngineID || p.PeakAdditionalBytes == 0 || strings.TrimSpace(p.Basis) == "" {
 		return false
 	}
-	for _, disk := range before.Disks {
-		found := false
-		var sampledGrowth uint64
-		for _, sample := range p.Filesystems {
-			if sample.Name == disk.Name && sample.Path == disk.Path && sample.Samples >= 2 && sample.SampledGrowthBytes <= p.PeakAdditionalBytes {
-				found = true
-				sampledGrowth = sample.SampledGrowthBytes
-			}
-		}
-		if !found {
-			return false
-		}
-		covered := map[string]bool{}
-		var total uint64
-		for _, c := range p.Components {
-			if c.Filesystem != disk.Name {
-				continue
-			}
-			if covered[c.Kind] || strings.TrimSpace(c.Basis) == "" || c.Bytes == 0 || math.MaxUint64-total < c.Bytes {
-				return false
-			}
-			covered[c.Kind] = true
-			total += c.Bytes
-		}
-		for _, kind := range []string{"images", "build-temporary", "suite-and-artifacts", "sampling-gaps-and-variation"} {
-			if !covered[kind] {
-				return false
-			}
-		}
-		if total > p.PeakAdditionalBytes || total < sampledGrowth {
+	for _, sample := range p.Filesystems {
+		if sample.SampledGrowthBytes > p.PeakAdditionalBytes {
 			return false
 		}
 	}
@@ -86,7 +63,7 @@ func (s *Service) samplePeak(ctx context.Context, o Options, before Snapshot) fu
 		record.Basis = "sampled peak only; conservative bound missing: images, temporary build/suite/artifact storage, sampling gaps and future variation require reasoned coverage"
 		err := writeJSON(filepath.Join(o.RunDir, "peak.json"), record)
 		if err == nil {
-			err = writeJSON(peakPath(o, before.EngineID), record)
+			err = writeJSON(observedPeakPath(o, before.EngineID), record)
 		}
 		return err == nil
 	}
@@ -125,4 +102,20 @@ func (s *Service) samplePeak(ctx context.Context, o Options, before Snapshot) fu
 		}
 	}()
 	return func() bool { close(stop); return <-done }
+}
+
+// observedPeakExceeds invalidates a supplied bound only when independently recorded matching filesystem facts exceed it.
+func observedPeakExceeds(o Options, before Snapshot, bound uint64) bool {
+	var observed PeakRecord
+	if readJSON(observedPeakPath(o, before.EngineID), &observed) != nil || observed.EngineID != before.EngineID {
+		return false
+	}
+	for _, disk := range before.Disks {
+		for _, sample := range observed.Filesystems {
+			if sample.Name == disk.Name && sample.Path == disk.Path && sample.Samples > 0 && sample.SampledGrowthBytes > bound {
+				return true
+			}
+		}
+	}
+	return false
 }

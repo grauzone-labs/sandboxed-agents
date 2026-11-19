@@ -38,6 +38,14 @@ func (s *Service) prepareLocked(ctx context.Context, o Options) (Snapshot, *os.F
 		return Snapshot{}, nil, err
 	}
 	before := Snapshot{TakenAt: time.Now().UTC(), HostLoad: o.HostLoad}
+	policy, policyErr := s.sessionPolicy()
+	if policyErr == nil {
+		policyErr = policy.launchable()
+	}
+	if policyErr != nil {
+		return before, nil, failCheck(o, "session-detachment", policyErr)
+	}
+	before.Session = policy
 	fail := func(name string, err error) (Snapshot, *os.File, error) { return before, nil, failCheck(o, name, err) }
 	data, err := s.query(ctx, o, "git", "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil || strings.TrimSpace(string(data)) != o.Revision {
@@ -101,7 +109,7 @@ func (s *Service) prepareLocked(ctx context.Context, o Options) (Snapshot, *os.F
 	}
 	var peak PeakRecord
 	err = readJSON(recordPath, &peak)
-	if err != nil || !admissiblePeak(peak, before) {
+	if err != nil || !admissiblePeak(peak, before) || observedPeakExceeds(o, before, peak.PeakAdditionalBytes) {
 		if !o.AllowUnbounded {
 			lock.Close()
 			return before, nil, headroomFailure(o, before, "peak-bound", 0)
@@ -189,15 +197,12 @@ func (s *Service) target(ctx context.Context, o Options) (Target, string, error)
 	if err != nil {
 		return target, "", engineFault("engine unreachable", engineReason(err), err)
 	}
-	var info struct {
-		Host  struct{ Hostname string }
-		Store struct{ GraphRoot string }
-	}
-	if err = json.Unmarshal(data, &info); err != nil || info.Host.Hostname == "" || !strings.HasPrefix(info.Store.GraphRoot, "/") {
+	identity, storage, err := EngineIdentity(data)
+	if err != nil {
 		return target, "", engineFault("malformed target", "engine storage identity is malformed", err)
 	}
-	target.Storage = info.Store.GraphRoot
-	return target, info.Host.Hostname + ":" + target.Storage, nil
+	target.Storage = storage
+	return target, identity, nil
 }
 
 // windowsAbsolute accepts an absolute non-option Windows path without control characters.

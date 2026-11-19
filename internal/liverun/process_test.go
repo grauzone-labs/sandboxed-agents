@@ -3,6 +3,7 @@ package liverun_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,12 +17,29 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
 )
 
-// TestMain exposes offline executable fixtures for the detached supervisor and fake host programs.
+// TestMain exposes offline executable fixtures for the detached supervisor and fake host programs. It exercises the prepare/run/status commands and owned process artifacts seam.
 func TestMain(m *testing.M) {
 	if os.Getenv("LIVERUN_FIXTURE") == "1" {
 		role := strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe")
 		if role == "go" || role == "podman" || role == "git" || role == "ssh" {
 			os.Exit(hostFixture(role, os.Args[1:]))
+		}
+		if len(os.Args) > 2 && os.Args[1] == "_fixture-producer" {
+			directory := os.Args[2]
+			asset := strings.Repeat("e", 64)
+			err := liverun.CaptureLayerBuildResult(directory, "localhost/sandboxed-agents:none-"+asset, asset, func(iid, label string) error {
+				if err := os.WriteFile(filepath.Join(filepath.Dir(directory), "producer-ready"), []byte(label), 0600); err != nil {
+					return err
+				}
+				for {
+					time.Sleep(time.Second)
+				}
+			}, func(string) (string, error) { return "", fmt.Errorf("unfinished producer was inspected") })
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(2)
+			}
+			os.Exit(0)
 		}
 		if len(os.Args) > 1 && os.Args[1] == "_fixture-session" {
 			command := exec.Command(os.Args[0], "run", "-run-dir", os.Args[2])
@@ -216,7 +234,7 @@ func TestRunSurvivesLauncherAndExcludesSecondSuite(t *testing.T) {
 	}
 }
 
-// TestKilledRunDoesNotLeaveStaleEngineLock proves owned process liveness blocks an orphan then admits a new run after it dies.
+// TestKilledRunDoesNotLeaveStaleEngineLock proves owned process liveness blocks an orphan then admits a new run after it dies. It exercises the prepare/run/status commands and owned process artifacts seam.
 func TestKilledRunDoesNotLeaveStaleEngineLock(t *testing.T) {
 	root, private, args := fixtureSetup(t)
 	binary, _ := os.Executable()
@@ -311,7 +329,7 @@ func cleanupFixture(root string) {
 	}
 }
 
-// TestRunRefusesConcurrentLaunchOfSameDirectory proves simultaneous launchers cannot overwrite the first run's exit evidence.
+// TestRunRefusesConcurrentLaunchOfSameDirectory proves simultaneous launchers cannot overwrite the first run's exit evidence. It exercises the prepare/run/status commands and owned process artifacts seam.
 func TestRunRefusesConcurrentLaunchOfSameDirectory(t *testing.T) {
 	root, private, _ := fixtureSetup(t)
 	binary, _ := os.Executable()
@@ -349,7 +367,7 @@ func TestRunRefusesConcurrentLaunchOfSameDirectory(t *testing.T) {
 	waitFixture(t, filepath.Join(private, "exit.json"))
 }
 
-// TestRunProgressPersistenceFailurePreservesSuiteExit proves a failed progress artifact cannot change the real suite outcome.
+// TestRunProgressPersistenceFailurePreservesSuiteExit proves a failed progress artifact cannot change the real suite outcome. It exercises the prepare/run/status commands and owned process artifacts seam.
 func TestRunProgressPersistenceFailurePreservesSuiteExit(t *testing.T) {
 	root, private, _ := fixtureSetup(t)
 	binary, _ := os.Executable()
@@ -379,7 +397,7 @@ func TestRunProgressPersistenceFailurePreservesSuiteExit(t *testing.T) {
 	}
 }
 
-// TestRunRecordsSampledPeakWithoutInventingBound proves the command retains run/filesystem provenance but fails closed on an unbounded last sample.
+// TestRunRecordsSampledPeakWithoutInventingBound proves the command retains run/filesystem provenance but fails closed on an unbounded last sample. It exercises the prepare/run/status commands and owned process artifacts seam.
 func TestRunRecordsSampledPeakWithoutInventingBound(t *testing.T) {
 	root, private, args := fixtureSetup(t)
 	binary, _ := os.Executable()
@@ -391,7 +409,7 @@ func TestRunRecordsSampledPeakWithoutInventingBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFixture(t, filepath.Join(private, "exit.json"))
-	paths, err := filepath.Glob(filepath.Join(root, "locks", "*-peak.json"))
+	paths, err := filepath.Glob(filepath.Join(root, "locks", "*-observed-peak.json"))
 	if err != nil || len(paths) != 1 {
 		t.Fatalf("last-run sampled peak absent: %v %v", paths, err)
 	}
@@ -429,7 +447,7 @@ func TestRunRecordsSampledPeakWithoutInventingBound(t *testing.T) {
 	}
 }
 
-// TestRunBuildChannelFailureIsSupplemental proves unavailable telemetry cannot prevent the suite or change its real exit code.
+// TestRunBuildChannelFailureIsSupplemental proves unavailable telemetry cannot prevent the suite or change its real exit code. It exercises the prepare/run/status commands and owned process artifacts seam.
 func TestRunBuildChannelFailureIsSupplemental(t *testing.T) {
 	root, private, _ := fixtureSetup(t)
 	if err := os.Mkdir(filepath.Join(private, "build-evidence"), 0700); err != nil {
@@ -453,5 +471,85 @@ func TestRunBuildChannelFailureIsSupplemental(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(private, "build-evidence-unverified")); err != nil {
 		t.Fatal("evidence gap not retained")
+	}
+}
+
+// TestRunPreservesAdmittedPeakBound proves the run command writes sampled observations separately and preserves the maintainer bound byte for byte. It exercises the prepare/run/status commands and owned process artifacts seam.
+func TestRunPreservesAdmittedPeakBound(t *testing.T) {
+	root, private, _ := fixtureSetup(t)
+	sum := sha256.Sum256([]byte("fixture-engine:/"))
+	bound := filepath.Join(root, "locks", fmt.Sprintf("%x-peak.json", sum))
+	payload := []byte(`{"EngineID":"fixture-engine:/","PeakAdditionalBytes":1,"Basis":"reasoned fixture allowance at known byte boundary"}`)
+	if err := os.WriteFile(bound, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	binary, _ := os.Executable()
+	if data, err := exec.Command(binary, "run", "-run-dir", private).CombinedOutput(); err != nil {
+		t.Fatalf("run: %v %s", err, data)
+	}
+	waitFixture(t, filepath.Join(root, "suite-ready"))
+	if !bytes.Equal(mustReadFile(t, bound), payload) {
+		t.Fatal("ongoing sampling destroyed admitted bound")
+	}
+	if err := os.WriteFile(filepath.Join(root, "release"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	waitFixture(t, filepath.Join(private, "exit.json"))
+	if !bytes.Equal(mustReadFile(t, bound), payload) {
+		t.Fatal("final sampling overwrote admitted bound")
+	}
+}
+
+// TestKilledProducerDoesNotBlockIndependentCleanup proves the actual producer-process/artifact to Cleanup seam retains unknown images and reports orphan metadata after a kill.
+func TestKilledProducerDoesNotBlockIndependentCleanup(t *testing.T) {
+	for _, termination := range []string{"kill", "timeout"} {
+		t.Run(termination, func(t *testing.T) {
+			svc, fake, options := cleanupHarness(t)
+			svc.BuildEvidence = nil
+			directory := filepath.Join(options.RunDir, "build-evidence")
+			if err := os.Mkdir(directory, 0700); err != nil {
+				t.Fatal(err)
+			}
+			invocation := strings.Repeat("f", 64)
+			cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 1, "Invocation": invocation, "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
+			binary, _ := os.Executable()
+			ctx := context.Background()
+			cancel := func() {}
+			if termination == "timeout" {
+				ctx, cancel = context.WithTimeout(ctx, 2*time.Second)
+			}
+			defer cancel()
+			producer := exec.CommandContext(ctx, binary, "_fixture-producer", directory)
+			producer.Env = append(os.Environ(), "LIVERUN_FIXTURE=1")
+			var output bytes.Buffer
+			producer.Stdout, producer.Stderr = &output, &output
+			if err := producer.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer producer.Process.Kill()
+			waitFixture(t, filepath.Join(options.RunDir, "producer-ready"))
+			if termination == "kill" {
+				if err := producer.Process.Kill(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := producer.Wait(); err == nil {
+				t.Fatal("producer did not die")
+			}
+			intermediate := "sha256:" + strings.Repeat("b", 64)
+			unknown := "sha256:" + strings.Repeat("d", 64)
+			image := cleanupImageFixture(intermediate)
+			image.RepoTags = nil
+			image.Labels[liverun.BuildInvocationLabel] = invocation
+			fake.images = map[string]cleanupFakeImage{intermediate: image, unknown: cleanupImageFixture(unknown)}
+			var report bytes.Buffer
+			err := svc.Cleanup(context.Background(), options, &report)
+			if got := cleanupRemoved(fake); len(got) != 1 || got[0] != intermediate {
+				t.Fatalf("killed producer blocked independent proof: %v err=%v report=%s", got, err, &report)
+			}
+			if err == nil || !strings.Contains(report.String(), "incomplete or invalid") || !strings.Contains(report.String(), unknown) || !strings.Contains(report.String(), `"after"`) {
+				t.Fatalf("orphan/unknown state lost: %v %s", err, &report)
+			}
+		})
 	}
 }

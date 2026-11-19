@@ -15,7 +15,7 @@ func freeSpace(string) (uint64, error) { return 0, fmt.Errorf("live-run supports
 func lockFile(*os.File) error { return fmt.Errorf("live-run supports Linux and Windows") }
 
 // detachCommand is unused on unsupported host platforms.
-func detachCommand(*exec.Cmd) {}
+func detachCommand(*exec.Cmd, SessionPolicy) {}
 
 // processIdentity refuses unsupported process metadata.
 func processIdentity(int) (string, error) { return "", fmt.Errorf("unsupported platform") }
@@ -33,3 +33,8 @@ func suiteAlive(ref processRef) bool { return ref.live() }
 
 // abortSuite stops an owned process if unsupported code ever reaches startup.
 func abortSuite(cmd *exec.Cmd) error { return cmd.Process.Kill() }
+
+// sessionJobPolicy refuses unimplemented host session policy inspection.
+func sessionJobPolicy() (SessionPolicy, error) {
+	return SessionPolicy{}, fmt.Errorf("unsupported host session inspection")
+}

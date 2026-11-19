@@ -203,7 +203,12 @@ func (s *Service) status(ctx context.Context, args []string, out, diagnostics io
 		state["log_verified"] = !ended.LogUnverified
 		var peak PeakRecord
 		state["peak_recorded"] = !ended.PeakUnverified && readJSON(filepath.Join(directory, "peak.json"), &peak) == nil && peak.EngineID == before.EngineID && peak.Revision == o.Revision
-		state["peak_bound_available"] = admissiblePeak(peak, before)
+		var bound PeakRecord
+		boundPath := o.PeakRecord
+		if boundPath == "" {
+			boundPath = peakPath(o, before.EngineID)
+		}
+		state["peak_bound_available"] = readJSON(boundPath, &bound) == nil && admissiblePeak(bound, before) && !observedPeakExceeds(o, before, bound.PeakAdditionalBytes)
 	}
 	return json.NewEncoder(out).Encode(state)
 }
@@ -260,7 +265,7 @@ func (s *Service) collect(ctx context.Context, args []string, out, diagnostics i
 	if readJSON(filepath.Join(directory, "options.json"), &o) != nil || readJSON(filepath.Join(directory, "before.json"), &before) != nil {
 		return fmt.Errorf("prepared run is unavailable")
 	}
-	if readJSON(filepath.Join(directory, "exit.json"), &ended) != nil {
+	if readCompletion(filepath.Join(directory, "exit.json"), &ended) != nil {
 		return fmt.Errorf("suite has not ended; collect after status confirms its exit")
 	}
 	if ended.LogUnverified {

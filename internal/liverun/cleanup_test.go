@@ -116,14 +116,18 @@ func (f *cleanupFake) Execute(_ context.Context, in liverun.Invocation) ([]byte,
 		}
 		return json.Marshal(values)
 	case "image":
-		if len(args) != 3 || args[1] != "inspect" {
+		if len(args) < 3 || args[1] != "inspect" {
 			return nil, fmt.Errorf("forbidden image call")
 		}
-		image, ok := f.images[args[2]]
-		if !ok {
-			return nil, fmt.Errorf("image not found")
+		images := []cleanupFakeImage{}
+		for _, id := range args[2:] {
+			image, ok := f.images[id]
+			if !ok {
+				return nil, fmt.Errorf("image not found")
+			}
+			images = append(images, image)
 		}
-		return json.Marshal([]cleanupFakeImage{image})
+		return json.Marshal(images)
 	case "ps":
 		f.psCalls++
 		if f.lateReference != "" && f.psCalls == 2 {
@@ -252,7 +256,7 @@ func cleanupRemoved(fake *cleanupFake) []string {
 	return result
 }
 
-// TestCleanupEligibility proves each exclusion through Cleanup and the fake whole-engine boundary.
+// TestCleanupEligibility proves each exclusion through Cleanup and the fake whole-engine boundary. It exercises the Cleanup command seam.
 func TestCleanupEligibility(t *testing.T) {
 	for _, name := range []string{"presentbefore", "missingproof", "wronghash", "emptyhash", "usedothergroup", "ambiguous", "failedquery", "retention", "chainonly", "downloaded", "cache", "arbitrary", "latecontainer"} {
 		t.Run(name, func(t *testing.T) {
@@ -310,7 +314,7 @@ func TestCleanupEligibility(t *testing.T) {
 	}
 }
 
-// TestCleanupChildrenBeforeParents proves exact removals preserve unproven ancestors and never prune or force.
+// TestCleanupChildrenBeforeParents proves exact removals preserve unproven ancestors and never prune or force. It exercises the Cleanup command seam.
 func TestCleanupChildrenBeforeParents(t *testing.T) {
 	svc, fake, options := cleanupHarness(t)
 	parent := "sha256:" + strings.Repeat("a", 64)
@@ -394,7 +398,7 @@ func TestCleanupChildrenBeforeParents(t *testing.T) {
 	}
 }
 
-// TestCleanupUniqueShortIDAndUnlabelledStep proves a uniquely inspected step result may identify an unlabelled intermediate.
+// TestCleanupUniqueShortIDAndUnlabelledStep proves the Cleanup seam refuses short primary IDs and admits an independently proven full unlabelled ID. It exercises the Cleanup command seam.
 func TestCleanupUniqueShortIDAndUnlabelledStep(t *testing.T) {
 	svc, fake, options := cleanupHarness(t)
 	id := "sha256:123456789abc" + strings.Repeat("a", 52)
@@ -404,15 +408,20 @@ func TestCleanupUniqueShortIDAndUnlabelledStep(t *testing.T) {
 	fake.images = map[string]cleanupFakeImage{id: image}
 	cleanupBuildLog(t, fake, options.RunDir, "[1/2] STEP 2/3: COPY file /path", "123456789abc")
 	var out bytes.Buffer
+	if err := svc.Cleanup(context.Background(), options, &out); err == nil || len(cleanupRemoved(fake)) != 0 {
+		t.Fatalf("short primary ID admitted: %v %s", err, &out)
+	}
+	fake.produced[0].ID = id
+	out.Reset()
 	if err := svc.Cleanup(context.Background(), options, &out); err != nil {
-		t.Fatalf("%v %s", err, out.String())
+		t.Fatalf("full primary ID refused: %v %s", err, &out)
 	}
 	if got := cleanupRemoved(fake); len(got) != 1 || got[0] != id {
 		t.Fatalf("short ID not uniquely resolved: %v", got)
 	}
 }
 
-// TestCleanupFailedContainerAndInventoryQueries proves failed queries never establish object absence at Cleanup.
+// TestCleanupFailedContainerAndInventoryQueries proves failed queries never establish object absence at Cleanup. It exercises the Cleanup command seam.
 func TestCleanupFailedContainerAndInventoryQueries(t *testing.T) {
 	for _, query := range []string{"images --all", "ps --all", "container inspect", "rmi --no-prune"} {
 		t.Run(query, func(t *testing.T) {
@@ -439,7 +448,7 @@ func TestCleanupFailedContainerAndInventoryQueries(t *testing.T) {
 	}
 }
 
-// TestCleanupRefusesInvalidInvocation proves changed and incomplete evidence stops removal at Cleanup.
+// TestCleanupRefusesInvalidInvocation proves changed and incomplete evidence stops removal at Cleanup. It exercises the Cleanup command seam.
 func TestCleanupRefusesInvalidInvocation(t *testing.T) {
 	for _, name := range []string{"incompletebefore", "invalidbeforeid", "missingbeforefields", "changedengine", "changedcheckout", "missingexit", "statusmismatch", "missingstart", "oversizedlog"} {
 		t.Run(name, func(t *testing.T) {
@@ -492,7 +501,7 @@ func TestCleanupRefusesInvalidInvocation(t *testing.T) {
 	}
 }
 
-// TestCleanupRetentionAndFailedCollection proves retained byte cost and collector failure remain visible without reusing old evidence.
+// TestCleanupRetentionAndFailedCollection proves retained byte cost and collector failure remain visible without reusing old evidence. It exercises the Cleanup command seam.
 func TestCleanupRetentionAndFailedCollection(t *testing.T) {
 	svc, fake, options := cleanupHarness(t)
 	id := "sha256:" + strings.Repeat("b", 64)
@@ -521,7 +530,7 @@ func TestCleanupRetentionAndFailedCollection(t *testing.T) {
 	}
 }
 
-// TestParseCleanupArgs proves the dispatch parser admits only a run directory and full retention IDs.
+// TestParseCleanupArgs proves the dispatch parser admits only a run directory and full retention IDs. It exercises the ParseCleanupArgs parser seam.
 func TestParseCleanupArgs(t *testing.T) {
 	id := "sha256:" + strings.Repeat("a", 64)
 	parsed, err := liverun.ParseCleanupArgs([]string{"-run-dir", "relative", "-retain", id}, &bytes.Buffer{})
@@ -548,7 +557,7 @@ func TestCleanupDispatch(t *testing.T) {
 	}
 }
 
-// TestCleanupFinalReconciliationDetectsFalseSuccess proves removal output alone never certifies an image is gone.
+// TestCleanupFinalReconciliationDetectsFalseSuccess proves removal output alone never certifies an image is gone. It exercises the Cleanup command seam.
 func TestCleanupFinalReconciliationDetectsFalseSuccess(t *testing.T) {
 	svc, fake, options := cleanupHarness(t)
 	id := "sha256:" + strings.Repeat("b", 64)
@@ -561,7 +570,7 @@ func TestCleanupFinalReconciliationDetectsFalseSuccess(t *testing.T) {
 	}
 }
 
-// TestCleanupDisconnectBeforeInventory proves a newly unreachable engine stops with the exact pending form and no removal.
+// TestCleanupDisconnectBeforeInventory proves a newly unreachable engine stops with the exact pending form and no removal. It exercises the Cleanup command seam.
 func TestCleanupDisconnectBeforeInventory(t *testing.T) {
 	svc, fake, options := cleanupHarness(t)
 	fake.disconnectAfter = 2
@@ -573,7 +582,7 @@ func TestCleanupDisconnectBeforeInventory(t *testing.T) {
 	}
 }
 
-// TestCleanupUnlabelledProofNeedsNoAssetLabel proves exact build provenance suffices for an unlabelled intermediate.
+// TestCleanupUnlabelledProofNeedsNoAssetLabel proves exact build provenance suffices for an unlabelled intermediate. It exercises the Cleanup command seam.
 func TestCleanupUnlabelledProofNeedsNoAssetLabel(t *testing.T) {
 	svc, fake, options := cleanupHarness(t)
 	id := "sha256:" + strings.Repeat("b", 64)
@@ -593,7 +602,7 @@ func TestCleanupUnlabelledProofNeedsNoAssetLabel(t *testing.T) {
 	}
 }
 
-// TestCleanupWindowsUsesSelectedConnection proves cleanup queries, removals and both filesystem measurements stay on the selected fake engine.
+// TestCleanupWindowsUsesSelectedConnection proves cleanup queries, removals and both filesystem measurements stay on the selected fake engine. It exercises the Cleanup command seam.
 func TestCleanupWindowsUsesSelectedConnection(t *testing.T) {
 	svc, fake, options := cleanupHarness(t)
 	svc.Platform = "windows"
@@ -627,5 +636,30 @@ func TestCleanupWindowsUsesSelectedConnection(t *testing.T) {
 	}
 	if len(report.Before.FreeSpace) != 2 || len(report.After.FreeSpace) != 2 || report.DurationsFile != "durations-windows-11.json" {
 		t.Fatalf("Windows evidence: %+v", report)
+	}
+}
+
+// TestCleanupBatchesPrimaryInspections proves the Cleanup engine-query seam inspects multiple IDs in one bounded call without changing individual removal policy.
+func TestCleanupBatchesPrimaryInspections(t *testing.T) {
+	svc, fake, options := cleanupHarness(t)
+	a := "sha256:" + strings.Repeat("a", 64)
+	b := "sha256:" + strings.Repeat("b", 64)
+	fake.images = map[string]cleanupFakeImage{a: cleanupImageFixture(a), b: cleanupImageFixture(b)}
+	fake.produced = []liverun.BuildResult{{ID: a, Step: "primary result", Source: "trusted fixture"}, {ID: b, Step: "primary result", Source: "trusted fixture"}}
+	var out bytes.Buffer
+	if err := svc.Cleanup(context.Background(), options, &out); err != nil {
+		t.Fatal(err)
+	}
+	inspections := 0
+	for _, call := range fake.calls {
+		if call.Program == "podman" && len(call.Args) > 1 && call.Args[0] == "image" && call.Args[1] == "inspect" {
+			inspections++
+			if len(call.Args) != 4 {
+				t.Fatalf("not a batch: %v", call.Args)
+			}
+		}
+	}
+	if inspections != 1 || len(cleanupRemoved(fake)) != 2 {
+		t.Fatalf("inspections=%d removals=%v", inspections, cleanupRemoved(fake))
 	}
 }

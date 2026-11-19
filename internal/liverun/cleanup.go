@@ -124,18 +124,29 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 		results, proofErr = s.BuildEvidence(ctx, run.options.RunDir)
 	}
 	if proofErr != nil {
-		return fmt.Errorf("cleanup: pending (trusted build evidence unverified)")
+		run.report.Unverified = append(run.report.Unverified, CleanupItem{Reason: "some trusted build evidence incomplete or invalid; only independent primary results admitted", Query: "private build-result channel"})
 	}
 	boundAsset := ""
 	for _, result := range results {
 		if len(result.Asset) != 64 || boundAsset != "" && boundAsset != result.Asset {
-			return fmt.Errorf("cleanup: pending (trusted asset identity unverified)")
+			run.report.Unverified = append(run.report.Unverified, CleanupItem{Reason: "trusted asset identity inconsistent; no ownership admitted from contradictory invocation scope", Query: "private build-result channel"})
+			results = nil
+			trusted = nil
+			break
 		}
 		boundAsset = result.Asset
 		if result.Source == "" || result.Step == "" {
 			continue
 		}
-		trusted = append(trusted, buildProof{Token: result.ID, Step: result.Step, Result: result.Source})
+		if result.Source == buildLayerSource && result.LayerInvocation != "" {
+			for _, image := range current {
+				if image.Verified && image.Labels[BuildInvocationLabel] == result.LayerInvocation {
+					trusted = append(trusted, buildProof{Token: image.ID, Step: "intermediate builder result for " + result.Step, Result: result.Source})
+				}
+			}
+		} else {
+			trusted = append(trusted, buildProof{Token: result.ID, Step: result.Step, Result: result.Source})
+		}
 	}
 	if len(results) > 0 {
 		asset = results[0].Asset

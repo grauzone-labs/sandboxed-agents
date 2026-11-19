@@ -77,36 +77,62 @@ func readBuildManifest(directory string) (buildManifest, error) {
 	return m, nil
 }
 
-// CaptureBuildResult runs an optional telemetry build with a private iidfile and confirms the final ID through inspect.
-// The caller holds the image-tag lock throughout; build and inspect are the primary host process boundaries.
-// Evidence failures leave an incomplete marker and never change the actual build result.
-// An empty directory preserves the ordinary build's flags, queries, output and cache semantics.
+// buildFinalSource and buildLayerSource identify the primary producer mechanisms, never stdout formats.
+const buildFinalSource = "podman --iidfile + image inspect under tag lock"
+const buildLayerSource = "podman --layer-label + exact image inspect"
+
+// BuildInvocationLabel is reserved for builder-controlled intermediate labels of an opted-in validation invocation.
+const BuildInvocationLabel = "io.sandboxed-agents.live-build-invocation"
+
+// CaptureBuildResult preserves the iidfile-only producer API without enabling intermediate telemetry.
 func CaptureBuildResult(directory, tag, asset string, build func(string) error, inspect func(string) (string, error)) error {
+	return captureBuildResult(directory, tag, asset, false, func(iid, label string) error { return build(iid) }, inspect)
+}
+
+// CaptureLayerBuildResult publishes primary attempt metadata and passes the builder a private nonce layer label.
+// The caller holds the tag lock; ordinary builds receive no extra options and evidence errors stay supplemental.
+func CaptureLayerBuildResult(directory, tag, asset string, build func(string, string) error, inspect func(string) (string, error)) error {
+	return captureBuildResult(directory, tag, asset, true, build, inspect)
+}
+
+// captureBuildResult runs an optional telemetry build with a private iidfile and confirms the final ID through inspect.
+// The caller holds the image-tag lock throughout; build and inspect are the primary host process boundaries.
+// Evidence loss is supplemental; absent results never grant ownership, and orphan artifacts are reported.
+// An empty directory preserves the ordinary build's flags, queries, output and cache semantics.
+func captureBuildResult(directory, tag, asset string, layers bool, build func(string, string) error, inspect func(string) (string, error)) error {
 	if directory == "" {
-		return build("")
+		return build("", "")
 	}
 	m, err := readBuildManifest(directory)
 	if err != nil {
-		return build("")
+		return build("", "")
 	}
 	if !buildCommitLine.MatchString("COMMIT "+tag) || !strings.HasSuffix(tag, "-"+asset) || len(asset) != 64 {
-		return build("")
+		return build("", "")
 	}
 	pending, err := os.CreateTemp(directory, ".pending-")
 	if err != nil {
-		return build("")
+		return build("", "")
 	}
 	marker := pending.Name()
 	if err = pending.Close(); err != nil {
-		return build("")
+		return build("", "")
 	}
 	private, err := os.MkdirTemp(directory, "iid-")
 	if err != nil {
-		return build("")
+		return build("", "")
 	}
 	defer os.RemoveAll(private)
 	iid := filepath.Join(private, "result.id")
-	if err = build(iid); err != nil {
+	layerLabel := ""
+	if layers {
+		attempt := buildPublication{Version: 1, Invocation: m.Invocation, Revision: m.Revision, EngineID: m.EngineID, Result: BuildResult{Asset: asset, Step: "COMMIT " + tag, Source: buildLayerSource, LayerInvocation: m.Invocation}}
+		if publishBuildEvent(directory, "attempt-", attempt) == nil {
+			layerLabel = BuildInvocationLabel + "=" + m.Invocation
+		}
+	}
+	if err = build(iid, layerLabel); err != nil {
+		_ = os.Remove(marker)
 		return err
 	}
 	data, err := cleanupRead(iid, 128)
@@ -118,19 +144,14 @@ func CaptureBuildResult(directory, tag, asset string, build func(string) error, 
 	if err != nil || canonicalImageID(confirmed) != id {
 		return nil
 	}
-	event := buildPublication{Version: 1, Invocation: m.Invocation, Revision: m.Revision, EngineID: m.EngineID, Result: BuildResult{ID: id, Asset: asset, Step: "COMMIT " + tag, Source: "podman --iidfile + image inspect under tag lock"}}
-	// Each producer owns a unique final filename; concurrent builds never overwrite each other's results.
-	nonce := make([]byte, 32)
-	if _, err = rand.Read(nonce); err != nil {
-		return nil
-	}
-	if writeJSON(filepath.Join(directory, "result-"+hex.EncodeToString(nonce)+".json"), event) == nil {
+	event := buildPublication{Version: 1, Invocation: m.Invocation, Revision: m.Revision, EngineID: m.EngineID, Result: BuildResult{ID: id, Asset: asset, Step: "COMMIT " + tag, Source: buildFinalSource}}
+	if publishBuildEvent(directory, "result-", event) == nil {
 		_ = os.Remove(marker)
 	}
 	return nil
 }
 
-// readBuildResults admits only primary final results bound to the prepared invocation's channel.
+// readBuildResults admits independent final IDs and intermediate attempts bound to the private invocation channel.
 func readBuildResults(o Options, before Snapshot) ([]BuildResult, error) {
 	directory := filepath.Join(o.RunDir, "build-evidence")
 	if _, err := os.Stat(filepath.Join(o.RunDir, "build-evidence-unverified")); !os.IsNotExist(err) {
@@ -149,26 +170,33 @@ func readBuildResults(o Options, before Snapshot) ([]BuildResult, error) {
 	}
 	results := []BuildResult{}
 	var total int64
+	partial := false
 	for _, entry := range entries {
 		if entry.Name() == "manifest.json" {
 			continue
 		}
-		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "result-") || !strings.HasSuffix(entry.Name(), ".json") {
-			return nil, fmt.Errorf("build channel contains incomplete publication")
+		if entry.IsDir() || (!strings.HasPrefix(entry.Name(), "result-") && !strings.HasPrefix(entry.Name(), "attempt-")) || !strings.HasSuffix(entry.Name(), ".json") {
+			partial = true
+			continue
 		}
 		info, infoErr := entry.Info()
 		if infoErr != nil || info.Size() < 0 || info.Size() > 64*1024 {
-			return nil, fmt.Errorf("build event unreadable or oversized")
+			partial = true
+			continue
 		}
 		total += info.Size()
 		if total > cleanupPrivateLimit {
 			return nil, fmt.Errorf("build channel exceeds total evidence limit")
 		}
 		var event buildPublication
-		if entry.Type()&os.ModeSymlink != 0 || strictBuildJSON(filepath.Join(directory, entry.Name()), &event) != nil || event.Version != 1 || event.Invocation != m.Invocation || event.Revision != m.Revision || event.EngineID != m.EngineID || !fullImageID(event.Result.ID) || !strings.HasPrefix(event.Result.Step, "COMMIT ") || !cleanupProjectTag(strings.TrimPrefix(event.Result.Step, "COMMIT ")) || !strings.HasSuffix(event.Result.Step, "-"+event.Result.Asset) || len(event.Result.Asset) != 64 || event.Result.Source != "podman --iidfile + image inspect under tag lock" {
-			return nil, fmt.Errorf("build result unverified")
+		if entry.Type()&os.ModeSymlink != 0 || strictBuildJSON(filepath.Join(directory, entry.Name()), &event) != nil || event.Version != 1 || event.Invocation != m.Invocation || event.Revision != m.Revision || event.EngineID != m.EngineID || !strings.HasPrefix(event.Result.Step, "COMMIT ") || !cleanupProjectTag(strings.TrimPrefix(event.Result.Step, "COMMIT ")) || !strings.HasSuffix(event.Result.Step, "-"+event.Result.Asset) || len(event.Result.Asset) != 64 || !validBuildResult(event.Result, m, strings.HasPrefix(entry.Name(), "attempt-")) {
+			partial = true
+			continue
 		}
 		results = append(results, event.Result)
+	}
+	if partial {
+		return results, fmt.Errorf("some producer evidence is incomplete or invalid")
 	}
 	return results, nil
 }
@@ -180,4 +208,21 @@ func ConfirmBuildEngine(directory, engine string) error {
 		return fmt.Errorf("build engine differs from invocation")
 	}
 	return nil
+}
+
+// publishBuildEvent atomically publishes one bounded event under a unique producer-owned filename.
+func publishBuildEvent(directory, prefix string, event buildPublication) error {
+	nonce := make([]byte, 32)
+	if _, err := rand.Read(nonce); err != nil {
+		return err
+	}
+	return writeJSON(filepath.Join(directory, prefix+hex.EncodeToString(nonce)+".json"), event)
+}
+
+// validBuildResult admits either a primary final ID or a nonce-authorized intermediate attempt.
+func validBuildResult(result BuildResult, m buildManifest, attempt bool) bool {
+	if attempt {
+		return result.ID == "" && result.Source == buildLayerSource && result.LayerInvocation == m.Invocation
+	}
+	return fullImageID(result.ID) && result.Source == buildFinalSource && result.LayerInvocation == ""
 }

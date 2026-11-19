@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// TestPeakSamplingRecordsFactsWithoutBound proves filesystem minima are retained separately from admissible future headroom.
+// TestPeakSamplingRecordsFactsWithoutBound proves filesystem minima are retained separately from admissible future headroom. It exercises the injected filesystem and peak artifacts seam.
 func TestPeakSamplingRecordsFactsWithoutBound(t *testing.T) {
 	root := t.TempDir()
 	o := Options{RunDir: filepath.Join(root, "private"), LockRoot: filepath.Join(root, "locks"), Revision: strings.Repeat("a", 40)}
@@ -22,22 +22,20 @@ func TestPeakSamplingRecordsFactsWithoutBound(t *testing.T) {
 	service := &Service{Platform: "linux", FreeSpace: func(string) (uint64, error) { return 700, nil }}
 	finish := service.samplePeak(context.Background(), o, before)
 	var ongoing PeakRecord
-	if err := readJSON(peakPath(o, before.EngineID), &ongoing); err != nil || ongoing.SamplingComplete {
+	if err := readJSON(observedPeakPath(o, before.EngineID), &ongoing); err != nil || ongoing.SamplingComplete {
 		t.Fatalf("ongoing sample absent or falsely complete: %v %+v", err, ongoing)
 	}
 	if !finish() {
 		t.Fatal("could not retain peak facts")
 	}
 	var peak PeakRecord
-	if err := readJSON(peakPath(o, before.EngineID), &peak); err != nil {
+	if err := readJSON(observedPeakPath(o, before.EngineID), &peak); err != nil {
 		t.Fatal(err)
 	}
 	if !peak.SamplingComplete || len(peak.Filesystems) != 1 || peak.Filesystems[0].SampledGrowthBytes != 200 || peak.PeakAdditionalBytes != 0 || admissiblePeak(peak, before) {
 		t.Fatalf("sample maximum misrepresented: %+v", peak)
 	}
-	peak.PeakAdditionalBytes = 2000
-	peak.Basis = "arbitrarily multiply sample by ten"
-	if admissiblePeak(peak, before) {
-		t.Fatal("unsupported multiplier became conservative bound")
+	if _, err := os.Stat(peakPath(o, before.EngineID)); !os.IsNotExist(err) {
+		t.Fatal("sampling created a bound record")
 	}
 }

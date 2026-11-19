@@ -1,6 +1,7 @@
 package liverun
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -61,3 +62,16 @@ func (e *cleanupEngineError) Error() string {
 
 // Unwrap classifies the pending error for partial-removal handling.
 func (e *cleanupEngineError) Unwrap() error { return errCleanupUnreachable }
+
+// EngineIdentity decodes the primary info query into the stable engine identity and its storage path.
+// Both values stay private; consumers compare the same definition across preparation, production and cleanup.
+func EngineIdentity(data []byte) (string, string, error) {
+	var info struct {
+		Host  struct{ Hostname string }
+		Store struct{ GraphRoot string }
+	}
+	if json.Unmarshal(data, &info) != nil || info.Host.Hostname == "" || !strings.HasPrefix(info.Store.GraphRoot, "/") {
+		return "", "", fmt.Errorf("engine storage identity unavailable or malformed")
+	}
+	return info.Host.Hostname + ":" + info.Store.GraphRoot, info.Store.GraphRoot, nil
+}

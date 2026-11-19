@@ -58,17 +58,14 @@ func (s *Service) cleanupEngine(ctx context.Context, r *cleanupRun, target Targe
 	if err != nil {
 		return cleanupPendingEngine(err)
 	}
-	var info struct {
-		Host  struct{ Hostname string }
-		Store struct{ GraphRoot string }
-	}
-	if json.Unmarshal(data, &info) != nil || info.Host.Hostname+":"+info.Store.GraphRoot != r.before.EngineID {
+	identity, _, err := EngineIdentity(data)
+	if err != nil || identity != r.before.EngineID {
 		return fmt.Errorf("engine identity changed or unverified")
 	}
 	return nil
 }
 
-// cleanupInventory enumerates full IDs and individually inspects each image, preserving query failures.
+// cleanupInventory batches exact primary image inspections and falls back per ID on incomplete or failed answers.
 func (s *Service) cleanupInventory(ctx context.Context, r *cleanupRun, target Target) ([]cleanupImage, []CleanupItem, error) {
 	if err := s.cleanupEngine(ctx, r, target); err != nil {
 		return nil, []CleanupItem{{Reason: "engine identity unverified", Query: "podman info --format json"}}, err
@@ -96,25 +93,28 @@ func (s *Service) cleanupInventory(ctx context.Context, r *cleanupRun, target Ta
 	sort.Strings(ids)
 	images := []cleanupImage{}
 	issues := []CleanupItem{}
-	for _, id := range ids {
-		image := cleanupImage{Image: Image{ID: id}}
-		inspected, e := s.cleanupQuery(ctx, r, target, "image", "inspect", id)
-		var answer []cleanupImage
-		var fields []map[string]json.RawMessage
-		_ = json.Unmarshal(inspected, &fields)
-		if e == nil && json.Unmarshal(inspected, &answer) == nil && len(answer) == 1 && len(fields) == 1 && fields[0]["Size"] != nil && string(fields[0]["Size"]) != "null" && canonicalImageID(answer[0].ID) == id && !answer[0].Created.IsZero() {
-			image = answer[0]
-			image.ID = id
-			image.Parent = canonicalImageID(image.Parent)
-			image.Verified = true
-			if image.Parent != "" && !fullImageID(image.Parent) {
-				image.Verified = false
+	for start := 0; start < len(ids); start += 64 {
+		batch := ids[start:min(start+64, len(ids))]
+		inspected, queryErr := s.cleanupQuery(ctx, r, target, append([]string{"image", "inspect"}, batch...)...)
+		decoded, valid := decodeCleanupImages(inspected, batch)
+		if queryErr != nil || !valid {
+			decoded = map[string]cleanupImage{}
+			for _, id := range batch {
+				answer, singleErr := s.cleanupQuery(ctx, r, target, "image", "inspect", id)
+				single, ok := decodeCleanupImages(answer, []string{id})
+				if singleErr == nil && ok {
+					decoded[id] = single[id]
+				}
 			}
 		}
-		if !image.Verified {
-			issues = append(issues, CleanupItem{ID: id, Reason: "image inspection failed or incomplete", Query: "podman image inspect ID"})
+		for _, id := range batch {
+			image, verified := decoded[id]
+			if !verified {
+				image = cleanupImage{Image: Image{ID: id}}
+				issues = append(issues, CleanupItem{ID: id, Reason: "image inspection failed or incomplete", Query: "podman image inspect ID"})
+			}
+			images = append(images, image)
 		}
-		images = append(images, image)
 	}
 	if _, err = s.cleanupReferences(ctx, r, target); err != nil {
 		issues = append(issues, CleanupItem{Reason: "container references unverified", Query: "podman ps --all / container inspect"})
@@ -219,4 +219,28 @@ func cleanupProjectTag(tag string) bool {
 		}
 	}
 	return true
+}
+
+// decodeCleanupImages validates the complete exact-ID answer of one bounded primary inspect batch.
+func decodeCleanupImages(data []byte, ids []string) (map[string]cleanupImage, bool) {
+	var answer []cleanupImage
+	var fields []map[string]json.RawMessage
+	if json.Unmarshal(data, &answer) != nil || json.Unmarshal(data, &fields) != nil || len(answer) != len(ids) || len(fields) != len(ids) {
+		return nil, false
+	}
+	expected := map[string]bool{}
+	for _, id := range ids {
+		expected[id] = true
+	}
+	result := map[string]cleanupImage{}
+	for i, image := range answer {
+		image.ID = canonicalImageID(image.ID)
+		image.Parent = canonicalImageID(image.Parent)
+		if !expected[image.ID] || result[image.ID].Verified || fields[i]["Size"] == nil || string(fields[i]["Size"]) == "null" || image.Created.IsZero() || image.Parent != "" && !fullImageID(image.Parent) {
+			return nil, false
+		}
+		image.Verified = true
+		result[image.ID] = image
+	}
+	return result, len(result) == len(ids)
 }

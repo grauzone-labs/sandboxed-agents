@@ -12,18 +12,18 @@ import (
 // BuildResult carries an immutable result from a trusted builder channel, never suite stdout.
 // Source and Step identify the primary result evidence; production final results use iidfile plus inspect.
 type BuildResult struct {
-	ID     string
-	Step   string
-	Source string
-	Asset  string
+	ID              string
+	Step            string
+	Source          string
+	Asset           string
+	LayerInvocation string
 }
 
-// buildProof preserves an exact result and its immediately preceding step privately.
+// buildProof binds a full identity to its primary result or builder-controlled invocation evidence privately.
 type buildProof struct {
 	Token  string
 	Step   string
 	Result string
-	Line   int
 	FullID string
 	Reason string
 }
@@ -67,24 +67,23 @@ func parseBuildAsset(log []byte) (string, error) {
 
 // resolveBuildRecord uniquely joins explicit build results to full, inspected engine identities.
 func resolveBuildRecord(proofs []buildProof, images []cleanupImage) []buildProof {
+	byID := map[string]cleanupImage{}
+	for _, image := range images {
+		byID[image.ID] = image
+	}
 	for i := range proofs {
 		proof := &proofs[i]
-		prefix := strings.TrimPrefix(proof.Token, "sha256:")
-		matches := []cleanupImage{}
-		for _, image := range images {
-			if strings.HasPrefix(strings.TrimPrefix(image.ID, "sha256:"), prefix) {
-				matches = append(matches, image)
-			}
-		}
+		id := canonicalImageID(proof.Token)
+		image, present := byID[id]
 		switch {
-		case len(matches) == 0:
+		case !fullImageID(id):
+			proof.Reason = "primary result lacks a complete immutable image ID"
+		case !present:
 			proof.Reason = "build result absent from complete current inventory"
-		case len(matches) > 1:
-			proof.Reason = "ambiguous build ID; multiple full inventory matches"
-		case !matches[0].Verified:
+		case !image.Verified:
 			proof.Reason = "image inspection failed; build result unverified"
 		default:
-			proof.FullID = matches[0].ID
+			proof.FullID = id
 		}
 	}
 	return proofs
@@ -94,7 +93,6 @@ func resolveBuildRecord(proofs []buildProof, images []cleanupImage) []buildProof
 func cleanupPlan(before Snapshot, images []cleanupImage, proofs []buildProof, asset string, retain []string) []CleanupItem {
 	present := map[string]bool{}
 	proven := map[string]bool{}
-	ambiguous := map[string]bool{}
 	retained := map[string]bool{}
 	for _, image := range before.Images {
 		present[canonicalImageID(image.ID)] = true
@@ -103,13 +101,7 @@ func cleanupPlan(before Snapshot, images []cleanupImage, proofs []buildProof, as
 		if proof.FullID != "" {
 			proven[proof.FullID] = true
 		}
-		if strings.HasPrefix(proof.Reason, "ambiguous") {
-			for _, image := range images {
-				if strings.HasPrefix(strings.TrimPrefix(image.ID, "sha256:"), strings.TrimPrefix(proof.Token, "sha256:")) {
-					ambiguous[image.ID] = true
-				}
-			}
-		}
+
 	}
 	for _, id := range retain {
 		retained[canonicalImageID(id)] = true
@@ -127,8 +119,6 @@ func cleanupPlan(before Snapshot, images []cleanupImage, proofs []buildProof, as
 		case !image.Verified:
 			item.Reason = "image inspection failed; unverified"
 			item.Query = "podman image inspect ID"
-		case ambiguous[image.ID]:
-			item.Reason = "ambiguous build ID"
 		case foreignImageTags(image.RepoTags):
 			item.Reason = "foreign or mixed image tags"
 		case !proven[image.ID]:

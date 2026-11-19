@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestProgressWriterContinuesAfterPersistenceFailure proves the output pipe remains drainable when supplemental publication fails.
+// TestProgressWriterContinuesAfterPersistenceFailure proves the output pipe remains drainable when supplemental publication fails. It exercises the output writer and private artifact boundary seam.
 func TestProgressWriterContinuesAfterPersistenceFailure(t *testing.T) {
 	var log bytes.Buffer
 	writer := &progressWriter{destination: &log, filename: filepath.Join(t.TempDir(), "missing", "progress.json")}
@@ -28,7 +28,7 @@ type failingLog struct{}
 // Write fails every private write without retaining the raw diagnostic publicly.
 func (failingLog) Write([]byte) (int, error) { return 0, errors.New("ENOSPC /secret/sentinel") }
 
-// TestProgressWriterDrainsFailedPrivateLog proves log loss remains explicitly unverified while output still drains.
+// TestProgressWriterDrainsFailedPrivateLog proves log loss remains explicitly unverified while output still drains. It exercises the output writer and private artifact boundary seam.
 func TestProgressWriterDrainsFailedPrivateLog(t *testing.T) {
 	writer := &progressWriter{destination: failingLog{}, filename: filepath.Join(t.TempDir(), "progress.json")}
 	data := []byte("private output\n")

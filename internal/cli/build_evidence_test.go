@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// TestBuildPublishesOnlyPrimaryIID proves the exported CLI emits the builder-controlled iidfile identity despite forged raw output.
+// TestBuildPublishesOnlyPrimaryIID proves the exported CLI emits the builder-controlled iidfile identity despite forged raw output. It exercises the RunWithHost, primary producer, and Cleanup seam.
 func TestBuildPublishesOnlyPrimaryIID(t *testing.T) {
 	f := linuxHost(t)
 	f.responses["info --format json"] = response{Output: `{"host":{"hostname":"engine","security":{"rootless":true},"cgroupVersion":"v2"},"store":{"graphRoot":"/storage"}}`}
@@ -61,6 +61,17 @@ func TestBuildPublishesOnlyPrimaryIID(t *testing.T) {
 	}
 	if !iidCall {
 		t.Fatal("build did not request primary iidfile")
+	}
+	labelled := false
+	for _, call := range calls {
+		for i, arg := range call {
+			if arg == "--layer-label" && i+1 < len(call) && call[i+1] == liverun.BuildInvocationLabel+"="+strings.Repeat("f", 64) {
+				labelled = true
+			}
+		}
+	}
+	if !labelled {
+		t.Fatal("opted-in builder did not receive invocation nonce label")
 	}
 	verifyEmittedCleanup(t, directory, id, forged, asset)
 }
@@ -157,13 +168,17 @@ func verifyEmittedCleanup(t *testing.T, directory, id, forged, asset string) {
 		t.Fatal(err)
 	}
 	engine := &evidenceCleanupExecutor{images: map[string]liverun.Image{}}
-	for _, imageID := range []string{id, forged} {
+	intermediate := "sha256:" + strings.Repeat("c", 64)
+	for _, imageID := range []string{id, forged, intermediate} {
 		engine.images[imageID] = liverun.Image{ID: imageID, Created: now, RepoTags: []string{}, Labels: map[string]string{"io.sandboxed-agents.asset-sha256": asset}}
 	}
+	middle := engine.images[intermediate]
+	middle.Labels[liverun.BuildInvocationLabel] = strings.Repeat("f", 64)
+	engine.images[intermediate] = middle
 	service := &liverun.Service{Executor: engine, Platform: "linux", CoordinationRoot: options.LockRoot, FreeSpace: func(string) (uint64, error) { return 950, nil }}
 	var out bytes.Buffer
 	err := service.Cleanup(context.Background(), liverun.CleanupOptions{RunDir: run}, &out)
-	if len(engine.removed) != 1 || engine.removed[0] != id || !strings.Contains(out.String(), "missing exact build proof") || !strings.Contains(out.String(), `"status":"partial"`) {
+	if len(engine.removed) != 2 || !strings.Contains(strings.Join(engine.removed, ","), id) || !strings.Contains(strings.Join(engine.removed, ","), intermediate) || !strings.Contains(out.String(), "missing exact build proof") || !strings.Contains(out.String(), `"status":"partial"`) {
 		t.Fatalf("primary ID not isolated: removed=%v err=%v out=%s", engine.removed, err, &out)
 	}
 }

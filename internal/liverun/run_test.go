@@ -3,6 +3,7 @@ package liverun_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -87,12 +88,12 @@ func commandHarness(t *testing.T) (*liverun.Service, *fakeHost, []string, string
 	peak := filepath.Join(root, "peak.json")
 	writePeakFixture(t, peak, false)
 	fake := &fakeHost{}
-	svc := &liverun.Service{Executor: fake, FreeSpace: func(string) (uint64, error) { return 900, nil }, Platform: "linux", CoordinationRoot: lock}
+	svc := &liverun.Service{Executor: fake, FreeSpace: func(string) (uint64, error) { return 900, nil }, Platform: "linux", CoordinationRoot: lock, SessionProbe: func() (liverun.SessionPolicy, error) { return liverun.SessionPolicy{}, nil }}
 	args := []string{"prepare", "-checkout", checkout, "-run-dir", run, "-record-dir", record, "-revision", strings.Repeat("a", 40), "-peak-record", peak}
 	return svc, fake, args, run
 }
 
-// TestPrepareCommandChecksRevisionAndHeadroom proves the prepare command saves an inventory without starting builds.
+// TestPrepareCommandChecksRevisionAndHeadroom proves the prepare command saves an inventory without starting builds. It exercises the prepare command at the injected host boundary seam.
 func TestPrepareCommandChecksRevisionAndHeadroom(t *testing.T) {
 	svc, fake, args, run := commandHarness(t)
 	var out bytes.Buffer
@@ -198,7 +199,7 @@ func TestPrepareRequiresRecordedHostPeak(t *testing.T) {
 	}
 }
 
-// TestPrepareWindowsReadsBothFilesystems proves the command binds every engine query and records both headroom values.
+// TestPrepareWindowsReadsBothFilesystems proves the command binds every engine query and records both headroom values. It exercises the prepare command at the injected host boundary seam.
 func TestPrepareWindowsReadsBothFilesystems(t *testing.T) {
 	svc, fake, args, run := commandHarness(t)
 	svc.Platform = "windows"
@@ -242,7 +243,7 @@ func mustReadFile(t *testing.T, path string) []byte {
 	return data
 }
 
-// TestCollectUsesBeforeSnapshotAndSanitizesOutput proves collect classifies the retained inventory rather than querying the changed engine.
+// TestCollectUsesBeforeSnapshotAndSanitizesOutput proves collect classifies the retained inventory rather than querying the changed engine. It exercises the collect command and retained artifacts seam.
 func TestCollectUsesBeforeSnapshotAndSanitizesOutput(t *testing.T) {
 	svc, fake, args, run := commandHarness(t)
 	id := strings.Repeat("b", 64)
@@ -255,7 +256,7 @@ func TestCollectUsesBeforeSnapshotAndSanitizesOutput(t *testing.T) {
 	if err := svc.RunDispatch(context.Background(), args, &out, &out); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(run, "exit.json"), []byte(`{"Code":1}`), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(run, "exit.json"), []byte(`{"Code":1,"Interrupted":false,"EndedAt":"2026-01-01T00:00:00Z"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(run, "suite.log"), []byte("asset-sha256 "+asset+"\nprivate-group /secret/path\n"), 0600); err != nil {
@@ -281,7 +282,7 @@ func TestCollectUsesBeforeSnapshotAndSanitizesOutput(t *testing.T) {
 	}
 }
 
-// TestStatusRejectsUnrecognizedPrivateProgress proves status cannot emit object names or paths from a malformed progress artifact.
+// TestStatusRejectsUnrecognizedPrivateProgress proves status cannot emit object names or paths from a malformed progress artifact. It exercises the status command and process/artifact boundary seam.
 func TestStatusRejectsUnrecognizedPrivateProgress(t *testing.T) {
 	svc, _, args, run := commandHarness(t)
 	var out bytes.Buffer
@@ -347,14 +348,14 @@ func TestPrepareWindowsRefusesInvalidMachineEvidence(t *testing.T) {
 	}
 }
 
-// TestCollectPreservesPreviousDurationsAfterFailure proves a failed collector cannot turn an old file into current evidence.
+// TestCollectPreservesPreviousDurationsAfterFailure proves a failed collector cannot turn an old file into current evidence. It exercises the collect command and retained artifacts seam.
 func TestCollectPreservesPreviousDurationsAfterFailure(t *testing.T) {
 	svc, fake, args, run := commandHarness(t)
 	var out bytes.Buffer
 	if err := svc.RunDispatch(context.Background(), args, &out, &out); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(run, "exit.json"), []byte(`{"Code":1}`), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(run, "exit.json"), []byte(`{"Code":1,"Interrupted":false,"EndedAt":"2026-01-01T00:00:00Z"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(run, "suite.log"), []byte("no completed observations\n"), 0600); err != nil {
@@ -407,5 +408,77 @@ func writePeakFixture(t *testing.T, path string, windows bool) {
 	}
 	if err = os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestPrepareAcceptsReasonedLegacyPeak proves the prepare command honors the original host-bound record contract without mandatory new component fields. It exercises the prepare command at the injected host boundary seam.
+func TestPrepareAcceptsReasonedLegacyPeak(t *testing.T) {
+	svc, _, args, _ := commandHarness(t)
+	payload := `{"EngineID":"engine:/private/storage","PeakAdditionalBytes":100,"Basis":"recorded peak of documented complete fixture run before cleanup"}`
+	if err := os.WriteFile(args[len(args)-1], []byte(payload), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := svc.RunDispatch(context.Background(), args, &out, &out); err != nil {
+		t.Fatalf("original peak format refused: %v", err)
+	}
+}
+
+// TestPrepareRefusesRestrictiveSessionJob proves the prepare command refuses an unsafe launching job before any build or engine query. It exercises the prepare command at the injected host boundary seam.
+func TestPrepareRefusesRestrictiveSessionJob(t *testing.T) {
+	svc, fake, args, _ := commandHarness(t)
+	svc.SessionProbe = func() (liverun.SessionPolicy, error) {
+		return liverun.SessionPolicy{InJob: true, KillOnClose: true}, nil
+	}
+	var out bytes.Buffer
+	err := svc.RunDispatch(context.Background(), args, &out, &out)
+	if err == nil || !strings.Contains(err.Error(), "session-detachment") {
+		t.Fatalf("restrictive session accepted: %v", err)
+	}
+	if len(fake.calls) != 0 {
+		t.Fatal("unsafe session reached host engine/build boundary")
+	}
+}
+
+// TestPrepareRejectsBoundBelowObservedPeak proves the prepare command/artifact seam preserves the supplied record but refuses a bound contradicted by matching observed filesystem facts.
+func TestPrepareRejectsBoundBelowObservedPeak(t *testing.T) {
+	svc, _, args, run := commandHarness(t)
+	var options liverun.Options
+	var out bytes.Buffer
+	if err := svc.RunDispatch(context.Background(), args, &out, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(mustReadFile(t, filepath.Join(run, "options.json")), &options); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte("engine:/private/storage"))
+	observed := filepath.Join(options.LockRoot, fmt.Sprintf("%x-observed-peak.json", digest))
+	payload := liverun.PeakRecord{EngineID: "engine:/private/storage", Filesystems: []liverun.PeakFilesystem{{Name: "engine", Path: "/private/storage", SampledGrowthBytes: 101, Samples: 2}}}
+	cleanupArtifact(t, options.LockRoot, filepath.Base(observed), payload)
+	bound := mustReadFile(t, args[len(args)-1])
+	out.Reset()
+	if err := svc.RunDispatch(context.Background(), args, &out, &out); err == nil || !strings.Contains(err.Error(), "peak-bound") {
+		t.Fatalf("known undersized bound accepted: %v", err)
+	}
+	if !bytes.Equal(bound, mustReadFile(t, args[len(args)-1])) {
+		t.Fatal("admitted source record was overwritten")
+	}
+}
+
+// TestStatusSeparatesObservedPeakAndAdmittedBound proves the status command/artifact seam reports a retained observation independently of the original admitted bound.
+func TestStatusSeparatesObservedPeakAndAdmittedBound(t *testing.T) {
+	svc, _, args, run := commandHarness(t)
+	var out bytes.Buffer
+	if err := svc.RunDispatch(context.Background(), args, &out, &out); err != nil {
+		t.Fatal(err)
+	}
+	cleanupArtifact(t, run, "exit.json", map[string]any{"Code": 0, "Interrupted": false, "EndedAt": time.Now().UTC()})
+	cleanupArtifact(t, run, "peak.json", liverun.PeakRecord{EngineID: "engine:/private/storage", Revision: strings.Repeat("a", 40)})
+	out.Reset()
+	if err := svc.RunDispatch(context.Background(), []string{"status", "-run-dir", run}, &out, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"peak_recorded":true`) || !strings.Contains(out.String(), `"peak_bound_available":true`) {
+		t.Fatalf("admitted bound conflated with observation: %s", &out)
 	}
 }

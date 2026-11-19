@@ -3,6 +3,7 @@ package liverun
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/capture"
@@ -22,6 +24,7 @@ type exitEvidence struct {
 	Interrupted    bool
 	LogUnverified  bool
 	PeakUnverified bool
+	FailedCheck    string
 }
 
 // startedRun records only the owned supervisor identity and preparation duration.
@@ -83,8 +86,18 @@ func (s *Service) launch(ctx context.Context, args []string, out, diagnostics io
 	}
 	cmd := exec.Command(executable, "_supervise", "-run-dir", directory)
 	cmd.Dir = options.Checkout
-	detachCommand(cmd)
+	policy, err := s.sessionPolicy()
+	if err == nil {
+		err = policy.launchable()
+	}
+	if err != nil {
+		return failCheck(options, "session-detachment", err)
+	}
+	detachCommand(cmd, policy)
 	if err = cmd.Start(); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			return failCheck(options, "session-detachment", err)
+		}
 		return fmt.Errorf("start detached supervisor: %w", err)
 	}
 	defer cmd.Process.Release()
@@ -112,6 +125,9 @@ func (s *Service) launch(ctx context.Context, args []string, out, diagnostics io
 			}
 			var ended exitEvidence
 			if readJSON(filepath.Join(directory, "exit.json"), &ended) == nil {
+				if ended.FailedCheck == "session-detachment" {
+					return fmt.Errorf("check session-detachment failed; detached supervisor remained in a launching job or policy is unverified")
+				}
 				return fmt.Errorf("detached startup failed; private diagnostic retained")
 			}
 		}
@@ -136,20 +152,34 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 	logUnverified := false
 	peakUnverified := false
 	var suiteEndedAt time.Time
+	failedCheck := ""
+	var engineLock *os.File
+	activeFile := ""
 	defer func() {
 		if suiteEndedAt.IsZero() {
 			suiteEndedAt = time.Now().UTC()
 		}
-		_, _, err := completion(directory, &exitEvidence{Code: code, EndedAt: suiteEndedAt, LogUnverified: logUnverified, PeakUnverified: peakUnverified})
+		_, _, err := completion(directory, &exitEvidence{Code: code, EndedAt: suiteEndedAt, LogUnverified: logUnverified, PeakUnverified: peakUnverified, FailedCheck: failedCheck})
 		if err != nil && result == nil {
 			result = err
 		}
+		if activeFile != "" {
+			_ = os.Remove(activeFile)
+		}
+		if engineLock != nil {
+			_ = engineLock.Close()
+		}
 	}()
+	policy, policyErr := s.sessionPolicy()
+	if policyErr != nil || policy.InJob {
+		failedCheck = "session-detachment"
+		return failCheck(options, "session-detachment", fmt.Errorf("supervisor remains in inherited job or policy query failed: %v", policyErr))
+	}
 	snapshot, lock, err := s.prepareLocked(ctx, options)
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
+	engineLock = lock
 	finishPeak := s.samplePeak(ctx, options, snapshot)
 	defer func() { peakUnverified = !finishPeak() }()
 	if _, err = os.Stat(filepath.Join(directory, "started.json")); err == nil {
@@ -178,7 +208,7 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 	if err = writeJSON(activePath(options, snapshot.EngineID), active); err != nil {
 		return err
 	}
-	defer os.Remove(activePath(options, snapshot.EngineID))
+	activeFile = activePath(options, snapshot.EngineID)
 
 	buildDirectory, err := createBuildChannel(options, snapshot)
 	if err != nil {
@@ -278,6 +308,10 @@ func completion(directory string, candidate *exitEvidence) (exitEvidence, bool, 
 	}
 	err = readCompletion(filepath.Join(directory, "exit.json"), &ended)
 	if err == nil {
+		data, textErr := os.ReadFile(filepath.Join(directory, "exit-status"))
+		if textErr == nil && strings.TrimSpace(string(data)) == strconv.Itoa(ended.Code) {
+			return ended, true, nil
+		}
 		return ended, true, writeExitText(directory, ended.Code)
 	}
 	if !os.IsNotExist(err) {

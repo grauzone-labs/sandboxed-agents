@@ -25,7 +25,7 @@ func buildChannelFixture(t *testing.T) (Options, Snapshot, string) {
 	return o, before, directory
 }
 
-// TestBuildChannelConcurrentPublication proves independent primary producers publish complete typed events without lost updates.
+// TestBuildChannelConcurrentPublication proves independent primary producers publish complete typed events without lost updates. It exercises the CaptureBuildResult producer and typed private artifacts seam.
 func TestBuildChannelConcurrentPublication(t *testing.T) {
 	o, before, directory := buildChannelFixture(t)
 	var workers sync.WaitGroup
@@ -47,7 +47,7 @@ func TestBuildChannelConcurrentPublication(t *testing.T) {
 	}
 }
 
-// TestBuildChannelEvidenceFailuresPreserveBuildOutcome proves missing/ambiguous primary evidence is supplemental and blocks cleanup authority.
+// TestBuildChannelEvidenceFailuresPreserveBuildOutcome proves missing/ambiguous primary evidence is supplemental and blocks cleanup authority. It exercises the CaptureBuildResult producer and typed private artifacts seam.
 func TestBuildChannelEvidenceFailuresPreserveBuildOutcome(t *testing.T) {
 	for _, kind := range []string{"missing-iid", "mismatch", "inspect-error", "publication-error", "build-error", "malformed-event"} {
 		t.Run(kind, func(t *testing.T) {
@@ -94,14 +94,20 @@ func TestBuildChannelEvidenceFailuresPreserveBuildOutcome(t *testing.T) {
 				}
 			}
 			results, readErr := readBuildResults(o, before)
-			if readErr == nil || len(results) != 0 {
+			if kind == "build-error" {
+				if readErr != nil || len(results) != 0 {
+					t.Fatalf("returned failed build blocked channel: %v %v", results, readErr)
+				}
+				return
+			}
+			if readErr == nil || kind != "malformed-event" && len(results) != 0 {
 				t.Fatalf("incomplete primary evidence admitted: %v %v", results, readErr)
 			}
 		})
 	}
 }
 
-// TestBuildChannelDisabledPreservesBuildAPI proves ordinary builds request neither iidfile nor inspection.
+// TestBuildChannelDisabledPreservesBuildAPI proves ordinary builds request neither iidfile nor inspection. It exercises the CaptureBuildResult producer and typed private artifacts seam.
 func TestBuildChannelDisabledPreservesBuildAPI(t *testing.T) {
 	inspected := false
 	err := CaptureBuildResult("", "unused", "", func(path string) error {

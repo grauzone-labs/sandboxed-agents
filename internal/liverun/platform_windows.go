@@ -28,8 +28,12 @@ func lockFile(file *os.File) error {
 }
 
 // detachCommand isolates the supervisor from the launching console without requiring elevation.
-func detachCommand(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP, HideWindow: true}
+func detachCommand(cmd *exec.Cmd, policy SessionPolicy) {
+	flags := uint32(windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP)
+	if policy.InJob && policy.Breakaway && !policy.SilentBreakaway {
+		flags |= windows.CREATE_BREAKAWAY_FROM_JOB
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: flags, HideWindow: true}
 }
 
 // processIdentity returns a live process's creation timestamp without administrator access.
@@ -162,3 +166,28 @@ func suiteAlive(ref processRef) bool { return ref.live() }
 
 // abortSuite stops the owned go process; closing its prepared job stops every descendant.
 func abortSuite(cmd *exec.Cmd) error { return cmd.Process.Kill() }
+
+// isProcessInJob calls the documented membership query absent from the x/sys wrapper surface.
+var isProcessInJob = windows.NewLazySystemDLL("kernel32.dll").NewProc("IsProcessInJob")
+
+// sessionJobPolicy reads the current process's immediate job limits without administrator rights.
+func sessionJobPolicy() (SessionPolicy, error) {
+	var member int32
+	ok, _, err := isProcessInJob.Call(uintptr(windows.CurrentProcess()), 0, uintptr(unsafe.Pointer(&member)))
+	if ok == 0 {
+		return SessionPolicy{}, fmt.Errorf("query job membership: %w", err)
+	}
+	p := SessionPolicy{InJob: member != 0}
+	if !p.InJob {
+		return p, nil
+	}
+	var limits windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+	if err := windows.QueryInformationJobObject(0, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)), nil); err != nil {
+		return p, err
+	}
+	flags := limits.BasicLimitInformation.LimitFlags
+	p.KillOnClose = flags&windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE != 0
+	p.Breakaway = flags&windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK != 0
+	p.SilentBreakaway = flags&windows.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK != 0
+	return p, nil
+}

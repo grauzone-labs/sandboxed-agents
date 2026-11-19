@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// TestStatusPreservesCompletionPublishedDuringLiveness proves status rechecks authoritative exit artifacts after a blocked ownership read.
+// TestStatusPreservesCompletionPublishedDuringLiveness proves status rechecks authoritative exit artifacts after a blocked ownership read. It exercises the status command and process/artifact boundary seam.
 func TestStatusPreservesCompletionPublishedDuringLiveness(t *testing.T) {
 	svc, _, args, run := commandHarness(t)
 	var out bytes.Buffer

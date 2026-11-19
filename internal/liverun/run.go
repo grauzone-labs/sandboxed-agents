@@ -35,6 +35,8 @@ type Service struct {
 	FreeSpace   DiskReader
 	Platform    string
 	MachineDisk func(string) (string, error)
+	// SessionProbe injects process-job observations at the host boundary.
+	SessionProbe func() (SessionPolicy, error)
 	// CoordinationRoot injects an isolated host namespace in offline fixtures; production uses the user cache.
 	CoordinationRoot string
 	// BuildEvidence injects a trusted producer at the host boundary for offline policy tests.
