@@ -57,13 +57,14 @@ The three gates are separate. An offline result is never presented as a live or 
 The live suite is the test `TestLiveSuite` in `cmd/sandboxed-agents`. It runs only with `SANDBOXED_AGENTS_LIVE_TESTS=1`; without that exact value the offline suite skips it and calls no real Podman. It takes its controller group from `SANDBOXED_AGENTS_GROUP`, which must name a dedicated group other than `default` that matches `^[a-z0-9][a-z0-9-]*$`, and the directory for its record from `SANDBOXED_AGENTS_LIVE_RECORD_DIR`. With the `default` group, an unset or invalid group, or no record directory, the suite exits non-zero before it calls Podman and writes no record. Its sandboxes are `live-lifecycle`, `live-update`, `live-agent`, `live-t3code`, and, in the image coverage, `image-none`, `image-dotnet`, `image-playwright`, `image-azure`, and `image-native`; because the group is a namespace of its own, these names cannot collide with sandboxes of another group.
 
 ```sh
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 SANDBOXED_AGENTS_LIVE_TESTS=1 \
 SANDBOXED_AGENTS_GROUP=live \
-SANDBOXED_AGENTS_LIVE_RECORD_DIR="$HOME/live-suite-records" \
+SANDBOXED_AGENTS_LIVE_RECORD_DIR="$HOME/live-suite-records/$RUN_ID" \
   go test ./cmd/sandboxed-agents -run '^TestLiveSuite$' -timeout 120m -v
 ```
 
-Run it from the repository root of a clean checkout at the commit under test, with the Go version from `go.mod` on `PATH`; the record names that commit. `$HOME/live-suite-records` stands for a path you replace: set `SANDBOXED_AGENTS_LIVE_RECORD_DIR` to a new, empty directory for every invocation, such as `$HOME/live-suite-records/$RUN_ID` with a unique `RUN_ID` that you choose, and never reuse a directory ([why](images.md#live-image-tests)). Add `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1` to select the image coverage, which a release run must include. The suite's cases, each a subtest and a check of the record:
+Run it from the repository root of a clean checkout at the commit under test, with the Go version from `go.mod` on `PATH`; the record names that commit. The block sets a new `RUN_ID` itself, so the record directory `$HOME/live-suite-records/$RUN_ID` is new and empty for every invocation; never reuse a directory ([why](images.md#live-image-tests)). Add `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1` to select the image coverage, which a release run must include. The suite's cases, each a subtest and a check of the record:
 
 | Check | What it does |
 |---|---|

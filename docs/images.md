@@ -159,14 +159,15 @@ The live suite also checks the swap limit: a new sandbox's `podman inspect` show
 
 The suite's `t3code` case also checks service restore on a real successful replacement from the base image to `native` and on a forced readiness rollback to that replacement. It verifies the Tool's pin, live HTTP service, and UID/GID 1000 after both, and compares the sandbox's publish, network, hardening, resource limits, and three volumes with their pre-enable values. This adds no Tailscale login or phone reachability coverage; those remain manually recorded ([live suite](releases.md#live-suite)).
 
-**Use a new record directory for each run.** In the examples below, `$HOME/live-suite-records` and `live-suite-records` in the PowerShell example stand for a path that you replace. Running by hand, set `SANDBOXED_AGENTS_LIVE_RECORD_DIR` to a new, empty directory for every invocation, and never reuse one: a directory left by an earlier run can keep that run's files, including `engine-failures-<platform>.json`, which then are not this run's evidence ([Whose file it is](#engine-failure-snapshots)). Choose a new unique `RUN_ID` yourself and build the path from it, for example `RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"` in Bash or `$runId = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')` in PowerShell, and the directory `$HOME/live-suite-records/$RUN_ID` or `Join-Path $env:USERPROFILE "live-suite-records\$runId"`. Use that same directory in the collector's `-record` path. Nothing in these examples sets `RUN_ID`.
+**Use a new record directory for each run.** Running by hand, set `SANDBOXED_AGENTS_LIVE_RECORD_DIR` to a new, empty directory for every invocation, and never reuse one: a directory left by an earlier run can keep that run's files, including `engine-failures-<platform>.json`, which then are not this run's evidence ([Whose file it is](#engine-failure-snapshots)). The block that runs the suite below sets a new `RUN_ID` (`$runId` in PowerShell) itself and builds the directory `$HOME/live-suite-records/$RUN_ID` (`live-suite-records\$runId` under `$env:USERPROFILE`) from it. The collector block that follows uses that same value and directory from the same shell session, so paste it into the session that ran the suite and never set a second ID there: its `-record` path has to name the record that this run wrote, and its first line stops when no ID is set.
 
 Because `build` renews every image of the current executable on the Podman host, the coverage has its own opt-in beside the suite's variables, `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1`:
 
 ```sh
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 SANDBOXED_AGENTS_LIVE_TESTS=1 \
 SANDBOXED_AGENTS_GROUP=live \
-SANDBOXED_AGENTS_LIVE_RECORD_DIR="$HOME/live-suite-records" \
+SANDBOXED_AGENTS_LIVE_RECORD_DIR="$HOME/live-suite-records/$RUN_ID" \
 SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1 \
   go test ./cmd/sandboxed-agents -run '^TestLiveSuite$' -timeout 120m -v
 ```
@@ -223,9 +224,10 @@ On Linux, in Bash:
 ```sh
 PRIVATE="$HOME/live-suite-private"
 mkdir -p "$PRIVATE" && chmod 700 "$PRIVATE"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 SANDBOXED_AGENTS_LIVE_TESTS=1 \
 SANDBOXED_AGENTS_GROUP=live \
-SANDBOXED_AGENTS_LIVE_RECORD_DIR="$HOME/live-suite-records" \
+SANDBOXED_AGENTS_LIVE_RECORD_DIR="$HOME/live-suite-records/$RUN_ID" \
 SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1 \
   go test ./cmd/sandboxed-agents -run '^TestLiveSuite$' -timeout 120m -v \
   > "$PRIVATE/live-suite-linux.log" 2>&1
@@ -239,7 +241,8 @@ $private = Join-Path $env:USERPROFILE 'live-suite-private'
 New-Item -ItemType Directory -Force $private | Out-Null
 $env:SANDBOXED_AGENTS_LIVE_TESTS = '1'
 $env:SANDBOXED_AGENTS_GROUP = 'live'
-$env:SANDBOXED_AGENTS_LIVE_RECORD_DIR = Join-Path $env:USERPROFILE 'live-suite-records'
+$runId = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+$env:SANDBOXED_AGENTS_LIVE_RECORD_DIR = Join-Path $env:USERPROFILE "live-suite-records\$runId"
 $env:SANDBOXED_AGENTS_LIVE_IMAGES_TESTS = '1'
 go test ./cmd/sandboxed-agents -run '^TestLiveSuite$' -timeout 120m -v 2>&1 |
   Out-File -Encoding utf8 -FilePath (Join-Path $private 'live-suite-windows-11.log')
@@ -269,8 +272,9 @@ The revision, the platform (`linux` or `windows-11`), and the selected coverage 
 On Linux:
 
 ```sh
+: "${RUN_ID:?use the RUN_ID that the suite block of this same run set}"
 go run ./internal/validationduration/cmd/retain-durations \
-  -record "$HOME/live-suite-records/live-suite-linux.json" \
+  -record "$HOME/live-suite-records/$RUN_ID/live-suite-linux.json" \
   -host-load idle -base-image absent -build-cache cold \
   < "$PRIVATE/live-suite-linux.log"
 ```
@@ -278,6 +282,7 @@ go run ./internal/validationduration/cmd/retain-durations \
 On Windows, where PowerShell has no `<` redirection and the log is piped in:
 
 ```powershell
+if (-not $env:SANDBOXED_AGENTS_LIVE_RECORD_DIR) { throw 'use the session that ran the suite block of this same run' }
 Get-Content -Encoding utf8 (Join-Path $private 'live-suite-windows-11.log') |
   go run ./internal/validationduration/cmd/retain-durations `
     -record (Join-Path $env:SANDBOXED_AGENTS_LIVE_RECORD_DIR 'live-suite-windows-11.json') `
@@ -291,8 +296,9 @@ Use the values you observed in place of `idle`, `absent`, and `cold`. The collec
 On Linux:
 
 ```sh
+: "${RUN_ID:?use the RUN_ID that the suite block of this same run set}"
 go run ./internal/validationduration/cmd/retain-durations \
-  -record "$HOME/live-suite-records/live-suite-linux.json" \
+  -record "$HOME/live-suite-records/$RUN_ID/live-suite-linux.json" \
   -host-load idle -base-image absent -build-cache cold \
   -preparation-start "$PREP_START" -preparation-end "$PREP_END" \
   -post-suite-start "$POST_START" -post-suite-end "$POST_END" \
@@ -346,7 +352,7 @@ When an unexpected operation fails, the suite can record what the engine reports
 
 `samples_truncated` starts as `false` and becomes `true` when an eligible unexpected failure cannot obtain one of the run's four snapshot slots. It marks omitted coverage; it does not count the omitted failures. A slot is reserved before the queries begin, so concurrent failures cannot exceed the cap, and a snapshot whose facts are unverified still uses a slot. An absent file, an empty list, or `samples_truncated: false` is not proof that no engine failure occurred, especially after an interruption or a failed write: a later failed write can leave a file that holds only the samples before it, so such a file is never proof that the run's coverage was complete.
 
-**Whose file it is.** The file is this invocation's evidence only when it was written in a fresh, empty record directory that this invocation alone used (running by hand, a new directory for every invocation, as described under Live image tests) (the [host commands](#running-a-live-run-with-the-host-commands) use a new one for each run, and `prepare` refuses a directory that already holds a suite record), and the suite's log has no line `live engine failure evidence could not be initialized`. Its schema, revision, and platform fields do not show which invocation wrote it. The suite writes the empty file before its first command, but it can stop earlier (for example when it cannot resolve the commit or the record directory), and the first write can fail with only that log line; then a file that an earlier run left in a reused directory stays in place, also at the same revision. The suite writes no marker of a successful initialization, so a file in a reused directory, or from a run whose initialization failed or never ran, is unverified and is not reported as this run's.
+**Whose file it is.** The file is this invocation's evidence only when it was written in a fresh, empty record directory that this invocation alone used (by hand, a new directory for every invocation as described under [Live image tests](#live-image-tests); the [host commands](#running-a-live-run-with-the-host-commands) use a new one for each run, and `prepare` refuses a directory that already holds a suite record), and the suite's log has no line `live engine failure evidence could not be initialized`. Its schema, revision, and platform fields do not show which invocation wrote it. The suite writes the empty file before its first command, but it can stop earlier (for example when it cannot resolve the commit or the record directory), and the first write can fail with only that log line; then a file that an earlier run left in a reused directory stays in place, also at the same revision. The suite writes no marker of a successful initialization, so a file in a reused directory, or from a run whose initialization failed or never ran, is unverified and is not reported as this run's.
 
 **When it is written.** The suite writes the file empty before its first command and atomically replaces it when each admitted snapshot completes, before that failing invocation returns to its case and before the case's cleanup. The first failure that the cap suppresses also writes `samples_truncated: true`; later suppressed failures run no diagnostic query and write nothing more, so a run makes at most six writes of the file: the empty start, four completed samples, and that first suppression. A later interruption keeps the completed writes; an observation still in flight may be absent. The observation points include a failed CLI invocation, a failed command in a terminal, a failed direct Podman call (the SSH host-key query included), and a failed image archive. The normal negative probes, `container exists` and `volume exists` with exit status 1, are excluded. The suite also suppresses automatic sampling around the calls it expects to fail: the forced readiness rollback of the `update` and `t3code` cases and the deterministic staging failure of `tools update`. Each runs on a host copy without automatic sampling, while the invocation timings and the original assertions stay active. A result that satisfies its expected-failure assertion takes no snapshot. A wrong failure, such as an allocator error, or an unexpected success is observed through the original host before that same assertion fails the case and the cleanup runs, subject to the same four-snapshot cap. When the invocation succeeded unexpectedly, a fixed mismatch error triggers the observation only: the assertion still receives its original nil error and output, the case still fails, and the invocation's timing still records `pass`. The observation reports an assertion mismatch; it does not claim that the successful process returned an error. Other calls, the Tool break and repair steps included, keep their snapshots. A sample is not by itself a product defect or a failing case.
 
@@ -395,7 +401,7 @@ New-Item -ItemType Directory -Force $private | Out-Null
 go build -o (Join-Path $private 'live-run.exe') ./internal/liverun/cmd/live-run
 ```
 
-**Use two fresh directories for every run.** Choose a new unique `RUN_ID` first, for example `RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"`; the examples below use `$RUN_ID` in the directory names, and nothing else sets it. The private run directory is new for each run and single use: `prepare` creates it with mode `0700`, it holds the suite log, the snapshots, and every diagnostic, and a run directory whose suite has started is refused. After any failed `run`, including a startup refusal, use a new `RUN_ID` and new private and record directories: a `run` that was attempted leaves `launching.json` in its run directory, and a retry there is refused with `run directory already launched`. Run `prepare` and `run` from the same shell, with the same `PATH` and Go environment (`GOTOOLCHAIN` included), because `run` repeats the Go and engine checks in the environment it starts from and refuses a toolchain that differs. The record directory is a second fresh directory that receives the schema 2 record and the sanitized files, and `prepare` refuses one that already holds `live-suite-linux.json` or `live-suite-windows-11.json`, so an earlier invocation's record cannot pass for this one. Neither directory may lie inside the other, and neither may lie inside the checkout, so that the run itself leaves no untracked file there. Keep the private directory out of anything that is shared.
+**Use two fresh directories for every run.** The setup block below sets a new unique `RUN_ID` (`$runId` in PowerShell) once for the run, and the phase blocks use it in the directory names. The private run directory is new for each run and single use: `prepare` creates it with mode `0700`, it holds the suite log, the snapshots, and every diagnostic, and a run directory whose suite has started is refused. After any failed `run`, including a startup refusal, use a new `RUN_ID` and new private and record directories: a `run` that was attempted leaves `launching.json` in its run directory, and a retry there is refused with `run directory already launched`. Run `prepare` and `run` from the same shell, with the same `PATH` and Go environment (`GOTOOLCHAIN` included), because `run` repeats the Go and engine checks in the environment it starts from and refuses a toolchain that differs. The record directory is a second fresh directory that receives the schema 2 record and the sanitized files, and `prepare` refuses one that already holds `live-suite-linux.json` or `live-suite-windows-11.json`, so an earlier invocation's record cannot pass for this one. Neither directory may lie inside the other, and neither may lie inside the checkout, so that the run itself leaves no untracked file there. Keep the private directory out of anything that is shared.
 
 **Prepare.** `prepare` takes the exact 40-character revision, the run directory, the record directory, and the peak record described below:
 
