@@ -23,12 +23,13 @@ type buildManifest struct {
 	Invocation, Revision, EngineID string
 }
 
-// buildPublication holds one primary final result or typed build attempt independently of all output text.
+// buildPublication carries a manifest-bound final, attempt, retention-only input, or unconfirmed-build observation independently of output text.
 type buildPublication struct {
 	Version                        int
 	Invocation, Revision, EngineID string
 	Result                         BuildResult
 	Input                          *registryBuildInput `json:",omitempty"`
+	Unconfirmed                    bool                `json:",omitempty"`
 }
 
 // createBuildChannel creates the private per-invocation producer channel before the suite starts.
@@ -101,7 +102,11 @@ func CaptureSingleCommitBuild(directory, tag, asset string, reuseNotExcluded boo
 // Artifacts are supplemental: every path returns the original build error rather than a telemetry failure.
 func captureBuildResult(directory, tag, asset, policy string, reuse bool, build func(string) error, inspect func(string) (string, error)) error {
 	m, err := readBuildManifest(directory)
-	if directory == "" || err != nil || len(asset) != 64 || !cleanupProjectTag(tag) || !strings.HasSuffix(tag, "-"+asset) {
+	if directory == "" || err != nil {
+		return build("")
+	}
+	if len(asset) != 64 || !cleanupProjectTag(tag) || !strings.HasSuffix(tag, "-"+asset) {
+		_ = RecordUnconfirmedBuild(directory)
 		return build("")
 	}
 	attemptID, err := newBuildAttemptID()
@@ -202,10 +207,11 @@ func readBuildChannel(o Options, before Snapshot) (state buildChannelState) {
 		return state
 	}
 	attempts := map[string]BuildResult{}
+	invalidAttempts := map[string]bool{}
 	closed := map[string]BuildResult{}
 	groups := map[string][]BuildResult{}
 	var total int64
-	invalid := false
+	invalid, incomplete := false, false
 	for _, entry := range entries {
 		name := entry.Name()
 		if name == "manifest.json" {
@@ -228,15 +234,24 @@ func readBuildChannel(o Options, before Snapshot) (state buildChannelState) {
 			invalid = true
 			continue
 		}
+		if strings.HasPrefix(name, "unconfirmed-") {
+			// This observation has no image identity and can only withdraw completeness.
+			if event.Version == 2 && event.Invocation == m.Invocation && event.Revision == m.Revision && event.EngineID == m.EngineID && event.Unconfirmed && event.Input == nil && event.Result == (BuildResult{}) {
+				incomplete = true
+			} else {
+				invalid = true
+			}
+			continue
+		}
 		if strings.HasPrefix(name, "input-") {
-			if event.Version == 2 && event.Invocation == m.Invocation && event.Revision == m.Revision && event.EngineID == m.EngineID && event.Input != nil && event.Result == (BuildResult{}) && validRegistryInput(*event.Input) {
+			if !event.Unconfirmed && event.Version == 2 && event.Invocation == m.Invocation && event.Revision == m.Revision && event.EngineID == m.EngineID && event.Input != nil && event.Result == (BuildResult{}) && validRegistryInput(*event.Input) {
 				state.Inputs[event.Input.ID] = true
 			} else {
 				invalid = true
 			}
 			continue
 		}
-		if (!isAttempt && !strings.HasPrefix(name, "result-")) || event.Input != nil || !validBuildPublication(event, m, isAttempt) {
+		if (!isAttempt && !strings.HasPrefix(name, "result-")) || event.Unconfirmed || event.Input != nil || !validBuildPublication(event, m, isAttempt) {
 			invalid = true
 			continue
 		}
@@ -247,6 +262,12 @@ func readBuildChannel(o Options, before Snapshot) (state buildChannelState) {
 			state.Open = true
 		}
 		if isAttempt {
+			_, duplicate := attempts[result.AttemptID]
+			if duplicate || invalidAttempts[result.AttemptID] || name != "attempt-"+result.AttemptID+".json" {
+				invalid = true
+				invalidAttempts[result.AttemptID] = true
+				continue
+			}
 			attempts[result.AttemptID] = result
 			continue
 		}
@@ -269,7 +290,7 @@ func readBuildChannel(o Options, before Snapshot) (state buildChannelState) {
 	for _, id := range groupIDs {
 		group := groups[id]
 		first := group[0]
-		consistent := true
+		consistent := !invalidAttempts[id]
 		for _, r := range group[1:] {
 			if r != first {
 				consistent = false
@@ -292,12 +313,27 @@ func readBuildChannel(o Options, before Snapshot) (state buildChannelState) {
 			state.Open = true
 		}
 	}
-	if invalid {
+	if invalid || incomplete {
 		state.Err = fmt.Errorf("some producer evidence incomplete or invalid")
 		state.Complete = false
 		state.Open = true
 	}
 	return state
+}
+
+// RecordUnconfirmedBuild withdraws complete accounting when a build must run without confirmed capture preconditions.
+// It validates the manifest before writing, carries no image or host diagnostic, and grants no ownership authority.
+// Publication failure falls back to the run's unverified marker; callers preserve the original build result.
+func RecordUnconfirmedBuild(directory string) error {
+	m, err := readBuildManifest(directory)
+	if err != nil {
+		return err
+	}
+	err = publishBuildEvent(directory, "unconfirmed-", buildPublication{Version: 2, Invocation: m.Invocation, Revision: m.Revision, EngineID: m.EngineID, Unconfirmed: true})
+	if err != nil {
+		markBuildChannelUnverified(directory)
+	}
+	return err
 }
 
 // ConfirmBuildEngine binds a producer's primary engine-info query to the private invocation.

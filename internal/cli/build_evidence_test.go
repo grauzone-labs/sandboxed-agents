@@ -135,6 +135,15 @@ func (e *evidenceCleanupExecutor) Execute(_ context.Context, in liverun.Invocati
 // verifyEmittedCleanup exercises actual emitter-to-collector-to-cleanup flow and proves raw forged IDs stay retained.
 func verifyEmittedCleanup(t *testing.T, directory, id, forged, asset string) {
 	t.Helper()
+	engine, output := collectEmittedCleanup(t, directory, id, forged, asset)
+	if len(engine.removed) != 1 || engine.removed[0] != id || !strings.Contains(output, "not committed by this run's builds") || !strings.Contains(output, `"status":"complete"`) {
+		t.Fatalf("primary ID not isolated: removed=%v out=%s", engine.removed, output)
+	}
+}
+
+// collectEmittedCleanup crosses the production journal-to-Cleanup seam with independently inspected full IDs and no proof adapter.
+func collectEmittedCleanup(t *testing.T, directory, id, forged, asset string) (*evidenceCleanupExecutor, string) {
+	t.Helper()
 	run := filepath.Dir(directory)
 	root := filepath.Dir(run)
 	options := liverun.Options{Checkout: filepath.Join(root, "checkout"), RunDir: run, RecordDir: filepath.Join(root, "records"), LockRoot: filepath.Join(root, "locks"), Revision: strings.Repeat("a", 40)}
@@ -177,10 +186,8 @@ func verifyEmittedCleanup(t *testing.T, directory, id, forged, asset string) {
 
 	service := &liverun.Service{Executor: engine, Platform: "linux", CoordinationRoot: options.LockRoot, FreeSpace: func(string) (uint64, error) { return 950, nil }}
 	var out bytes.Buffer
-	err := service.Cleanup(context.Background(), liverun.CleanupOptions{RunDir: run}, &out)
-	if len(engine.removed) != 1 || engine.removed[0] != id || !strings.Contains(out.String(), "not committed by this run's builds") || !strings.Contains(out.String(), `"status":"complete"`) {
-		t.Fatalf("primary ID not isolated: removed=%v err=%v out=%s", engine.removed, err, &out)
-	}
+	_ = service.Cleanup(context.Background(), liverun.CleanupOptions{RunDir: run}, &out)
+	return engine, out.String()
 }
 
 // TestLiveEvidencePreservesBuildFailure proves the RunWithHost/fake Podman seam preserves a real build failure and never retries based on raw output while applying layer-free evidence.

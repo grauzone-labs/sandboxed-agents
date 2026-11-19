@@ -124,7 +124,9 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 	state := buildChannelState{}
 	var results []BuildResult
 	var proofErr error
-	if s.BuildEvidence != nil {
+	// The policy-test adapter supplies trusted results; production always reads the private channel and applies its vetoes.
+	primaryChannel := s.BuildEvidence == nil
+	if !primaryChannel {
 		results, proofErr = s.BuildEvidence(ctx, run.options.RunDir)
 	} else {
 		state = readBuildChannel(run.options, run.before)
@@ -146,7 +148,7 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 	for id := range state.Inputs {
 		blocked[id] = true
 	}
-	if s.BuildEvidence == nil {
+	if primaryChannel {
 		for _, r := range results {
 			id := canonicalImageID(r.ID)
 			if previous, ok := observedAttempt[id]; ok && previous != r.AttemptID {
@@ -173,7 +175,7 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 			continue
 		}
 		proof := buildProof{Token: result.ID, Step: result.Step, Result: result.Source}
-		if s.BuildEvidence == nil && blocked[canonicalImageID(result.ID)] {
+		if primaryChannel && blocked[canonicalImageID(result.ID)] {
 			proof.Reason = "primary result reuse not excluded; retained"
 		}
 		trusted = append(trusted, proof)
@@ -192,11 +194,11 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 		}
 	}
 	plan := cleanupPlan(run.before, current, record, asset, options.Retain)
+	if primaryChannel {
+		accountBuildCoverage(run, plan, record, current, state)
+	}
 	if err = cleanupWriteJSON(filepath.Join(run.directory, "removal-plan.json"), plan, cleanupSummaryLimit/2); err != nil {
 		return fmt.Errorf("cleanup: pending (cannot retain removal plan)")
-	}
-	if s.BuildEvidence == nil {
-		accountBuildCoverage(run, plan, record, current, state)
 	}
 	for index, item := range plan {
 		if item.Reason != "" {

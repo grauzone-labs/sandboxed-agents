@@ -10,40 +10,50 @@ import (
 	"time"
 )
 
-// withBuildEvidence captures primary final IDs under the image-tag lock with the opted-in single-commit policy.
+// withBuildEvidence captures primary final IDs and registry FROM inputs under the image-tag lock with the opted-in single-commit policy.
 // Telemetry remains supplemental; stdout and RUN output never authorize publication or removal.
 func withBuildEvidence(p podmanTarget, tag, hash string, args []string, build func(string, string) error) error {
 	directory := os.Getenv(liverun.BuildEvidenceEnv)
-	if directory == "" || confirmBuildTarget(p, directory) != nil {
+	if directory == "" {
+		return build("", "")
+	}
+	if confirmBuildTarget(p, directory) != nil {
+		_ = liverun.RecordUnconfirmedBuild(directory)
 		return build("", "")
 	}
 	inspect := func(name string) (string, error) {
-		if err := confirmBuildTarget(p, directory); err != nil {
-			return "", err
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		output, err := p.queryContext(ctx, time.Second, "image", "inspect", name)
+		record, err := inspectBuildTarget(p, directory, name)
 		if err != nil {
 			return "", err
 		}
-		record, err := decodeBuildInspection(output, hash)
-		return record, err
+		if record.Labels[assetHashLabel] != hash {
+			return "", fmt.Errorf("build result asset unverified")
+		}
+		return record.ID, nil
 	}
-	return liverun.CaptureSingleCommitBuild(directory, tag, hash, reproducibleBuild(p.environment(), args), func(iid string) error {
+	return liverun.CaptureSingleCommitBuild(directory, tag, hash, reproducibleBuild(p.host.Platform, p.environment(), args), func(iid string) error {
 		buildErr := build(iid, "--layers=false")
 		recordRegistryFrom(p, directory, args)
 		return buildErr
 	}, inspect)
 }
 
-// decodeBuildInspection verifies the primary final ID and expected asset label on the inspected tag.
-func decodeBuildInspection(output, hash string) (string, error) {
-	var records []imageRecord
-	if json.Unmarshal([]byte(output), &records) != nil || len(records) != 1 || records[0].Labels[assetHashLabel] != hash {
-		return "", fmt.Errorf("build result inspection unverified")
+// inspectBuildTarget confirms the invocation engine before a bounded primary inspection yielding exactly one image.
+func inspectBuildTarget(p podmanTarget, directory, name string) (imageRecord, error) {
+	if err := confirmBuildTarget(p, directory); err != nil {
+		return imageRecord{}, err
 	}
-	return records[0].ID, nil
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	output, err := p.queryContext(ctx, time.Second, "image", "inspect", name)
+	if err != nil {
+		return imageRecord{}, err
+	}
+	var records []imageRecord
+	if json.Unmarshal([]byte(output), &records) != nil || len(records) != 1 {
+		return imageRecord{}, fmt.Errorf("build result inspection unverified")
+	}
+	return records[0], nil
 }
 
 // confirmBuildTarget binds builder-controlled metadata to the actual selected primary engine query.
@@ -62,9 +72,10 @@ func confirmBuildTarget(p podmanTarget, directory string) error {
 }
 
 // reproducibleBuild detects explicit config-timestamp controls without using time as ownership evidence.
-func reproducibleBuild(environment, args []string) bool {
+func reproducibleBuild(platform string, environment, args []string) bool {
 	for _, value := range environment {
-		if strings.HasPrefix(value, "SOURCE_DATE_EPOCH=") {
+		key, _, present := strings.Cut(value, "=")
+		if present && (key == "SOURCE_DATE_EPOCH" || platform == "windows" && strings.EqualFold(key, "SOURCE_DATE_EPOCH")) {
 			return true
 		}
 	}
@@ -82,26 +93,20 @@ func reproducibleBuild(environment, args []string) bool {
 // It excludes product-labelled images and never attributes a pull or grants deletion authority.
 func recordRegistryFrom(p podmanTarget, directory string, args []string) {
 	reference := literalRegistryFrom(args)
-	if reference == "" || confirmBuildTarget(p, directory) != nil {
+	if reference == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	data, err := p.queryContext(ctx, time.Second, "image", "inspect", reference)
+	image, err := inspectBuildTarget(p, directory, reference)
 	if err != nil {
 		return
 	}
-	var images []imageRecord
-	if json.Unmarshal([]byte(data), &images) != nil || len(images) != 1 {
+	if _, present := image.Labels[assetHashLabel]; present {
 		return
 	}
-	if _, present := images[0].Labels[assetHashLabel]; present {
+	if _, present := image.Labels[imageMarkerLabel]; present {
 		return
 	}
-	if _, present := images[0].Labels[imageMarkerLabel]; present {
-		return
-	}
-	_ = liverun.RecordRegistryBuildInput(directory, reference, images[0].ID)
+	_ = liverun.RecordRegistryBuildInput(directory, reference, image.ID)
 }
 
 // literalRegistryFrom reads one bounded single-stage recipe; unresolved/unsupported references provide no exclusion.

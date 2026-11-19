@@ -12,7 +12,7 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
 )
 
-// singleCommitRecipeError checks the offline recipe guard used before layer-free validation builds.
+// singleCommitRecipeError is a test-only structural guard for single-stage recipes and same-instruction SSH host-key removal.
 func singleCommitRecipeError(recipe string) error {
 	stages := 0
 	instruction := ""

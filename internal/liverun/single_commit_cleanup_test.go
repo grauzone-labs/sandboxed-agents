@@ -129,6 +129,109 @@ func TestSingleCommitCoverage(t *testing.T) {
 			if mode == "open-pull" && (!strings.Contains(out.String(), other) || !strings.Contains(out.String(), "not committed by this run's builds")) {
 				t.Fatalf("FROM input not retained/reported: %s", &out)
 			}
+			if mode == "open-pull" {
+				if strings.Contains(out.String(), "docker.io/library/debian") {
+					t.Fatal("foreign host tag leaked")
+				}
+				for _, item := range report.Skipped {
+					if item.ID == other && (len(item.Tags) != 1 || item.Tags[0] != "<redacted>") {
+						t.Fatalf("known FROM bypassed tag sanitizer: %+v", item)
+					}
+				}
+			}
+			if mode == "closed" {
+				paths, globErr := filepath.Glob(filepath.Join(options.RunDir, "cleanup-*", "removal-plan.json"))
+				if globErr != nil || len(paths) != 1 {
+					t.Fatalf("missing private plan: %v %v", paths, globErr)
+				}
+				data, readErr := os.ReadFile(paths[0])
+				var plan []liverun.CleanupItem
+				if readErr != nil || json.Unmarshal(data, &plan) != nil {
+					t.Fatalf("unreadable private plan: %v", readErr)
+				}
+				found := false
+				for _, item := range plan {
+					if item.ID == other {
+						found = true
+						if item.Reason != "not committed by this run's builds" {
+							t.Fatalf("private plan contradicts reported closed accounting: %+v", item)
+						}
+					}
+				}
+				if !found {
+					t.Fatal("private plan omitted retained unknown image")
+				}
+			}
+		})
+	}
+}
+
+// TestInvalidAttemptArtifactsPreserveIndependentProof proves duplicate or filename-mismatched attempts quarantine their receipt while an independent primary final remains removable at the journal-to-Cleanup seam.
+func TestInvalidAttemptArtifactsPreserveIndependentProof(t *testing.T) {
+	for _, kind := range []string{"mismatched-name", "duplicate"} {
+		t.Run(kind, func(t *testing.T) {
+			svc, fake, options := cleanupHarness(t)
+			svc.BuildEvidence = nil
+			directory := filepath.Join(options.RunDir, "build-evidence")
+			if err := os.Mkdir(directory, 0700); err != nil {
+				t.Fatal(err)
+			}
+			cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 2, "Invocation": strings.Repeat("f", 64), "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
+			asset := strings.Repeat("e", 64)
+			id := "sha256:" + strings.Repeat("b", 64)
+			independent := "sha256:" + strings.Repeat("c", 64)
+			for _, imageID := range []string{id, independent} {
+				if err := liverun.CaptureSingleCommitBuild(directory, "localhost/sandboxed-agents:none-"+asset, asset, false, func(path string) error { return os.WriteFile(path, []byte(imageID), 0600) }, func(string) (string, error) { return imageID, nil }); err != nil {
+					t.Fatal(err)
+				}
+			}
+			paths, _ := filepath.Glob(filepath.Join(directory, "result-*.json"))
+			for _, path := range paths {
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var event map[string]any
+				if err = json.Unmarshal(data, &event); err != nil {
+					t.Fatal(err)
+				}
+				result := event["Result"].(map[string]any)
+				if result["ID"] != id {
+					continue
+				}
+				result["ID"], result["Outcome"] = "", ""
+				result["EndedAt"] = "0001-01-01T00:00:00Z"
+				if kind == "duplicate" {
+					cleanupArtifact(t, directory, "attempt-"+result["AttemptID"].(string)+".json", event)
+				}
+				cleanupArtifact(t, directory, "attempt-"+strings.Repeat("0", 64)+".json", event)
+			}
+			fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id), independent: cleanupImageFixture(independent)}
+			var output bytes.Buffer
+			_ = svc.Cleanup(context.Background(), options, &output)
+			var report liverun.CleanupReport
+			if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+				t.Fatal(err)
+			}
+			removed := cleanupRemoved(fake)
+			if report.Status != "unverified" || len(report.Unverified) == 0 || len(removed) != 1 || removed[0] != independent {
+				t.Fatalf("ambiguous attempt admitted or independent proof lost: removed=%v %s", removed, &output)
+			}
+			if _, ok := fake.images[id]; !ok {
+				t.Fatal("ambiguous attempt's image removed")
+			}
+			found := false
+			for _, item := range report.Skipped {
+				if item.ID == id {
+					found = true
+					if item.Reason != "missing exact build proof" {
+						t.Fatalf("ambiguous attempt falsely excluded: %+v", item)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("audit omitted ambiguous attempt's retained image")
+			}
 		})
 	}
 }

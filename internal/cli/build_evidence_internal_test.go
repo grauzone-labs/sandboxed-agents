@@ -17,7 +17,7 @@ func TestTimestampControlsExcludeFreshness(t *testing.T) {
 		{nil, []string{"--source-date-epoch=0"}, true},
 		{nil, []string{"--rewrite-timestamp"}, true},
 	} {
-		if got := reproducibleBuild(test.env, test.args); got != test.want {
+		if got := reproducibleBuild("linux", test.env, test.args); got != test.want {
 			t.Fatalf("env=%v argv=%v got=%v", test.env, test.args, got)
 		}
 	}

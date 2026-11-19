@@ -16,7 +16,7 @@ func TestLiveBuildPolicyFlags(t *testing.T) {
 	for _, platform := range []string{"linux", "windows"} {
 		for _, jobs := range []string{"1", "2"} {
 			normalized := map[string][]string{}
-			for _, channel := range []string{"active", "absent", "mismatch", "reproducible"} {
+			for _, channel := range []string{"active", "absent", "mismatch", "reproducible", "mixed-case"} {
 				t.Run(platform+"/"+jobs+"/"+channel, func(t *testing.T) {
 					f := linuxHost(t)
 					if platform == "windows" {
@@ -47,6 +47,9 @@ func TestLiveBuildPolicyFlags(t *testing.T) {
 						t.Setenv("SOURCE_DATE_EPOCH", "")
 						os.Unsetenv("SOURCE_DATE_EPOCH")
 					}
+					if channel == "mixed-case" {
+						t.Setenv("Source_Date_Epoch", "0")
+					}
 					id := "sha256:" + strings.Repeat("b", 64)
 					t.Setenv("TEST_PODMAN_IIDFILE_CONTENT", id)
 					tag := baseTag(t)
@@ -60,7 +63,11 @@ func TestLiveBuildPolicyFlags(t *testing.T) {
 					}
 					normalized[channel] = nil
 					builds := 0
+					infoQueries := 0
 					for _, call := range calls {
+						if slices.Contains(call, "info") {
+							infoQueries++
+						}
 						if i := slices.Index(call, "build"); i >= 0 {
 							builds++
 							args := call[i+1:]
@@ -88,7 +95,7 @@ func TestLiveBuildPolicyFlags(t *testing.T) {
 							if counts["--iidfile"] > 1 || counts["--layers=false"] > 1 {
 								t.Fatalf("duplicate evidence flags: %v", call)
 							}
-							want := channel == "active" || channel == "reproducible"
+							want := channel == "active" || channel == "reproducible" || channel == "mixed-case"
 							if slices.Contains(args, "--layers=false") != want || slices.Contains(args, "--iidfile") != want || slices.Contains(args, "--layer-label") {
 								t.Fatalf("wrong policy argv: %v", call)
 							}
@@ -103,7 +110,7 @@ func TestLiveBuildPolicyFlags(t *testing.T) {
 							}
 						}
 					}
-					if channel == "active" || channel == "reproducible" {
+					if channel == "active" || channel == "reproducible" || channel == "mixed-case" {
 						paths, _ := filepath.Glob(filepath.Join(directory, "result-*.json"))
 						if len(paths) != 2 {
 							t.Fatalf("missing invocation receipts: %v", paths)
@@ -121,7 +128,7 @@ func TestLiveBuildPolicyFlags(t *testing.T) {
 								t.Fatal(e)
 							}
 							expected := "default-timestamps"
-							if channel == "reproducible" {
+							if channel == "reproducible" || channel == "mixed-case" && platform == "windows" {
 								expected = "reuse-not-excluded"
 							}
 							if event.Version != 2 || event.Result.Policy != "single-commit" || event.Result.Reproducibility != expected || event.Result.Outcome != "committed" {
@@ -132,9 +139,12 @@ func TestLiveBuildPolicyFlags(t *testing.T) {
 					if builds != 2 {
 						t.Fatalf("expected base plus toolchain via runner: %v", calls)
 					}
+					if channel == "absent" && infoQueries != 1 {
+						t.Fatalf("ordinary build added engine queries: %v", calls)
+					}
 				})
 			}
-			for _, channel := range []string{"active", "mismatch", "reproducible"} {
+			for _, channel := range []string{"active", "mismatch", "reproducible", "mixed-case"} {
 				if !slices.Equal(normalized[channel], normalized["absent"]) {
 					t.Fatalf("non-evidence argv changed for %s/%s/%s: %v versus %v", platform, jobs, channel, normalized[channel], normalized["absent"])
 				}
