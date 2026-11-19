@@ -17,6 +17,7 @@ import (
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
+	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
@@ -343,9 +344,9 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				"TEST_SSH_OUTPUT":       "debug1: SSH2_MSG_NEWKEYS received\n", "TEST_SSH_EXIT": "255",
 				"TEST_SSH_KNOWN_HOSTS": "[127.0.0.1]:" + tracerPort + " " + tracerHostKey + "\n",
 			}
-			values[liveOverlapEnv] = scenario.overlap
+			values[liverun.CaseOverlapEnv] = scenario.overlap
 			if scenario.overlap == "2" {
-				values[liveBuildJobsEnv] = "3"
+				values[liverun.BuildJobsEnv] = "3"
 			}
 			var output string
 			if scenario.overlap == "2" {

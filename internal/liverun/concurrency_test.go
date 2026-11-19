@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
 )
 
 // TestPrepareConcurrencyInputs proves explicit/default concurrency is saved and
@@ -55,8 +57,8 @@ func TestPrepareConcurrencyInputs(t *testing.T) {
 func TestRunUsesSavedConcurrencyInputs(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
 		t.Run(map[bool]string{false: "explicit", true: "legacy"}[legacy], func(t *testing.T) {
-			t.Setenv("SANDBOXED_AGENTS_LIVE_OVERLAP", "9")
-			t.Setenv("SANDBOXED_AGENTS_LIVE_BUILD_JOBS", "9")
+			t.Setenv(liverun.CaseOverlapEnv, "9")
+			t.Setenv(liverun.BuildJobsEnv, "9")
 			root, private, _ := fixtureSetup(t, "-overlap", "3", "-build-jobs", "2")
 			if legacy {
 				var options map[string]any

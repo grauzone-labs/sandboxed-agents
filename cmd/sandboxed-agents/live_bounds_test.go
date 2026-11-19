@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 	"github.com/grauzone-labs/sandboxed-agents/internal/validationduration"
 )
@@ -198,7 +199,7 @@ func TestLiveBoundFailureRetainsRecordsAndCleansUp(t *testing.T) {
 			values := nestedExecutables()
 			for k, v := range map[string]string{
 				"TEST_LIVE_BOUND_SUITE": "1", liveRecordDirEnv: directory, "SANDBOXED_AGENTS_GROUP": "bound-fixture", livePreparedExecutableEnv: program,
-				"SANDBOXED_AGENTS_LIVE_STOP_AFTER_FAILURE": stop, "TEST_SANDBOXED_AGENTS_EXECUTABLE": program, "TEST_SANDBOXED_AGENTS_LOG": log, "TEST_SANDBOXED_AGENTS_RESPONSES": string(responses), "TEST_PODMAN_RESPONSES": string(podmanResponses),
+				liverun.StopAfterFailureEnv: stop, "TEST_SANDBOXED_AGENTS_EXECUTABLE": program, "TEST_SANDBOXED_AGENTS_LOG": log, "TEST_SANDBOXED_AGENTS_RESPONSES": string(responses), "TEST_PODMAN_RESPONSES": string(podmanResponses),
 				"XDG_STATE_HOME": directory, "LOCALAPPDATA": directory,
 			} {
 				values[k] = v

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 	"github.com/grauzone-labs/sandboxed-agents/internal/validationduration"
 )
@@ -24,8 +25,8 @@ func TestLiveSuiteRejectsInvalidOverlap(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
 			t.Setenv("PATH", fakes.Dir)
-			output, err := liveSuiteChild(t, fakes, map[string]string{"SANDBOXED_AGENTS_GROUP": "live-overlap", liveRecordDirEnv: t.TempDir(), liveOverlapEnv: value})
-			if err == nil || !strings.Contains(output, liveOverlapEnv) {
+			output, err := liveSuiteChild(t, fakes, map[string]string{"SANDBOXED_AGENTS_GROUP": "live-overlap", liveRecordDirEnv: t.TempDir(), liverun.CaseOverlapEnv: value})
+			if err == nil || !strings.Contains(output, liverun.CaseOverlapEnv) {
 				t.Fatalf("overlap %q: %v\n%s", value, err, output)
 			}
 			assertNoExternalCalls(t, fakes)
@@ -122,7 +123,7 @@ func TestLiveOverlapAdmitsConcurrentCases(t *testing.T) {
 			}
 			script, _ := json.Marshal(responses)
 			program := liveFakeProgram(t)
-			command := fixtureLiveCommand(t, fakes, "TestLiveOverlapFixture", map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", livePreparedExecutableEnv: program, liveRecordDirEnv: records, "SANDBOXED_AGENTS_GROUP": "live-overlap", liveOverlapEnv: overlap, "TEST_SANDBOXED_AGENTS_RESPONSES": string(script), "TEST_SANDBOXED_AGENTS_LOG": filepath.Join(records, "cli.jsonl"), "TEST_PODMAN_RESPONSES": `{"* exists *":{"Exit":1},"ps --all --format {{.Names}}":{},"volume ls --format {{.Name}}":{}}`})
+			command := fixtureLiveCommand(t, fakes, "TestLiveOverlapFixture", map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", livePreparedExecutableEnv: program, liveRecordDirEnv: records, "SANDBOXED_AGENTS_GROUP": "live-overlap", liverun.CaseOverlapEnv: overlap, "TEST_SANDBOXED_AGENTS_RESPONSES": string(script), "TEST_SANDBOXED_AGENTS_LOG": filepath.Join(records, "cli.jsonl"), "TEST_PODMAN_RESPONSES": `{"* exists *":{"Exit":1},"ps --all --format {{.Names}}":{},"volume ls --format {{.Name}}":{}}`})
 			output, err := command.CombinedOutput()
 			if err != nil {
 				t.Fatalf("overlap %s: %v\n%s", overlap, err, output)
@@ -144,7 +145,7 @@ func fixtureLiveCommand(t *testing.T, fakes testutil.Fakes, fixture string, valu
 	if fixture == "TestLiveOverlapFixture" {
 		values[liveOverlapFakeRootEnv] = fakes.Dir
 	}
-	base := testutil.Env(testutil.Env(fakes.Env(os.Environ()), nestedExecutables()), map[string]string{liveOverlapEnv: "", liveBuildJobsEnv: "", liveStopAfterFailureEnv: ""})
+	base := testutil.Env(testutil.Env(fakes.Env(os.Environ()), nestedExecutables()), map[string]string{liverun.CaseOverlapEnv: "", liverun.BuildJobsEnv: "", liverun.StopAfterFailureEnv: ""})
 	command.Env = testutil.Env(base, values)
 	return command
 }
@@ -167,7 +168,7 @@ func TestLiveOverlapFailureStopsNewWork(t *testing.T) {
 		"remove first --volumes --force": {ReadyFile: failed, WaitFor: release}, "remove second --volumes --force": {},
 	}
 	script, _ := json.Marshal(responses)
-	command := fixtureLiveCommand(t, fakes, "TestLiveOverlapFixture", map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", "TEST_LIVE_OVERLAP_FAILURE": "1", livePreparedExecutableEnv: program, liveRecordDirEnv: records, "SANDBOXED_AGENTS_GROUP": "live-overlap", liveOverlapEnv: "2", liveStopAfterFailureEnv: "1", "TEST_SANDBOXED_AGENTS_RESPONSES": string(script), "TEST_SANDBOXED_AGENTS_LOG": filepath.Join(records, "cli.jsonl"), "TEST_PODMAN_RESPONSES": `{"* exists *":{"Exit":1},"ps --all --format {{.Names}}":{},"volume ls --format {{.Name}}":{}}`})
+	command := fixtureLiveCommand(t, fakes, "TestLiveOverlapFixture", map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", "TEST_LIVE_OVERLAP_FAILURE": "1", livePreparedExecutableEnv: program, liveRecordDirEnv: records, "SANDBOXED_AGENTS_GROUP": "live-overlap", liverun.CaseOverlapEnv: "2", liverun.StopAfterFailureEnv: "1", "TEST_SANDBOXED_AGENTS_RESPONSES": string(script), "TEST_SANDBOXED_AGENTS_LOG": filepath.Join(records, "cli.jsonl"), "TEST_PODMAN_RESPONSES": `{"* exists *":{"Exit":1},"ps --all --format {{.Names}}":{},"volume ls --format {{.Name}}":{}}`})
 	var output bytes.Buffer
 	command.Stdout, command.Stderr = &output, &output
 	if err := command.Start(); err != nil {
@@ -274,7 +275,7 @@ func TestLiveOverlapInterruptionKeepsFailingRecord(t *testing.T) {
 	directory := t.TempDir()
 	marker := filepath.Join(directory, "active")
 	program := liveFakeProgram(t)
-	command := fixtureLiveCommand(t, fakes, "TestLiveOverlapFixture", map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", "TEST_LIVE_OVERLAP_INTERRUPT": marker, livePreparedExecutableEnv: program, liveRecordDirEnv: directory, "SANDBOXED_AGENTS_GROUP": "live-overlap", liveOverlapEnv: "2", "TEST_SANDBOXED_AGENTS_RESPONSES": `{"version":{},"up first":{},"up second":{},"check later":{},"remove second --volumes --force":{}}`, "TEST_SANDBOXED_AGENTS_LOG": filepath.Join(directory, "cli.jsonl"), "TEST_PODMAN_RESPONSES": `{"* exists *":{"Exit":1}}`, "TMPDIR": directory, "TMP": directory, "TEMP": directory})
+	command := fixtureLiveCommand(t, fakes, "TestLiveOverlapFixture", map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", "TEST_LIVE_OVERLAP_INTERRUPT": marker, livePreparedExecutableEnv: program, liveRecordDirEnv: directory, "SANDBOXED_AGENTS_GROUP": "live-overlap", liverun.CaseOverlapEnv: "2", "TEST_SANDBOXED_AGENTS_RESPONSES": `{"version":{},"up first":{},"up second":{},"check later":{},"remove second --volumes --force":{}}`, "TEST_SANDBOXED_AGENTS_LOG": filepath.Join(directory, "cli.jsonl"), "TEST_PODMAN_RESPONSES": `{"* exists *":{"Exit":1}}`, "TMPDIR": directory, "TMP": directory, "TEMP": directory})
 	var log bytes.Buffer
 	command.Stdout, command.Stderr = &log, &log
 	if err := command.Start(); err != nil {
@@ -384,7 +385,7 @@ func TestLiveOverlapObservesActiveFailures(t *testing.T) {
 					decision <- line
 				}
 			}}}
-			command := fixtureLiveCommand(t, fakes, "TestLiveOverlapFixture", map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", "TEST_LIVE_OBSERVE_FAILURE": mode, livePreparedExecutableEnv: liveFakeProgram(t), liveRecordDirEnv: directory, "SANDBOXED_AGENTS_GROUP": "live-observe", liveOverlapEnv: "2", liveStopAfterFailureEnv: "1", "TEST_SANDBOXED_AGENTS_LOG": filepath.Join(directory, "cli.jsonl"), "TEST_SANDBOXED_AGENTS_RESPONSES": `{"version":{}}`, "TEST_PODMAN_RESPONSES": `{"ps --all --format {{.Names}}":{},"volume ls --format {{.Name}}":{}}`})
+			command := fixtureLiveCommand(t, fakes, "TestLiveOverlapFixture", map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", "TEST_LIVE_OBSERVE_FAILURE": mode, livePreparedExecutableEnv: liveFakeProgram(t), liveRecordDirEnv: directory, "SANDBOXED_AGENTS_GROUP": "live-observe", liverun.CaseOverlapEnv: "2", liverun.StopAfterFailureEnv: "1", "TEST_SANDBOXED_AGENTS_LOG": filepath.Join(directory, "cli.jsonl"), "TEST_SANDBOXED_AGENTS_RESPONSES": `{"version":{}}`, "TEST_PODMAN_RESPONSES": `{"ps --all --format {{.Names}}":{},"volume ls --format {{.Name}}":{}}`})
 			command.Stdout, command.Stderr = &log, &log
 			if err := command.Start(); err != nil {
 				t.Fatal(err)
@@ -449,7 +450,7 @@ func TestLiveOverlapFixtureRejectsFlagOnly(t *testing.T) {
 	}
 	t.Setenv("PATH", fakes.Dir)
 	command := exec.Command(os.Args[0], "-test.v", "-test.run=^TestLiveOverlapFixture$", "-test.timeout=1m")
-	command.Env = testutil.Env(testutil.Env(fakes.Env(os.Environ()), nestedExecutables()), map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", liveRecordDirEnv: t.TempDir(), "SANDBOXED_AGENTS_GROUP": "ordinary", "XDG_STATE_HOME": directory, "LOCALAPPDATA": directory, livePreparedExecutableEnv: "", liveOverlapEnv: "", liveOverlapFakeRootEnv: ""})
+	command.Env = testutil.Env(testutil.Env(fakes.Env(os.Environ()), nestedExecutables()), map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", liveRecordDirEnv: t.TempDir(), "SANDBOXED_AGENTS_GROUP": "ordinary", "XDG_STATE_HOME": directory, "LOCALAPPDATA": directory, livePreparedExecutableEnv: "", liverun.CaseOverlapEnv: "", liveOverlapFakeRootEnv: ""})
 	output, err := command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "requires isolated fake setup") {
 		t.Errorf("flag-only fixture did not refuse isolation: %v\n%s", err, output)
@@ -507,7 +508,7 @@ func TestLiveOverlapBaseFailurePreservesRemainingCases(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
 			directory := t.TempDir()
 			log := filepath.Join(directory, "cli.jsonl")
-			command := fixtureLiveCommand(t, fakes, "TestLiveOverlapFixture", map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", "TEST_LIVE_BASE_FAILURE": "1", livePreparedExecutableEnv: liveFakeProgram(t), liveRecordDirEnv: directory, liveImagesEnv: "1", "SANDBOXED_AGENTS_GROUP": "live-base", liveOverlapEnv: "2", liveStopAfterFailureEnv: stop, "TEST_SANDBOXED_AGENTS_LOG": log, "TEST_SANDBOXED_AGENTS_RESPONSES": `{"version":{},"up first":{"Exit":1},"check remaining-update":{},"check remaining-agent":{},"check remaining-tool":{},"build":{}}`, "TEST_PODMAN_RESPONSES": `{"ps --all --format {{.Names}}":{},"volume ls --format {{.Name}}":{}}`})
+			command := fixtureLiveCommand(t, fakes, "TestLiveOverlapFixture", map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", "TEST_LIVE_BASE_FAILURE": "1", livePreparedExecutableEnv: liveFakeProgram(t), liveRecordDirEnv: directory, liveImagesEnv: "1", "SANDBOXED_AGENTS_GROUP": "live-base", liverun.CaseOverlapEnv: "2", liverun.StopAfterFailureEnv: stop, "TEST_SANDBOXED_AGENTS_LOG": log, "TEST_SANDBOXED_AGENTS_RESPONSES": `{"version":{},"up first":{"Exit":1},"check remaining-update":{},"check remaining-agent":{},"check remaining-tool":{},"build":{}}`, "TEST_PODMAN_RESPONSES": `{"ps --all --format {{.Names}}":{},"volume ls --format {{.Name}}":{}}`})
 			if output, err := command.CombinedOutput(); err == nil {
 				t.Fatalf("failed base passed: %s", output)
 			}
@@ -564,10 +565,10 @@ func TestLiveBuildConcurrencyInput(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
 			directory := t.TempDir()
 			log := filepath.Join(directory, "cli.jsonl")
-			command := fixtureLiveCommand(t, fakes, "TestLiveOverlapFixture", map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", "TEST_LIVE_BUILD_INPUTS": "1", livePreparedExecutableEnv: liveFakeProgram(t), liveRecordDirEnv: directory, liveImagesEnv: "1", "SANDBOXED_AGENTS_GROUP": "live-inputs", liveOverlapEnv: "2", liveBuildJobsEnv: test.jobs, "TEST_SANDBOXED_AGENTS_LOG": log, "TEST_SANDBOXED_AGENTS_RESPONSES": `{"version":{},"build":{},"build --jobs 3":{}}`, "TEST_PODMAN_RESPONSES": `{"ps --all --format {{.Names}}":{},"volume ls --format {{.Name}}":{}}`})
+			command := fixtureLiveCommand(t, fakes, "TestLiveOverlapFixture", map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", "TEST_LIVE_BUILD_INPUTS": "1", livePreparedExecutableEnv: liveFakeProgram(t), liveRecordDirEnv: directory, liveImagesEnv: "1", "SANDBOXED_AGENTS_GROUP": "live-inputs", liverun.CaseOverlapEnv: "2", liverun.BuildJobsEnv: test.jobs, "TEST_SANDBOXED_AGENTS_LOG": log, "TEST_SANDBOXED_AGENTS_RESPONSES": `{"version":{},"build":{},"build --jobs 3":{}}`, "TEST_PODMAN_RESPONSES": `{"ps --all --format {{.Names}}":{},"volume ls --format {{.Name}}":{}}`})
 			output, err := command.CombinedOutput()
 			if test.invalid {
-				if err == nil || !strings.Contains(string(output), liveBuildJobsEnv) {
+				if err == nil || !strings.Contains(string(output), liverun.BuildJobsEnv) {
 					t.Errorf("invalid input: %v\n%s", err, output)
 				}
 				assertNoExternalCalls(t, fakes)

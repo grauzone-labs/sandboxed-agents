@@ -170,22 +170,23 @@ func rebuildImages(request Request, p podmanTarget, output, progress io.Writer) 
 			return "", err
 		}
 		defer lock.Close()
-		var tag string
+		var outcome imageBuildOutcome
 		if request.BuildJobs > 1 {
-			tag, err, baseOutputErr = rebuildBaseWithProgress(p, hash, output, progress)
+			outcome = rebuildBaseWithProgress(p, hash, output, progress)
 		} else {
-			tag, err = buildLabeledImageUnderLock(p, nil, hash, "", true, output)
+			outcome.tag, outcome.buildErr = buildLabeledImageUnderLock(p, nil, hash, "", true, output)
 		}
-		if err != nil {
-			return "", err
+		baseOutputErr = outcome.outputErr
+		if outcome.buildErr != nil {
+			return "", outcome.buildErr
 		}
 		if request.BuildJobs <= 1 {
-			fmt.Fprintln(output, "built image", tag)
+			fmt.Fprintln(output, "built image", outcome.tag)
 		}
 		if len(sets) == 0 {
 			return "", nil
 		}
-		base, err := inspectImage(p, tag)
+		base, err := inspectImage(p, outcome.tag)
 		if err != nil {
 			return "", fmt.Errorf("%w; %s", err, notice)
 		}
@@ -206,32 +207,32 @@ func rebuildImages(request Request, p podmanTarget, output, progress io.Writer) 
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	var failures []error
+	var failureCauses []error
 	var failedSets []string
-	results := make([]error, len(names))
+	buildFailures := make([]error, len(names))
 	outputErr := baseOutputErr
 	if request.BuildJobs > 1 {
 		var toolchainOutputErr error
-		results, toolchainOutputErr = rebuildToolchains(p, sets, names, hash, baseID, request.BuildJobs, output, progress)
+		buildFailures, toolchainOutputErr = rebuildToolchains(p, sets, names, hash, baseID, request.BuildJobs, output, progress)
 		outputErr = errors.Join(outputErr, toolchainOutputErr)
 	} else {
 		for i, name := range names {
 			tag, err := buildLabeledImage(p, sets[name], hash, baseID, true, output, progress)
-			results[i] = err
+			buildFailures[i] = err
 			if err == nil {
 				fmt.Fprintln(output, "built image", tag)
 			}
 		}
 	}
 	for i, name := range names {
-		err := results[i]
+		err := buildFailures[i]
 		if err != nil {
-			failures = append(failures, err)
+			failureCauses = append(failureCauses, err)
 			failedSets = append(failedSets, name)
 		}
 	}
-	if len(failures) > 0 {
-		return errors.Join(fmt.Errorf("failed toolchain sets: %s; %s: %w", strings.Join(failedSets, "; "), notice, errors.Join(failures...)), outputErr)
+	if len(failureCauses) > 0 {
+		return errors.Join(fmt.Errorf("failed toolchain sets: %s; %s: %w", strings.Join(failedSets, "; "), notice, errors.Join(failureCauses...)), outputErr)
 	}
 	fmt.Fprintln(output, notice)
 	if outputErr != nil {

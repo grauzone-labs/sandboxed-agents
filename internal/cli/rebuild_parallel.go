@@ -44,14 +44,14 @@ func rebuildToolchains(p podmanTarget, sets map[string][]string, names []string,
 			jobs <- i
 		}
 	}()
-	failures := make([]error, len(names))
+	buildFailures := make([]error, len(names))
 	outputErrors := make([]error, len(names))
 	for range names {
 		result := <-done
 		outcome := publishRebuildOutcome(publisher, output, "toolchain set "+names[result.index], result.outcome)
-		failures[result.index], outputErrors[result.index] = outcome.buildErr, outcome.outputErr
+		buildFailures[result.index], outputErrors[result.index] = outcome.buildErr, outcome.outputErr
 	}
-	return failures, errors.Join(outputErrors...)
+	return buildFailures, errors.Join(outputErrors...)
 }
 
 // rebuildSpooledImage holds one tag through build and primary evidence publication, releasing it before output publication.
@@ -65,11 +65,11 @@ func rebuildSpooledImage(p podmanTarget, set []string, hash, baseID string, prog
 }
 
 // rebuildBaseWithProgress publishes a rebuilt base's output separately from its build result so toolchain work can continue after output errors.
-func rebuildBaseWithProgress(p podmanTarget, hash string, output, progress io.Writer) (string, error, error) {
+func rebuildBaseWithProgress(p podmanTarget, hash string, output, progress io.Writer) imageBuildOutcome {
 	publisher := &serializedBuildWriter{writer: progress}
 	outcome := buildSpooledImageUnderLock(p, nil, hash, "", publisher)
 	outcome = publishRebuildOutcome(publisher, output, "base image", outcome)
-	return outcome.tag, outcome.buildErr, outcome.outputErr
+	return outcome
 }
 
 // publishRebuildOutcome publishes one complete image block and its successful result under the publisher's exclusion, retaining accurate tag outcomes on I/O errors.

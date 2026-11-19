@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
 	"github.com/grauzone-labs/sandboxed-agents/internal/release"
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 	"github.com/grauzone-labs/sandboxed-agents/internal/validationduration"
@@ -45,16 +46,6 @@ var controllerGroupPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // liveCheckNames are the fixed check identifiers of the record, in run order.
 var liveCheckNames = []string{"preflight", "lifecycle", "update", "agent", "t3code", "images"}
-
-// liveOverlapEnv caps independent cases and initial toolchain work; the
-// unmeasured default remains serial on both supported platforms.
-const liveOverlapEnv = "SANDBOXED_AGENTS_LIVE_OVERLAP"
-
-// liveBuildJobsEnv selects parallel work only inside the existing sole rebuild.
-const liveBuildJobsEnv = "SANDBOXED_AGENTS_LIVE_BUILD_JOBS"
-
-// liveStopAfterFailureEnv opts into stopping before the next case after a failure.
-const liveStopAfterFailureEnv = "SANDBOXED_AGENTS_LIVE_STOP_AFTER_FAILURE"
 
 // liveSuite carries one run's inputs, host, and check results.
 type liveSuite struct {
@@ -120,8 +111,8 @@ func newLiveSuite(t *testing.T) *liveSuite {
 	for _, name := range liveCheckNames {
 		suite.results[name] = "not-run"
 	}
-	suite.overlap = livePositiveInput(t, liveOverlapEnv)
-	suite.buildJobs = livePositiveInput(t, liveBuildJobsEnv)
+	suite.overlap = livePositiveInput(t, liverun.CaseOverlapEnv)
+	suite.buildJobs = livePositiveInput(t, liverun.BuildJobsEnv)
 	suite.platform = livePlatform()
 	if suite.platform == "" {
 		t.Fatalf("the live suite runs on Linux amd64 or Windows 11 x64, not %s", runtime.GOOS)
@@ -139,7 +130,7 @@ func newLiveSuite(t *testing.T) *liveSuite {
 		t.Fatalf("%s: %v", liveRecordDirEnv, err)
 	}
 	suite.imagesSelected = os.Getenv(liveImagesEnv) == "1"
-	suite.stopAfterFailure = os.Getenv(liveStopAfterFailureEnv) == "1"
+	suite.stopAfterFailure = os.Getenv(liverun.StopAfterFailureEnv) == "1"
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -365,7 +356,7 @@ func liveSuiteChild(t *testing.T, fakes testutil.Fakes, values map[string]string
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", fakes.Dir)
-	environment := map[string]string{testutil.LiveTestsEnv: "1", liveImagesEnv: "", liveRecordDirEnv: "", liveOverlapEnv: "", liveBuildJobsEnv: "", liveStopAfterFailureEnv: ""}
+	environment := map[string]string{testutil.LiveTestsEnv: "1", liveImagesEnv: "", liveRecordDirEnv: "", liverun.CaseOverlapEnv: "", liverun.BuildJobsEnv: "", liverun.StopAfterFailureEnv: ""}
 	maps.Copy(environment, values)
 	command := exec.Command(testExecutable, "-test.v", "-test.run=^TestLiveSuite$")
 	command.Env = testutil.Env(testutil.Env(fakes.Env(os.Environ()), nestedExecutables()), environment)

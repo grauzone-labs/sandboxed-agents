@@ -104,7 +104,7 @@ func hostFixture(role string, args []string) int {
 			return 0
 		}
 		if args[0] == "test" {
-			data, _ := json.Marshal(map[string]string{"overlap": os.Getenv("SANDBOXED_AGENTS_LIVE_OVERLAP"), "build_jobs": os.Getenv("SANDBOXED_AGENTS_LIVE_BUILD_JOBS")})
+			data, _ := json.Marshal(map[string]string{"overlap": os.Getenv(liverun.CaseOverlapEnv), "build_jobs": os.Getenv(liverun.BuildJobsEnv)})
 			if err := os.WriteFile(filepath.Join(root, "suite-inputs.json"), data, 0600); err != nil {
 				return 2
 			}

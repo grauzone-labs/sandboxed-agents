@@ -232,11 +232,11 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 		images = "1"
 	}
 	suite.Env = hostEnvironment(s.Platform, map[string]string{
-		"SANDBOXED_AGENTS_LIVE_STOP_AFTER_FAILURE": "1",
-		"SANDBOXED_AGENTS_LIVE_OVERLAP":            strconv.Itoa(options.Overlap),
-		"SANDBOXED_AGENTS_LIVE_BUILD_JOBS":         strconv.Itoa(options.BuildJobs),
-		BuildEvidenceEnv:                           buildDirectory,
-		"SANDBOXED_AGENTS_LIVE_TESTS":              "1", "SANDBOXED_AGENTS_GROUP": options.Group,
+		StopAfterFailureEnv:           "1",
+		CaseOverlapEnv:                strconv.Itoa(options.Overlap),
+		BuildJobsEnv:                  strconv.Itoa(options.BuildJobs),
+		BuildEvidenceEnv:              buildDirectory,
+		"SANDBOXED_AGENTS_LIVE_TESTS": "1", "SANDBOXED_AGENTS_GROUP": options.Group,
 		"SANDBOXED_AGENTS_LIVE_RECORD_DIR": options.RecordDir, "SANDBOXED_AGENTS_LIVE_IMAGES_TESTS": images,
 	})
 	// Capture uses UTF-8 bytes directly; PowerShell's 5.1 text encoding is never involved.
