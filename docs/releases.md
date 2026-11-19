@@ -63,7 +63,7 @@ SANDBOXED_AGENTS_LIVE_RECORD_DIR="$HOME/live-suite-records" \
   go test ./cmd/sandboxed-agents -run '^TestLiveSuite$' -timeout 120m -v
 ```
 
-Run it from the repository root of a clean checkout at the commit under test, with the Go version from `go.mod` on `PATH`; the record names that commit. Add `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1` to select the image coverage, which a release run must include. The suite's cases, each a subtest and a check of the record:
+Run it from the repository root of a clean checkout at the commit under test, with the Go version from `go.mod` on `PATH`; the record names that commit. `$HOME/live-suite-records` stands for a path you replace: set `SANDBOXED_AGENTS_LIVE_RECORD_DIR` to a new, empty directory for every invocation, such as `$HOME/live-suite-records/$RUN_ID` with a unique `RUN_ID` that you choose, and never reuse a directory ([why](images.md#live-image-tests)). Add `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1` to select the image coverage, which a release run must include. The suite's cases, each a subtest and a check of the record:
 
 | Check | What it does |
 |---|---|
