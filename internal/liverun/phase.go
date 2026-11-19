@@ -3,6 +3,7 @@ package liverun
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,9 @@ import (
 	"strings"
 	"time"
 )
+
+// revisionLine admits only a complete immutable commit identity.
+var revisionLine = regexp.MustCompile("^[0-9a-f]{40}$")
 
 // Options records the host inputs needed to repeat preparation under the engine lock.
 type Options struct {
@@ -36,7 +40,7 @@ func (s *Service) RunDispatch(ctx context.Context, args []string, out, diagnosti
 	}
 	switch args[0] {
 	case "prepare":
-		options, err := parseOptions(args[1:], diagnostics)
+		options, err := s.parseOptions(args[1:], diagnostics)
 		if err != nil {
 			return err
 		}
@@ -65,14 +69,13 @@ func (s *Service) RunDispatch(ctx context.Context, args []string, out, diagnosti
 }
 
 // parseOptions validates command inputs without starting any process.
-func parseOptions(args []string, diagnostics io.Writer) (Options, error) {
+func (s *Service) parseOptions(args []string, diagnostics io.Writer) (Options, error) {
 	var o Options
 	set := flag.NewFlagSet("prepare", flag.ContinueOnError)
 	set.SetOutput(diagnostics)
 	set.StringVar(&o.Checkout, "checkout", ".", "checkout under test")
 	set.StringVar(&o.RunDir, "run-dir", "", "private run directory outside the record directory")
 	set.StringVar(&o.RecordDir, "record-dir", "", "schema 2 records for this invocation")
-	set.StringVar(&o.LockRoot, "lock-root", "", "shared per-user engine lock directory")
 	set.StringVar(&o.Revision, "revision", "", "full target commit")
 	set.StringVar(&o.PeakRecord, "peak-record", "", "earlier host peak record; defaults to engine-specific last peak")
 	set.StringVar(&o.Group, "group", "live", "dedicated controller group")
@@ -83,7 +86,7 @@ func parseOptions(args []string, diagnostics io.Writer) (Options, error) {
 	if err := set.Parse(args); err != nil {
 		return o, err
 	}
-	if set.NArg() != 0 || !regexp.MustCompile("^[0-9a-f]{40}$").MatchString(o.Revision) || o.RunDir == "" || o.RecordDir == "" {
+	if set.NArg() != 0 || !revisionLine.MatchString(o.Revision) || o.RunDir == "" || o.RecordDir == "" {
 		return o, fmt.Errorf("supply full -revision, -run-dir and -record-dir")
 	}
 	if o.HostLoad != "idle" && o.HostLoad != "shared" && o.HostLoad != "unknown" {
@@ -102,17 +105,13 @@ func parseOptions(args []string, diagnostics io.Writer) (Options, error) {
 		}
 		*p = v
 	}
-	if o.LockRoot == "" {
-		cache, err := os.UserCacheDir()
-		if err != nil {
-			return o, err
-		}
-		o.LockRoot = filepath.Join(cache, "sandboxed-agents", "live-run")
-	}
 	var err error
-	o.LockRoot, err = filepath.Abs(o.LockRoot)
+	o.LockRoot, err = s.coordinationRoot()
 	if err != nil {
 		return o, err
+	}
+	if within(o.Checkout, o.RunDir) || within(o.Checkout, o.RecordDir) {
+		return o, fmt.Errorf("private run and record directories must be outside checkout")
 	}
 	if within(o.RecordDir, o.RunDir) || within(o.RunDir, o.RecordDir) {
 		return o, fmt.Errorf("private run and record directories must be separate")
@@ -146,5 +145,9 @@ func (s *Service) query(ctx context.Context, o Options, program string, args ...
 // failCheck saves engine diagnostics privately and returns only the failed check name.
 func failCheck(o Options, name string, err error) error {
 	_ = os.WriteFile(filepath.Join(o.RunDir, "diagnostic.txt"), []byte(fmt.Sprint(err)+"\n"), 0600)
+	var fault *engineFailure
+	if name == "engine" && errors.As(err, &fault) {
+		return fmt.Errorf("check engine failed; %s: %s; private diagnostic retained", fault.kind, fault.reason)
+	}
 	return fmt.Errorf("check %s failed; private diagnostic retained", name)
 }

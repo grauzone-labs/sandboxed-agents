@@ -297,6 +297,23 @@ func main() {
 				typed = append(typed, next)
 			}
 		}
+		// A telemetry fixture writes the primary API file independently of stdout, only on successful builds.
+		if prefix == "TEST_PODMAN" && response.Exit == 0 && os.Getenv("TEST_PODMAN_IIDFILE_CONTENT") != "" {
+			args := os.Args[1:]
+			if len(args) > 2 && args[0] == "--connection" {
+				args = args[2:]
+			}
+			if len(args) > 0 && args[0] == "build" {
+				for i, arg := range args {
+					if arg == "--iidfile" && i+1 < len(args) {
+						if err := os.WriteFile(args[i+1], []byte(os.Getenv("TEST_PODMAN_IIDFILE_CONTENT")), 0600); err != nil {
+							fmt.Fprintln(os.Stderr, err)
+							os.Exit(125)
+						}
+					}
+				}
+			}
+		}
 		code = response.Exit
 	} else {
 		// Like ssh -E, a log file named after -E receives the client's output instead of stdout.

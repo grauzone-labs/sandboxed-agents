@@ -37,11 +37,19 @@ type Container struct {
 	State struct{ Status string }
 }
 
-// PeakRecord is a host-specific peak estimate of additional space before cleanup.
+// PeakRecord separates sampled filesystem facts from an optional maintainer-reasoned headroom bound.
 type PeakRecord struct {
-	EngineID            string
-	PeakAdditionalBytes uint64
-	Basis               string
+	EngineID              string
+	PeakAdditionalBytes   uint64
+	Basis                 string
+	Revision              string
+	SampleStartedAt       time.Time
+	SampleEndedAt         time.Time
+	SampleIntervalSeconds float64
+	SampleContext         string
+	SamplingComplete      bool
+	Filesystems           []PeakFilesystem
+	Components            []PeakComponent
 }
 
 // Target binds one selected engine and its read-only machine query endpoint.

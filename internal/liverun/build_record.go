@@ -3,11 +3,20 @@ package liverun
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
+
+// BuildResult carries an immutable result from a trusted builder channel, never suite stdout.
+// Source and Step identify the primary result evidence; production final results use iidfile plus inspect.
+type BuildResult struct {
+	ID     string
+	Step   string
+	Source string
+	Asset  string
+}
 
 // buildProof preserves an exact result and its immediately preceding step privately.
 type buildProof struct {
@@ -25,56 +34,35 @@ var buildLogPrefix = regexp.MustCompile(`^[a-zA-Z0-9_./-]+\.go:[0-9]+: ?`)
 // buildAssetLine recognizes the exact preflight version output rather than a substring.
 var buildAssetLine = regexp.MustCompile(`^asset-sha256 ([0-9a-f]{64})$`)
 
-// buildStepLine recognizes non-FROM build steps with Podman's optional stage prefix.
-var buildStepLine = regexp.MustCompile(`^(?:\[[0-9]+/[0-9]+\] )?STEP [0-9]+/[0-9]+: (RUN|COPY|ADD|LABEL|ENV|USER|WORKDIR|EXPOSE|VOLUME|ENTRYPOINT|CMD|ARG|SHELL|STOPSIGNAL|HEALTHCHECK|ONBUILD|MAINTAINER) .+$`)
-
-// buildResultLine admits only an exact Podman result ID, never a layer-download description.
-var buildResultLine = regexp.MustCompile(`^--> ((?:sha256:)?[0-9a-f]{12,64})$`)
-
-// buildCommitLine binds final results to this project's canonical image-tag namespace.
+// buildCommitLine binds primary final results to this project's canonical image-tag namespace.
 var buildCommitLine = regexp.MustCompile(`^(?:\[[0-9]+/[0-9]+\] )?COMMIT localhost/sandboxed-agents:[a-z0-9-]+-[0-9a-f]{64}$`)
 
-// parseBuildOutput extracts adjacent step/result pairs and the exact preflight asset-hash line.
-// Nonadjacent, cached, interleaved, FROM, bare-ID and download output deliberately proves nothing.
-func parseBuildOutput(log []byte) ([]buildProof, string, error) {
+// parseBuildAsset reads only a comparison-context hint; stdout never supplies image ownership proof.
+func parseBuildAsset(log []byte) (string, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(log))
 	scanner.Buffer(make([]byte, 4096), 1024*1024)
-	previous := ""
-	lineNumber := 0
 	asset := ""
-	assetConflict := false
-	proofs := []buildProof{}
-	seen := map[string]bool{}
+	conflict := false
 	for scanner.Scan() {
-		lineNumber++
-		line := strings.TrimSpace(scanner.Text())
-		line = buildLogPrefix.ReplaceAllString(line, "")
-		line = strings.TrimSpace(line)
+		line := strings.TrimSpace(buildLogPrefix.ReplaceAllString(strings.TrimSpace(scanner.Text()), ""))
+		if quoted, ok := strings.CutPrefix(line, "live output: "); ok {
+			decoded, err := strconv.Unquote(quoted)
+			if err != nil {
+				continue
+			}
+			line = strings.TrimSpace(decoded)
+		}
 		if match := buildAssetLine.FindStringSubmatch(line); len(match) == 2 {
 			if asset != "" && asset != match[1] {
-				assetConflict = true
+				conflict = true
 			}
 			asset = match[1]
 		}
-		if match := buildResultLine.FindStringSubmatch(line); len(match) == 2 && (buildStepLine.MatchString(previous) || buildCommitLine.MatchString(previous)) {
-			key := previous + "\n" + line
-			if !seen[key] {
-				proofs = append(proofs, buildProof{Token: match[1], Step: previous, Result: line, Line: lineNumber})
-				seen[key] = true
-			}
-			if len(proofs) > 10000 {
-				return nil, "", fmt.Errorf("too many build results")
-			}
-		}
-		previous = line
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, "", err
-	}
-	if assetConflict {
+	if conflict {
 		asset = ""
 	}
-	return proofs, asset, nil
+	return asset, scanner.Err()
 }
 
 // resolveBuildRecord uniquely joins explicit build results to full, inspected engine identities.
@@ -141,6 +129,8 @@ func cleanupPlan(before Snapshot, images []cleanupImage, proofs []buildProof, as
 			item.Query = "podman image inspect ID"
 		case ambiguous[image.ID]:
 			item.Reason = "ambiguous build ID"
+		case foreignImageTags(image.RepoTags):
+			item.Reason = "foreign or mixed image tags"
 		case !proven[image.ID]:
 			item.Reason = "missing exact build proof"
 		case cleanupWrongHash(image.Labels, asset):
@@ -203,4 +193,14 @@ const cleanupAssetLabel = "io.sandboxed-agents.asset-sha256"
 func cleanupWrongHash(labels map[string]string, asset string) bool {
 	value, labelled := labels[cleanupAssetLabel]
 	return labelled && (asset == "" || value != asset)
+}
+
+// foreignImageTags refuses every tag outside the canonical project namespace, allowing untagged intermediates.
+func foreignImageTags(tags []string) bool {
+	for _, tag := range tags {
+		if tag != "<none>:<none>" && !buildCommitLine.MatchString("COMMIT "+tag) {
+			return true
+		}
+	}
+	return false
 }

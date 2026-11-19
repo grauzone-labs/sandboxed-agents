@@ -44,19 +44,19 @@ func (s *Service) cleanupQuery(ctx context.Context, r *cleanupRun, target Target
 		return nil, fmt.Errorf("private query evidence could not be retained")
 	}
 	if err != nil {
-		return nil, fmt.Errorf("podman query failed; private diagnostic retained")
+		return nil, engineFault("engine unreachable", engineReason(fmt.Errorf("%w; %s", err, data)), err)
 	}
 	return data, nil
 }
 
 // errCleanupUnreachable keeps the engine-unreachable pending form distinct from an invalid identity.
-var errCleanupUnreachable = fmt.Errorf("cleanup: pending (engine unreachable: podman info query failed; private diagnostic retained)")
+var errCleanupUnreachable = fmt.Errorf("engine connection unavailable")
 
 // cleanupEngine checks the same selected endpoint before any destructive operation.
 func (s *Service) cleanupEngine(ctx context.Context, r *cleanupRun, target Target) error {
 	data, err := s.cleanupQuery(ctx, r, target, "info", "--format", "json")
 	if err != nil {
-		return errCleanupUnreachable
+		return cleanupPendingEngine(err)
 	}
 	var info struct {
 		Host  struct{ Hostname string }
@@ -206,7 +206,12 @@ func cleanupProjectTag(tag string) bool {
 	if set == "none" {
 		return true
 	}
+	previous := ""
 	for _, name := range strings.Split(set, "-") {
+		if previous != "" && name <= previous {
+			return false
+		}
+		previous = name
 		switch name {
 		case "azure", "dotnet", "native", "playwright":
 		default:

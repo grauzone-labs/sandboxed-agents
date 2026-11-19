@@ -17,9 +17,11 @@ import (
 
 // exitEvidence records the suite's actual exit status, or a detected interrupted supervisor.
 type exitEvidence struct {
-	Code        int
-	EndedAt     time.Time
-	Interrupted bool
+	Code           int
+	EndedAt        time.Time
+	Interrupted    bool
+	LogUnverified  bool
+	PeakUnverified bool
 }
 
 // startedRun records only the owned supervisor identity and preparation duration.
@@ -65,6 +67,9 @@ func (s *Service) launch(ctx context.Context, args []string, out, diagnostics io
 	var options Options
 	if err = readJSON(filepath.Join(directory, "options.json"), &options); err != nil {
 		return fmt.Errorf("read prepared run options")
+	}
+	if err = s.checkCoordination(options); err != nil {
+		return err
 	}
 	if options.RunDir != directory {
 		return fmt.Errorf("prepared run directory mismatch")
@@ -128,11 +133,15 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 		startedAt = time.Now().UTC()
 	}
 	code := 1
+	logUnverified := false
+	peakUnverified := false
+	var suiteEndedAt time.Time
 	defer func() {
-		if err := writeExitText(directory, code); err != nil && result == nil {
-			result = err
+		if suiteEndedAt.IsZero() {
+			suiteEndedAt = time.Now().UTC()
 		}
-		if err := writeJSON(filepath.Join(directory, "exit.json"), exitEvidence{Code: code, EndedAt: time.Now().UTC()}); err != nil && result == nil {
+		_, _, err := completion(directory, &exitEvidence{Code: code, EndedAt: suiteEndedAt, LogUnverified: logUnverified, PeakUnverified: peakUnverified})
+		if err != nil && result == nil {
 			result = err
 		}
 	}()
@@ -141,6 +150,8 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 		return err
 	}
 	defer lock.Close()
+	finishPeak := s.samplePeak(ctx, options, snapshot)
+	defer func() { peakUnverified = !finishPeak() }()
 	if _, err = os.Stat(filepath.Join(directory, "started.json")); err == nil {
 		return fmt.Errorf("run directory already used")
 	}
@@ -155,7 +166,11 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 	if err != nil {
 		return err
 	}
-	defer log.Close()
+	defer func() {
+		if log.Close() != nil {
+			logUnverified = true
+		}
+	}()
 	active := activeRun{Supervisor: supervisor, RunDir: directory}
 	if err = writeJSON(filepath.Join(directory, "processes.json"), active); err != nil {
 		return err
@@ -165,6 +180,11 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 	}
 	defer os.Remove(activePath(options, snapshot.EngineID))
 
+	buildDirectory, err := createBuildChannel(options, snapshot)
+	if err != nil {
+		buildDirectory = ""
+		_ = os.WriteFile(filepath.Join(directory, "build-evidence-unverified"), []byte("trusted build channel unavailable\n"), 0600)
+	}
 	suite := exec.Command("go", "test", "./cmd/sandboxed-agents", "-run", "^TestLiveSuite$", "-timeout", "120m", "-v")
 	suite.Dir = options.Checkout
 	images := "0"
@@ -173,7 +193,8 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 	}
 	suite.Env = hostEnvironment(s.Platform, map[string]string{
 		"SANDBOXED_AGENTS_LIVE_STOP_AFTER_FAILURE": "1",
-		"SANDBOXED_AGENTS_LIVE_TESTS":              "1", "SANDBOXED_AGENTS_GROUP": options.Group,
+		BuildEvidenceEnv:              buildDirectory,
+		"SANDBOXED_AGENTS_LIVE_TESTS": "1", "SANDBOXED_AGENTS_GROUP": options.Group,
 		"SANDBOXED_AGENTS_LIVE_RECORD_DIR": options.RecordDir, "SANDBOXED_AGENTS_LIVE_IMAGES_TESTS": images,
 	})
 	// Capture uses UTF-8 bytes directly; PowerShell's 5.1 text encoding is never involved.
@@ -214,6 +235,8 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 	}
 	err = wait()
 	waited = true
+	suiteEndedAt = time.Now().UTC()
+	logUnverified = writer.logFailed || log.Sync() != nil
 	if err == nil {
 		code = 0
 		return nil
@@ -232,4 +255,59 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 // writeExitText retains a portable plain integer exit file for shell callers.
 func writeExitText(directory string, code int) error {
 	return os.WriteFile(filepath.Join(directory, "exit-status"), []byte(strconv.Itoa(code)+"\n"), 0600)
+}
+
+// completion serializes authoritative publication and interrupted recovery on a persistent per-run inode.
+// It reuses existing JSON evidence and repairs the shell status from that authoritative value.
+func completion(directory string, candidate *exitEvidence) (exitEvidence, bool, error) {
+	var ended exitEvidence
+	lock, err := os.OpenFile(filepath.Join(directory, "completion.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return ended, false, err
+	}
+	defer lock.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if err = lockFile(lock); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			return ended, false, fmt.Errorf("completion publication busy or unavailable")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	err = readCompletion(filepath.Join(directory, "exit.json"), &ended)
+	if err == nil {
+		return ended, true, writeExitText(directory, ended.Code)
+	}
+	if !os.IsNotExist(err) {
+		return ended, false, fmt.Errorf("existing completion unverified")
+	}
+	if candidate == nil {
+		return ended, false, nil
+	}
+	ended = *candidate
+	if err = writeExitText(directory, ended.Code); err != nil {
+		return ended, false, err
+	}
+	err = writeJSON(filepath.Join(directory, "exit.json"), ended)
+	return ended, err == nil, err
+}
+
+// readCompletion refuses malformed existing artifacts instead of inventing an authoritative successful exit.
+func readCompletion(path string, ended *exitEvidence) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, ended) != nil || json.Unmarshal(data, &fields) != nil || ended.EndedAt.IsZero() {
+		return fmt.Errorf("completion fields unverified")
+	}
+	for _, name := range []string{"Code", "EndedAt", "Interrupted"} {
+		if fields[name] == nil {
+			return fmt.Errorf("completion fields incomplete")
+		}
+	}
+	return nil
 }

@@ -103,11 +103,17 @@ func buildLabeledImageUnderLock(p podmanTarget, set []string, hash, baseID strin
 			flags = append(flags, "--pull=never", "--build-arg", "BASE_IMAGE="+baseID, "--label", baseImageLabel+"="+baseID)
 		}
 		args = append(append(append([]string{}, args[:len(args)-1]...), flags...), args[len(args)-1])
-		result, err := p.query(args...)
-		if result != "" {
-			fmt.Fprint(output, result)
-		}
-		return err
+		return withBuildEvidence(p, image.Tag(hash, set), hash, func(iid string) error {
+			buildArgs := args
+			if iid != "" {
+				buildArgs = append(append(append([]string{}, args[:len(args)-1]...), "--iidfile", iid), args[len(args)-1])
+			}
+			result, err := p.query(buildArgs...)
+			if result != "" {
+				fmt.Fprint(output, result)
+			}
+			return err
+		})
 	})
 }
 

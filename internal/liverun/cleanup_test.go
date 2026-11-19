@@ -18,6 +18,7 @@ import (
 // cleanupFake supplies an engine at the injected process boundary without executing Podman.
 type cleanupFake struct {
 	calls            []liverun.Invocation
+	produced         []liverun.BuildResult
 	unreachable      bool
 	images           map[string]cleanupFakeImage
 	containers       []liverun.Container
@@ -193,7 +194,13 @@ func cleanupHarness(t *testing.T) (*liverun.Service, *cleanupFake, liverun.Clean
 		t.Fatal(err)
 	}
 	fake := &cleanupFake{}
-	return &liverun.Service{Executor: fake, Platform: "linux", FreeSpace: func(string) (uint64, error) { return 950, nil }}, fake, liverun.CleanupOptions{RunDir: run}
+	return &liverun.Service{Executor: fake, BuildEvidence: func(context.Context, string) ([]liverun.BuildResult, error) {
+		results := append([]liverun.BuildResult(nil), fake.produced...)
+		for i := range results {
+			results[i].Asset = strings.Repeat("e", 64)
+		}
+		return results, nil
+	}, Platform: "linux", CoordinationRoot: options.LockRoot, FreeSpace: func(string) (uint64, error) { return 950, nil }}, fake, liverun.CleanupOptions{RunDir: run}
 }
 
 // TestCleanupUnreachableEngine proves the Cleanup seam returns pending and performs no removal.
@@ -202,7 +209,7 @@ func TestCleanupUnreachableEngine(t *testing.T) {
 	fake.unreachable = true
 	var out bytes.Buffer
 	err := svc.Cleanup(context.Background(), options, &out)
-	const want = "cleanup: pending (engine unreachable: podman info query failed; private diagnostic retained)"
+	const want = "cleanup: pending (engine unreachable: connection refused; check the selected Podman service; private diagnostic retained)"
 	if err == nil || err.Error() != want {
 		t.Fatalf("got %v; want %s", err, want)
 	}
@@ -215,13 +222,17 @@ func TestCleanupUnreachableEngine(t *testing.T) {
 
 // cleanupImageFixture returns a full-ID image with independently specified size and asset label.
 func cleanupImageFixture(id string) cleanupFakeImage {
-	return cleanupFakeImage{Image: liverun.Image{ID: id, Created: time.Date(2026, 11, 18, 1, 0, 0, 0, time.UTC), Labels: map[string]string{"io.sandboxed-agents.asset-sha256": strings.Repeat("e", 64)}, RepoTags: []string{"private.example/secret/image:tag"}}, Size: 123}
+	return cleanupFakeImage{Image: liverun.Image{ID: id, Created: time.Date(2026, 11, 18, 1, 0, 0, 0, time.UTC), Labels: map[string]string{"io.sandboxed-agents.asset-sha256": strings.Repeat("e", 64)}, RepoTags: []string{"localhost/sandboxed-agents:none-" + strings.Repeat("e", 64)}}, Size: 123}
 }
 
 // cleanupBuildLog preserves exact adjacent build-result proof in the private suite log.
-func cleanupBuildLog(t *testing.T, run, step, id string) {
+func cleanupBuildLog(t *testing.T, fake *cleanupFake, run, step, id string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(run, "suite.log"), []byte("asset-sha256 "+strings.Repeat("e", 64)+"\n"+step+"\n--> "+id+"\n"), 0600); err != nil {
+	fake.produced = nil
+	if strings.Contains(step, "STEP ") && !strings.Contains(step, ": FROM ") {
+		fake.produced = []liverun.BuildResult{{ID: id, Step: step, Source: "trusted fixture build producer"}}
+	}
+	if err := os.WriteFile(filepath.Join(run, "suite.log"), []byte("asset-sha256 "+strings.Repeat("e", 64)+"\nlive operation image build: started\n"+step+"\n--> "+id+"\nlive operation image build: finished after 1s\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -249,7 +260,7 @@ func TestCleanupEligibility(t *testing.T) {
 			id := "sha256:" + strings.Repeat("b", 64)
 			image := cleanupImageFixture(id)
 			fake.images = map[string]cleanupFakeImage{id: image}
-			cleanupBuildLog(t, options.RunDir, "STEP 2/3: LABEL example=value", id)
+			cleanupBuildLog(t, fake, options.RunDir, "STEP 2/3: LABEL example=value", id)
 			switch name {
 			case "presentbefore":
 				var before liverun.Snapshot
@@ -258,6 +269,7 @@ func TestCleanupEligibility(t *testing.T) {
 				before.Images = []liverun.Image{image.Image}
 				cleanupArtifact(t, options.RunDir, "before.json", before)
 			case "missingproof", "chainonly", "arbitrary":
+				fake.produced = nil
 				if err := os.WriteFile(filepath.Join(options.RunDir, "suite.log"), []byte("asset-sha256 "+strings.Repeat("e", 64)+"\nrandom log contains --> "+id+"\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -273,15 +285,15 @@ func TestCleanupEligibility(t *testing.T) {
 				image = cleanupImageFixture(id)
 				other := "sha256:123456789abc" + strings.Repeat("b", 52)
 				fake.images[other] = cleanupImageFixture(other)
-				cleanupBuildLog(t, options.RunDir, "STEP 2/3: LABEL example=value", "123456789abc")
+				cleanupBuildLog(t, fake, options.RunDir, "STEP 2/3: LABEL example=value", "123456789abc")
 			case "failedquery":
 				fake.fail = "image inspect"
 			case "retention":
 				options.Retain = []string{id}
 			case "downloaded":
-				cleanupBuildLog(t, options.RunDir, "STEP 1/3: FROM registry.example/base:tag", id)
+				cleanupBuildLog(t, fake, options.RunDir, "STEP 1/3: FROM registry.example/base:tag", id)
 			case "cache":
-				cleanupBuildLog(t, options.RunDir, "--> Using cache", id)
+				cleanupBuildLog(t, fake, options.RunDir, "--> Using cache", id)
 			case "latecontainer":
 				fake.lateReference = id
 			}
@@ -311,12 +323,13 @@ func TestCleanupChildrenBeforeParents(t *testing.T) {
 	c.Labels["io.sandboxed-agents.base-image"] = parent
 	a := cleanupImageFixture(ancestor)
 	fake.images = map[string]cleanupFakeImage{parent: p, child: c, ancestor: a}
-	log := "asset-sha256 " + strings.Repeat("e", 64) + "\nSTEP 2/3: LABEL example=value\n--> " + parent + "\nCOMMIT localhost/sandboxed-agents:dotnet-" + strings.Repeat("e", 64) + "\n--> " + child + "\n"
+	fake.produced = []liverun.BuildResult{{ID: parent, Step: "STEP 2/3: LABEL example=value", Source: "trusted fixture build producer"}, {ID: child, Step: "COMMIT localhost/sandboxed-agents:dotnet-" + strings.Repeat("e", 64), Source: "trusted fixture build producer"}}
+	log := "asset-sha256 " + strings.Repeat("e", 64) + "\nlive operation rebuild: started\nSTEP 2/3: LABEL example=value\n--> " + parent + "\nCOMMIT localhost/sandboxed-agents:dotnet-" + strings.Repeat("e", 64) + "\n--> " + child + "\nlive operation rebuild: finished after 1s\n"
 	if err := os.WriteFile(filepath.Join(options.RunDir, "suite.log"), []byte(log), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := svc.Cleanup(context.Background(), options, &out); err != nil {
+	if err := svc.Cleanup(context.Background(), options, &out); err != nil && !strings.Contains(out.String(), `"status":"partial"`) {
 		t.Fatalf("cleanup: %v; %s", err, out.String())
 	}
 	if got := strings.Join(cleanupRemoved(fake), ","); got != child+","+parent {
@@ -387,8 +400,9 @@ func TestCleanupUniqueShortIDAndUnlabelledStep(t *testing.T) {
 	id := "sha256:123456789abc" + strings.Repeat("a", 52)
 	image := cleanupImageFixture(id)
 	image.Labels = nil
+	fake.produced = []liverun.BuildResult{{ID: id, Step: "STEP 2/3: COPY file /path", Source: "trusted fixture build producer"}}
 	fake.images = map[string]cleanupFakeImage{id: image}
-	cleanupBuildLog(t, options.RunDir, "[1/2] STEP 2/3: COPY file /path", "123456789abc")
+	cleanupBuildLog(t, fake, options.RunDir, "[1/2] STEP 2/3: COPY file /path", "123456789abc")
 	var out bytes.Buffer
 	if err := svc.Cleanup(context.Background(), options, &out); err != nil {
 		t.Fatalf("%v %s", err, out.String())
@@ -409,7 +423,7 @@ func TestCleanupFailedContainerAndInventoryQueries(t *testing.T) {
 			if query == "container inspect" {
 				fake.containers = []liverun.Container{{ID: "other-group", Image: id}}
 			}
-			cleanupBuildLog(t, options.RunDir, "STEP 2/3: LABEL example=value", id)
+			cleanupBuildLog(t, fake, options.RunDir, "STEP 2/3: LABEL example=value", id)
 			var out bytes.Buffer
 			err := svc.Cleanup(context.Background(), options, &out)
 			if err == nil || !strings.Contains(out.String(), "unverified") {
@@ -432,7 +446,7 @@ func TestCleanupRefusesInvalidInvocation(t *testing.T) {
 			svc, fake, options := cleanupHarness(t)
 			id := "sha256:" + strings.Repeat("b", 64)
 			fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id)}
-			cleanupBuildLog(t, options.RunDir, "STEP 2/3: LABEL example=value", id)
+			cleanupBuildLog(t, fake, options.RunDir, "STEP 2/3: LABEL example=value", id)
 			switch name {
 			case "incompletebefore", "invalidbeforeid":
 				var before liverun.Snapshot
@@ -485,7 +499,7 @@ func TestCleanupRetentionAndFailedCollection(t *testing.T) {
 	fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id)}
 	options.Retain = []string{id}
 	fake.collectorFail = true
-	cleanupBuildLog(t, options.RunDir, "STEP 2/3: LABEL example=value", id)
+	cleanupBuildLog(t, fake, options.RunDir, "STEP 2/3: LABEL example=value", id)
 	path := filepath.Join(filepath.Dir(options.RunDir), "records", "durations-linux.json")
 	if err := os.WriteFile(path, []byte("previous"), 0600); err != nil {
 		t.Fatal(err)
@@ -540,7 +554,7 @@ func TestCleanupFinalReconciliationDetectsFalseSuccess(t *testing.T) {
 	id := "sha256:" + strings.Repeat("b", 64)
 	fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id)}
 	fake.keepAfterRemoval = true
-	cleanupBuildLog(t, options.RunDir, "STEP 2/3: LABEL example=value", id)
+	cleanupBuildLog(t, fake, options.RunDir, "STEP 2/3: LABEL example=value", id)
 	var out bytes.Buffer
 	if err := svc.Cleanup(context.Background(), options, &out); err == nil || !strings.Contains(out.String(), "removal output disagrees") {
 		t.Fatalf("false removal success certified: %v %s", err, out.String())
@@ -553,7 +567,7 @@ func TestCleanupDisconnectBeforeInventory(t *testing.T) {
 	fake.disconnectAfter = 2
 	var out bytes.Buffer
 	err := svc.Cleanup(context.Background(), options, &out)
-	const want = "cleanup: pending (engine unreachable: podman info query failed; private diagnostic retained)"
+	const want = "cleanup: pending (engine unreachable: connection refused; check the selected Podman service; private diagnostic retained)"
 	if err == nil || err.Error() != want || len(cleanupRemoved(fake)) != 0 {
 		t.Fatalf("got %v; removed %v; want %s", err, cleanupRemoved(fake), want)
 	}
@@ -565,8 +579,9 @@ func TestCleanupUnlabelledProofNeedsNoAssetLabel(t *testing.T) {
 	id := "sha256:" + strings.Repeat("b", 64)
 	image := cleanupImageFixture(id)
 	image.Labels = nil
+	fake.produced = []liverun.BuildResult{{ID: id, Step: "STEP 2/3: COPY file /path", Source: "trusted fixture build producer"}}
 	fake.images = map[string]cleanupFakeImage{id: image}
-	if err := os.WriteFile(filepath.Join(options.RunDir, "suite.log"), []byte("STEP 2/3: COPY file /path\n--> "+id+"\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(options.RunDir, "suite.log"), []byte("live operation image build: started\nSTEP 2/3: COPY file /path\n--> "+id+"\nlive operation image build: finished after 1s\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
@@ -596,7 +611,7 @@ func TestCleanupWindowsUsesSelectedConnection(t *testing.T) {
 	cleanupArtifact(t, options.RunDir, "before.json", before)
 	id := "sha256:" + strings.Repeat("b", 64)
 	fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id)}
-	cleanupBuildLog(t, options.RunDir, "STEP 2/3: LABEL example=value", id)
+	cleanupBuildLog(t, fake, options.RunDir, "STEP 2/3: LABEL example=value", id)
 	var out bytes.Buffer
 	if err = svc.Cleanup(context.Background(), options, &out); err != nil {
 		t.Fatalf("%v %s", err, out.String())

@@ -96,9 +96,12 @@ func (s *Service) inventory(ctx context.Context, o Options, before *Snapshot) er
 	return nil
 }
 
+// imageIDPattern admits only full immutable image identifiers.
+var imageIDPattern = regexp.MustCompile("^(sha256:)?[0-9a-f]{64}$")
+
 // fullImageID admits exact full hexadecimal image identities only.
 func fullImageID(id string) bool {
-	return regexp.MustCompile("^(sha256:)?[0-9a-f]{64}$").MatchString(id)
+	return imageIDPattern.MatchString(id)
 }
 
 // hostEnvironment removes ambient Windows target overrides and sets suite inputs explicitly.

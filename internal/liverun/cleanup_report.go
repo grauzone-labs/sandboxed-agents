@@ -149,20 +149,23 @@ func (s *Service) finishCleanup(ctx context.Context, r *cleanupRun, log []byte, 
 	end := time.Now().UTC()
 	r.report.PostSuiteSeconds = end.Sub(r.ended.EndedAt).Seconds()
 	load, base, cache := classifyContext(r.before, asset)
-	platform := "linux"
-	if s.Platform == "windows" {
-		platform = "windows-11"
-	}
+	platform := s.platformName()
 	record := filepath.Join(r.options.RecordDir, "live-suite-"+platform+".json")
 	args := []string{"run", "./internal/validationduration/cmd/retain-durations", "-record", record, "-host-load", load, "-base-image", base, "-build-cache", cache, "-preparation-start", r.started.PreparationStart.Format(time.RFC3339Nano), "-preparation-end", r.started.PreparationEnd.Format(time.RFC3339Nano), "-post-suite-start", r.ended.EndedAt.Format(time.RFC3339Nano), "-post-suite-end", end.Format(time.RFC3339Nano)}
 	bounded, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	data, collectErr := s.Executor.Execute(bounded, Invocation{Program: "go", Args: args, Dir: r.options.Checkout, Env: hostEnvironment(s.Platform, nil), Input: log})
 	expected := filepath.Join(r.options.RecordDir, "durations-"+platform+".json")
-	if collectErr == nil && strings.TrimSpace(string(data)) == expected {
+	collected, optional := collectorOutcome(data, collectErr, expected)
+	if collected {
 		if _, readErr := cleanupRead(expected, cleanupSummaryLimit); readErr == nil {
 			r.report.Collected = true
 			r.report.DurationsFile = filepath.Base(expected)
+			if optional {
+				r.report.Unverified = append(r.report.Unverified, CleanupItem{Reason: "case durations retained; optional operation evidence unverified", Query: "retain-durations"})
+				r.report.Status = "unverified"
+			}
+			collectErr = nil
 		} else {
 			collectErr = fmt.Errorf("collector output artifact unreadable or oversized")
 		}
@@ -183,6 +186,9 @@ func (s *Service) finishCleanup(ctx context.Context, r *cleanupRun, log []byte, 
 	}
 	if _, err = out.Write(append(encoded, '\n')); err != nil {
 		return err
+	}
+	if r.report.Status == "partial" {
+		return fmt.Errorf("cleanup: partial (unproven images retained; see sanitized cleanup report)")
 	}
 	if r.report.Status != "complete" {
 		return fmt.Errorf("cleanup: unverified (see sanitized cleanup report)")

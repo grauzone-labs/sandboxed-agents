@@ -35,6 +35,10 @@ type Service struct {
 	FreeSpace   DiskReader
 	Platform    string
 	MachineDisk func(string) (string, error)
+	// CoordinationRoot injects an isolated host namespace in offline fixtures; production uses the user cache.
+	CoordinationRoot string
+	// BuildEvidence injects a trusted producer at the host boundary for offline policy tests.
+	BuildEvidence func(context.Context, string) ([]BuildResult, error)
 }
 
 // New returns the production host boundaries for the current operating system.

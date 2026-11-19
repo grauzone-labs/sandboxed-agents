@@ -23,7 +23,21 @@ func TestMain(m *testing.M) {
 		if role == "go" || role == "podman" || role == "git" || role == "ssh" {
 			os.Exit(hostFixture(role, os.Args[1:]))
 		}
+		if len(os.Args) > 1 && os.Args[1] == "_fixture-session" {
+			command := exec.Command(os.Args[0], "run", "-run-dir", os.Args[2])
+			if data, err := command.CombinedOutput(); err != nil {
+				fmt.Fprintln(os.Stderr, err, string(data))
+				os.Exit(2)
+			}
+			if err := os.WriteFile(filepath.Join(os.Getenv("LIVERUN_FIXTURE_ROOT"), "session-ready"), nil, 0600); err != nil {
+				os.Exit(3)
+			}
+			for {
+				time.Sleep(time.Second)
+			}
+		}
 		service := liverun.New()
+		service.CoordinationRoot = filepath.Join(os.Getenv("LIVERUN_FIXTURE_ROOT"), "locks")
 		service.MachineDisk = func(string) (string, error) { return rootFixtureDisk(), nil }
 		if err := service.RunDispatch(context.Background(), os.Args[1:], os.Stdout, os.Stderr); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -60,6 +74,8 @@ func hostFixture(role string, args []string) int {
 			}
 			for n := 0; n < 1000; n++ {
 				if _, err := os.Stat(filepath.Join(root, "release")); err == nil {
+					fmt.Println("live operation cleanup: started")
+					fmt.Println("suite final output")
 					return 7
 				}
 				time.Sleep(10 * time.Millisecond)
@@ -115,11 +131,15 @@ func fixtureSetup(t *testing.T) (string, string, []string) {
 		}
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module fixture\n\ngo 1.27.2\n"), 0600); err != nil {
+	checkout := filepath.Join(root, "checkout")
+	if err := os.Mkdir(checkout, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "go.mod"), []byte("module fixture\n\ngo 1.27.2\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	private := filepath.Join(root, "private")
-	args := []string{"prepare", "-checkout", root, "-run-dir", private, "-record-dir", filepath.Join(root, "records"), "-lock-root", filepath.Join(root, "locks"), "-revision", strings.Repeat("a", 40), "-allow-unbounded", "-unbounded-decision", "fixture invocation with no bound"}
+	args := []string{"prepare", "-checkout", checkout, "-run-dir", private, "-record-dir", filepath.Join(root, "records"), "-revision", strings.Repeat("a", 40), "-allow-unbounded", "-unbounded-decision", "fixture invocation with no bound"}
 	command := exec.Command(binary, args...)
 	if data, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("prepare: %v\n%s", err, data)
@@ -327,4 +347,111 @@ func TestRunRefusesConcurrentLaunchOfSameDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFixture(t, filepath.Join(private, "exit.json"))
+}
+
+// TestRunProgressPersistenceFailurePreservesSuiteExit proves a failed progress artifact cannot change the real suite outcome.
+func TestRunProgressPersistenceFailurePreservesSuiteExit(t *testing.T) {
+	root, private, _ := fixtureSetup(t)
+	binary, _ := os.Executable()
+	if data, err := exec.Command(binary, "run", "-run-dir", private).CombinedOutput(); err != nil {
+		t.Fatalf("run: %v %s", err, data)
+	}
+	waitFixture(t, filepath.Join(root, "suite-ready"))
+	if err := os.Remove(filepath.Join(private, "progress.json")); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(private, "progress.json"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "release"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	waitFixture(t, filepath.Join(private, "exit.json"))
+	var ended struct{ Code int }
+	if err := json.Unmarshal(mustReadFile(t, filepath.Join(private, "exit.json")), &ended); err != nil {
+		t.Fatal(err)
+	}
+	if ended.Code != 7 {
+		t.Fatalf("progress error changed actual suite code 7 to %d", ended.Code)
+	}
+	if !bytes.Contains(mustReadFile(t, filepath.Join(private, "suite.log")), []byte("suite final output")) {
+		t.Fatal("suite output was not drained")
+	}
+}
+
+// TestRunRecordsSampledPeakWithoutInventingBound proves the command retains run/filesystem provenance but fails closed on an unbounded last sample.
+func TestRunRecordsSampledPeakWithoutInventingBound(t *testing.T) {
+	root, private, args := fixtureSetup(t)
+	binary, _ := os.Executable()
+	if data, err := exec.Command(binary, "run", "-run-dir", private).CombinedOutput(); err != nil {
+		t.Fatalf("run: %v %s", err, data)
+	}
+	waitFixture(t, filepath.Join(root, "suite-ready"))
+	if err := os.WriteFile(filepath.Join(root, "release"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	waitFixture(t, filepath.Join(private, "exit.json"))
+	paths, err := filepath.Glob(filepath.Join(root, "locks", "*-peak.json"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("last-run sampled peak absent: %v %v", paths, err)
+	}
+	var peak struct {
+		Revision, EngineID, SampleContext string
+		PeakAdditionalBytes               uint64
+		Filesystems                       []struct {
+			Name, Path string
+			Samples    int
+		}
+	}
+	if err = json.Unmarshal(mustReadFile(t, paths[0]), &peak); err != nil {
+		t.Fatal(err)
+	}
+	if peak.Revision != strings.Repeat("a", 40) || peak.EngineID != "fixture-engine:/" || peak.SampleContext == "" || len(peak.Filesystems) == 0 || peak.Filesystems[0].Samples < 2 || peak.PeakAdditionalBytes != 0 {
+		t.Fatalf("sample facts misrepresented: %+v", peak)
+	}
+	next := []string{}
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-allow-unbounded" {
+			continue
+		}
+		if args[i] == "-unbounded-decision" {
+			i++
+			continue
+		}
+		if args[i] == private {
+			next = append(next, filepath.Join(root, "next"))
+		} else {
+			next = append(next, args[i])
+		}
+	}
+	if data, err := exec.Command(binary, next...).CombinedOutput(); err == nil || !bytes.Contains(data, []byte("no reliable bound")) {
+		t.Fatalf("sample maximum accepted as bound: %v %s", err, data)
+	}
+}
+
+// TestRunBuildChannelFailureIsSupplemental proves unavailable telemetry cannot prevent the suite or change its real exit code.
+func TestRunBuildChannelFailureIsSupplemental(t *testing.T) {
+	root, private, _ := fixtureSetup(t)
+	if err := os.Mkdir(filepath.Join(private, "build-evidence"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	binary, _ := os.Executable()
+	if data, err := exec.Command(binary, "run", "-run-dir", private).CombinedOutput(); err != nil {
+		t.Fatalf("telemetry prevented suite: %v %s", err, data)
+	}
+	waitFixture(t, filepath.Join(root, "suite-ready"))
+	if err := os.WriteFile(filepath.Join(root, "release"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	waitFixture(t, filepath.Join(private, "exit.json"))
+	var ended struct{ Code int }
+	if err := json.Unmarshal(mustReadFile(t, filepath.Join(private, "exit.json")), &ended); err != nil {
+		t.Fatal(err)
+	}
+	if ended.Code != 7 {
+		t.Fatalf("telemetry changed actual suite code: %d", ended.Code)
+	}
+	if _, err := os.Stat(filepath.Join(private, "build-evidence-unverified")); err != nil {
+		t.Fatal("evidence gap not retained")
+	}
 }

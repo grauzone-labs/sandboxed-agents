@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
 )
@@ -17,6 +18,7 @@ import (
 type fakeHost struct {
 	calls     []liverun.Invocation
 	fail      string
+	errorText string
 	goVersion string
 	answers   map[string]string
 }
@@ -31,6 +33,9 @@ func (f *fakeHost) Execute(_ context.Context, in liverun.Invocation) ([]byte, er
 		}
 	}
 	if strings.Contains(key, f.fail) && f.fail != "" {
+		if f.errorText != "" {
+			return nil, fmt.Errorf("%s", f.errorText)
+		}
 		return nil, fmt.Errorf("private host detail /secret/name")
 	}
 	switch {
@@ -72,16 +77,18 @@ func commandHarness(t *testing.T) (*liverun.Service, *fakeHost, []string, string
 	if err := os.MkdirAll(record, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module fixture\n\ngo 1.27.2\n"), 0600); err != nil {
+	checkout := filepath.Join(root, "checkout")
+	if err := os.Mkdir(checkout, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "go.mod"), []byte("module fixture\n\ngo 1.27.2\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	peak := filepath.Join(root, "peak.json")
-	if err := os.WriteFile(peak, []byte(`{"EngineID":"engine:/private/storage","PeakAdditionalBytes":100,"Basis":"measured complete earlier run"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writePeakFixture(t, peak, false)
 	fake := &fakeHost{}
-	svc := &liverun.Service{Executor: fake, FreeSpace: func(string) (uint64, error) { return 900, nil }, Platform: "linux"}
-	args := []string{"prepare", "-checkout", root, "-run-dir", run, "-record-dir", record, "-lock-root", lock, "-revision", strings.Repeat("a", 40), "-peak-record", peak}
+	svc := &liverun.Service{Executor: fake, FreeSpace: func(string) (uint64, error) { return 900, nil }, Platform: "linux", CoordinationRoot: lock}
+	args := []string{"prepare", "-checkout", checkout, "-run-dir", run, "-record-dir", record, "-revision", strings.Repeat("a", 40), "-peak-record", peak}
 	return svc, fake, args, run
 }
 
@@ -195,6 +202,7 @@ func TestPrepareRequiresRecordedHostPeak(t *testing.T) {
 func TestPrepareWindowsReadsBothFilesystems(t *testing.T) {
 	svc, fake, args, run := commandHarness(t)
 	svc.Platform = "windows"
+	writePeakFixture(t, args[len(args)-1], true)
 	svc.MachineDisk = func(string) (string, error) { return "C:\\private\\ext4.vhdx", nil }
 	t.Setenv("CONTAINER_HOST", "ignored")
 	t.Setenv("CONTAINER_CONNECTION", "ignored")
@@ -377,5 +385,27 @@ func TestPrepareRejectsNullInventories(t *testing.T) {
 				t.Fatalf("null inventory accepted: %v", err)
 			}
 		})
+	}
+}
+
+// writePeakFixture supplies explicit reasoned component coverage at the host-record boundary, never a sampled-max multiplier.
+func writePeakFixture(t *testing.T, path string, windows bool) {
+	t.Helper()
+	p := liverun.PeakRecord{EngineID: "engine:/private/storage", Revision: strings.Repeat("a", 40), PeakAdditionalBytes: 100, Basis: "fixture allowances cover every growth source at these literal byte budgets", SampleStartedAt: time.Now().Add(-time.Minute), SampleEndedAt: time.Now().Add(-time.Second), SampleIntervalSeconds: 10, SampleContext: "isolated fixture", SamplingComplete: true}
+	p.Filesystems = []liverun.PeakFilesystem{{Name: "engine", Path: "/private/storage", StartFreeBytes: 900, MinimumFreeBytes: 850, SampledGrowthBytes: 50, Samples: 2}}
+	if windows {
+		p.Filesystems = append(p.Filesystems, liverun.PeakFilesystem{Name: "host", Path: `C:\private\ext4.vhdx`, StartFreeBytes: 900, MinimumFreeBytes: 850, SampledGrowthBytes: 50, Samples: 2})
+	}
+	for _, d := range p.Filesystems {
+		for _, kind := range []string{"images", "build-temporary", "suite-and-artifacts", "sampling-gaps-and-variation"} {
+			p.Components = append(p.Components, liverun.PeakComponent{Filesystem: d.Name, Kind: kind, Bytes: 25, Basis: "independently specified fixture allocation allowance"})
+		}
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
 	}
 }

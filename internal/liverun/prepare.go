@@ -34,15 +34,18 @@ func (s *Service) prepare(ctx context.Context, o Options) (Snapshot, error) {
 
 // prepareLocked verifies every pre-build check while keeping the selected engine excluded.
 func (s *Service) prepareLocked(ctx context.Context, o Options) (Snapshot, *os.File, error) {
+	if err := s.checkCoordination(o); err != nil {
+		return Snapshot{}, nil, err
+	}
 	before := Snapshot{TakenAt: time.Now().UTC(), HostLoad: o.HostLoad}
 	fail := func(name string, err error) (Snapshot, *os.File, error) { return before, nil, failCheck(o, name, err) }
 	data, err := s.query(ctx, o, "git", "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil || strings.TrimSpace(string(data)) != o.Revision {
 		return fail("revision", fmt.Errorf("checkout revision differs: %v", err))
 	}
-	data, err = s.query(ctx, o, "git", "status", "--porcelain", "--untracked-files=no")
+	data, err = s.query(ctx, o, "git", "status", "--porcelain", "--untracked-files=all", "--ignored=matching")
 	if err != nil || strings.TrimSpace(string(data)) != "" {
-		return fail("checkout-clean", fmt.Errorf("tracked checkout is modified: %v", err))
+		return fail("checkout-clean", fmt.Errorf("checkout has modified, untracked or ignored inputs: %v", err))
 	}
 	module, err := os.ReadFile(filepath.Join(o.Checkout, "go.mod"))
 	if err != nil {
@@ -59,10 +62,7 @@ func (s *Service) prepareLocked(ctx context.Context, o Options) (Snapshot, *os.F
 	if err = os.MkdirAll(o.RecordDir, 0700); err != nil {
 		return fail("record-directory", err)
 	}
-	platform := "linux"
-	if s.Platform == "windows" {
-		platform = "windows-11"
-	}
+	platform := s.platformName()
 	if _, err = os.Stat(filepath.Join(o.RecordDir, "live-suite-"+platform+".json")); err == nil || !os.IsNotExist(err) {
 		return fail("record-directory", fmt.Errorf("record directory already contains suite evidence or is unreadable; use a fresh invocation directory"))
 	}
@@ -95,13 +95,13 @@ func (s *Service) prepareLocked(ctx context.Context, o Options) (Snapshot, *os.F
 	if err = writeJSON(filepath.Join(o.RunDir, "preparation.json"), before); err != nil {
 		return lockedFail("inventory-retention", err)
 	}
-	peakPath := o.PeakRecord
-	if peakPath == "" {
-		peakPath = filepath.Join(o.LockRoot, engineKey(engine)+"-peak.json")
+	recordPath := o.PeakRecord
+	if recordPath == "" {
+		recordPath = peakPath(o, engine)
 	}
 	var peak PeakRecord
-	err = readJSON(peakPath, &peak)
-	if err != nil || peak.EngineID != engine || peak.PeakAdditionalBytes == 0 || strings.TrimSpace(peak.Basis) == "" {
+	err = readJSON(recordPath, &peak)
+	if err != nil || !admissiblePeak(peak, before) {
 		if !o.AllowUnbounded {
 			lock.Close()
 			return before, nil, headroomFailure(o, before, "peak-bound", 0)
@@ -114,7 +114,6 @@ func (s *Service) prepareLocked(ctx context.Context, o Options) (Snapshot, *os.F
 			}
 		}
 	}
-	before.Complete = true
 	return before, lock, nil
 }
 
@@ -124,7 +123,7 @@ func (s *Service) target(ctx context.Context, o Options) (Target, string, error)
 	if s.Platform == "windows" {
 		data, err := s.query(ctx, o, "podman", "machine", "list", "--format", "json")
 		if err != nil {
-			return target, "", err
+			return target, "", engineFault("engine unreachable", engineReason(err), err)
 		}
 		var machines []struct {
 			Name    string
@@ -132,7 +131,7 @@ func (s *Service) target(ctx context.Context, o Options) (Target, string, error)
 			VMType  string
 		}
 		if err = json.Unmarshal(data, &machines); err != nil || len(machines) == 0 {
-			return target, "", fmt.Errorf("machine list is unavailable")
+			return target, "", engineFault("malformed target", "machine list unavailable or malformed", err)
 		}
 		chosen := machines[0]
 		defaults := 0
@@ -143,14 +142,14 @@ func (s *Service) target(ctx context.Context, o Options) (Target, string, error)
 			}
 		}
 		if len(machines) > 1 && defaults != 1 {
-			return target, "", fmt.Errorf("select one default Podman machine")
+			return target, "", engineFault("ambiguous target", "select exactly one default Podman machine", nil)
 		}
 		if chosen.VMType != "wsl" || !validName(chosen.Name) {
-			return target, "", fmt.Errorf("invalid WSL2 machine selection")
+			return target, "", engineFault("unsafe target", "a valid WSL2 machine selection is required", nil)
 		}
 		data, err = s.query(ctx, o, "podman", "machine", "inspect", chosen.Name)
 		if err != nil {
-			return target, "", err
+			return target, "", engineFault("engine unreachable", engineReason(err), err)
 		}
 		var inspected []struct {
 			Name, State string
@@ -159,40 +158,43 @@ func (s *Service) target(ctx context.Context, o Options) (Target, string, error)
 			SSHConfig   machineSSH
 		}
 		if err = json.Unmarshal(data, &inspected); err != nil || len(inspected) != 1 || inspected[0].Name != chosen.Name {
-			return target, "", fmt.Errorf("invalid machine inspect")
+			return target, "", engineFault("malformed target", "machine inspect is malformed", err)
 		}
 		m := inspected[0]
 		if m.State != "running" {
 			_, engineErr := s.podman(ctx, o, Target{Connection: chosen.Name}, "info", "--format", "json")
 			if engineErr != nil {
-				return target, "", engineErr
+				return target, "", engineFault("machine stopped", "machine stopped; "+engineReason(engineErr), engineErr)
 			}
 		}
-		if m.State != "running" || m.Rootful == nil || *m.Rootful {
-			return target, "", fmt.Errorf("a running rootless machine is required; inspect answer: %s", data)
+		if m.State != "running" {
+			return target, "", engineFault("machine stopped", "machine stopped; start it outside this command", nil)
+		}
+		if m.Rootful == nil || *m.Rootful {
+			return target, "", engineFault("unsafe target", "a verified rootless machine is required", fmt.Errorf("inspect answer: %s", data))
 		}
 		if m.SSHConfig.Port < 1 || m.SSHConfig.Port > 65535 || !regexp.MustCompile("^[a-zA-Z0-9_][a-zA-Z0-9_-]*$").MatchString(m.SSHConfig.RemoteUsername) || !windowsAbsolute(m.SSHConfig.IdentityPath) {
-			return target, "", fmt.Errorf("invalid machine filesystem or SSH metadata")
+			return target, "", engineFault("malformed target", "machine filesystem or SSH metadata is malformed", nil)
 		}
 		target.Connection, target.MachineDiskPath, target.SSH = chosen.Name, m.ConfigDir.Path, m.SSHConfig
 		if s.MachineDisk == nil {
-			return target, "", fmt.Errorf("machine virtual disk cannot be located")
+			return target, "", engineFault("malformed target", "machine virtual disk location unverified", nil)
 		}
 		target.MachineDiskPath, err = s.MachineDisk(chosen.Name)
 		if err != nil {
-			return target, "", fmt.Errorf("machine virtual disk: %w", err)
+			return target, "", engineFault("malformed target", "machine virtual disk location unverified", err)
 		}
 	}
 	data, err := s.podman(ctx, o, target, "info", "--format", "json")
 	if err != nil {
-		return target, "", err
+		return target, "", engineFault("engine unreachable", engineReason(err), err)
 	}
 	var info struct {
 		Host  struct{ Hostname string }
 		Store struct{ GraphRoot string }
 	}
 	if err = json.Unmarshal(data, &info); err != nil || info.Host.Hostname == "" || !strings.HasPrefix(info.Store.GraphRoot, "/") {
-		return target, "", fmt.Errorf("engine storage identity is unavailable")
+		return target, "", engineFault("malformed target", "engine storage identity is malformed", err)
 	}
 	target.Storage = info.Store.GraphRoot
 	return target, info.Host.Hostname + ":" + target.Storage, nil

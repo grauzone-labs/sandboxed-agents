@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -75,6 +74,9 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 	if err != nil {
 		return err
 	}
+	if err = s.checkCoordination(run.options); err != nil {
+		return fmt.Errorf("cleanup: pending (coordination root changed)")
+	}
 	lock, err := acquireEngine(run.options.LockRoot, run.before.EngineID)
 	if err != nil {
 		return fmt.Errorf("cleanup: pending (engine exclusion unavailable)")
@@ -89,7 +91,7 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 	target, engine, err := s.target(ctx, run.options)
 	if err != nil {
 		_ = cleanupWriteJSON(filepath.Join(run.directory, "engine-diagnostic.json"), map[string]string{"error": boundedCleanupText(err.Error(), 4096)}, cleanupPrivateLimit)
-		return errCleanupUnreachable
+		return cleanupPendingEngine(err)
 	}
 	if engine != run.before.EngineID || target != run.before.Target {
 		return fmt.Errorf("cleanup: pending (engine changed since before snapshot)")
@@ -98,14 +100,14 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 	if err != nil {
 		return fmt.Errorf("cleanup: pending (private log unreadable or exceeds limit)")
 	}
-	proofs, asset, err := parseBuildOutput(log)
+	asset, err := parseBuildAsset(log)
 	if err != nil {
 		return fmt.Errorf("cleanup: pending (build evidence incomplete or exceeds limit)")
 	}
 	current, issues, err := s.cleanupInventory(ctx, run, target)
 	run.report.Unverified = append(run.report.Unverified, issues...)
 	if errors.Is(err, errCleanupUnreachable) {
-		return errCleanupUnreachable
+		return err
 	}
 	if err != nil {
 		run.report.Status = "unverified"
@@ -114,7 +116,31 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 		}
 		return s.finishCleanup(ctx, run, log, asset, out, err)
 	}
-	record := resolveBuildRecord(proofs, current)
+	// Stdout and operation markers are attacker-controlled data, even inside apparent build windows.
+	// Until a trusted producer supplies primary evidence, no stdout token grants ownership.
+	trusted := []buildProof{}
+	results, proofErr := readBuildResults(run.options, run.before)
+	if s.BuildEvidence != nil {
+		results, proofErr = s.BuildEvidence(ctx, run.options.RunDir)
+	}
+	if proofErr != nil {
+		return fmt.Errorf("cleanup: pending (trusted build evidence unverified)")
+	}
+	boundAsset := ""
+	for _, result := range results {
+		if len(result.Asset) != 64 || boundAsset != "" && boundAsset != result.Asset {
+			return fmt.Errorf("cleanup: pending (trusted asset identity unverified)")
+		}
+		boundAsset = result.Asset
+		if result.Source == "" || result.Step == "" {
+			continue
+		}
+		trusted = append(trusted, buildProof{Token: result.ID, Step: result.Step, Result: result.Source})
+	}
+	if len(results) > 0 {
+		asset = results[0].Asset
+	}
+	record := resolveBuildRecord(trusted, current)
 	if err = cleanupWriteJSON(filepath.Join(run.directory, "build-record.json"), record, cleanupPrivateLimit); err != nil {
 		return fmt.Errorf("cleanup: pending (cannot retain build record)")
 	}
@@ -129,13 +155,16 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 	}
 	for index, item := range plan {
 		if item.Reason != "" {
+			if item.Reason == "missing exact build proof" {
+				run.report.Status = "partial"
+			}
 			run.report.Skipped = append(run.report.Skipped, item)
 			continue
 		}
 		// Recheck the endpoint and every container immediately before each removal.
 		if err = s.cleanupEngine(ctx, run, target); err != nil {
 			if errors.Is(err, errCleanupUnreachable) && len(run.report.Removed) == 0 {
-				return errCleanupUnreachable
+				return err
 			}
 			run.report.Unverified = append(run.report.Unverified, CleanupItem{ID: item.ID, Reason: "engine identity unverified", Query: "podman info --format json"})
 			run.skipRemainder(plan[index+1:])
@@ -225,6 +254,9 @@ func loadCleanup(o CleanupOptions) (*cleanupRun, error) {
 			}
 		}
 	}
+	if r.ended.LogUnverified {
+		return nil, fmt.Errorf("cleanup: pending (private suite log unverified)")
+	}
 	before := r.before
 	if !before.Complete || before.EngineID == "" || before.Target.Storage == "" || before.TakenAt.IsZero() || len(before.Disks) == 0 || before.SystemDF == "" {
 		return nil, fmt.Errorf("cleanup: pending (incomplete before snapshot)")
@@ -244,7 +276,7 @@ func loadCleanup(o CleanupOptions) (*cleanupRun, error) {
 		}
 		seen[container.ID] = true
 	}
-	if r.options.RunDir != directory || !filepath.IsAbs(r.options.Checkout) || !filepath.IsAbs(r.options.RecordDir) || !filepath.IsAbs(r.options.LockRoot) || within(directory, r.options.RecordDir) || within(r.options.RecordDir, directory) || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(r.options.Revision) {
+	if r.options.RunDir != directory || !filepath.IsAbs(r.options.Checkout) || !filepath.IsAbs(r.options.RecordDir) || !filepath.IsAbs(r.options.LockRoot) || within(directory, r.options.RecordDir) || within(r.options.RecordDir, directory) || !revisionLine.MatchString(r.options.Revision) {
 		return nil, fmt.Errorf("cleanup: pending (invocation paths or revision changed)")
 	}
 	if r.ended.EndedAt.IsZero() || r.started.PreparationStart.IsZero() || r.started.PreparationEnd.Before(r.started.PreparationStart) || r.ended.EndedAt.Before(r.started.PreparationEnd) || r.before.TakenAt.After(r.started.PreparationEnd) || r.ended.EndedAt.After(time.Now().UTC()) {
@@ -271,7 +303,7 @@ func loadCleanup(o CleanupOptions) (*cleanupRun, error) {
 func (s *Service) cleanupCheckout(ctx context.Context, r *cleanupRun) error {
 	data, err := s.query(ctx, r.options, "git", "rev-parse", "--verify", "HEAD^{commit}")
 	if err == nil && strings.TrimSpace(string(data)) == r.options.Revision {
-		data, err = s.query(ctx, r.options, "git", "status", "--porcelain", "--untracked-files=no")
+		data, err = s.query(ctx, r.options, "git", "status", "--porcelain", "--untracked-files=all", "--ignored=matching")
 		if err == nil && len(strings.TrimSpace(string(data))) == 0 {
 			return nil
 		}

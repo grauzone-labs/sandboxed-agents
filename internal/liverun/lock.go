@@ -77,3 +77,26 @@ func refuseActive(o Options, engine string) error {
 	}
 	return nil
 }
+
+// coordinationRoot binds production phases to one per-user cache namespace.
+// Different OS users or different cache environments do not share this contract;
+// filesystem ownership does not protect coordination from other writers of that user.
+func (s *Service) coordinationRoot() (string, error) {
+	if s.CoordinationRoot != "" {
+		return filepath.Abs(s.CoordinationRoot)
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(filepath.Join(cache, "sandboxed-agents", "live-run"))
+}
+
+// checkCoordination refuses old or edited artifacts that could split run and cleanup locking.
+func (s *Service) checkCoordination(o Options) error {
+	root, err := s.coordinationRoot()
+	if err != nil || root != o.LockRoot {
+		return fmt.Errorf("coordination root changed; prepare with the current host user and cache environment")
+	}
+	return nil
+}
