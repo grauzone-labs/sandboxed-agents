@@ -47,7 +47,7 @@
       "21": "The prompt was revised because the earlier one promised removed-image IDs, tags, sizes and before and after measurements without supplying them, so its expectation 4 could not be graded. The revised prompt supplies concrete fictional values and keeps the intent and the other expectations; the earlier prompt, expectations and two private runs stay under retired_premise. The revised case has one text-only run on committed docs27 (06340a2) that passed its six listed criteria; that is a run of the revised prompt, not a retired-premise pass, and no baseline exists.",
       "15_20": "Case 15 runs 1 to 4 and case 20 runs 1 to 3 are listed under their cases with their copy hashes. The case 15 round that used the uncommitted candidate (run 3) also let the agent read tool metadata and contained a routing-role hint in its harness, so its valid role cannot be attributed to the skill alone; its host briefs lacked the helper-absent branch and a stable request identifier, and case 20 run 2 ignored the frozen layout. The skill prose was sharpened afterwards. Case 15 run 4 and case 20 run 3 read the committed docs27 bytes (06340a2) without a role hint or expectations and passed their listed criteria (six and five); case 15's hypothetical targets omit an explicit reasoning effort and provider instance identifier, and case 20's fixture supplies no host thread identifiers. These runs cover the listed criteria on those bytes only; they say nothing about later bytes.",
       "simulation_scope": "Every run listed for cases 13 to 23, including case 15 run 4, case 20 run 3 and case 21 run 3 on committed docs27, is a fresh Linux-container text-only simulation by one model (gpt-6-luna, effort high, priority tier requested, effective tier not exposed), reading a frozen copy of SKILL.md and docs/images.md, with no host, SSH, Podman, delegation or question tool call. A pass is a pass of the listed expectations on that copy and says nothing about later bytes; no no-skill baseline was observed, and no native, live, all-model or all-host proof exists.",
-      "24_25": "Cases 24 and 25 cover the operations-file and preflight-cost paragraph of skill version 1.5.0 (P, S and T, the incomplete block, the 5 % rule). They are text-only fixtures with fictional values. Their first draft had counts that the source semantics cannot produce (126 invocations that held 120 preflight and 7 selection calls with only 6 not entered; 4 not entered beside 5 selection calls); both were corrected in place before any run. Case 24 now has 133 invocations (120 preflight calls, 7 selection calls, 6 neither; preflight not entered 13, selection not entered 126), and case 25 has 85 (74 closed and 1 open preflight, 5 selection, 4 neither, 1 unobserved; preflight not entered 9, selection not entered 79). Case 24 then ran once on the committed docs32 bytes (3e72d3e) and ended partial: its criterion 1 was not met and its criterion 6, a verbatim return of the full operations file, was ungradable because the fixture gave only a summary. The old prompt, criteria and that run are kept under retired_premise; the active prompt says that it is a summary and criterion 6 checks the file name, the supplied facts and the absence of invented rows. Case 25 had never run, so its prompt and criterion 6 were adjusted in place before any run to the same boundary. Neither active case has a run, baseline or pass; a run needs a frozen copy of the exact released bytes without expectations or hints, and an actual run still returns the real file."
+      "24_25": "Cases 24 and 25 cover the operations-file and preflight-cost paragraph of skill version 1.5.0 (P, S and T, the incomplete block, the 5 % rule). They are text-only fixtures with fictional values. Their first draft had counts that the source semantics cannot produce (126 invocations that held 120 preflight and 7 selection calls with only 6 not entered; 4 not entered beside 5 selection calls); both were corrected in place before any run. Case 24 now has 133 invocations (120 preflight calls, 7 selection calls, 6 neither; preflight not entered 13, selection not entered 126), and case 25 has 85 (74 closed and 1 open preflight, 5 selection, 4 neither, 1 unobserved; preflight not entered 9, selection not entered 79). Case 24 then ran once on the committed docs32 bytes (3e72d3e) and ended partial: its criterion 1 was not met and its criterion 6, a verbatim return of the full operations file, was ungradable because the fixture gave only a summary. The old prompt, criteria and that run are kept under retired_premise; the active prompt says that it is a summary and criterion 6 checks the file name, the supplied facts and the absence of invented rows. Case 25 had never run, so its prompt and criterion 6 were adjusted in place before any run to the same boundary. Neither active case has a run, baseline or pass; a run needs a frozen copy of the exact released bytes without expectations or hints, and an actual run still returns the real file. Case 25 then ran once (2026-11-19 11:16:38 UTC, on the frozen copy of ba94a37 holding the docs32 bytes) and ended partial: its core safety held (incomplete state, no ratio, the open call not zero, no saving), but criteria 3 and 5 were not met (no explicit statement that the unobserved invocation has no measured seconds and that the 9 not-entered scopes are known absences; the next-evidence list and the need for another run's own decision through the coordinator were incomplete); the run is listed under case 25 and is not a baseline or a pass. The skill paragraph was restructured afterwards into focused bullets with an explicit completion contract; neither active case has run on those bytes."
     }
   },
   "evals": [
@@ -1367,8 +1367,41 @@
         "Claims no saving and proposes or starts no change to the preflight or any optimization; says that a complete block with T from an authorized Windows run, with its call, invocation and run counts, the revision, the engine capacity and the context, is needed, and that another run is the user's decision through the coordinator",
         "Names `operations-windows-11.json` as this run's evidence with the block's state, says that its complete contents were not provided and invents no row, leaves the suite's PASS and the durations file unchanged, and publishes no raw journal, path or token"
       ],
-      "baseline": "Not run. No observed baseline exists for this case: neither an earlier skill version nor the case without the skill has been simulated on it. Do not read any other case's baseline or run as this one's.",
-      "runs": []
+      "baseline": "Not run as a no-skill or earlier-version baseline. No observed baseline exists for this case. One run with skill version 1.5.0 on the docs32 bytes is listed under runs (partial) and is not a baseline.",
+      "runs": [
+        {
+          "date": "2026-11-19",
+          "utc": "2026-11-19T11:16:38Z",
+          "host": "T3 Code delegated child, fresh Linux-container text-only simulation (no host, SSH, Podman, delegation or question tool call; hypothetical calls only)",
+          "model": "gpt-6-luna",
+          "effort": "high",
+          "service_tier": "Priority service tier selected for the child; the effective tier was not exposed (verification gap), so no speed is claimed.",
+          "skill_version": "1.5.0",
+          "result": "partial: expectations 3 and 5 not met",
+          "unmet_expectations": [
+            3,
+            5
+          ],
+          "ungradable_expectations": [],
+          "copy": {
+            "source_commit": "ba94a370f32cfc7ad0d04468b1260c90be39dd2f",
+            "status": "committed ba94a37; frozen copy of SKILL.md and docs/images.md (the bytes of docs32, 3e72d3e) plus the active case prompt only, with no expectations, expected output or hint",
+            "skill_sha256": "7c8fcd9ee09babeb24ac51a1268215f87a9c197e0fe19f90cb08b224107cb209",
+            "images_sha256": "770e36fd37c0b1bc407d17a1023a36a53f782609b4f358e798a0300a688b1798",
+            "manifest": "skill-evals-fixture33-committed/manifest.json",
+            "prompt_sha256": "b7b7b9e4acf9754c214f89b2e1dc96617b597fbf0e672b2243a00d4c3cab282d"
+          },
+          "notes": "Correct: state `incomplete` with the three reasons and `ledger_unverified` true; P 71.8 seconds over 74 measured calls among 85 invocations; S 9.4 seconds over 5 calls kept separate; T 2950.0; the 71.8 seconds as returned calls only; the open call as not a zero-second call; no ratio, threshold, saving or optimization concluded (the quoted 2.4 % appears only to refute the coordinator, not as a supported calculation); the file named as this run's evidence with every summary fact and no invented row; PASS and durations unchanged; no raw journal, path or token. Not met: expectation 3, because the response gave no explicit statement that the unobserved invocation has no measured seconds and no explanation that the 9 not-entered preflight scopes are known absences of the call and not zero-second calls (it covered only the open call); expectation 5, because it named the need for a complete block with T from an authorized Windows run but omitted the counts, revision, capacity and context details and did not say that another run needs its own decision through the coordinator. Route metadata was correct: built-in, no user override.",
+          "limitations": "Text-only simulation by one model; no observed no-skill baseline, and no actual dispatch, host, native, live, other-model, all-host or later-byte proof; the file was a summary, not a fabricated full JSON; the private artifact names are metadata, not live evidence.",
+          "private_artifacts": [
+            "skill-evals-fixture33-committed/results/case-25-gpt-6-luna-r1.txt",
+            "skill-evals-fixture33-committed/results/case-25-r1-assessment.json"
+          ],
+          "task_ref": "story-173-skill-eval25-luna-r1",
+          "attempt": 1,
+          "harness_confounds": "No role hint and no expectations were supplied; the frozen skill bytes are those of the committed docs32 and later commits do not change them, but the maintained skill text has since been restructured, so this run says nothing about those bytes."
+        }
+      ]
     }
   ]
 }
