@@ -36,7 +36,7 @@ Unchanged: every live case and assertion, the one no-cache `build` and its pull 
 
 ## Status
 
-On 2026-11-19 the user accepted both decisions above, with the caveats listed under Consequences, in answer to a question that stated each of them. The acceptance authorizes no live run, no host, machine, connection, or configuration change, no product-wide cache change, no numeric bound or no-bound decision, and no change to the cleanup eligibility rules. The decision rests on reading the source of Podman and Buildah at the product floors and in later releases, not on a live run, and the offline implementation exists and was verified against fake engines when this record was updated; runtime proof is pending.
+On 2026-11-19 the user accepted both decisions above, with the caveats listed under Consequences, in answer to a question that stated each of them. The acceptance authorizes no live run, no host, machine, connection, or configuration change, no product-wide cache change, no numeric bound or no-bound decision, and no change to the cleanup eligibility rules. Later the same day the accounting was made stricter within #180: an unexplained new image keeps the cleanup `partial` whether or not every surviving attempt is closed, and a pulled base without a known input counts as unexplained. That edit changed reporting only, left the scope of both decisions as accepted, and was not put to the user again, so the user's acceptance covers the decisions as first stated and not that wording. The decision rests on reading the source of Podman and Buildah at the product floors and in later releases, not on a live run, and the offline implementation exists and was verified against fake engines when this record was updated; runtime proof is pending.
 
 ## Open
 
