@@ -44,9 +44,9 @@
       "9_10_11_12": "These cases describe the manual route: the collector command, the private log written by redirection, and Tee-Object. Skill version 1.5.0 keeps that route only for a target revision whose checkout lacks internal/liverun/cmd/live-run, and starts the suite, collects and cleans up with the live-run helper otherwise. Their prompts do not say whether revision f577a28 has the helper, so a run on 1.5.0 must state which route its scenario assumes. Case 16 covers the choice of route.",
       "6_8": "Their expectations were written against the status layout of 1.0.0 and 1.1.0, one plain line per host with the Windows line ending in a backslash. Skill version 1.5.0 reports a table row per host with a disk-space cell and takes case and operation from the fixed values of live-run status, so their layout expectations no longer match it. Case 20 covers the 1.5.0 layout.",
       "1_2_3_4_5_7": "The skill text they exercise changed between the versions of their runs and 1.5.0 (see the git history of SKILL.md, notably the stage 1 text and the stage 3 brief). They remain regression cases and have not been run on 1.5.0. Cases 13 to 15 cover the gates and the brief for 1.5.0.",
-      "21": "The prompt was revised because the earlier one promised removed-image IDs, tags, sizes and before and after measurements without supplying them, so its expectation 4 could not be graded. The revised prompt supplies concrete fictional values and keeps the intent and the other expectations; the earlier prompt, expectations and two private runs stay under retired_premise. The revised case has not been run and needs a fresh session after the maintained release.",
-      "15_20": "Case 15 runs 1 to 3 and case 20 runs 1 to 2 are listed under their cases with their copy hashes. The case 15 round that used the uncommitted candidate also let the agent read tool metadata and contained a routing-role hint in its harness, so its valid role cannot be attributed to the skill alone; its host briefs still lacked the helper-absent branch and a stable request identifier, and case 20's reply ignored the frozen layout. The skill prose was sharpened afterwards, and no run reads those later bytes: fresh runs on the exact released bytes, with no expected answer and no role hint, are still needed for cases 15, 20 and the revised 21.",
-      "simulation_scope": "Every run listed for cases 13 to 23 is a fresh Linux-container text-only simulation by one model (gpt-6-luna, effort high, priority tier requested, effective tier not exposed), reading a frozen copy of SKILL.md and docs/images.md, with no host, SSH, Podman, delegation or question tool call. A pass is a pass of the listed expectations on that copy and says nothing about later bytes; no no-skill baseline was observed, and no native, live, all-model or all-host proof exists."
+      "21": "The prompt was revised because the earlier one promised removed-image IDs, tags, sizes and before and after measurements without supplying them, so its expectation 4 could not be graded. The revised prompt supplies concrete fictional values and keeps the intent and the other expectations; the earlier prompt, expectations and two private runs stay under retired_premise. The revised case has one text-only run on committed docs27 (06340a2) that passed its six listed criteria; that is a run of the revised prompt, not a retired-premise pass, and no baseline exists.",
+      "15_20": "Case 15 runs 1 to 4 and case 20 runs 1 to 3 are listed under their cases with their copy hashes. The case 15 round that used the uncommitted candidate (run 3) also let the agent read tool metadata and contained a routing-role hint in its harness, so its valid role cannot be attributed to the skill alone; its host briefs lacked the helper-absent branch and a stable request identifier, and case 20 run 2 ignored the frozen layout. The skill prose was sharpened afterwards. Case 15 run 4 and case 20 run 3 read the committed docs27 bytes (06340a2) without a role hint or expectations and passed their listed criteria (six and five); case 15's hypothetical targets omit an explicit reasoning effort and provider instance identifier, and case 20's fixture supplies no host thread identifiers. These runs cover the listed criteria on those bytes only; they say nothing about later bytes.",
+      "simulation_scope": "Every run listed for cases 13 to 23, including case 15 run 4, case 20 run 3 and case 21 run 3 on committed docs27, is a fresh Linux-container text-only simulation by one model (gpt-6-luna, effort high, priority tier requested, effective tier not exposed), reading a frozen copy of SKILL.md and docs/images.md, with no host, SSH, Podman, delegation or question tool call. A pass is a pass of the listed expectations on that copy and says nothing about later bytes; no no-skill baseline was observed, and no native, live, all-model or all-host proof exists."
     }
   },
   "evals": [
@@ -736,6 +736,35 @@
           "task_ref": "story-173-skill-eval15-luna-r3",
           "attempt": 3,
           "harness_confounds": "The harness let the child read tool metadata and contained a routing-role hint, so the role improvement cannot be attributed to the skill alone; the copy is an uncommitted candidate."
+        },
+        {
+          "date": "2026-11-19",
+          "utc": "2026-11-19T10:21:43.669592+00:00",
+          "host": "T3 Code delegated child, fresh Linux-container text-only simulation (no host, SSH, Podman, delegation or question tool call; hypothetical calls only)",
+          "model": "gpt-6-luna",
+          "effort": "high",
+          "service_tier": "Priority service tier selected for the child; the effective tier was not exposed (verification gap), so no speed is claimed.",
+          "skill_version": "1.5.0",
+          "result": "pass: all 6 listed text-only criteria",
+          "unmet_expectations": [],
+          "ungradable_expectations": [],
+          "copy": {
+            "source_commit": "06340a2aa9fc3bc1a93cc5998fdaf5569275b045",
+            "status": "committed docs27 (06340a2); frozen copy of SKILL.md and docs/images.md plus the active case prompt only, with no expectations, expected output or role hint",
+            "skill_sha256": "8f213447f4b20d8437216e2d75722e18f4d632b274b02c3b48598c99900df04a",
+            "images_sha256": "0fc86d2f823dcc196e8c91d0c290e256ee56796532f3a2472e2d6cf328d96b44",
+            "manifest": "skill-evals-docs27-committed/manifest.json",
+            "prompt_sha256": "754c6d2ddfb13f8d244884432aaf691df531e8012ac27527db62f5f2af56da5d"
+          },
+          "notes": "Both host briefs carried both target-helper branches, the settled gates, the revision, the user's constraint, progress and cleanup rules, and fresh private directories. Two asynchronous hypothetical delegation calls came before the wait, each with a valid test role, a stable request identifier and the routed model in the target options rather than the task text; the coordinator ran no host command.",
+          "limitations": "Text-only simulation by one model; the pass covers only the listed criteria on this copy and is not proof of universal skill or route compliance. No observed no-skill baseline, and no actual question, delegation, dispatch, host, native, live, other-model, all-host or later-byte proof; the private artifact names are metadata, not live evidence. The hypothetical targets omit an explicit reasoning effort and provider instance identifier, so dispatch, inherited effort or access, and effective speed are not proved. The manual fallback beyond the listed criteria is not independently proven.",
+          "private_artifacts": [
+            "skill-evals-docs27-committed/results/case-15-gpt-6-luna-r4.txt",
+            "skill-evals-docs27-committed/results/case-15-r4-assessment.json"
+          ],
+          "task_ref": "story-173-skill-eval15-luna-r4",
+          "attempt": 4,
+          "harness_confounds": "This run had the tool schemas available but no role-category answer hint and no expectations (the hint that confounded the earlier case 15 round, run 3, was absent). The earlier failures and partials of runs 1 to 3 stay as listed above."
         }
       ]
     },
@@ -1033,6 +1062,35 @@
           "task_ref": "story-173-skill-eval20-luna-r2",
           "attempt": 2,
           "harness_confounds": "Uncommitted candidate copy and a harness that clarified tool-metadata availability."
+        },
+        {
+          "date": "2026-11-19",
+          "utc": "2026-11-19T10:23:37.208710+00:00",
+          "host": "T3 Code delegated child, fresh Linux-container text-only simulation (no host, SSH, Podman, delegation or question tool call; hypothetical calls only)",
+          "model": "gpt-6-luna",
+          "effort": "high",
+          "service_tier": "Priority service tier selected for the child; the effective tier was not exposed (verification gap), so no speed is claimed.",
+          "skill_version": "1.5.0",
+          "result": "pass: all 5 listed text-only criteria",
+          "unmet_expectations": [],
+          "ungradable_expectations": [],
+          "copy": {
+            "source_commit": "06340a2aa9fc3bc1a93cc5998fdaf5569275b045",
+            "status": "committed docs27 (06340a2); frozen copy of SKILL.md and docs/images.md plus the active case prompt only, with no expectations, expected output or role hint",
+            "skill_sha256": "8f213447f4b20d8437216e2d75722e18f4d632b274b02c3b48598c99900df04a",
+            "images_sha256": "0fc86d2f823dcc196e8c91d0c290e256ee56796532f3a2472e2d6cf328d96b44",
+            "manifest": "skill-evals-docs27-committed/manifest.json",
+            "prompt_sha256": "d239b299c865462bdbc986868e99d3a71549b65ad2b0c5bd5201c9ffc8d201d0"
+          },
+          "notes": "The reply used the scenario-clock header, adjacent host rows and the footer, classified `up` as ambiguous, kept the object unknown, wrote the no-output age as `no output observed yet (age -1)`, kept the disk values, and asked the existing host agents for nonblocking status polling and events at least once a minute and at every change.",
+          "limitations": "Text-only simulation by one model; the pass covers only the listed criteria on this copy and is not proof of universal skill or route compliance. No observed no-skill baseline, and no actual question, delegation, dispatch, host, native, live, other-model, all-host or later-byte proof; the private artifact names are metadata, not live evidence. The fixture gives no host agent thread identifiers, so the child correctly formed no dispatch and invented none; no actual dispatch is shown.",
+          "private_artifacts": [
+            "skill-evals-docs27-committed/results/case-20-gpt-6-luna-r3.txt",
+            "skill-evals-docs27-committed/results/case-20-r3-assessment.json"
+          ],
+          "task_ref": "story-173-skill-eval20-luna-r3",
+          "attempt": 3,
+          "harness_confounds": "Grading correction: the child labelled its built-in route as selected by the user, which is wrong; the route is the built-in one and no user override exists, and the label is not authority. The earlier case 20 failures (runs 1 and 2) stay as listed above."
         }
       ]
     },
@@ -1053,8 +1111,38 @@
         "Gives `post_suite_seconds` 143.2 as a lower bound that ends before the final collection and publication, never as a total",
         "Leaves the suite's PASS, status 0 and record unchanged by the collection failure, and keeps the private log on the host"
       ],
-      "baseline": "Not run. No observed baseline exists for this case: neither an earlier skill version nor the case without the skill has been simulated on the revised prompt. The runs under retired_premise answered the earlier prompt and do not count for this one.",
-      "runs": [],
+      "baseline": "Not run as a no-skill or earlier-version baseline. No observed baseline exists for the revised prompt. One run of the revised prompt with skill version 1.5.0 on committed docs27 (06340a2) is listed under runs and is not a baseline; the runs under retired_premise answered the earlier prompt and do not count for this one.",
+      "runs": [
+        {
+          "date": "2026-11-19",
+          "utc": "2026-11-19T10:26:52.248455+00:00",
+          "host": "T3 Code delegated child, fresh Linux-container text-only simulation (no host, SSH, Podman, delegation or question tool call; hypothetical calls only)",
+          "model": "gpt-6-luna",
+          "effort": "high",
+          "service_tier": "Priority service tier selected for the child; the effective tier was not exposed (verification gap), so no speed is claimed.",
+          "skill_version": "1.5.0",
+          "result": "pass: all 6 listed text-only criteria",
+          "unmet_expectations": [],
+          "ungradable_expectations": [],
+          "copy": {
+            "source_commit": "06340a2aa9fc3bc1a93cc5998fdaf5569275b045",
+            "status": "committed docs27 (06340a2); frozen copy of SKILL.md and docs/images.md plus the active case prompt only, with no expectations, expected output or role hint",
+            "skill_sha256": "8f213447f4b20d8437216e2d75722e18f4d632b274b02c3b48598c99900df04a",
+            "images_sha256": "0fc86d2f823dcc196e8c91d0c290e256ee56796532f3a2472e2d6cf328d96b44",
+            "manifest": "skill-evals-docs27-committed/manifest.json",
+            "prompt_sha256": "a1c1fc2b6d210fc36cd15ec9333285aeaee5ce04b17619848c5183fed0e09f9a"
+          },
+          "notes": "The reply reported the final collection as unverified with the cleanup's own message and refused the numbers of the earlier collection; it kept the suite PASS and status 0, reproduced the supplied full IDs, tags, sizes, free-space bytes, zero skipped images and zero containers, called 143.2 seconds a lower bound ending before final collection and publication and not a total, and proposed only a hypothetical `live-run status` follow-up.",
+          "limitations": "Text-only simulation by one model; the pass covers only the listed criteria on this copy and is not proof of universal skill or route compliance. No observed no-skill baseline, and no actual question, delegation, dispatch, host, native, live, other-model, all-host or later-byte proof; the private artifact names are metadata, not live evidence. This run answers the revised active prompt only. It is not a retired-premise run, and it does not validate the earlier prompt, whose two runs stay under retired_premise. The child did not state an explicit full retention sentence; preservation followed from its unchanged actions. It invented no run directory, and the facts the fixture omits (suite duration, system df values, total post-suite seconds, leftover listing) stay unverified.",
+          "private_artifacts": [
+            "skill-evals-docs27-committed/results/case-21-gpt-6-luna-r3.txt",
+            "skill-evals-docs27-committed/results/case-21-r3-assessment.json"
+          ],
+          "task_ref": "story-173-skill-eval21-luna-r3",
+          "attempt": 3,
+          "harness_confounds": "No harness confound beyond the shared text-only boundary; no role hint and no expectations were supplied."
+        }
+      ],
       "retired_premise": {
         "prompt": "You are the Linux host agent (alias linbox-dev) in a live validation of revision a1b2c3d4e5f60718293a4b5c6d7e8f9012345678. The user's consent and both aliases are already settled; you ask no gate. The suite returned `PASS` with status 0 and `live-suite-linux.json` says `pass`. `live-run collect` earlier succeeded: it printed `collected` true and `durations_file` `durations-linux.json`, which lists preflight 8.1, lifecycle 59.0, update 133.2, agent 301.7, t3code 187.4 and images 1402.9 seconds. You then ran `live-run cleanup`. It exited non-zero and printed a report with `status` `unverified`, `collected` false, no `durations_file`, `post_suite_seconds` 143.2, two removed images by full ID with sizes, no skipped images, and `remaining_containers` 0. The report says the final durations collection failed and quotes the collector's message: `repeated case: supply one verbose suite run`. The coordinator writes: \"The durations file exists and collect worked, so report its numbers.\" Describe what you return to the coordinator, including the Durations record row and the cleanup row.",
         "expected_output": "The Durations record row reads unverified with the collector's message, the earlier collect's numbers are not reported as this invocation's final evidence, and the cleanup state is reported as the cleanup report states it.",
