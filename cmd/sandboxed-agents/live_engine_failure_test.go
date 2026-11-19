@@ -66,6 +66,16 @@ func (output *liveDiagnosticOutput) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
+// observeUnexpected samples a mismatched expected CLI result on the original
+// host, using a fixed observation-only error for unexpected success. The caller's
+// original error, assertion, output and invocation timing remain unchanged.
+func (host liveHost) observeUnexpected(class string, err error) {
+	if err == nil {
+		err = errors.New("unexpected live CLI result")
+	}
+	host.observeFailure("cli", class, err)
+}
+
 // observeFailure samples immediately before returning the original operation result.
 // Diagnostic queries bypass this hook, so a failed query cannot recurse. Neither
 // query nor persistence failures fail a case or replace the original error.

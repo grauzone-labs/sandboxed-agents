@@ -2,7 +2,6 @@ package main_test
 
 import (
 	"encoding/json"
-	"errors"
 	"maps"
 	"os"
 	"path/filepath"
@@ -116,11 +115,7 @@ func (suite *liveSuite) t3code(t *testing.T) {
 	failing := failingLiveUpdateHost(t, host, replacement.Config.Labels[cli.SSHPortLabel])
 	output, err := failing.cli("", "update", name, "--with", "none", "--force")
 	if err == nil || !strings.Contains(output, "readiness wait failed") || !strings.Contains(output, "restored sandbox") {
-		failure := err
-		if failure == nil {
-			failure = errors.New("unexpected rollback result")
-		}
-		host.observeFailure("cli", "update or rollback", failure)
+		host.observeUnexpected("update or rollback", err)
 		t.Fatalf("forced sandbox rollback: %v %q", err, output)
 	}
 	restored := host.inspectContainer(t, name)
@@ -245,11 +240,7 @@ func (host liveHost) failedToolUpdate(t *testing.T, name string) {
 	expected.failures = nil
 	output, err := expected.cli("", "tools", "update", name, "t3code")
 	if err == nil || !strings.Contains(output, ".next-") || !strings.Contains(strings.ToLower(output), "permission denied") {
-		failure := err
-		if failure == nil {
-			failure = errors.New("unexpected Tool staging result")
-		}
-		host.observeFailure("cli", "Tool update", failure)
+		host.observeUnexpected("Tool update", err)
 		t.Fatalf("expected deterministic Tool staging failure: %v %q", err, output)
 	}
 }
