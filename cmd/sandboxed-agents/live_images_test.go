@@ -8,6 +8,7 @@ import (
 	"io"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,15 +21,18 @@ import (
 // enough: the suite's images case runs only with SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1.
 const liveImagesEnv = "SANDBOXED_AGENTS_LIVE_IMAGES_TESTS"
 
+// liveImageSets are the five existing toolchain selections covered by images.
+var liveImageSets = []string{"none", "dotnet", "playwright", "azure", "native"}
+
 // liveImageCoverage proves the base and four toolchains work as agent, run root sshd with persistent host keys and an Ed25519 key exchange, share base layers, carry image labels, and become outdated after the suite's one build at the real CLI, Podman, and SSH seams.
 func liveImageCoverage(t *testing.T, suite *liveSuite) {
 	host := suite.host
 	assetHash := suite.assetHash
-	sets := []string{"none", "dotnet", "playwright", "azure", "native"}
+	sets := liveImageSets
 	images := make(map[string]liveImage)
 	tags := make(map[string]string)
 
-	if suite.imageWork == nil {
+	if suite.work == nil {
 		for _, set := range sets {
 			host.cleanupSandbox(t, "image-"+set)
 			images[set], tags[set] = initialLiveImage(t, host, set)
@@ -41,22 +45,16 @@ func liveImageCoverage(t *testing.T, suite *liveSuite) {
 		}
 		// This is the last registered cleanup, so it joins other cases before any
 		// image cleanup, including when an initial assertion terminates the case.
-		t.Cleanup(func() { suite.joinIndependent() })
+		t.Cleanup(suite.work.joinIndependent)
 		t.Run("initial", func(t *testing.T) {
 			for index, set := range sets {
 				t.Run(set, func(t *testing.T) {
 					t.Parallel()
-					if !suite.imageWork.acquire() {
+					if !suite.work.acquire() {
 						t.Skip("not started after an earlier failure")
 					}
-					defer suite.imageWork.release()
-					defer func() {
-						if t.Failed() {
-							suite.imageWork.suite.stateMu.Lock()
-							suite.imageWork.suite.failed = true
-							suite.imageWork.suite.stateMu.Unlock()
-						}
-					}()
+					defer suite.work.release()
+
 					observed[index], observedTags[index] = initialLiveImage(t, host, set)
 				})
 			}
@@ -75,20 +73,23 @@ func liveImageCoverage(t *testing.T, suite *liveSuite) {
 	for _, set := range sets {
 		assertLiveImage(t, set, assetHash, images[set], images["none"])
 	}
-	if suite.imageWork == nil {
+	if suite.work == nil {
 		host.assertNoBakedSSHKeys(t, tags["none"])
 	} else {
-		if !suite.imageWork.acquire() {
+		if !suite.work.acquire() {
 			t.Fatal("image coverage incomplete after an earlier failure")
 		}
-		func() { defer suite.imageWork.release(); host.assertNoBakedSSHKeys(t, tags["none"]) }()
+		func() { defer suite.work.release(); host.assertNoBakedSSHKeys(t, tags["none"]) }()
 	}
-	if suite.beforeImageRebuild != nil {
-		suite.beforeImageRebuild(t)
+	if suite.work != nil {
+		suite.work.joinIndependent()
+		if suite.stopping() {
+			t.Fatal("image coverage incomplete after an earlier case failed")
+		}
 	}
 	// This is the live suite's sole build command. up may build a missing
 	// image, but must not renew an existing image. All five now exist.
-	output := host.mustCLI(t, "", "build")
+	output := suite.rebuildImages(t)
 	suite.imagesRan = true
 	for _, fragment := range []string{"keep", "image", "update", "list", "outdated"} {
 		if !strings.Contains(strings.ToLower(output), fragment) {
@@ -342,4 +343,15 @@ test "$("$directory/smoke")" = 'native smoke'
 	default:
 		panic(fmt.Sprintf("unknown live smoke toolchain %q", set))
 	}
+}
+
+// rebuildImages runs the suite's existing single rebuild, preserving literal
+// build for serial jobs and adding --jobs only when parallel work was selected.
+func (suite *liveSuite) rebuildImages(t *testing.T) string {
+	t.Helper()
+	args := []string{"build"}
+	if suite.buildJobs > 1 {
+		args = append(args, "--jobs", strconv.Itoa(suite.buildJobs))
+	}
+	return suite.host.mustCLI(t, "", args...)
 }

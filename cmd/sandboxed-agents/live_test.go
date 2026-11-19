@@ -50,6 +50,9 @@ var liveCheckNames = []string{"preflight", "lifecycle", "update", "agent", "t3co
 // unmeasured default remains serial on both supported platforms.
 const liveOverlapEnv = "SANDBOXED_AGENTS_LIVE_OVERLAP"
 
+// liveBuildJobsEnv selects parallel work only inside the existing sole rebuild.
+const liveBuildJobsEnv = "SANDBOXED_AGENTS_LIVE_BUILD_JOBS"
+
 // liveStopAfterFailureEnv opts into stopping before the next case after a failure.
 const liveStopAfterFailureEnv = "SANDBOXED_AGENTS_LIVE_STOP_AFTER_FAILURE"
 
@@ -61,12 +64,10 @@ type liveSuite struct {
 	imagesSelected, imagesRan, imagesComplete bool
 	results                                   map[string]string
 	stopAfterFailure, failed                  bool
-	overlap                                   int
+	overlap, buildJobs                        int
 	stateMu                                   sync.Mutex
 	afterBaseUp                               func()
-	imageWork                                 *liveWork
-	beforeImageRebuild                        func(*testing.T)
-	joinIndependent                           func()
+	work                                      *liveWork
 }
 
 // TestLiveSuite runs the live cases against real Podman on the selected host in a dedicated controller group and writes the platform's validation record, only when explicitly opted in.
@@ -115,18 +116,12 @@ func TestLiveSuite(t *testing.T) {
 // git metadata files, and writes the failing record, all before any program runs.
 func newLiveSuite(t *testing.T) *liveSuite {
 	t.Helper()
-	suite := &liveSuite{host: liveHost{binary: executable, environment: os.Environ()}, results: map[string]string{}}
+	suite := &liveSuite{host: liveHost{binary: executable, environment: os.Environ(), removals: make(chan struct{}, 1)}, results: map[string]string{}}
 	for _, name := range liveCheckNames {
 		suite.results[name] = "not-run"
 	}
-	suite.overlap = 1
-	if value := os.Getenv(liveOverlapEnv); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 {
-			t.Fatal("SANDBOXED_AGENTS_LIVE_OVERLAP must be a positive integer")
-		}
-		suite.overlap = parsed
-	}
+	suite.overlap = livePositiveInput(t, liveOverlapEnv)
+	suite.buildJobs = livePositiveInput(t, liveBuildJobsEnv)
 	suite.platform = livePlatform()
 	if suite.platform == "" {
 		t.Fatalf("the live suite runs on Linux amd64 or Windows 11 x64, not %s", runtime.GOOS)
@@ -154,7 +149,7 @@ func newLiveSuite(t *testing.T) *liveSuite {
 		t.Fatalf("resolve the checkout's commit: %v", err)
 	}
 	suite.buildDirectory = t.TempDir()
-	suite.host.timings = &liveTimings{evidence: validationduration.Operations{SchemaVersion: 1, Kind: "live-suite-operations", Commit: suite.commit, Platform: suite.platform, Operations: []validationduration.Operation{}, Cases: []validationduration.OperationCase{}}}
+	suite.host.timings = &liveTimings{evidence: validationduration.Operations{SchemaVersion: 1, Kind: "live-suite-operations", Commit: suite.commit, Platform: suite.platform, CaseOverlap: suite.overlap, BuildJobs: suite.buildJobs, Operations: []validationduration.Operation{}, Cases: []validationduration.OperationCase{}}}
 	suite.host.caseName = "suite"
 	suite.host.failures = &liveEngineFailures{directory: suite.recordDirectory, evidence: liveEngineFailureEvidence{SchemaVersion: 1, Kind: "live-engine-failures", Commit: suite.commit, Platform: suite.platform, Samples: []liveEngineFailureSample{}}}
 	suite.writeRecord(t, false)
@@ -370,7 +365,7 @@ func liveSuiteChild(t *testing.T, fakes testutil.Fakes, values map[string]string
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", fakes.Dir)
-	environment := map[string]string{testutil.LiveTestsEnv: "1", liveImagesEnv: "", liveRecordDirEnv: "", liveOverlapEnv: "", liveStopAfterFailureEnv: ""}
+	environment := map[string]string{testutil.LiveTestsEnv: "1", liveImagesEnv: "", liveRecordDirEnv: "", liveOverlapEnv: "", liveBuildJobsEnv: "", liveStopAfterFailureEnv: ""}
 	maps.Copy(environment, values)
 	command := exec.Command(testExecutable, "-test.v", "-test.run=^TestLiveSuite$")
 	command.Env = testutil.Env(testutil.Env(fakes.Env(os.Environ()), nestedExecutables()), environment)
@@ -554,4 +549,19 @@ func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 			}
 		})
 	}
+}
+
+// livePositiveInput accepts a positive suite input before any engine work and
+// supplies the unmeasured serial default when the variable is absent or empty.
+func livePositiveInput(t *testing.T, name string) int {
+	t.Helper()
+	value := os.Getenv(name)
+	if value == "" {
+		return 1
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 1 {
+		t.Fatal(name + " must be a positive integer")
+	}
+	return parsed
 }

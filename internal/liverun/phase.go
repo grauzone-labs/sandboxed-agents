@@ -27,6 +27,8 @@ type Options struct {
 	PeakRecord        string
 	Group             string
 	Images            bool
+	Overlap           int
+	BuildJobs         int
 	HostLoad          string
 	AllowUnbounded    bool
 	UnboundedDecision string
@@ -80,11 +82,16 @@ func (s *Service) parseOptions(args []string, diagnostics io.Writer) (Options, e
 	set.StringVar(&o.PeakRecord, "peak-record", "", "earlier host peak record; defaults to engine-specific last peak")
 	set.StringVar(&o.Group, "group", "live", "dedicated controller group")
 	set.StringVar(&o.HostLoad, "host-load", "unknown", "observed other work before run: idle, shared, unknown")
+	set.IntVar(&o.Overlap, "overlap", 1, "maximum independent suite work")
+	set.IntVar(&o.BuildJobs, "build-jobs", 1, "parallel jobs in the suite rebuild")
 	set.BoolVar(&o.Images, "images", true, "include documented image coverage")
 	set.BoolVar(&o.AllowUnbounded, "allow-unbounded", false, "invocation-specific user decision to proceed without a bound")
 	set.StringVar(&o.UnboundedDecision, "unbounded-decision", "", "record of that invocation-specific user decision")
 	if err := set.Parse(args); err != nil {
 		return o, err
+	}
+	if o.Overlap < 1 || o.BuildJobs < 1 {
+		return o, fmt.Errorf("overlap and build-jobs must be positive integers")
 	}
 	if set.NArg() != 0 || !revisionLine.MatchString(o.Revision) || o.RunDir == "" || o.RecordDir == "" {
 		return o, fmt.Errorf("supply full -revision, -run-dir and -record-dir")
@@ -150,4 +157,19 @@ func failCheck(o Options, name string, err error) error {
 		return fmt.Errorf("check engine failed; %s: %s; private diagnostic retained", fault.kind, fault.reason)
 	}
 	return fmt.Errorf("check %s failed; private diagnostic retained", name)
+}
+
+// normalizeConcurrency supplies serial defaults for legacy private options and
+// refuses negative saved inputs before preparation or launch can query an engine.
+func (o *Options) normalizeConcurrency() error {
+	if o.Overlap < 0 || o.BuildJobs < 0 {
+		return fmt.Errorf("invalid saved suite concurrency")
+	}
+	if o.Overlap == 0 {
+		o.Overlap = 1
+	}
+	if o.BuildJobs == 0 {
+		o.BuildJobs = 1
+	}
+	return nil
 }

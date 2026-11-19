@@ -42,6 +42,8 @@ type Operations struct {
 	Kind               string          `json:"kind"`
 	Commit             string          `json:"commit"`
 	Platform           string          `json:"platform"`
+	CaseOverlap        int             `json:"case_overlap,omitempty"`
+	BuildJobs          int             `json:"build_jobs,omitempty"`
 	Engine             *Engine         `json:"engine,omitempty"`
 	Operations         []Operation     `json:"operations"`
 	Cases              []OperationCase `json:"cases"`
@@ -93,6 +95,9 @@ func WriteOperations(directory string, evidence Operations) (string, error) {
 func validateOperations(evidence Operations) error {
 	if evidence.SchemaVersion != 1 || evidence.Kind != "live-suite-operations" || !commitPattern.MatchString(evidence.Commit) || !slices.Contains([]string{"linux", "windows-11"}, evidence.Platform) {
 		return fmt.Errorf("invalid operation evidence identity")
+	}
+	if evidence.CaseOverlap < 0 || evidence.BuildJobs < 0 {
+		return fmt.Errorf("invalid configured concurrency")
 	}
 	if evidence.Engine != nil && (evidence.Engine.CPUs <= 0 || evidence.Engine.MemoryBytes == 0) {
 		return fmt.Errorf("invalid engine capacity")

@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
@@ -322,6 +321,10 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				podmanResponses["container inspect "+cli.DerivedNames(tracerGroup, "image-"+set).Container] = lifecycleResponse{Output: tracerContainer(set, 1)}
 				podmanResponses["image inspect "+tracerTag(set)] = lifecycleResponse{Sequence: []scriptedAnswer{{Output: tracerImage(set, 1)}, {Output: tracerImage(set, 2)}}}
 			}
+			if scenario.overlap == "2" {
+				executableResponses["build --jobs 3"] = executableResponses["build"]
+				delete(executableResponses, "build")
+			}
 			executableScript, err := json.Marshal(executableResponses)
 			if err != nil {
 				t.Fatal(err)
@@ -341,17 +344,20 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				"TEST_SSH_KNOWN_HOSTS": "[127.0.0.1]:" + tracerPort + " " + tracerHostKey + "\n",
 			}
 			values[liveOverlapEnv] = scenario.overlap
+			if scenario.overlap == "2" {
+				values[liveBuildJobsEnv] = "3"
+			}
 			var output string
 			if scenario.overlap == "2" {
 				cleanupReady := filepath.Join(records, "cleanup-ready")
 				cleanupRelease := filepath.Join(records, "cleanup-release")
 				archiveReady := filepath.Join(records, "archive-ready")
 				buildReady := filepath.Join(records, "build-ready")
-				executableResponses["remove live-lifecycle --volumes --force"] = lifecycleResponse{ReadyFile: cleanupReady, WaitFor: cleanupRelease}
+				podmanResponses["volume exists "+cli.DerivedNames(tracerGroup, "live-lifecycle").SSH] = lifecycleResponse{ReadyFile: cleanupReady, WaitFor: cleanupRelease, Exit: 1}
 				executableResponses["up live-update --with native"] = lifecycleResponse{WaitFor: cleanupReady}
-				build := executableResponses["build"]
+				build := executableResponses["build --jobs 3"]
 				build.ReadyFile = buildReady
-				executableResponses["build"] = build
+				executableResponses["build --jobs 3"] = build
 				archive := podmanResponses["image save --format docker-archive "+tracerTag("none")]
 				archive.ReadyFile = archiveReady
 				podmanResponses["image save --format docker-archive "+tracerTag("none")] = archive
@@ -374,26 +380,18 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				}()
 				waitLiveMarker(t, cleanupReady)
 				// Let initial image coverage reach its last engine operation while another
-				// case is still in cleanup. A missing barrier would start build now.
-				deadline := time.Now().Add(15 * time.Second)
-				for {
-					if _, err := os.Stat(archiveReady); err == nil {
-						break
-					}
-					if time.Now().After(deadline) {
-						t.Fatal("parallel images did not reach archive while lifecycle cleanup held its slot")
-					}
-					time.Sleep(10 * time.Millisecond)
-				}
-				time.Sleep(100 * time.Millisecond)
+				// case is held in an absence check. Completion ordering below also
+				// proves every independent invocation finishes before rebuild.
+				waitLiveMarker(t, archiveReady)
 				if _, err := os.Stat(buildReady); !os.IsNotExist(err) {
-					t.Error("build started while lifecycle cleanup was in flight")
+					t.Error("build started while a lifecycle absence check was in flight")
 				}
 				if err := os.WriteFile(cleanupRelease, nil, 0600); err != nil {
 					t.Fatal(err)
 				}
 				err = command.Wait()
 				output = log.String()
+				assertLiveTraceRebuildExclusive(t, output)
 			} else {
 				output, err = liveSuiteChild(t, fakes, values)
 			}
@@ -425,6 +423,24 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 			if record.Result != result || record.ImagePartSelected != selected || record.ImagePartRan != selected || record.ImageCoverageComplete != selected || !slices.Equal(record.Checks, wantChecks) {
 				t.Fatalf("record=%s; want %s with image fields %v and checks %v", data, result, selected, wantChecks)
 			}
+			settingsData, err := os.ReadFile(filepath.Join(records, "operations-"+livePlatform()+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var settings struct {
+				Overlap int `json:"case_overlap"`
+				Jobs    int `json:"build_jobs"`
+			}
+			if err = json.Unmarshal(settingsData, &settings); err != nil {
+				t.Fatal(err)
+			}
+			wantOverlap, wantJobs := 1, 1
+			if scenario.overlap == "2" {
+				wantOverlap, wantJobs = 2, 3
+			}
+			if settings.Overlap != wantOverlap || settings.Jobs != wantJobs {
+				t.Fatalf("configured concurrency omitted from operations: %s", settingsData)
+			}
 			assertTracedToolEvidence(t, records, result, failed)
 			assertTracedOperationEvidence(t, records, executableLog, fakes.PodmanLog, selected)
 			assertTracedEngineFailureEvidence(t, records, fakes.PodmanLog)
@@ -438,6 +454,11 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 					}
 				} else {
 					wantCLI, wantEngine := slices.Clone(baselineCLI), slices.Clone(baselineEngine)
+					for index, line := range wantCLI {
+						if line == `["build"]` {
+							wantCLI[index] = `["build","--jobs","3"]`
+						}
+					}
 					slices.Sort(cliCalls)
 					slices.Sort(engineCalls)
 					slices.Sort(wantCLI)
@@ -448,7 +469,7 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 					// All independent CLI cleanup has finished before the sole rebuild.
 					rebuilt := false
 					for _, call := range testutil.Invocations(t, executableLog) {
-						if slices.Equal(call, []string{"build"}) {
+						if len(call) > 0 && call[0] == "build" {
 							rebuilt = true
 							continue
 						}
@@ -462,7 +483,7 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 			commands := map[string]int{}
 			for _, call := range testutil.Invocations(t, executableLog) {
 				commands[strings.Join(call, " ")]++
-				if slices.Equal(call, []string{"build"}) {
+				if len(call) > 0 && call[0] == "build" {
 					builds++
 				}
 				if len(call) >= 2 && call[0] == "up" {
@@ -687,4 +708,65 @@ func tracedInvocationLines(t *testing.T, path string) []string {
 		lines = append(lines, string(data))
 	}
 	return lines
+}
+
+// assertLiveTraceRebuildExclusive derives active operations from Go's named
+// verbose log contexts and the harness's started/finished events, proving the
+// rebuild overlaps neither CLI nor direct engine work from another case.
+func assertLiveTraceRebuildExclusive(t *testing.T, output string) {
+	t.Helper()
+	current := ""
+	active := map[string]int{}
+	builds := 0
+	rebuilding := false
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "=== ") {
+			fields := strings.Fields(line)
+			if len(fields) == 3 {
+				parts := strings.Split(fields[2], "/")
+				current = ""
+				if len(parts) >= 2 && parts[0] == "TestLiveSuite" {
+					current = parts[1]
+				}
+			}
+		}
+		_, event, found := strings.Cut(line, ": live operation ")
+		if !found {
+			continue
+		}
+		operation, state, found := strings.Cut(event, ": ")
+		if !found || current == "" {
+			t.Fatalf("operation without case context: %q", line)
+		}
+		if state == "started" {
+			if operation == "rebuild" {
+				builds++
+				for name, count := range active {
+					if name != "images" && count != 0 {
+						t.Errorf("rebuild started with %d active %s operations", count, name)
+					}
+				}
+				rebuilding = true
+			} else if current != "images" && rebuilding {
+				t.Errorf("%s operation started during rebuild", current)
+			}
+			active[current]++
+		} else if strings.HasPrefix(state, "finished after ") {
+			active[current]--
+			if active[current] < 0 {
+				t.Errorf("unmatched operation finish for %s", current)
+			}
+			if operation == "rebuild" {
+				rebuilding = false
+			}
+		}
+	}
+	if builds != 1 {
+		t.Errorf("trace has %d rebuild starts; want one", builds)
+	}
+	for name, count := range active {
+		if count != 0 {
+			t.Errorf("trace ended with %d active %s operations", count, name)
+		}
+	}
 }

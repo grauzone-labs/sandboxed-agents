@@ -17,7 +17,7 @@ func TestRetainOperationsReconcilesCaseAndPhaseSeconds(t *testing.T) {
 	directory := t.TempDir()
 	path, err := validationduration.WriteOperations(directory, validationduration.Operations{
 		SchemaVersion: 1, Kind: "live-suite-operations", Commit: "0123456789abcdef0123456789abcdef01234567", Platform: "linux",
-		Engine: &validationduration.Engine{CPUs: 4, MemoryBytes: 4294967296},
+		Engine: &validationduration.Engine{CPUs: 4, MemoryBytes: 4294967296}, CaseOverlap: 3, BuildJobs: 2,
 		Operations: []validationduration.Operation{
 			{Case: "lifecycle", Source: "cli", Operation: "image build or sandbox start", Result: "pass", Seconds: 2},
 			{Case: "lifecycle", Source: "podman", Operation: "inspection", Result: "fail", Seconds: 3},
@@ -52,7 +52,7 @@ func TestRetainOperationsReconcilesCaseAndPhaseSeconds(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine := got["engine"].(map[string]any)
-	if engine["cpus"] != float64(4) || engine["memory_bytes"] != float64(4294967296) || got["preparation_seconds"] != float64(37) || got["post_suite_seconds"] != float64(62) {
+	if got["case_overlap"] != float64(3) || got["build_jobs"] != float64(2) || engine["cpus"] != float64(4) || engine["memory_bytes"] != float64(4294967296) || got["preparation_seconds"] != float64(37) || got["post_suite_seconds"] != float64(62) {
 		t.Fatalf("numeric evidence: %s", data)
 	}
 	if strings.Contains(string(data), "2026-") || strings.Contains(string(data), directory) {
@@ -71,6 +71,8 @@ func TestRetainPreservesDurationsWithUnsafeOperations(t *testing.T) {
 		{"unknown-output", strings.Replace(safe, `"operations":`, `"output":"private path", "operations":`, 1)},
 		{"private-case", strings.Replace(safe, `"case":"lifecycle"`, `"case":"private-sandbox"`, 1)},
 		{"private-operation", strings.Replace(safe, `"operation":"image build or sandbox start"`, `"operation":"/private/command"`, 1)},
+		{"negative-overlap", strings.Replace(safe, `"operations":`, `"case_overlap":-1,"operations":`, 1)},
+		{"negative-jobs", strings.Replace(safe, `"operations":`, `"build_jobs":-1,"operations":`, 1)},
 		{"negative-time", strings.Replace(safe, `"seconds":2`, `"seconds":-2`, 1)},
 		{"revision", strings.Replace(safe, "0123456789abcdef0123456789abcdef01234567", strings.Repeat("a", 40), 1)},
 		{"trailing-object", safe + `{}`},

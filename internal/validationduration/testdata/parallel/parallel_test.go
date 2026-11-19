@@ -2,8 +2,8 @@ package parallel_test
 
 import "testing"
 
-// TestLiveSuite emits actual verbose output with concurrent fixed cases, one
-// failed check, skipped images, and an unknown nested check for the collector.
+// TestLiveSuite proves concurrent pass/fail/skip cases and nested output remain
+// distinguishable at the verbose Go subprocess seam used by the collector.
 func TestLiveSuite(t *testing.T) {
 	t.Run("preflight", func(t *testing.T) { t.Log("private preflight output") })
 	for _, name := range []string{"lifecycle", "update", "agent", "t3code", "images"} {

@@ -104,6 +104,10 @@ func hostFixture(role string, args []string) int {
 			return 0
 		}
 		if args[0] == "test" {
+			data, _ := json.Marshal(map[string]string{"overlap": os.Getenv("SANDBOXED_AGENTS_LIVE_OVERLAP"), "build_jobs": os.Getenv("SANDBOXED_AGENTS_LIVE_BUILD_JOBS")})
+			if err := os.WriteFile(filepath.Join(root, "suite-inputs.json"), data, 0600); err != nil {
+				return 2
+			}
 			fmt.Println("=== RUN   TestLiveSuite/images")
 			fmt.Println("host_test.go:1: sandboxed-agents build private-image /private/path")
 			fmt.Println("UTF-8 fixture: café")
@@ -151,7 +155,7 @@ func hostFixture(role string, args []string) int {
 }
 
 // fixtureSetup installs fake host programs beside an isolated checkout and prepares the real command.
-func fixtureSetup(t *testing.T) (string, string, []string) {
+func fixtureSetup(t *testing.T, additional ...string) (string, string, []string) {
 	t.Helper()
 	root := t.TempDir()
 	t.Cleanup(func() { cleanupFixture(root) })
@@ -184,6 +188,7 @@ func fixtureSetup(t *testing.T) (string, string, []string) {
 	}
 	private := filepath.Join(root, "private")
 	args := []string{"prepare", "-checkout", checkout, "-run-dir", private, "-record-dir", filepath.Join(root, "records"), "-revision", strings.Repeat("a", 40), "-allow-unbounded", "-unbounded-decision", "fixture invocation with no bound"}
+	args = append(args, additional...)
 	command := exec.Command(binary, args...)
 	if data, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("prepare: %v\n%s", err, data)
@@ -191,10 +196,12 @@ func fixtureSetup(t *testing.T) (string, string, []string) {
 	return root, private, args
 }
 
-// waitFixture waits briefly for observable process evidence rather than assuming a scheduling delay.
+// waitFixture waits for observable process evidence rather than assuming a scheduling delay.
+// Thirty seconds covers compound race-instrumented startup: run waits for
+// repeated preparation through several fake process queries before readiness.
 func waitFixture(t *testing.T, path string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(path); err == nil {
 			return

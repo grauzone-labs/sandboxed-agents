@@ -55,3 +55,27 @@ func TestProgressIgnoresEmbeddedCommandPayload(t *testing.T) {
 		t.Fatalf("payload changed status operation: %s", writer.state.Operation)
 	}
 }
+
+// TestProgressKeepsCaseOperationCoherent proves interleaved verbose case markers
+// clear an operation belonging to another case at the private status writer seam.
+func TestProgressKeepsCaseOperationCoherent(t *testing.T) {
+	var log bytes.Buffer
+	writer := &progressWriter{destination: &log, filename: filepath.Join(t.TempDir(), "progress.json")}
+	for _, step := range []struct{ line, caseName, operation string }{
+		{"=== NAME  TestLiveSuite/images\n", "images", ""},
+		{"test.go:1: live operation Tool update: started\n", "images", "Tool update"},
+		{"    --- PASS: TestLiveSuite/update (1.00s)\n", "update", ""},
+		{"test.go:1: live operation cleanup: started\n", "update", "cleanup"},
+		{"=== CONT  TestLiveSuite/images/initial/native\n", "images", ""},
+		{"test.go:1: live operation image archive: started\n", "images", "image archive"},
+		{"=== NAME  TestLiveSuite/images\n", "images", "image archive"},
+		{"=== NAME  TestLiveSuite\n", "", ""},
+	} {
+		if _, err := writer.Write([]byte(step.line)); err != nil {
+			t.Fatal(err)
+		}
+		if writer.state.Case != step.caseName || writer.state.Operation != step.operation {
+			t.Errorf("after %q: case=%q operation=%q; want %q %q", step.line, writer.state.Case, writer.state.Operation, step.caseName, step.operation)
+		}
+	}
+}

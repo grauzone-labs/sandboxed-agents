@@ -34,6 +34,9 @@ func (s *Service) prepare(ctx context.Context, o Options) (Snapshot, error) {
 
 // prepareLocked verifies every pre-build check while keeping the selected engine excluded.
 func (s *Service) prepareLocked(ctx context.Context, o Options) (Snapshot, *os.File, error) {
+	if err := o.normalizeConcurrency(); err != nil {
+		return Snapshot{}, nil, err
+	}
 	if err := s.checkCoordination(o); err != nil {
 		return Snapshot{}, nil, err
 	}

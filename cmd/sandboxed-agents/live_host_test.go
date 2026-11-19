@@ -31,6 +31,7 @@ type liveHost struct {
 	timings         *liveTimings
 	failures        *liveEngineFailures
 	caseName        string
+	removals        chan struct{}
 	operationBounds map[string]time.Duration
 	report          func(string)
 }
@@ -201,12 +202,30 @@ func (host liveHost) cliContext(ctx context.Context, input string, args ...strin
 	defer cancel()
 	started := time.Now()
 	host.reportOperation(operation, "started")
-	command := exec.Command(host.binary, args...)
-	command.Env = host.environment
-	command.Stdin = strings.NewReader(input)
-	command.WaitDelay = time.Second
 	output := liveOutput{lines: liveLineStream{report: host.report}}
-	err := capture.RunOwned(ctx, command, &output, &output)
+	var err error
+	if len(args) > 0 && args[0] == "remove" && host.removals != nil {
+		select {
+		case host.removals <- struct{}{}:
+		default:
+			host.reportOperation(operation, "waiting for another suite remove")
+			select {
+			case host.removals <- struct{}{}:
+			case <-ctx.Done():
+				err = ctx.Err()
+			}
+		}
+		if err == nil {
+			defer func() { <-host.removals }()
+		}
+	}
+	if err == nil {
+		command := exec.Command(host.binary, args...)
+		command.Env = host.environment
+		command.Stdin = strings.NewReader(input)
+		command.WaitDelay = time.Second
+		err = capture.RunOwned(ctx, command, &output, &output)
+	}
 	output.Flush()
 	host.recordOperation("cli", operation, started, err)
 	host.reportOperation(operation, fmt.Sprintf("finished after %s", time.Since(started).Round(time.Millisecond)))

@@ -71,6 +71,9 @@ func (s *Service) launch(ctx context.Context, args []string, out, diagnostics io
 	if err = readJSON(filepath.Join(directory, "options.json"), &options); err != nil {
 		return fmt.Errorf("read prepared run options")
 	}
+	if err = options.normalizeConcurrency(); err != nil {
+		return err
+	}
 	if err = s.checkCoordination(options); err != nil {
 		return err
 	}
@@ -146,6 +149,9 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 	}
 	var options Options
 	if err = readJSON(filepath.Join(directory, "options.json"), &options); err != nil {
+		return err
+	}
+	if err = options.normalizeConcurrency(); err != nil {
 		return err
 	}
 	startedAt := options.PreparationStart
@@ -227,8 +233,10 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 	}
 	suite.Env = hostEnvironment(s.Platform, map[string]string{
 		"SANDBOXED_AGENTS_LIVE_STOP_AFTER_FAILURE": "1",
-		BuildEvidenceEnv:              buildDirectory,
-		"SANDBOXED_AGENTS_LIVE_TESTS": "1", "SANDBOXED_AGENTS_GROUP": options.Group,
+		"SANDBOXED_AGENTS_LIVE_OVERLAP":            strconv.Itoa(options.Overlap),
+		"SANDBOXED_AGENTS_LIVE_BUILD_JOBS":         strconv.Itoa(options.BuildJobs),
+		BuildEvidenceEnv:                           buildDirectory,
+		"SANDBOXED_AGENTS_LIVE_TESTS":              "1", "SANDBOXED_AGENTS_GROUP": options.Group,
 		"SANDBOXED_AGENTS_LIVE_RECORD_DIR": options.RecordDir, "SANDBOXED_AGENTS_LIVE_IMAGES_TESTS": images,
 	})
 	// Capture uses UTF-8 bytes directly; PowerShell's 5.1 text encoding is never involved.

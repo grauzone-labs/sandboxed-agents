@@ -84,7 +84,13 @@ func (w *progressWriter) observe(line string) {
 		}
 	}
 	if match := progressCaseLine.FindStringSubmatch(line); len(match) > 1 {
+		if w.state.Case != match[1] {
+			w.state.Operation = ""
+		}
 		w.state.Case = match[1]
+	} else if strings.HasPrefix(line, "=== ") {
+		w.state.Case = ""
+		w.state.Operation = ""
 	}
 	marker := "sandboxed-agents "
 	if tail, ok := strings.CutPrefix(line, marker); ok {
@@ -150,6 +156,9 @@ func (s *Service) status(ctx context.Context, args []string, out, diagnostics io
 	if readJSON(filepath.Join(directory, "options.json"), &o) != nil || readJSON(filepath.Join(directory, "before.json"), &before) != nil {
 		return fmt.Errorf("prepared run is unavailable")
 	}
+	if err = o.normalizeConcurrency(); err != nil {
+		return err
+	}
 	var progress progressState
 	_ = readJSON(filepath.Join(directory, "progress.json"), &progress)
 	if !fixedCase(progress.Case) {
@@ -196,7 +205,7 @@ func (s *Service) status(ctx context.Context, args []string, out, diagnostics io
 			age = 0
 		}
 	}
-	state := map[string]any{"case": progress.Case, "operation": progress.Operation, "last_output_age_seconds": age, "ended": finished, "running": running, "free_space": summary}
+	state := map[string]any{"case_overlap": o.Overlap, "build_jobs": o.BuildJobs, "case": progress.Case, "operation": progress.Operation, "last_output_age_seconds": age, "ended": finished, "running": running, "free_space": summary}
 	if finished {
 		if total, ok := readCleanupTotal(directory, o, ended); ok {
 			state["post_suite_total_seconds"] = total
