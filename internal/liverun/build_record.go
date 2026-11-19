@@ -222,7 +222,32 @@ func uniqueBuildRecord(records []buildProof) []buildProof {
 	return result
 }
 
-// accountBuildCoverage classifies retained unknowns without granting any image deletion authority.
+// Primary receipt veto reasons are fixed sanitized descriptions, independent of engine output.
+const (
+	primaryReuseReason  = "primary result reuse not excluded; retained"
+	primarySharedReason = "primary result shared by distinct build attempts; retained"
+	primaryInputReason  = "primary result collides with recorded registry input; retained"
+)
+
+// explainPrimaryVetoes replaces only a noneligible missing-proof or coverage reason with its actual receipt veto.
+// Retention, before-snapshot, inspection and foreign-tag decisions keep precedence; no empty reason is changed.
+func explainPrimaryVetoes(plan []CleanupItem, record []buildProof) {
+	blocked := map[string]string{}
+	for _, proof := range record {
+		if proof.Reason == primaryReuseReason || proof.Reason == primarySharedReason || proof.Reason == primaryInputReason {
+			blocked[canonicalImageID(proof.Token)] = proof.Reason
+		}
+	}
+	for i := range plan {
+		item := &plan[i]
+		if reason := blocked[item.ID]; reason != "" && (item.Reason == "missing exact build proof" || item.Reason == "not committed by this run's builds") {
+			item.Reason = reason
+		}
+	}
+}
+
+// accountBuildCoverage keeps absent-before images unexplained unless valid primary accounting or a revalidated registry input explains them.
+// It preserves skip-reason precedence and never derives nonownership from a closed journal or grants deletion authority.
 func accountBuildCoverage(run *cleanupRun, plan []CleanupItem, record []buildProof, images []cleanupImage, state buildChannelState) {
 	external := map[string]bool{}
 	for _, image := range images {
@@ -236,20 +261,22 @@ func accountBuildCoverage(run *cleanupRun, plan []CleanupItem, record []buildPro
 		before[canonicalImageID(image.ID)] = true
 	}
 	for _, proof := range record {
-		if fullImageID(proof.Token) {
-			receipted[canonicalImageID(proof.Token)] = true
+		if proof.Reason == "" && fullImageID(proof.FullID) {
+			receipted[canonicalImageID(proof.FullID)] = true
 		}
 	}
 	for i := range plan {
 		item := &plan[i]
-		if before[item.ID] || receipted[item.ID] || !item.SizeVerified {
+		if before[item.ID] || receipted[item.ID] {
 			continue
 		}
-		if state.Complete && !state.Open || external[item.ID] {
+		if external[item.ID] {
 			if item.Reason == "missing exact build proof" || item.Reason == "foreign or mixed image tags" {
 				item.Reason = "not committed by this run's builds"
 			}
-		} else if (state.Open || !state.Complete) && item.Reason == "foreign or mixed image tags" {
+			continue
+		}
+		if run.report.Status == "complete" {
 			run.report.Status = "partial"
 		}
 	}

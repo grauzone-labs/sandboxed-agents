@@ -143,20 +143,20 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 	if proofErr != nil {
 		run.report.Unverified = append(run.report.Unverified, CleanupItem{Reason: "some trusted build evidence incomplete or invalid; only independent primary results admitted", Query: "private build-result channel"})
 	}
-	blocked := map[string]bool{}
+	blocked := map[string]string{}
 	observedAttempt := map[string]string{}
 	for id := range state.Inputs {
-		blocked[id] = true
+		blocked[id] = primaryInputReason
 	}
 	if primaryChannel {
 		for _, r := range results {
 			id := canonicalImageID(r.ID)
-			if previous, ok := observedAttempt[id]; ok && previous != r.AttemptID {
-				blocked[id] = true
+			if previous, ok := observedAttempt[id]; ok && previous != r.AttemptID && blocked[id] != primaryInputReason {
+				blocked[id] = primarySharedReason
 			}
 			observedAttempt[id] = r.AttemptID
-			if r.Policy != SingleCommitPolicy || r.Reproducibility != "default-timestamps" {
-				blocked[canonicalImageID(r.ID)] = true
+			if (r.Policy != SingleCommitPolicy || r.Reproducibility != "default-timestamps") && blocked[id] == "" {
+				blocked[id] = primaryReuseReason
 			}
 		}
 	}
@@ -175,8 +175,8 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 			continue
 		}
 		proof := buildProof{Token: result.ID, Step: result.Step, Result: result.Source}
-		if primaryChannel && blocked[canonicalImageID(result.ID)] {
-			proof.Reason = "primary result reuse not excluded; retained"
+		if primaryChannel {
+			proof.Reason = blocked[canonicalImageID(result.ID)]
 		}
 		trusted = append(trusted, proof)
 	}
@@ -196,13 +196,14 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 	plan := cleanupPlan(run.before, current, record, asset, options.Retain)
 	if primaryChannel {
 		accountBuildCoverage(run, plan, record, current, state)
+		explainPrimaryVetoes(plan, record)
 	}
 	if err = cleanupWriteJSON(filepath.Join(run.directory, "removal-plan.json"), plan, cleanupSummaryLimit/2); err != nil {
 		return fmt.Errorf("cleanup: pending (cannot retain removal plan)")
 	}
 	for index, item := range plan {
 		if item.Reason != "" {
-			if item.Reason == "missing exact build proof" {
+			if item.Reason == "missing exact build proof" && run.report.Status == "complete" {
 				run.report.Status = "partial"
 			}
 			run.report.Skipped = append(run.report.Skipped, item)

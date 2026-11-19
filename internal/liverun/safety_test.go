@@ -171,8 +171,8 @@ func TestCleanupConsumesPrimaryBuildChannel(t *testing.T) {
 	if got := cleanupRemoved(fake); len(got) != 1 || got[0] != id {
 		t.Fatalf("primary result lost or raw output authorized: %v %v %s", got, err, &out)
 	}
-	if !strings.Contains(out.String(), `"status":"complete"`) || !strings.Contains(out.String(), "not committed by this run's builds") {
-		t.Fatalf("unknown intermediate not accounted for: %s", &out)
+	if err == nil || !strings.Contains(out.String(), `"status":"partial"`) || !strings.Contains(out.String(), "missing exact build proof") || !strings.Contains(out.String(), foreign) || strings.Contains(out.String(), "not committed by this run's builds") {
+		t.Fatalf("unreceipted current-asset final must remain unexplained: %v %s", err, &out)
 	}
 }
 
@@ -572,7 +572,7 @@ func TestCleanupDeduplicatesPrimaryResults(t *testing.T) {
 	}
 	fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id)}
 	var out bytes.Buffer
-	if err := svc.Cleanup(context.Background(), options, &out); err == nil || len(cleanupRemoved(fake)) != 0 || !strings.Contains(out.String(), "reuse not excluded") {
+	if err := svc.Cleanup(context.Background(), options, &out); err == nil || len(cleanupRemoved(fake)) != 0 || !strings.Contains(out.String(), "primary result shared by distinct build attempts; retained") {
 		t.Fatalf("repeated primary ID was not retained: %v %s", err, &out)
 	}
 	paths, err := filepath.Glob(filepath.Join(options.RunDir, "cleanup-*", "build-record.json"))

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -30,6 +31,26 @@ type buildPublication struct {
 	Result                         BuildResult
 	Input                          *registryBuildInput `json:",omitempty"`
 	Unconfirmed                    bool                `json:",omitempty"`
+}
+
+// Build event prefixes agree between producers and the collector; manifest-loss markers carry negative evidence only.
+const (
+	buildAttemptPrefix     = "attempt-"
+	buildResultPrefix      = "result-"
+	buildInputPrefix       = "input-"
+	buildUnconfirmedPrefix = "unconfirmed-"
+	buildReadLossPrefix    = "read-loss-"
+	buildInvalidPrefix     = "invalid-manifest-"
+)
+
+// bind constructs a publication with this manifest's exact invocation, revision and engine binding.
+func (m buildManifest) bind(version int) buildPublication {
+	return buildPublication{Version: version, Invocation: m.Invocation, Revision: m.Revision, EngineID: m.EngineID}
+}
+
+// bound checks the complete manifest binding independently of event version, payload or filename kind.
+func (m buildManifest) bound(event buildPublication) bool {
+	return event.Invocation == m.Invocation && event.Revision == m.Revision && event.EngineID == m.EngineID
 }
 
 // createBuildChannel creates the private per-invocation producer channel before the suite starts.
@@ -72,7 +93,10 @@ func readBuildManifest(directory string) (buildManifest, error) {
 		return m, fmt.Errorf("build channel must be absolute")
 	}
 	err := strictBuildJSON(filepath.Join(directory, "manifest.json"), &m)
-	if err != nil || (m.Version != 1 && m.Version != 2) || !revisionLine.MatchString(m.Revision) || len(m.Invocation) != 64 || m.EngineID == "" {
+	if err != nil {
+		return m, fmt.Errorf("build channel manifest unverified: %w", err)
+	}
+	if (m.Version != 1 && m.Version != 2) || !revisionLine.MatchString(m.Revision) || len(m.Invocation) != 64 || m.EngineID == "" {
 		return m, fmt.Errorf("build channel manifest unverified")
 	}
 	if _, err = hex.DecodeString(m.Invocation); err != nil {
@@ -103,6 +127,7 @@ func CaptureSingleCommitBuild(directory, tag, asset string, reuseNotExcluded boo
 func captureBuildResult(directory, tag, asset, policy string, reuse bool, build func(string) error, inspect func(string) (string, error)) error {
 	m, err := readBuildManifest(directory)
 	if directory == "" || err != nil {
+		markBuildManifestLoss(directory, err)
 		return build("")
 	}
 	if len(asset) != 64 || !cleanupProjectTag(tag) || !strings.HasSuffix(tag, "-"+asset) {
@@ -128,8 +153,9 @@ func captureBuildResult(directory, tag, asset, policy string, reuse bool, build 
 	if policy == "" {
 		version = 1
 	}
-	attempt := buildPublication{Version: version, Invocation: m.Invocation, Revision: m.Revision, EngineID: m.EngineID, Result: result}
-	attemptPath := filepath.Join(directory, "attempt-"+attemptID+".json")
+	attempt := m.bind(version)
+	attempt.Result = result
+	attemptPath := filepath.Join(directory, buildAttemptPrefix+attemptID+".json")
 	if err = writeJSON(attemptPath, attempt); err != nil {
 		markBuildChannelUnverified(directory)
 		return build("")
@@ -148,7 +174,7 @@ func captureBuildResult(directory, tag, asset, policy string, reuse bool, build 
 		if inspectErr == nil && canonicalImageID(confirmed) == id {
 			result.ID = id
 			attempt.Result = result
-			if publishBuildEvent(directory, "result-", attempt) == nil {
+			if publishBuildEvent(directory, buildResultPrefix, attempt) == nil {
 				_ = os.Remove(attemptPath)
 			}
 		}
@@ -186,8 +212,7 @@ func readBuildChannel(o Options, before Snapshot) (state buildChannelState) {
 	}()
 	directory := filepath.Join(o.RunDir, "build-evidence")
 	if _, err := os.Stat(filepath.Join(o.RunDir, "build-evidence-unverified")); !os.IsNotExist(err) {
-		state.Err = fmt.Errorf("build channel failed to initialize")
-		return state
+		state.Err = fmt.Errorf("build channel publication unavailable")
 	}
 	if _, err := os.Stat(directory); os.IsNotExist(err) {
 		return state
@@ -228,30 +253,34 @@ func readBuildChannel(o Options, before Snapshot) (state buildChannelState) {
 			state.Err = fmt.Errorf("build channel exceeds evidence limit")
 			return state
 		}
+		if strings.HasPrefix(name, buildReadLossPrefix) || strings.HasPrefix(name, buildInvalidPrefix) {
+			incomplete = true
+			continue
+		}
 		var event buildPublication
-		isAttempt := strings.HasPrefix(name, "attempt-")
+		isAttempt := strings.HasPrefix(name, buildAttemptPrefix)
 		if strictBuildJSON(filepath.Join(directory, name), &event) != nil {
 			invalid = true
 			continue
 		}
-		if strings.HasPrefix(name, "unconfirmed-") {
+		if strings.HasPrefix(name, buildUnconfirmedPrefix) {
 			// This observation has no image identity and can only withdraw completeness.
-			if event.Version == 2 && event.Invocation == m.Invocation && event.Revision == m.Revision && event.EngineID == m.EngineID && event.Unconfirmed && event.Input == nil && event.Result == (BuildResult{}) {
+			if event.Version == 2 && m.bound(event) && event.Unconfirmed && event.Input == nil && event.Result == (BuildResult{}) {
 				incomplete = true
 			} else {
 				invalid = true
 			}
 			continue
 		}
-		if strings.HasPrefix(name, "input-") {
-			if !event.Unconfirmed && event.Version == 2 && event.Invocation == m.Invocation && event.Revision == m.Revision && event.EngineID == m.EngineID && event.Input != nil && event.Result == (BuildResult{}) && validRegistryInput(*event.Input) {
+		if strings.HasPrefix(name, buildInputPrefix) {
+			if !event.Unconfirmed && event.Version == 2 && m.bound(event) && event.Input != nil && event.Result == (BuildResult{}) && validRegistryInput(*event.Input) {
 				state.Inputs[event.Input.ID] = true
 			} else {
 				invalid = true
 			}
 			continue
 		}
-		if (!isAttempt && !strings.HasPrefix(name, "result-")) || event.Unconfirmed || event.Input != nil || !validBuildPublication(event, m, isAttempt) {
+		if (!isAttempt && !strings.HasPrefix(name, buildResultPrefix)) || event.Unconfirmed || event.Input != nil || !validBuildPublication(event, m, isAttempt) {
 			invalid = true
 			continue
 		}
@@ -262,10 +291,13 @@ func readBuildChannel(o Options, before Snapshot) (state buildChannelState) {
 			state.Open = true
 		}
 		if isAttempt {
-			_, duplicate := attempts[result.AttemptID]
-			if duplicate || invalidAttempts[result.AttemptID] || name != "attempt-"+result.AttemptID+".json" {
+			if invalidAttempts[result.AttemptID] || name != buildAttemptPrefix+result.AttemptID+".json" {
 				invalid = true
 				invalidAttempts[result.AttemptID] = true
+				filenameID := strings.TrimSuffix(strings.TrimPrefix(name, buildAttemptPrefix), ".json")
+				if validAttemptID(filenameID) {
+					invalidAttempts[filenameID] = true
+				}
 				continue
 			}
 			attempts[result.AttemptID] = result
@@ -322,18 +354,38 @@ func readBuildChannel(o Options, before Snapshot) (state buildChannelState) {
 }
 
 // RecordUnconfirmedBuild withdraws complete accounting when a build must run without confirmed capture preconditions.
-// It validates the manifest before writing, carries no image or host diagnostic, and grants no ownership authority.
-// Publication failure falls back to the run's unverified marker; callers preserve the original build result.
+// It binds observations only after manifest validation; a failed read or validation attempts an identity-free in-channel marker.
+// Bound observation publication failure falls back to the run's private marker; no path grants ownership or changes a build outcome.
 func RecordUnconfirmedBuild(directory string) error {
 	m, err := readBuildManifest(directory)
 	if err != nil {
+		markBuildManifestLoss(directory, err)
 		return err
 	}
-	err = publishBuildEvent(directory, "unconfirmed-", buildPublication{Version: 2, Invocation: m.Invocation, Revision: m.Revision, EngineID: m.EngineID, Unconfirmed: true})
+	event := m.bind(2)
+	event.Unconfirmed = true
+	err = publishBuildEvent(directory, buildUnconfirmedPrefix, event)
 	if err != nil {
 		markBuildChannelUnverified(directory)
 	}
 	return err
+}
+
+// markBuildManifestLoss attempts an identity-free negative marker only inside the existing channel, distinguishing I/O from invalid contents.
+// It never creates directories, writes a parent marker, reuses stale manifest authority, or changes a build outcome.
+func markBuildManifestLoss(directory string, readErr error) {
+	var pathErr *os.PathError
+	if !filepath.IsAbs(directory) || readErr == nil {
+		return
+	}
+	prefix := buildInvalidPrefix
+	if errors.As(readErr, &pathErr) {
+		prefix = buildReadLossPrefix
+	}
+	marker, err := os.CreateTemp(directory, prefix+"*.json")
+	if err == nil {
+		_ = marker.Close()
+	}
 }
 
 // ConfirmBuildEngine binds a producer's primary engine-info query to the private invocation.
@@ -357,7 +409,7 @@ func publishBuildEvent(directory, prefix string, event buildPublication) error {
 // validBuildPublication admits only correctly bound typed attempts or confirmed full final results.
 func validBuildPublication(event buildPublication, m buildManifest, attempt bool) bool {
 	r := event.Result
-	if (event.Version != 1 && event.Version != 2) || event.Invocation != m.Invocation || event.Revision != m.Revision || event.EngineID != m.EngineID {
+	if (event.Version != 1 && event.Version != 2) || !m.bound(event) {
 		return false
 	}
 	if !strings.HasPrefix(r.Step, "COMMIT ") || !cleanupProjectTag(strings.TrimPrefix(r.Step, "COMMIT ")) || len(r.Asset) != 64 || !strings.HasSuffix(r.Step, "-"+r.Asset) {
@@ -393,7 +445,7 @@ func newBuildAttemptID() (string, error) {
 	return hex.EncodeToString(nonce), nil
 }
 
-// markBuildChannelUnverified retains startup publication loss outside the channel when its parent remains writable.
+// markBuildChannelUnverified retains startup, attempt or observation publication loss when the validated channel's parent remains writable.
 func markBuildChannelUnverified(directory string) {
 	_ = os.WriteFile(filepath.Join(filepath.Dir(directory), "build-evidence-unverified"), []byte("producer evidence unavailable\n"), 0600)
 }
@@ -412,7 +464,9 @@ func RecordRegistryBuildInput(directory, reference, id string) error {
 	if !validRegistryInput(input) {
 		return fmt.Errorf("registry input unverified")
 	}
-	return publishBuildEvent(directory, "input-", buildPublication{Version: 2, Invocation: m.Invocation, Revision: m.Revision, EngineID: m.EngineID, Input: &input})
+	event := m.bind(2)
+	event.Input = &input
+	return publishBuildEvent(directory, buildInputPrefix, event)
 }
 
 // validRegistryInput requires a full identity and a bounded literal non-project reference without shell or option syntax.

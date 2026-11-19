@@ -136,8 +136,28 @@ func (e *evidenceCleanupExecutor) Execute(_ context.Context, in liverun.Invocati
 func verifyEmittedCleanup(t *testing.T, directory, id, forged, asset string) {
 	t.Helper()
 	engine, output := collectEmittedCleanup(t, directory, id, forged, asset)
-	if len(engine.removed) != 1 || engine.removed[0] != id || !strings.Contains(output, "not committed by this run's builds") || !strings.Contains(output, `"status":"complete"`) {
+	if len(engine.removed) != 1 || engine.removed[0] != id || !strings.Contains(output, "not committed by this run's builds") || !strings.Contains(output, `"status":"partial"`) {
 		t.Fatalf("primary ID not isolated: removed=%v out=%s", engine.removed, output)
+	}
+	var report liverun.CleanupReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		t.Fatal(err)
+	}
+	unknowns := map[string]bool{forged: true, "sha256:" + strings.Repeat("c", 64): true}
+	foundUnknown, foundInput := 0, false
+	for _, item := range report.Skipped {
+		if unknowns[item.ID] {
+			foundUnknown++
+			if item.Reason != "missing exact build proof" {
+				t.Fatalf("raw output or closed journal excluded an unknown: %+v", item)
+			}
+		}
+		if item.ID == "sha256:"+strings.Repeat("e", 64) {
+			foundInput = item.Reason == "not committed by this run's builds"
+		}
+	}
+	if foundUnknown != 2 || !foundInput {
+		t.Fatalf("unknown/input accounting lost: %s", output)
 	}
 }
 

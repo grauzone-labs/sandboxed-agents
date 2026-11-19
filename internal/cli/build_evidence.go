@@ -11,6 +11,7 @@ import (
 )
 
 // withBuildEvidence captures primary final IDs and registry FROM inputs under the image-tag lock with the opted-in single-commit policy.
+// Failed confirmation records an unconfirmed observation, or an identity-free channel-local marker if its manifest cannot be validated.
 // Telemetry remains supplemental; stdout and RUN output never authorize publication or removal.
 func withBuildEvidence(p podmanTarget, tag, hash string, args []string, build func(string, string) error) error {
 	directory := os.Getenv(liverun.BuildEvidenceEnv)

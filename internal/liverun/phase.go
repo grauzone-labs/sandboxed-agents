@@ -79,7 +79,7 @@ func (s *Service) parseOptions(args []string, diagnostics io.Writer) (Options, e
 	set.StringVar(&o.RunDir, "run-dir", "", "private run directory outside the record directory")
 	set.StringVar(&o.RecordDir, "record-dir", "", "schema 2 records for this invocation")
 	set.StringVar(&o.Revision, "revision", "", "full target commit")
-	set.StringVar(&o.PeakRecord, "peak-record", "", "earlier host peak record; defaults to engine-specific last peak")
+	set.StringVar(&o.PeakRecord, "peak-record", "", "maintainer-authored conservative bound record; defaults to engine-specific KEY-peak.json")
 	set.StringVar(&o.Group, "group", "live", "dedicated controller group")
 	set.StringVar(&o.HostLoad, "host-load", "unknown", "observed other work before run: idle, shared, unknown")
 	set.IntVar(&o.Overlap, "overlap", 1, "maximum independent suite work")

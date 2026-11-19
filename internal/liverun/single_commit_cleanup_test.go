@@ -106,7 +106,7 @@ func TestSingleCommitCoverage(t *testing.T) {
 				t.Fatalf("no audit: %v %s", err, &out)
 			}
 			want := "complete"
-			if mode == "open" || mode == "open-foreign-final" || mode == "open-unproved-pull" || mode == "open-input-foreign-final" {
+			if mode == "closed" || mode == "failed-final" || mode == "open" || mode == "open-foreign-final" || mode == "open-unproved-pull" || mode == "open-input-foreign-final" {
 				want = "partial"
 			}
 			if mode == "reuse" || mode == "legacy" || mode == "conflicting" || mode == "mixed-reuse" || mode == "repeated-default" || mode == "legacy-foreign" || mode == "invalid-foreign" {
@@ -120,7 +120,7 @@ func TestSingleCommitCoverage(t *testing.T) {
 			}
 			removed := cleanupRemoved(fake)
 			if mode == "closed" || mode == "failed-final" {
-				if len(removed) != 1 || removed[0] != id || !strings.Contains(out.String(), "not committed by this run's builds") {
+				if len(removed) != 1 || removed[0] != id || len(report.Skipped) != 1 || report.Skipped[0].ID != other || report.Skipped[0].Reason != "missing exact build proof" || strings.Contains(out.String(), "not committed by this run's builds") {
 					t.Fatalf("wrong closed accounting/removal: %v %s", removed, &out)
 				}
 			} else if len(removed) != 0 {
@@ -153,7 +153,7 @@ func TestSingleCommitCoverage(t *testing.T) {
 				for _, item := range plan {
 					if item.ID == other {
 						found = true
-						if item.Reason != "not committed by this run's builds" {
+						if item.Reason != "missing exact build proof" {
 							t.Fatalf("private plan contradicts reported closed accounting: %+v", item)
 						}
 					}

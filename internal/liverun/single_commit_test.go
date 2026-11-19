@@ -56,7 +56,7 @@ func TestUnconfirmedPublicationPreservesConcurrentFinals(t *testing.T) {
 	}
 }
 
-// TestUnconfirmedPublicationRequiresManifest proves the public unconfirmed producer writes no journal or parent marker for an invalid manifest at the filesystem seam.
+// TestUnconfirmedPublicationRequiresManifest proves invalid contents yield only empty in-channel negative evidence and no bound observation or parent write at the public producer/filesystem seam.
 func TestUnconfirmedPublicationRequiresManifest(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "build-evidence")
@@ -70,8 +70,17 @@ func TestUnconfirmedPublicationRequiresManifest(t *testing.T) {
 		t.Fatal("invalid manifest accepted")
 	}
 	entries, err := os.ReadDir(directory)
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("untrusted channel was written: %v %v", entries, err)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("missing negative evidence or extra authority: %v %v", entries, err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == "manifest.json" {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || !strings.HasPrefix(entry.Name(), "invalid-manifest-") || !info.Mode().IsRegular() || info.Size() != 0 {
+			t.Fatalf("invalid manifest authorized a payload: %v %v", entry, err)
+		}
 	}
 	if _, err = os.Stat(filepath.Join(root, "build-evidence-unverified")); !os.IsNotExist(err) {
 		t.Fatalf("untrusted parent was written: %v", err)
