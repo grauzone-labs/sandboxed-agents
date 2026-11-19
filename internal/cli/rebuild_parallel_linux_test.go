@@ -1,8 +1,12 @@
 package cli_test
 
 import (
+	"bytes"
 	"github.com/grauzone-labs/sandboxed-agents/image"
+	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -58,4 +62,72 @@ func TestConcurrentBuildJobsToolchainRebuildBlocksUp(t *testing.T) {
 	if builds := countPodmanCalls(t, f, "build "); builds != 2 {
 		t.Fatalf("builds=%d want base and toolchain once", builds)
 	}
+}
+
+// cleanupInterferenceOutput replaces one owned spool path with a nonempty directory after its engine has finished, exercising the real removal boundary.
+type cleanupInterferenceOutput struct {
+	directory string
+	retained  string
+	setupErr  error
+	output    bytes.Buffer
+}
+
+// Write preserves caller output while making the selected spool's exact-path removal fail without any production I/O injection.
+func (w *cleanupInterferenceOutput) Write(data []byte) (int, error) {
+	if strings.Contains(string(data), "build output for toolchain set azure:") {
+		paths, err := filepath.Glob(filepath.Join(w.directory, "sandboxed-agents-build-output-*"))
+		if err == nil {
+			for _, path := range paths {
+				contents, readErr := os.ReadFile(path)
+				if readErr != nil || !bytes.Contains(contents, []byte("begin azure\n")) {
+					continue
+				}
+				err = os.Rename(path, path+".retained")
+				if err == nil {
+					err = os.Mkdir(path, 0700)
+				}
+				if err == nil {
+					err = os.WriteFile(filepath.Join(path, "external-entry"), []byte("keep"), 0600)
+				}
+				if err == nil {
+					w.retained = path
+				}
+				break
+			}
+		}
+		w.setupErr = err
+	}
+	return w.output.Write(data)
+}
+
+// TestBuildJobsSpoolCleanupFailureKeepsRebuiltTag proves a real removal failure reports I/O without misclassifying a replaced tag or deleting unrelated contents at RunWithHost/fake Podman/filesystem seams.
+func TestBuildJobsSpoolCleanupFailureKeepsRebuiltTag(t *testing.T) {
+	f, dir := rebuildFixture(t, "azure", "dotnet")
+	temp := t.TempDir()
+	t.Setenv("TMPDIR", temp)
+	t.Setenv("TMP", temp)
+	t.Setenv("TEMP", temp)
+	for _, name := range []string{"none", "azure", "dotnet"} {
+		releaseHandshakeFile(t, filepath.Join(dir, name+".release"))
+	}
+	stdout := &cleanupInterferenceOutput{directory: temp}
+	var stderr bytes.Buffer
+	status := cli.RunWithHost([]string{"build", "--jobs=2"}, stdout, &stderr, f.host)
+	if stdout.setupErr != nil || stdout.retained == "" {
+		t.Fatalf("cleanup failure fixture was not established: path=%q err=%v", stdout.retained, stdout.setupErr)
+	}
+	if status != 1 || strings.Contains(stderr.String(), "failed toolchain sets") || !strings.Contains(stderr.String(), "remove build output spool") || !strings.Contains(stderr.String(), "was rebuilt") || !strings.Contains(stderr.String(), "existing sandboxes keep their image until update; list marks them as outdated") {
+		t.Fatalf("status=%d stderr=%s", status, stderr.String())
+	}
+	for _, name := range []string{"none", "azure", "dotnet"} {
+		data, err := os.ReadFile(filepath.Join(dir, name+".tag"))
+		if err != nil || string(data) != "new-"+name {
+			t.Fatalf("%s tag=%s err=%v", name, data, err)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(stdout.retained, "external-entry"))
+	if err != nil || string(data) != "keep" {
+		t.Fatalf("unrelated entry changed: %s %v", data, err)
+	}
+	assertSingleRebuildAttempts(t, dir, "none", "azure", "dotnet")
 }

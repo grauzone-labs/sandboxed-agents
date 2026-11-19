@@ -163,6 +163,7 @@ func rebuildImages(request Request, p podmanTarget, output, progress io.Writer) 
 	}
 	// Capture the base's immutable ID before another tag writer can replace it.
 	const notice = "existing sandboxes keep their image until update; list marks them as outdated"
+	var baseOutputErr error
 	baseID, err := func() (string, error) {
 		lock, err := acquireImageTagLock(p, image.Tag(hash, nil), progress)
 		if err != nil {
@@ -171,14 +172,16 @@ func rebuildImages(request Request, p podmanTarget, output, progress io.Writer) 
 		defer lock.Close()
 		var tag string
 		if request.BuildJobs > 1 {
-			tag, err = rebuildBaseWithProgress(p, hash, output, progress)
+			tag, err, baseOutputErr = rebuildBaseWithProgress(p, hash, output, progress)
 		} else {
 			tag, err = buildLabeledImageUnderLock(p, nil, hash, "", true, output)
 		}
 		if err != nil {
 			return "", err
 		}
-		fmt.Fprintln(output, "built image", tag)
+		if request.BuildJobs <= 1 {
+			fmt.Fprintln(output, "built image", tag)
+		}
 		if len(sets) == 0 {
 			return "", nil
 		}
@@ -189,10 +192,13 @@ func rebuildImages(request Request, p podmanTarget, output, progress io.Writer) 
 		return base.ID, nil
 	}()
 	if err != nil {
-		return err
+		return errors.Join(err, baseOutputErr)
 	}
 	if len(sets) == 0 {
 		fmt.Fprintln(output, notice)
+		if baseOutputErr != nil {
+			return fmt.Errorf("build output errors; %s: %w", notice, baseOutputErr)
+		}
 		return nil
 	}
 	var names []string
@@ -203,8 +209,11 @@ func rebuildImages(request Request, p podmanTarget, output, progress io.Writer) 
 	var failures []error
 	var failedSets []string
 	results := make([]error, len(names))
+	outputErr := baseOutputErr
 	if request.BuildJobs > 1 {
-		results = rebuildToolchains(p, sets, names, hash, baseID, request.BuildJobs, output, progress)
+		var toolchainOutputErr error
+		results, toolchainOutputErr = rebuildToolchains(p, sets, names, hash, baseID, request.BuildJobs, output, progress)
+		outputErr = errors.Join(outputErr, toolchainOutputErr)
 	} else {
 		for i, name := range names {
 			tag, err := buildLabeledImage(p, sets[name], hash, baseID, true, output, progress)
@@ -222,9 +231,12 @@ func rebuildImages(request Request, p podmanTarget, output, progress io.Writer) 
 		}
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("failed toolchain sets: %s; %s: %w", strings.Join(failedSets, "; "), notice, errors.Join(failures...))
+		return errors.Join(fmt.Errorf("failed toolchain sets: %s; %s: %w", strings.Join(failedSets, "; "), notice, errors.Join(failures...)), outputErr)
 	}
 	fmt.Fprintln(output, notice)
+	if outputErr != nil {
+		return fmt.Errorf("build output errors; %s: %w", notice, outputErr)
+	}
 	return nil
 }
 

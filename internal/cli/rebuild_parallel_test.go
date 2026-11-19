@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,23 +21,36 @@ import (
 
 // TestBuildJobsValidatesBeforePreflight proves positive build limits and the conservative default at the public parser and fake-engine CLI seams.
 func TestBuildJobsValidatesBeforePreflight(t *testing.T) {
-	for _, value := range []string{"0", "-1", "no", "1.5", "999999999999999999999999", ""} {
-		t.Run("invalid-"+value, func(t *testing.T) {
+	invalid := []struct {
+		name string
+		args []string
+	}{
+		{"zero", []string{"build", "--jobs=0"}}, {"negative", []string{"build", "--jobs=-1"}},
+		{"nonnumeric", []string{"build", "--jobs=no"}}, {"fraction", []string{"build", "--jobs=1.5"}},
+		{"overflow", []string{"build", "--jobs=999999999999999999999999"}},
+		{"empty", []string{"build", "--jobs="}}, {"missing", []string{"build", "--jobs"}},
+		{"duplicate", []string{"build", "--jobs=1", "--jobs=2"}},
+		{"up", []string{"up", "demo", "--jobs=2"}}, {"list", []string{"list", "--jobs=2"}},
+		{"update-all", []string{"update", "--all", "--jobs=2"}},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
 			f := linuxHost(t)
-			status, output, calls := f.run(t, "build", "--jobs="+value)
+			status, output, calls := f.run(t, test.args...)
 			if status != 2 || len(calls) != 0 || !strings.Contains(output, "--jobs") {
 				t.Fatalf("status=%d output=%q calls=%v", status, output, calls)
 			}
 		})
 	}
-	for _, args := range [][]string{{"build"}, {"build", "--jobs", "1"}, {"build", "--jobs=2"}} {
-		request, err := cli.Parse(args, "default")
-		if err != nil {
-			t.Fatalf("args=%v: %v", args, err)
-		}
-		// The parsed value remains observable without depending on a request field added by implementation.
-		if len(args) > 1 && request.Options["jobs"] == "" {
-			t.Fatalf("limit lost: %+v", request)
+	for _, test := range []struct {
+		args []string
+		jobs int
+	}{
+		{[]string{"build"}, 1}, {[]string{"build", "--jobs", "1"}, 1}, {[]string{"build", "--jobs=2"}, 2},
+	} {
+		request, err := cli.Parse(test.args, "default")
+		if err != nil || request.BuildJobs != test.jobs {
+			t.Fatalf("args=%v jobs=%d want=%d err=%v", test.args, request.BuildJobs, test.jobs, err)
 		}
 	}
 }
@@ -433,5 +447,116 @@ func TestBuildJobsBaseFailureStopsWorkers(t *testing.T) {
 	}
 	if builds != 1 {
 		t.Fatalf("builds=%d calls=%v", builds, calls)
+	}
+}
+
+// rejectingBuildOutput refuses one output boundary while retaining all other writes.
+type rejectingBuildOutput struct {
+	buffer bytes.Buffer
+	reject string
+}
+
+// Write returns a real caller-side I/O failure for the selected publication heading.
+func (w *rejectingBuildOutput) Write(data []byte) (int, error) {
+	if strings.Contains(string(data), w.reject) {
+		return 0, errors.New("caller rejected build output")
+	}
+	return w.buffer.Write(data)
+}
+
+// String returns the successfully published output retained by the rejecting caller.
+func (w *rejectingBuildOutput) String() string { return w.buffer.String() }
+
+// TestBuildJobsPublicationFailureKeepsEngineOutcome proves output I/O failure does not rename a successfully rebuilt image as a failed set at the RunWithHost/fake Podman seam.
+func TestBuildJobsPublicationFailureKeepsEngineOutcome(t *testing.T) {
+	f, dir := rebuildFixture(t, "azure", "dotnet")
+	for _, name := range []string{"none", "azure", "dotnet"} {
+		releaseHandshakeFile(t, filepath.Join(dir, name+".release"))
+	}
+	stdout := &rejectingBuildOutput{reject: "build output for toolchain set azure:"}
+	var stderr bytes.Buffer
+	status := cli.RunWithHost([]string{"build", "--jobs=2"}, stdout, &stderr, f.host)
+	for _, name := range []string{"none", "azure", "dotnet"} {
+		data, err := os.ReadFile(filepath.Join(dir, name+".tag"))
+		if err != nil || string(data) != "new-"+name {
+			t.Fatalf("engine did not replace %s: %s %v", name, data, err)
+		}
+	}
+	assertSingleRebuildAttempts(t, dir, "none", "azure", "dotnet")
+	if status != 1 || strings.Contains(stderr.String(), "failed toolchain sets") || !strings.Contains(stderr.String(), "caller rejected build output") {
+		t.Fatalf("status=%d stderr=%s", status, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "was rebuilt") || !strings.Contains(stdout.String(), "built image localhost/sandboxed-agents:azure-") {
+		t.Fatalf("lost successful outcome: stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+}
+
+// TestBuildJobsBasePublicationFailureContinues proves a successfully rebuilt base's output error preserves remaining builds and guidance at the RunWithHost/fake Podman seam.
+func TestBuildJobsBasePublicationFailureContinues(t *testing.T) {
+	f, dir := rebuildFixture(t, "azure", "dotnet")
+	for _, name := range []string{"none", "azure", "dotnet"} {
+		releaseHandshakeFile(t, filepath.Join(dir, name+".release"))
+	}
+	stdout := &rejectingBuildOutput{reject: "build output for base image:"}
+	var stderr bytes.Buffer
+	status := cli.RunWithHost([]string{"build", "--jobs=2"}, stdout, &stderr, f.host)
+	for _, name := range []string{"none", "azure", "dotnet"} {
+		data, err := os.ReadFile(filepath.Join(dir, name+".tag"))
+		if err != nil || string(data) != "new-"+name {
+			t.Errorf("base output failure stopped %s: %s %v", name, data, err)
+		}
+	}
+	assertSingleRebuildAttempts(t, dir, "none", "azure", "dotnet")
+	if status != 1 || strings.Contains(stderr.String(), "failed toolchain sets") || !strings.Contains(stderr.String(), "was rebuilt") || !strings.Contains(stderr.String(), "existing sandboxes keep their image until update; list marks them as outdated") {
+		t.Fatalf("status=%d stdout=%s stderr=%s", status, stdout.String(), stderr.String())
+	}
+}
+
+// TestBuildJobsSeparatesMixedBuildAndOutputFailures proves a genuine failure alone enters the sorted set aggregation while another replaced tag's I/O error stays separate at RunWithHost/fake Podman.
+func TestBuildJobsSeparatesMixedBuildAndOutputFailures(t *testing.T) {
+	f, dir := rebuildFixture(t, "azure", "dotnet")
+	t.Setenv("REBUILD_FAKE_FAILURES", "dotnet")
+	for _, name := range []string{"none", "azure", "dotnet"} {
+		releaseHandshakeFile(t, filepath.Join(dir, name+".release"))
+	}
+	stdout := &rejectingBuildOutput{reject: "build output for toolchain set azure:"}
+	var stderr bytes.Buffer
+	status := cli.RunWithHost([]string{"build", "--jobs=2"}, stdout, &stderr, f.host)
+	if status != 1 || !strings.Contains(stderr.String(), "failed toolchain sets: dotnet;") || strings.Contains(stderr.String(), "failed toolchain sets: azure") || !strings.Contains(stderr.String(), "was rebuilt") || !strings.Contains(stderr.String(), "caller rejected build output") {
+		t.Fatalf("status=%d stderr=%s", status, stderr.String())
+	}
+	for name, want := range map[string]string{"none": "new-none", "azure": "new-azure", "dotnet": "old-dotnet"} {
+		data, err := os.ReadFile(filepath.Join(dir, name+".tag"))
+		if err != nil || string(data) != want {
+			t.Fatalf("%s tag=%s want=%s err=%v", name, data, want, err)
+		}
+	}
+	assertSingleRebuildAttempts(t, dir, "none", "azure", "dotnet")
+}
+
+// assertSingleRebuildAttempts proves no build was retried by checking the fake engine's complete interval records.
+func assertSingleRebuildAttempts(t *testing.T, dir string, names ...string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "events"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := strings.Fields(string(data))
+	if len(events) != 2*len(names) {
+		t.Fatalf("unexpected build attempts: %s", data)
+	}
+	for _, name := range names {
+		starts, ends := 0, 0
+		for _, event := range events {
+			if event == "+"+name {
+				starts++
+			}
+			if event == "-"+name {
+				ends++
+			}
+		}
+		if starts != 1 || ends != 1 {
+			t.Fatalf("%s attempts: %s", name, data)
+		}
 	}
 }

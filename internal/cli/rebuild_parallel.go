@@ -14,29 +14,27 @@ import (
 	"github.com/grauzone-labs/sandboxed-agents/internal/capture"
 )
 
-// rebuildToolchains rebuilds sorted sets with bounded workers and publishes complete, disk-spooled output blocks in completion order.
-func rebuildToolchains(p podmanTarget, sets map[string][]string, names []string, hash, baseID string, limit int, output, progress io.Writer) []error {
+// imageBuildOutcome keeps an unsuccessful rebuild distinct from output errors after a tag was rebuilt.
+type imageBuildOutcome struct {
+	tag       string
+	buildErr  error
+	outputErr error
+	log       *buildOutputSpool
+}
+
+// rebuildToolchains rebuilds sorted sets with bounded workers and publishes complete blocks without treating output failures as failed sets.
+func rebuildToolchains(p podmanTarget, sets map[string][]string, names []string, hash, baseID string, limit int, output, progress io.Writer) ([]error, error) {
 	type result struct {
-		index int
-		tag   string
-		log   *os.File
-		err   error
+		index   int
+		outcome imageBuildOutcome
 	}
 	jobs := make(chan int)
 	done := make(chan result)
-	streams := &serializedBuildWriter{writer: progress}
-	progress = streams
+	publisher := &serializedBuildWriter{writer: progress}
 	for range min(limit, len(names)) {
 		go func() {
 			for i := range jobs {
-				log, err := os.CreateTemp("", "sandboxed-agents-build-output-*")
-				tag := ""
-				if err == nil {
-					tag, err = rebuildSpooledImage(p, sets[names[i]], hash, baseID, log, progress)
-				} else {
-					err = fmt.Errorf("create build output spool: %w", err)
-				}
-				done <- result{i, tag, log, err}
+				done <- result{i, rebuildSpooledImage(p, sets[names[i]], hash, baseID, publisher)}
 			}
 		}()
 	}
@@ -47,87 +45,155 @@ func rebuildToolchains(p podmanTarget, sets map[string][]string, names []string,
 		}
 	}()
 	failures := make([]error, len(names))
+	outputErrors := make([]error, len(names))
 	for range names {
 		result := <-done
-		// A complete stdout block also excludes progress writes when both streams share a terminal or writer.
-		streams.mu.Lock()
-		err := result.err
-		if result.log != nil {
-			err = errors.Join(err, publishBuildLog(output, "toolchain set "+names[result.index], result.log))
-		}
-		if err == nil {
-			_, err = fmt.Fprintln(output, "built image", result.tag)
-		}
-		streams.mu.Unlock()
-		failures[result.index] = err
+		outcome := publishRebuildOutcome(publisher, output, "toolchain set "+names[result.index], result.outcome)
+		failures[result.index], outputErrors[result.index] = outcome.buildErr, outcome.outputErr
 	}
-	return failures
+	return failures, errors.Join(outputErrors...)
 }
 
-// rebuildSpooledImage holds one tag through build and primary evidence publication, collecting both streams with actual-byte progress.
-func rebuildSpooledImage(p podmanTarget, set []string, hash, baseID string, log *os.File, progress io.Writer) (string, error) {
+// rebuildSpooledImage holds one tag through build and primary evidence publication, releasing it before output publication.
+func rebuildSpooledImage(p podmanTarget, set []string, hash, baseID string, progress io.Writer) imageBuildOutcome {
 	lock, err := acquireImageTagLock(p, image.Tag(hash, set), progress)
 	if err != nil {
-		return "", err
+		return imageBuildOutcome{tag: image.Tag(hash, set), buildErr: err}
 	}
 	defer lock.Close()
-	return buildSpooledImageUnderLock(p, set, hash, baseID, log, progress)
+	return buildSpooledImageUnderLock(p, set, hash, baseID, progress)
 }
 
-// rebuildBaseWithProgress rebuilds the base under its caller's tag lock and publishes its complete output with live byte counts.
-func rebuildBaseWithProgress(p podmanTarget, hash string, output, progress io.Writer) (string, error) {
-	log, err := os.CreateTemp("", "sandboxed-agents-build-output-*")
+// rebuildBaseWithProgress publishes a rebuilt base's output separately from its build result so toolchain work can continue after output errors.
+func rebuildBaseWithProgress(p podmanTarget, hash string, output, progress io.Writer) (string, error, error) {
+	publisher := &serializedBuildWriter{writer: progress}
+	outcome := buildSpooledImageUnderLock(p, nil, hash, "", publisher)
+	outcome = publishRebuildOutcome(publisher, output, "base image", outcome)
+	return outcome.tag, outcome.buildErr, outcome.outputErr
+}
+
+// publishRebuildOutcome publishes one complete image block and its successful result under the publisher's exclusion, retaining accurate tag outcomes on I/O errors.
+func publishRebuildOutcome(publisher *serializedBuildWriter, output io.Writer, name string, outcome imageBuildOutcome) imageBuildOutcome {
+	err := publisher.exclusive(func() error {
+		var logErr, resultErr error
+		if outcome.log != nil {
+			logErr = outcome.log.publish(output, name)
+		}
+		if outcome.buildErr == nil {
+			_, resultErr = fmt.Fprintln(output, "built image", outcome.tag)
+		}
+		if resultErr != nil {
+			resultErr = fmt.Errorf("publish build result: %w", resultErr)
+		}
+		return errors.Join(logErr, resultErr)
+	})
+	outputErr := errors.Join(outcome.outputErr, err)
+	if outputErr != nil {
+		if outcome.buildErr == nil {
+			outputErr = fmt.Errorf("image %s was rebuilt; %w", outcome.tag, outputErr)
+		} else {
+			outputErr = fmt.Errorf("image %s build output: %w", outcome.tag, outputErr)
+		}
+	}
+	outcome.outputErr = outputErr
+	return outcome
+}
+
+// buildOutputSpool owns the creation, complete output, publication, and exact-path cleanup of one private temporary log.
+type buildOutputSpool struct{ file *os.File }
+
+// newBuildOutputSpool creates one private log whose normal completion cleanup belongs to its owner.
+func newBuildOutputSpool() (*buildOutputSpool, error) {
+	file, err := os.CreateTemp("", "sandboxed-agents-build-output-*")
 	if err != nil {
-		return "", fmt.Errorf("create build output spool: %w", err)
+		return nil, fmt.Errorf("create build output spool: %w", err)
 	}
-	tag, err := buildSpooledImageUnderLock(p, nil, hash, "", log, progress)
-	return tag, errors.Join(err, publishBuildLog(output, "base image", log))
+	return &buildOutputSpool{file: file}, nil
 }
 
-// publishBuildLog emits one complete output block and reports any publication or spool cleanup failure.
-func publishBuildLog(output io.Writer, name string, log *os.File) error {
-	_, headingErr := fmt.Fprintln(output, "build output for "+name+":")
-	_, seekErr := log.Seek(0, io.SeekStart)
-	var copyErr error
-	if seekErr == nil {
-		_, copyErr = io.Copy(output, log)
+// Write retains process bytes in the owned log without truncation.
+func (s *buildOutputSpool) Write(data []byte) (int, error) { return s.file.Write(data) }
+
+// publish emits the complete log and closes and removes only its own path, reporting each failed operation accurately.
+func (s *buildOutputSpool) publish(output io.Writer, name string) error {
+	_, publicationErr := fmt.Fprintln(output, "build output for "+name+":")
+	if publicationErr == nil {
+		if _, publicationErr = s.file.Seek(0, io.SeekStart); publicationErr == nil {
+			_, publicationErr = io.Copy(output, s.file)
+		}
+		if publicationErr == nil {
+			_, publicationErr = fmt.Fprintln(output)
+		}
 	}
-	_, newlineErr := fmt.Fprintln(output)
-	closeErr := log.Close()
-	removeErr := os.Remove(log.Name())
-	if err := errors.Join(headingErr, seekErr, copyErr, newlineErr, closeErr, removeErr); err != nil {
-		return fmt.Errorf("publish build output: %w", err)
+	closeErr := s.file.Close()
+	if closeErr != nil {
+		closeErr = fmt.Errorf("close build output spool: %w", closeErr)
+	}
+	removeErr := os.Remove(s.file.Name())
+	if removeErr != nil {
+		removeErr = fmt.Errorf("remove build output spool: %w", removeErr)
+	}
+	if err := errors.Join(publicationErr, closeErr, removeErr); err != nil {
+		return fmt.Errorf("publish build output for %s: %w", name, err)
 	}
 	return nil
 }
 
-// buildSpooledImageUnderLock applies the common build protocol through overlapped-capable capture with complete output spooling.
-func buildSpooledImageUnderLock(p podmanTarget, set []string, hash, baseID string, log *os.File, progress io.Writer) (string, error) {
-	return buildLabeledImageWithRunner(p, set, hash, baseID, true, func(args ...string) error {
+// buildSpooledImageUnderLock uses the common build/evidence protocol and separates capture or context cleanup errors after a successful engine exit.
+func buildSpooledImageUnderLock(p podmanTarget, set []string, hash, baseID string, progress io.Writer) imageBuildOutcome {
+	outcome := imageBuildOutcome{tag: image.Tag(hash, set)}
+	log, err := newBuildOutputSpool()
+	if err != nil {
+		outcome.buildErr = err
+		return outcome
+	}
+	outcome.log = log
+	rebuilt := false
+	_, err = buildLabeledImageWithRunner(p, set, hash, baseID, true, func(args ...string) error {
 		writer := &buildProgressWriter{log: log, progress: progress, name: toolchainSet(set)}
 		command := p.command(context.Background(), 0, args...)
-		if err := capture.Run(command, writer, writer); err != nil {
-			// Original process output is retained in the image's block, without constructing a second unbounded diagnostic string.
-			return fmt.Errorf("podman %s: %w", strings.Join(command.Args[1:], " "), err)
+		captureErr := capture.Run(command, writer, writer)
+		rebuilt = command.ProcessState != nil && command.ProcessState.Success()
+		if captureErr != nil {
+			if rebuilt {
+				outcome.outputErr = fmt.Errorf("capture build output: %w", captureErr)
+				return nil
+			}
+			return fmt.Errorf("podman %s: %w", strings.Join(command.Args[1:], " "), captureErr)
 		}
 		return nil
 	})
+	if rebuilt {
+		if err != nil {
+			outcome.outputErr = errors.Join(outcome.outputErr, fmt.Errorf("finish rebuilt image: %w", err))
+		}
+	} else {
+		outcome.buildErr = err
+	}
+	return outcome
 }
 
-// serializedBuildWriter serializes progress and lock notices with completed output blocks, including when the caller shares one writer for both streams.
+// serializedBuildWriter owns exclusion between progress/lock notices and complete output blocks, including aliased caller streams.
 type serializedBuildWriter struct {
 	mu     sync.Mutex
 	writer io.Writer
 }
 
-// Write publishes one build-progress write while excluding other workers.
+// exclusive publishes one complete block while excluding progress and lock notices.
+func (w *serializedBuildWriter) exclusive(publish func() error) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return publish()
+}
+
+// Write publishes one progress or lock notice while excluding complete blocks and other workers.
 func (w *serializedBuildWriter) Write(data []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.writer.Write(data)
 }
 
-// buildProgressWriter spools complete process output and reports the first bytes and subsequent changes at most once per second.
+// buildProgressWriter retains all process output and reports first bytes and subsequent changes at most once per second.
 type buildProgressWriter struct {
 	mu       sync.Mutex
 	log      io.Writer
@@ -135,18 +201,22 @@ type buildProgressWriter struct {
 	name     string
 	bytes    int64
 	last     time.Time
+	now      func() time.Time
 }
 
-// Write retains every byte and publishes per-image byte counts while the build is running.
+// Write retains every byte and publishes per-image byte counts on actual output, with an optional internal clock seam.
 func (w *buildProgressWriter) Write(data []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	n, err := w.log.Write(data)
 	w.bytes += int64(n)
 	now := time.Now()
+	if w.now != nil {
+		now = w.now()
+	}
 	if n > 0 && (w.last.IsZero() || now.Sub(w.last) >= time.Second) {
 		w.last = now
-		// Progress is supplemental; a failed status write does not retry or change a build.
+		// Supplemental progress failure never retries or changes an executed build.
 		fmt.Fprintf(w.progress, "build progress %s: %d bytes received\n", w.name, w.bytes)
 	}
 	return n, err
