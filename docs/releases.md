@@ -59,12 +59,14 @@ The live suite is the test `TestLiveSuite` in `cmd/sandboxed-agents`. It runs on
 ```sh
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 SANDBOXED_AGENTS_LIVE_TESTS=1 \
+SANDBOXED_AGENTS_LIVE_OVERLAP=1 \
+SANDBOXED_AGENTS_LIVE_BUILD_JOBS=1 \
 SANDBOXED_AGENTS_GROUP=live \
 SANDBOXED_AGENTS_LIVE_RECORD_DIR="$HOME/live-suite-records/$RUN_ID" \
   go test ./cmd/sandboxed-agents -run '^TestLiveSuite$' -timeout 120m -v
 ```
 
-Run it from the repository root of a clean checkout at the commit under test, with the Go version from `go.mod` on `PATH`; the record names that commit. The block sets a new `RUN_ID` itself, so the record directory `$HOME/live-suite-records/$RUN_ID` is new and empty for every invocation; never reuse a directory ([why](images.md#live-image-tests)). Add `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1` to select the image coverage, which a release run must include. The suite's cases, each a subtest and a check of the record:
+Run it from the repository root of a clean checkout at the commit under test, with the Go version from `go.mod` on `PATH`; the record names that commit. The block sets both concurrency settings to `1`, so a value left in your shell cannot change the run, and it sets a new `RUN_ID` itself, so the record directory `$HOME/live-suite-records/$RUN_ID` is new and empty for every invocation; never reuse a directory ([why](images.md#live-image-tests)). Add `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1` to select the image coverage, which a release run must include. The suite's cases, each a subtest and a check of the record:
 
 | Check | What it does |
 |---|---|
