@@ -14,7 +14,7 @@ In the grammar, square brackets mark what is optional, an uppercase word stands 
 sandboxed-agents version
 sandboxed-agents list
 sandboxed-agents check [NAME]
-sandboxed-agents build [--with SET]
+sandboxed-agents build [--with SET] [--jobs N]
 sandboxed-agents up NAME [WORKSPACE] [--with SET] [--agents LIST] [--port N] [--ssh-config] [--memory SIZE] [--cpus N] [--pids-limit N] [--shm-size SIZE]
 sandboxed-agents start NAME [--ssh-config]
 sandboxed-agents stop NAME [--force]
@@ -113,7 +113,7 @@ An invalid, inapplicable, missing, or conflicting option exits with status 2 and
 | `list` | Lists the sandboxes of the current controller group with state, port, toolchain set, agents, and problems. States include "volumes only", "update interrupted", and "owner conflict". A sandbox whose image is older than the current one is marked as outdated. |
 | `check` | Without a name, runs the preflight on its own and reports each missing host prerequisite. See [Host prerequisites](host-prerequisites.md). |
 | `check NAME` | Diagnoses one sandbox. It reports an owner conflict, a leftover backup container of an interrupted update, and other problems, exits non-zero when it finds one, and changes nothing. It also reports the recorded memory limit and the recorded `memory-swap` in bytes; `memory-swap` is the combined memory and swap ceiling, and `-1` means unlimited. On a running sandbox whose manager answers it lists every enabled Tool with its version, selection, service state, and tailnet node state, and a `failed` service or node is a problem. |
-| `build [--with SET]` | Builds the base image and every existing toolchain set of this executable anew, plus `SET` when given. See [Images](images.md#build-refresh-and-reuse). |
+| `build [--with SET] [--jobs N]` | Builds the base image and every existing toolchain set of this executable anew, plus `SET` when given. `--jobs N` bounds how many toolchain rebuilds run at the same time. See [Images](images.md#build-refresh-and-reuse). |
 
 ## Lifecycle commands
 
@@ -150,6 +150,7 @@ Options:
 |---|---|---|
 | `--with SET` | `build`, `up`, `update NAME` | The toolchain set. `none` selects the base image. `update NAME --with SET` replaces the recorded set. `update --all` takes no `--with`. |
 | `--agents LIST` | `up` | Agents to enable after the sandbox runs. A failed install leaves the sandbox running, is reported, and makes `up` exit non-zero. See [Agents](agents.md#choose-agents-at-creation). |
+| `--jobs N` | `build` | The maximum number of toolchain rebuilds that run at the same time after the base image has finished. A positive integer; without the option, `1`. An invalid value is a usage error before any Podman call. |
 | `--port N` | `up` | The host loopback port for SSH. Without it, the first free port from 2222 upward that no sandbox of any controller group has recorded. |
 | `--ssh-config` | `up`, `start` | Installs the opt-in SSH setup after the sandbox runs. See [SSH access](ssh.md). |
 | `--memory SIZE` | `up` | Memory limit. Default `8g`, at least `6m`. A new sandbox gets a `memory-swap` equal to it, so it has no swap; there is no option for the swap limit. |
