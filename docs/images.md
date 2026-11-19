@@ -142,7 +142,7 @@ The command builds every needed image once per set before it changes any sandbox
 
 ## Live image tests
 
-The live harness bounds each CLI invocation to 60 minutes and supervises its owned
+The live harness bounds each operation by its class ([Operation bounds and early stop](#operation-bounds-and-early-stop)) and supervises its owned
 host process tree (a Linux process group or Windows job). Cancellation ends that
 local tree and reports elapsed time; it does not prove that a remote engine or a
 detached mapping helper stopped. Reconcile recorded objects and engine state before
@@ -171,13 +171,45 @@ SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1 \
 
 Without the image opt-in the suite runs its other cases and records the image coverage as `not-run`. The suite removes its sandboxes, volumes, and group state but none of the images it builds; removing them is a maintainer step, and the runs on record are listed in the [maintainer notes](maintainers.md#live-runs-on-record).
 
+### Operation bounds and early stop
+
+Every operation the suite runs ends at a bound set by its operation class, the same classes that [Operation timings](#operation-timings) records. The bound covers each CLI invocation, each direct Podman call, and each command the suite runs in a terminal, such as an agent session. The bounds replace the earlier limit of 60 minutes per CLI invocation and are all shorter than the suite's `-timeout` of 120 minutes. A class that the table does not list uses two minutes.
+
+| Class | Bound (seconds) | What the number rests on |
+|---|---|---|
+| `preflight` | 300 | Room beyond six 30-second machine reads. Not a measured maximum. |
+| `inspection` | 120 | The two-minute budget that the harness already gave direct Podman reads. |
+| `SSH server check` | 120 | The same two-minute read budget, set equal to the other read classes. |
+| `Tool probe` | 120 | The same two-minute read budget. |
+| `image build` | 1800 | First toolchain builds took up to about 870 seconds combined, so this is a whole-stage proxy of more than twice that, for one `up`. |
+| `rebuild` | 2100 | The largest rebuild on record took about 930 seconds; the bound is more than twice that. |
+| `sandbox start or restart` | 600 | The lifecycle case took up to 324 seconds as a whole; the bound is a whole-case proxy of about 1.8 times that, for one command. |
+| `smoke` | 300 | A Windows `shell` took about 69 seconds; the bound is more than four times that. |
+| `cleanup` | 180 | A Windows `remove` took about 55 seconds; the bound is more than three times that. |
+| `Tool install` | 1200 | The longest early `t3code` case took about 500 seconds as a whole; the bound is a whole-case proxy of more than twice that, for one command. |
+| `Tool update` | 1200 | The same whole-case proxy as `Tool install`. |
+| `update or rollback` | 1200 | No per-invocation measurement exists; the bound uses the whole-case and build figures above. |
+| `agent install` | 1200 | No per-invocation measurement exists; the bound uses the whole-case and build figures above. |
+| `agent session` | 300 | No recorded maximum names this class. |
+| `Tool delete` | 300 | No recorded maximum names this class. |
+
+**These bounds are provisional.** The story's evidence gives approximate times of whole stages and whole cases, not the largest time of each operation, so most numbers above are proxies with a wide margin, and a few rest on no recorded time. They are pending calibration against the per-operation seconds that [`operations-<platform>.json`](#operation-timings) records from live runs; no such run has been used yet. Until then, read a bound as the point where a stalled operation stops holding the run, not as an expected duration, and make no claim from it that a healthy run is faster.
+
+The finer bounds that existed before stay as they are, and a bound of a class never lengthens one of them. The manager's `ssh-host-key` query keeps its 9 seconds plus one second to drain its output. The harness's own SSH key-exchange check from the host keeps its 15-second overall limit and 3-second attempts. The save of an image archive keeps its 10-minute limit, and the suite's terminal waits keep their own smaller limits. The production commands' own timeouts, deadlines, and messages are untouched: the bounds govern the harness only.
+
+**When a bound is hit.** The suite ends only its owned host process tree, as for any cancellation, and the failure names the operation class, the time elapsed, and the bound, and repeats that engine operations may still be running and that recorded objects are to be reconciled before cleanup. The case fails and the parent test returns; the lines of the cases that finished, the failing schema 2 record, and `operations-<platform>.json` are written as for any failed case, and the suite's own cleanup of sandboxes, volumes, and group state runs. The bound shows in the operations file as a `fail` entry of its class.
+
+**Streaming.** While an operation runs, the suite forwards its output to the private `go test -v` log as chunks arrive, so a stall shows as a last line with an age instead of silence. A CLI invocation and a direct Podman call stream through the same capture that keeps their combined output, and a terminal command streams the new part of its transcript each time the suite polls it. Around every operation inside a case the suite also logs two marker lines, `live operation CLASS: started` and `live operation CLASS: finished after DURATION`, where `CLASS` is one of the fixed classes. The markers hold no argument, name, or path. The raw lines stay in the private log on the host, and the sanitized files are unchanged.
+
+**Stop after the first failed case.** Set `SANDBOXED_AGENTS_LIVE_STOP_AFTER_FAILURE=1` for a run that only a pass can serve. After a case fails, the suite starts no further case, and the schema 2 record keeps each case it did not reach as `not-run`. The failed case still fails the record, and the cleanup still runs. Any other value, including an unset variable, leaves the order and results of the cases as they are. The opt-in fabricates no coverage and no pass: a record from a stopped run cannot pass the stable release check, which requires a pass and completed image coverage ([Stable release check](releases.md#stable-release-check)). The preflight already ends the suite when it fails, with or without the opt-in.
+
 ### Retaining case durations
 
 The schema 2 record holds results without timings. `go test -v` prints each case's duration and the suite's total, and that log is private: it holds group, sandbox, container, volume, and image names, paths, and program output. A run that should leave duration evidence keeps that log on the host where the suite ran, outside the record directory, and derives from it a sanitized file, `durations-linux.json` or `durations-windows-11.json`, written beside the schema 2 record. Only that file is shared with the run's evidence. Collecting it reads the record and never changes it, so the schema 2 record, the release gate, and the failing record that an interrupted run leaves are the same with or without it. The suite itself writes a second sanitized file beside them, `operations-linux.json` or `operations-windows-11.json`, which shows where each case spent its time; [Operation timings](#operation-timings) describes it. The release gate reads neither file, and neither can stand in for the schema 2 record.
 
 `go test -v` prints a top-level case's completion line only once the parent test ends, so the log of a run that the parent did not outlive may hold none of its case durations, finished cases included. The file records what the log emitted and nothing more.
 
-**Run the suite with its log kept.** Both commands send the verbose output to a log file and keep the exit status of `go test`, the suite's verdict. Add `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1` as above whenever the image coverage is selected, which a release run requires.
+**Run the suite with its log kept.** The [host commands](#running-a-live-run-with-the-host-commands) run this same suite and collection from one repository-owned helper; the commands below are what they replace by hand. Both commands send the verbose output to a log file and keep the exit status of `go test`, the suite's verdict. Add `SANDBOXED_AGENTS_LIVE_IMAGES_TESTS=1` as above whenever the image coverage is selected, which a release run requires.
 
 On Linux, in Bash:
 
@@ -285,7 +317,7 @@ Besides the schema 2 record, the live suite writes `operations-<platform>.json` 
 - **`engine`** holds `cpus` and `memory_bytes`, the capacity numbers that the selected Podman engine reports. On Windows that is the engine of the connection the preflight selects, not the host that runs the CLI.
 - **`preparation_seconds`** and **`post_suite_seconds`** appear only when the collector was given their timestamps ([above](#retaining-case-durations)).
 
-**The vocabulary is fixed.** An entry holds no arguments, group, sandbox, container, volume, or image names, no paths, no timestamps, and no program output: the suite keeps only the labels below and the numbers, and the collector refuses a file with anything else. `case` is one of the suite's checks, `preflight`, `lifecycle`, `update`, `agent`, `t3code`, or `images`, or `suite` for a command that runs outside every case, such as the cleanup the suite registers for its whole run. `operation` is one of the classes the [live-validation skill](../.agents/skills/live-validation/SKILL.md) names for its status reports (image build, sandbox start or restart, SSH server check, smoke, update or rollback, agent install, agent session, rebuild, cleanup, Tool install, Tool update, Tool delete, Tool probe) or one of two more, `preflight` and `inspection`. The CLI subcommand picks the class: `up` is `image build`; `stop`, `start`, and `restart` are `sandbox start or restart`; `shell` is `smoke`; `update` is `update or rollback`; `build` is `rebuild`; `remove` is `cleanup`; `agents enable` is `agent install` and every other `agents` command is `agent session`; `tools enable`, `tools update`, and `tools delete` are `Tool install`, `Tool update`, and `Tool delete`, and every other `tools` command is `Tool probe`; `check` and `version` are `preflight`; anything else is `inspection`. Direct Podman calls are `inspection`, except that the manager's `ssh-host-key` query and the check of PID 1 in a container are `SSH server check`, and every Podman call in the `t3code` case is `Tool probe`.
+**The vocabulary is fixed.** An entry holds no arguments, group, sandbox, container, volume, or image names, no paths, no timestamps, and no program output: the suite keeps only the labels below and the numbers, and the collector refuses a file with anything else. `case` is one of the suite's checks, `preflight`, `lifecycle`, `update`, `agent`, `t3code`, or `images`, or `suite` for a command that runs outside every case, such as the cleanup the suite registers for its whole run. `operation` is one of the classes the [live-validation skill](../.agents/skills/live-validation/SKILL.md) names for its status reports (image build, sandbox start or restart, SSH server check, smoke, update or rollback, agent install, agent session, rebuild, cleanup, Tool install, Tool update, Tool delete, Tool probe) or one of two more, `preflight` and `inspection`. The CLI subcommand picks the class: `up` is `image build`; `stop`, `start`, and `restart` are `sandbox start or restart`; `shell` is `smoke`; `update` is `update or rollback`; `build` is `rebuild`; `remove` is `cleanup`; `agents enable` is `agent install` and every other `agents` command is `agent session`; `tools enable`, `tools update`, and `tools delete` are `Tool install`, `Tool update`, and `Tool delete`, and every other `tools` command is `Tool probe`; `check` and `version`, each run with no further argument, are `preflight`, while `check NAME` and any other use of the two are `inspection`; anything else is `inspection`. Direct Podman calls are `inspection`, except that the manager's `ssh-host-key` query and the check of PID 1 in a container are `SSH server check`, and every Podman call in the `t3code` case is `Tool probe`.
 
 **Read each number as follows.**
 
@@ -298,3 +330,87 @@ Besides the schema 2 record, the live suite writes `operations-<platform>.json` 
 Do not add up the operations of every case to get a suite total, or add a remainder to anything: the total also counts what runs outside the cases, and operations can overlap. A time says how long a command took on that run, not why, so a cause or a speedup needs its own evidence, as for the case durations.
 
 **Incomplete runs.** The suite writes the file empty (no operations, no cases, no `engine`) before any command runs, and replaces it once the suite's cleanups have finished, whether the suite passed or failed. A failing case keeps every operation that ran; a case that did not run, because the preflight failed or the image coverage was not selected, has no entry in `cases`, and an unselected `images` case is reported as `not-run` by the schema 2 record, not here. A signal or `-timeout` that ends the test binary before those cleanups leaves the empty file: valid, no observations, neither zero nor proof that no command ran, and a command that was still running then leaves no entry. The failing schema 2 record that such a run leaves is written first and is unchanged. An `operations-<platform>.json` is this run's evidence only when it names this run's revision and the suite started in this invocation; after a run that failed before the suite started, a file in the record directory belongs to an earlier run, and its numbers are not reported as this run's.
+
+### Running a live run with the host commands
+
+`./internal/liverun/cmd/live-run` is a repository-owned helper with the phases `prepare`, `run`, `status`, `collect`, and `cleanup`. It replaces the scripts a host agent would otherwise write anew for each run. Run it on the host, from the checkout under test, on Linux or Windows 11, after the decision to start a live run has been made: the [live-validation skill](../.agents/skills/live-validation/SKILL.md) gates that decision, and the helper does not. It fetches no source, pushes nothing, changes no host configuration, and starts or repairs no Podman machine, and a stopped machine is reported with the engine's own message. Only `cleanup` removes anything, and only the images it can prove this run built. Each phase prints one sanitized JSON result with no group, sandbox, container, volume, or image name and no path, except where `cleanup` lists immutable image IDs. Raw output, paths, and object identities stay in the private run directory.
+
+**What is verified and what is pending.** Offline tests with fake `podman`, `go`, and filesystem answers cover every check below, the exclusion between runs, the detached run, and the sanitized outputs, and the helper and its tests compile for Windows. Nothing here has run on a native Windows host, in Windows PowerShell 5.1 as a non-administrator, or against real Podman output, and no timing is measured: the seconds that `prepare` and `run` report await authorized live runs on both hosts. Do not read a cross-compile as that proof, and do not read any of this as a speedup.
+
+**Build the helper in the checkout.** Build it from the checkout at the target revision so that its code matches the suite it starts, and write the binary into the private directory, outside the checkout.
+
+On Linux, in Bash:
+
+```sh
+PRIVATE="$HOME/live-suite-private"
+mkdir -p "$PRIVATE" && chmod 700 "$PRIVATE"
+go build -o "$PRIVATE/live-run" ./internal/liverun/cmd/live-run
+```
+
+On Windows, in PowerShell:
+
+```powershell
+$private = Join-Path $env:USERPROFILE 'live-suite-private'
+New-Item -ItemType Directory -Force $private | Out-Null
+go build -o (Join-Path $private 'live-run.exe') ./internal/liverun/cmd/live-run
+```
+
+**Use two fresh directories for every run.** The private run directory is new for each run and single use: `prepare` creates it with mode `0700`, it holds the suite log, the snapshots, and every diagnostic, and a run directory whose suite has started is refused. The record directory is a second fresh directory that receives the schema 2 record and the sanitized files, and `prepare` refuses one that already holds `live-suite-linux.json` or `live-suite-windows-11.json`, so an earlier invocation's record cannot pass for this one. Neither directory may lie inside the other. Keep the private directory out of anything that is shared.
+
+**Prepare.** `prepare` takes the exact 40-character revision, the run directory, the record directory, and the peak record described below:
+
+```sh
+"$PRIVATE/live-run" prepare -revision "$SHA" \
+  -run-dir "$PRIVATE/run-$RUN_ID" -record-dir "$HOME/live-suite-records/$RUN_ID" \
+  -peak-record "$PRIVATE/peak.json" -host-load idle
+```
+
+`-checkout` defaults to the current directory, `-group` to `live`, and `-images` to `true`, which selects the image coverage that a release run requires; `-images=false` leaves it out. `-host-load` takes `idle`, `shared`, or `unknown` as [observed before the suite starts](#retaining-case-durations), and defaults to `unknown`; the helper infers no value from the host. `prepare` checks, in this order, and stops at the first check that fails, before any build or test starts:
+
+- **`revision`** and **`checkout-clean`**: `HEAD` equals the revision, and no tracked file is modified. Untracked files are not checked.
+- **`go-pin`** and **`go-version`**: the effective `go env GOVERSION` equals the exact patch version that `go.mod` pins, so the asset hashes of two hosts can match.
+- **`record-directory`**: the record directory is usable and holds no suite record.
+- **`engine`**: one rootless engine answers. On Windows that is the default WSL2 machine, which must be running and rootless.
+- **`engine-exclusive`**: no other live run owned by this helper holds the same engine. The lock is per engine for the host user, across checkouts and controller groups, and its files are never deleted.
+- **`filesystem`**, **`storage-measurement`**, and **`inventory`**: the free space of every measured filesystem, `podman system df`, and the whole-engine inventory of images and containers in one pass, with full image IDs. On Linux the filesystem is the one that holds Podman's storage. On Windows there are two: the host drive that holds the machine's virtual disk, found from the user's own WSL registry entry and read without administrator rights, and the machine's storage filesystem, read with a bounded `df` over the SSH endpoint that `podman machine inspect` reports, with a private `known_hosts` file.
+- **`peak-bound`** and **`headroom`**: the peak record exists and names this engine, and every measured filesystem has strictly more free bytes than its bound.
+
+A failure prints `check NAME failed; private diagnostic retained` and keeps the engine's own message in `diagnostic.txt` of the run directory. A rejection by `peak-bound` or `headroom` also prints the free bytes of each filesystem role and the expected bytes, or that there is no reliable bound; the host is then `pending`, and the suite is not started. A failed run of `prepare` can be repeated with the same run directory until a suite has started in it. When the headroom was insufficient and you removed, in one pass, the images that an earlier run's record marks eligible, run `prepare` again after that removal: its fresh whole-engine inventory and free-space measurement replace the earlier ones as the before records, the bound is selected again for that state, and there is no second removal pass. The inventory, the `system df` text, and the free space are kept in `preparation.json` in the run directory, also after a headroom rejection, so a rejected preparation still leaves the before measurement.
+
+**The peak record.** The record is a JSON file that holds the bound the headroom rule needs. Nothing writes it for you, and the helper never derives a bound from the net growth after cleanup. Its path is the `-peak-record` argument; without the argument the helper reads `KEY-peak.json` in its lock root, where `KEY` is the hexadecimal SHA-256 of the engine identity. The lock root is `-lock-root`, defaulting to `sandboxed-agents/live-run` in the user's cache directory.
+
+```json
+{"EngineID": "ENGINE_HOSTNAME:/ENGINE_GRAPHROOT", "PeakAdditionalBytes": 123, "Basis": "where the number comes from"}
+```
+
+`EngineID` is the engine's host name and its storage root, joined by a colon, as `podman info` reports them; `preparation.json` of a rejected run holds the value. `PeakAdditionalBytes` is the peak additional space the run needs before any cleanup, not the net growth after it, and must be greater than zero. `Basis` is non-empty text that says how the number was reached. The bound applies only to a run whose cache state, selected toolchain sets, and dependency versions (a floating release such as `npm@latest` included) the basis covers, as the headroom rule requires. The number `123` above is a placeholder and not a measured bound. A missing, mismatched, or empty record refuses preparation.
+
+A run may proceed without a bound only on a decision that the user has made for that invocation after the free space and the risk were stated: pass `-allow-unbounded` together with `-unbounded-decision` and the text of that decision. The flag does not accept free space that cannot be read, and no bound it replaces is made up.
+
+**Run.** `live-run run -run-dir RUN` starts the suite detached from the session that launched it and returns once the supervisor acknowledges the start, within five minutes, printing `{"started":true,"preparation_seconds":N}`. On Linux the supervisor is a new session; on Windows it is a detached process that owns the suite in a job object that ends with it. The supervisor first repeats every `prepare` check under the held engine lock, because time can pass between the two commands, and replaces `before.json` with that final snapshot, which later comparison and cleanup use. It then runs the suite as documented above, `go test ./cmd/sandboxed-agents -run '^TestLiveSuite$' -timeout 120m -v`, with the live opt-in, the group, the record directory, the image coverage as `prepare` selected it, and `SANDBOXED_AGENTS_LIVE_STOP_AFTER_FAILURE=1` ([early stop](#operation-bounds-and-early-stop)). Its output goes as UTF-8 bytes to `suite.log` in the run directory, the private log, so no shell redirection and no PowerShell text encoding is involved. When the suite returns, or when the supervisor is found dead, the run directory holds `exit.json` and `exit-status`, a plain integer: the exit status of `go test`, or 137 with `interrupted` for a supervisor that died. A second `run` is refused while a suite of this helper holds the engine, and accepted once that suite has ended, also after a killed one.
+
+`preparation_seconds` runs from the start of the `prepare` invocation to the start of the suite. It therefore includes the time between the two commands and any repeated `prepare`, and it is the number the collector later receives. It is not a measurement of the checks alone.
+
+**Status.** `live-run status -run-dir RUN` reads the private files and prints one JSON object with these fields, and no raw log line:
+
+| Field | Meaning |
+|---|---|
+| `case`, `operation` | The most recently observed suite case and operation class, each from a fixed list, or `unknown`. |
+| `last_output_age_seconds` | Seconds since the suite last wrote output, or `-1` before any output. |
+| `ended`, `running` | Whether the suite has ended, and whether its supervisor or suite still lives. |
+| `free_space` | Free bytes now, one entry per measured filesystem, named `engine` or `host`. |
+| `exit_code`, `interrupted` | Present once the suite has ended. |
+
+The case and operation come from the marker lines and `-v` case lines that [the suite streams](#operation-bounds-and-early-stop). For an older log without markers, an `up` shows as `image build or sandbox start`: the helper does not guess from a raw line whether an image was built. A silent log keeps its last observation while the age grows; a silence is not a pass, not a finished operation, and not the next one. The values describe the latest observation and do not say that other cases are idle.
+
+**Collect.** After `status` shows `ended`, `live-run collect -run-dir RUN` runs the durations collector on `suite.log` with the record, and passes the preparation start and end from the run. It takes the three comparison values from the final `before.json` alone and the asset hash from the log's preflight output: `host_load` is the value given to `prepare`, and `base_image` and `build_cache` follow the [rules above](#retaining-case-durations), with `unknown` when the snapshot or the hash is missing. It prints `durations_file` (the file name only), `collected`, and the three values. Only exit status 0 with `collected` true and that file name confirm this invocation's collection. After a failure the collector's message is in `diagnostic.txt`, the command exits non-zero, and an earlier `durations-<platform>.json` in the record directory is not this run's. `collect` takes no post-suite interval; the next phase does.
+
+**Cleanup.** `live-run cleanup -run-dir RUN` removes the images this invocation built and left unused, by the rules of the skill's [image cleanup](../.agents/skills/live-validation/SKILL.md#image-cleanup), which this command applies and does not change. Run it with the run directory prepared and run for this invocation, after the suite has ended, whether it passed, failed, or was interrupted. Repeat `-retain sha256:FULL_IMAGE_ID`, with a full 64-hexadecimal image ID, for each image the user asked to keep; a tag, a prefix, or any other argument is refused. The command starts no suite and no machine, takes the engine lock, and refuses while an owned suite is still running. It checks the saved artifacts, the revision of the checkout, and that the engine is the one of the snapshot before it inventories the engine, and it rechecks the engine, every container reference of the whole engine, and the checkout before each `podman rmi --no-prune ID`. It never runs a prune, a reset, or a forced removal, and it removes no container, volume, group state, log, or checkout.
+
+Build proof comes from `suite.log`. The parser accepts a build step line and its result line only when they are adjacent: a `STEP` line that is not a `FROM` step, or the `COMMIT` line of a project tag, followed directly by the line that names the result image, each optionally behind a Go source location or stage prefix. It reads no bare ID, no tag, no cached line, no downloaded layer, and no parent chain as proof, and it skips a log format it does not recognize, as well as a pair whose lines the streaming split apart. A skipped image therefore stays and is listed as skipped or unverified, never removed. The real output of Podman and of a Windows machine in these formats has not yet been checked on a live run, so how many images the proof covers there is pending. Each result ID is resolved against the full inventory of the engine, matches exactly one image, and is confirmed by `podman image inspect`. The full ID, step, result line, and log line number stay in the private `build-record.json`.
+
+Each attempt writes a new `cleanup-RANDOM` directory in the run directory, mode `0700`, with the queries, inventories, build record, removal plan, final inventory, and raw measurements, all private. The command prints the sanitized report and writes the same report to `cleanup-linux.json` or `cleanup-windows-11.json` in the record directory. The report holds the suite's exit code and whether it was interrupted; the removed, skipped, and unverified images, with immutable IDs, canonical project tags, byte sizes (with `size_verified`), and a fixed reason or query category; the before and after free space by filesystem role and a four-row allowlist of `podman system df`; the number of containers left on the engine; `post_suite_seconds`; and `collected` with `durations_file`. Its `status` is `complete` only when every query and the reconciliation succeeded. Otherwise it is `unverified`, the command exits non-zero, and the report says what is unverified, independent of the suite's result. An engine that does not answer ends the command with `cleanup: pending (engine unreachable: podman info query failed; private diagnostic retained)` and no removal; other saved evidence that is missing, incomplete, or changed ends it with a `cleanup: pending (...)` that names the cause. Private JSON files are capped at 16 MiB, the sanitized report at 4 MiB, and `suite.log` at 64 MiB; a plan that does not fit is refused before any removal.
+
+`cleanup` also runs the final durations collection, with both the preparation interval and the post-suite interval, and replaces the file that `collect` wrote. The post-suite interval starts at the `EndedAt` time in `exit.json`, so it includes an earlier `collect`, and it ends once the engine is reconciled, the after measurements are taken, and the preliminary cleanup report is saved. It ends before the final collector call and the publication of the report, which cannot count their own duration, so `post_suite_seconds` is a lower bound on the time after the suite and never a total that includes everything. Only a true `collected` and the named durations file confirm this invocation's final collection; a failed final collection is reported as unverified and never confirms an earlier file. When `cleanup` stops before that collection, for example because the engine is unreachable, the file of the earlier successful `collect` has no post-suite interval and is the only collection of the run.
+
+No live run has used `cleanup` yet. The seconds it reports are to be compared with the post-suite seconds of earlier runs only after authorized runs on both hosts, and none of this documents a faster run.
