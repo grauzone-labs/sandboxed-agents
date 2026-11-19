@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"maps"
 	"os"
@@ -140,7 +141,7 @@ func newLiveSuite(t *testing.T) *liveSuite {
 		t.Fatalf("resolve the checkout's commit: %v", err)
 	}
 	suite.buildDirectory = t.TempDir()
-	suite.host.timings = &liveTimings{evidence: validationduration.Operations{SchemaVersion: 1, Kind: "live-suite-operations", Commit: suite.commit, Platform: suite.platform, CaseOverlap: suite.overlap, BuildJobs: suite.buildJobs, Operations: []validationduration.Operation{}, Cases: []validationduration.OperationCase{}}}
+	suite.host.timings = &liveTimings{evidence: validationduration.Operations{SchemaVersion: 1, Kind: "live-suite-operations", Commit: suite.commit, Platform: suite.platform, CaseOverlap: suite.overlap, BuildJobs: suite.buildJobs, GoTestParallel: liveGoTestParallel(t), Operations: []validationduration.Operation{}, Cases: []validationduration.OperationCase{}}}
 	suite.host.caseName = "suite"
 	suite.host.failures = &liveEngineFailures{directory: suite.recordDirectory, evidence: liveEngineFailureEvidence{SchemaVersion: 1, Kind: "live-engine-failures", Commit: suite.commit, Platform: suite.platform, Samples: []liveEngineFailureSample{}}}
 	suite.writeRecord(t, false)
@@ -555,4 +556,19 @@ func livePositiveInput(t *testing.T, name string) int {
 		t.Fatal(name + " must be a positive integer")
 	}
 	return parsed
+}
+
+// liveGoTestParallel reads the configured Go test cap without changing the flag
+// or inferring it from host capacity or the suite's independent-work budget.
+func liveGoTestParallel(t *testing.T) int {
+	t.Helper()
+	option := flag.Lookup("test.parallel")
+	if option == nil {
+		t.Fatal("Go test parallel cap is unavailable")
+	}
+	value, err := strconv.Atoi(option.Value.String())
+	if err != nil || value < 1 {
+		t.Fatal("Go test parallel cap is invalid")
+	}
+	return value
 }

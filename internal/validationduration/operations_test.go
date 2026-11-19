@@ -17,7 +17,7 @@ func TestRetainOperationsReconcilesCaseAndPhaseSeconds(t *testing.T) {
 	directory := t.TempDir()
 	path, err := validationduration.WriteOperations(directory, validationduration.Operations{
 		SchemaVersion: 1, Kind: "live-suite-operations", Commit: "0123456789abcdef0123456789abcdef01234567", Platform: "linux",
-		Engine: &validationduration.Engine{CPUs: 4, MemoryBytes: 4294967296}, CaseOverlap: 3, BuildJobs: 2,
+		Engine: &validationduration.Engine{CPUs: 4, MemoryBytes: 4294967296}, CaseOverlap: 3, BuildJobs: 2, GoTestParallel: 1,
 		Operations: []validationduration.Operation{
 			{Case: "lifecycle", Source: "cli", Operation: "image build or sandbox start", Result: "pass", Seconds: 2},
 			{Case: "lifecycle", Source: "podman", Operation: "inspection", Result: "fail", Seconds: 3},
@@ -52,7 +52,7 @@ func TestRetainOperationsReconcilesCaseAndPhaseSeconds(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine := got["engine"].(map[string]any)
-	if got["case_overlap"] != float64(3) || got["build_jobs"] != float64(2) || engine["cpus"] != float64(4) || engine["memory_bytes"] != float64(4294967296) || got["preparation_seconds"] != float64(37) || got["post_suite_seconds"] != float64(62) {
+	if got["go_test_parallel"] != float64(1) || got["case_overlap"] != float64(3) || got["build_jobs"] != float64(2) || engine["cpus"] != float64(4) || engine["memory_bytes"] != float64(4294967296) || got["preparation_seconds"] != float64(37) || got["post_suite_seconds"] != float64(62) {
 		t.Fatalf("numeric evidence: %s", data)
 	}
 	if strings.Contains(string(data), "2026-") || strings.Contains(string(data), directory) {
@@ -73,6 +73,7 @@ func TestRetainPreservesDurationsWithUnsafeOperations(t *testing.T) {
 		{"private-operation", strings.Replace(safe, `"operation":"image build or sandbox start"`, `"operation":"/private/command"`, 1)},
 		{"negative-overlap", strings.Replace(safe, `"operations":`, `"case_overlap":-1,"operations":`, 1)},
 		{"negative-jobs", strings.Replace(safe, `"operations":`, `"build_jobs":-1,"operations":`, 1)},
+		{"negative-go-parallel", strings.Replace(safe, `"operations":`, `"go_test_parallel":-1,"operations":`, 1)},
 		{"negative-time", strings.Replace(safe, `"seconds":2`, `"seconds":-2`, 1)},
 		{"revision", strings.Replace(safe, "0123456789abcdef0123456789abcdef01234567", strings.Repeat("a", 40), 1)},
 		{"trailing-object", safe + `{}`},
@@ -126,5 +127,39 @@ func TestWriteOperationsRejectsUnobservedBuildClass(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(directory, "operations-linux.json")); !os.IsNotExist(err) {
 		t.Fatalf("invalid class published evidence: %v", err)
+	}
+}
+
+// TestRetainLegacyOperationsKeepsGoParallelUnknown proves collection accepts
+// older operation evidence without inventing a historical Go cap, while keeping
+// schema2 bytes unchanged at the public Retain file boundary.
+func TestRetainLegacyOperationsKeepsGoParallelUnknown(t *testing.T) {
+	directory := t.TempDir()
+	path, err := validationduration.WriteOperations(directory, validationduration.Operations{
+		SchemaVersion: 1, Kind: "live-suite-operations", Commit: "0123456789abcdef0123456789abcdef01234567", Platform: "linux", Operations: []validationduration.Operation{}, Cases: []validationduration.OperationCase{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordPath := filepath.Join(directory, "live-suite-linux.json")
+	if err = os.WriteFile(recordPath, []byte(record), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = validationduration.Retain(strings.NewReader("    --- PASS: TestLiveSuite/preflight (1.00s)\n"), recordPath, validationduration.Context{HostLoad: "unknown", BaseImage: "unknown", BuildCache: "unknown"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err = json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := fields["go_test_parallel"]; exists {
+		t.Fatalf("legacy Go cap was inferred: %s", data)
+	}
+	if after, err := os.ReadFile(recordPath); err != nil || string(after) != record {
+		t.Fatalf("legacy collection changed schema2: %s; %v", after, err)
 	}
 }

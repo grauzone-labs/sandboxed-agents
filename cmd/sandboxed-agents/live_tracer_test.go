@@ -233,7 +233,8 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 		images, failIdentity bool
 		bindFailure          string
 		overlap              string
-	}{{false, false, "", ""}, {true, false, "", ""}, {false, true, "", ""}, {false, false, "extra-volume", ""}, {false, false, "host-bind", ""}, {false, false, "unsafe-options", ""}, {true, false, "", "1"}, {true, false, "", "2"}} {
+	}{{false, false, "", ""}, {true, false, "", ""}, {false, true, "", ""}, {false, false, "extra-volume", ""}, {false, false, "host-bind", ""}, {false, false, "unsafe-options", ""}, {true, false, "", "1"}, {true, false, "", "2"}, {true, false, "", "9"}} {
+		parallelImages := scenario.overlap == "2" || scenario.overlap == "9"
 		selected := scenario.images
 		failed := scenario.failIdentity || scenario.bindFailure != ""
 		label := "images-selected-" + strconv.FormatBool(selected) + "-tool-identity-failure-" + strconv.FormatBool(scenario.failIdentity)
@@ -242,6 +243,9 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 		}
 		if scenario.overlap != "" {
 			label += "-overlap-" + scenario.overlap
+		}
+		if scenario.overlap == "9" {
+			label += "-go-parallel-1"
 		}
 		t.Run(label, func(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
@@ -322,7 +326,7 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				podmanResponses["container inspect "+cli.DerivedNames(tracerGroup, "image-"+set).Container] = lifecycleResponse{Output: tracerContainer(set, 1)}
 				podmanResponses["image inspect "+tracerTag(set)] = lifecycleResponse{Sequence: []scriptedAnswer{{Output: tracerImage(set, 1)}, {Output: tracerImage(set, 2)}}}
 			}
-			if scenario.overlap == "2" {
+			if parallelImages {
 				executableResponses["build --jobs 3"] = executableResponses["build"]
 				delete(executableResponses, "build")
 			}
@@ -345,11 +349,11 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				"TEST_SSH_KNOWN_HOSTS": "[127.0.0.1]:" + tracerPort + " " + tracerHostKey + "\n",
 			}
 			values[liverun.CaseOverlapEnv] = scenario.overlap
-			if scenario.overlap == "2" {
+			if parallelImages {
 				values[liverun.BuildJobsEnv] = "3"
 			}
 			var output string
-			if scenario.overlap == "2" {
+			if parallelImages {
 				cleanupReady := filepath.Join(records, "cleanup-ready")
 				cleanupRelease := filepath.Join(records, "cleanup-release")
 				archiveReady := filepath.Join(records, "archive-ready")
@@ -368,6 +372,9 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				values["TEST_PODMAN_RESPONSES"] = string(podmanScript)
 				values[testutil.LiveTestsEnv] = "1"
 				command := fixtureLiveCommand(t, fakes, "TestLiveSuite", values)
+				if scenario.overlap == "9" {
+					command.Args = append(command.Args, "-test.parallel=1")
+				}
 				var log bytes.Buffer
 				command.Stdout, command.Stderr = &log, &log
 				if err := command.Start(); err != nil {
@@ -380,6 +387,19 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 					}
 				}()
 				waitLiveMarker(t, cleanupReady)
+				if scenario.overlap == "9" {
+					initial, readErr := os.ReadFile(filepath.Join(records, "operations-"+livePlatform()+".json"))
+					if readErr != nil {
+						t.Fatal(readErr)
+					}
+					var fields map[string]json.RawMessage
+					if err := json.Unmarshal(initial, &fields); err != nil {
+						t.Fatal(err)
+					}
+					if string(fields["go_test_parallel"]) != "1" {
+						t.Errorf("initial operation evidence missing actual Go parallel cap: %s", initial)
+					}
+				}
 				// Let initial image coverage reach its last engine operation while another
 				// case is held in an absence check. Completion ordering below also
 				// proves every independent invocation finishes before rebuild.
@@ -392,7 +412,17 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				}
 				err = command.Wait()
 				output = log.String()
-				assertLiveTraceRebuildExclusive(t, output)
+				maximumImageOperations := assertLiveTraceRebuildExclusive(t, output)
+				if scenario.overlap == "9" {
+					if maximumImageOperations != 1 {
+						t.Errorf("Go parallel1 admitted %d simultaneous image operations with shared budget9", maximumImageOperations)
+					}
+					for _, set := range sets {
+						if !strings.Contains(output, "=== CONT  TestLiveSuite/images/initial/"+set+"\n") {
+							t.Errorf("initial %s did not run as an actual parallel Go subtest", set)
+						}
+					}
+				}
 			} else {
 				output, err = liveSuiteChild(t, fakes, values)
 			}
@@ -429,15 +459,22 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				t.Fatal(err)
 			}
 			var settings struct {
-				Overlap int `json:"case_overlap"`
-				Jobs    int `json:"build_jobs"`
+				Overlap    int `json:"case_overlap"`
+				Jobs       int `json:"build_jobs"`
+				GoParallel int `json:"go_test_parallel"`
 			}
 			if err = json.Unmarshal(settingsData, &settings); err != nil {
 				t.Fatal(err)
 			}
 			wantOverlap, wantJobs := 1, 1
-			if scenario.overlap == "2" {
+			if parallelImages {
 				wantOverlap, wantJobs = 2, 3
+			}
+			if scenario.overlap == "9" {
+				wantOverlap = 9
+				if settings.GoParallel != 1 {
+					t.Errorf("final operation Go parallel cap=%d; want1", settings.GoParallel)
+				}
 			}
 			if settings.Overlap != wantOverlap || settings.Jobs != wantJobs {
 				t.Fatalf("configured concurrency omitted from operations: %s", settingsData)
@@ -713,13 +750,15 @@ func tracedInvocationLines(t *testing.T, path string) []string {
 
 // assertLiveTraceRebuildExclusive derives active operations from Go's named
 // verbose log contexts and the harness's started/finished events, proving the
-// rebuild overlaps neither CLI nor direct engine work from another case.
-func assertLiveTraceRebuildExclusive(t *testing.T, output string) {
+// rebuild overlaps neither CLI nor direct engine work from another case, and
+// returns the maximum simultaneous image operations observed in that trace.
+func assertLiveTraceRebuildExclusive(t *testing.T, output string) int {
 	t.Helper()
 	current := ""
 	active := map[string]int{}
 	builds := 0
 	rebuilding := false
+	maximumImageOperations := 0
 	for _, line := range strings.Split(output, "\n") {
 		if strings.HasPrefix(line, "=== ") {
 			fields := strings.Fields(line)
@@ -752,6 +791,7 @@ func assertLiveTraceRebuildExclusive(t *testing.T, output string) {
 				t.Errorf("%s operation started during rebuild", current)
 			}
 			active[current]++
+			maximumImageOperations = max(maximumImageOperations, active["images"])
 		} else if strings.HasPrefix(state, "finished after ") {
 			active[current]--
 			if active[current] < 0 {
@@ -770,4 +810,5 @@ func assertLiveTraceRebuildExclusive(t *testing.T, output string) {
 			t.Errorf("trace ended with %d active %s operations", count, name)
 		}
 	}
+	return maximumImageOperations
 }
