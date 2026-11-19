@@ -108,7 +108,10 @@ func (host liveHost) assertNoBakedSSHKeys(t *testing.T, tag string) {
 	command := host.podmanCommand(ctx, "image", "save", "--format", "docker-archive", tag)
 	started := time.Now()
 	processErr := fmt.Errorf("image save did not finish")
-	defer func() { host.recordOperation("podman", "inspection", started, processErr) }()
+	defer func() {
+		host.recordOperation("podman", "inspection", started, processErr)
+		host.observeFailure("podman", "inspection", processErr)
+	}()
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	stream, err := command.StdoutPipe()

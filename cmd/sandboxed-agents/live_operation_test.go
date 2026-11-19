@@ -96,6 +96,8 @@ type timedLiveTerminal struct {
 	closeOnce sync.Once
 	test      *testing.T
 	seen      int
+	completed bool
+	result    int
 }
 
 // startTerminal measures terminal CLI startup failures as well as successful invocations.
@@ -106,6 +108,7 @@ func (host liveHost) startTerminal(t *testing.T, args ...string) *timedLiveTermi
 	defer func() {
 		if !ready {
 			host.recordOperation("cli", liveCLIClass(args), started, fmt.Errorf("terminal startup failed"))
+			host.observeFailure("cli", liveCLIClass(args), fmt.Errorf("terminal startup failed"))
 		}
 	}()
 	operation := liveCLIClass(args)
@@ -115,14 +118,19 @@ func (host liveHost) startTerminal(t *testing.T, args ...string) *timedLiveTermi
 	return terminal
 }
 
-// Wait records the first completed invocation after its terminal output drains.
+// Wait records the first completed invocation after its terminal output drains
+// and preserves that result across later waits, including after slow diagnostics.
 func (terminal *timedLiveTerminal) Wait(timeout time.Duration) (int, bool) {
+	if terminal.completed {
+		return terminal.result, true
+	}
 	deadline := time.Now().Add(timeout)
 	for {
 		terminal.Output()
 		left := time.Until(terminal.started.Add(terminal.host.operationBound(terminal.operation)))
 		if left <= 0 {
 			terminal.test.Errorf("live operation %s exceeded class bound %s after %s; host invocation cancelled; engine operations may still be running: reconcile recorded objects before cleanup", terminal.operation, terminal.host.operationBound(terminal.operation), time.Since(terminal.started).Round(time.Millisecond))
+			terminal.completed, terminal.result = true, -1
 			terminal.Close()
 			return -1, true
 		}
@@ -130,6 +138,7 @@ func (terminal *timedLiveTerminal) Wait(timeout time.Duration) (int, bool) {
 		exit, finished := terminal.liveTerminal.Wait(wait)
 		terminal.Output()
 		if finished {
+			terminal.completed, terminal.result = true, exit
 			terminal.finish(exit)
 			return exit, true
 		}
@@ -158,6 +167,7 @@ func (terminal *timedLiveTerminal) finish(exit int) {
 		}
 		terminal.host.recordOperation("cli", terminal.operation, terminal.started, err)
 		terminal.host.reportOperation(terminal.operation, fmt.Sprintf("finished after %s", time.Since(terminal.started).Round(time.Millisecond)))
+		terminal.host.observeFailure("cli", terminal.operation, err)
 	})
 }
 

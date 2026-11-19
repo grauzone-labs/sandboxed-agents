@@ -29,6 +29,7 @@ type liveHost struct {
 	environment     []string
 	connection      []string
 	timings         *liveTimings
+	failures        *liveEngineFailures
 	caseName        string
 	operationBounds map[string]time.Duration
 	report          func(string)
@@ -153,6 +154,7 @@ func (host liveHost) readSSHHostKey(name string) (string, error) {
 	if err == nil {
 		err = errors.New("manager printed no single Ed25519 public key")
 	}
+	host.observeFailure("podman", "SSH server check", err)
 	return "", fmt.Errorf("read live SSH host key for %s after %s (deadline %s, output drain %s): %w\nmanager stdout: %q\nmanager stderr: %q",
 		name, elapsed, liveHostKeyTimeout, liveHostKeyWaitDelay, err, stdout.String(), stderr.String())
 }
@@ -213,6 +215,7 @@ func (host liveHost) cliContext(ctx context.Context, input string, args ...strin
 			err = fmt.Errorf("%w; host invocation cancelled; engine operations may still be running: reconcile recorded objects before cleanup", err)
 		}
 	}
+	host.observeFailure("cli", operation, err)
 	return output.String(), err
 }
 
@@ -242,6 +245,9 @@ func (host liveHost) podman(args ...string) (string, error) {
 	host.reportOperation(operation, fmt.Sprintf("finished after %s", time.Since(started).Round(time.Millisecond)))
 	if ctx.Err() != nil {
 		err = fmt.Errorf("live Podman operation %s ended after %s: %w; engine operations may still be running", operation, time.Since(started).Round(time.Millisecond), errors.Join(ctx.Err(), err))
+	}
+	if !expectedLiveAbsence(args, err) {
+		host.observeFailure("podman", operation, err)
 	}
 	return output.String(), err
 }

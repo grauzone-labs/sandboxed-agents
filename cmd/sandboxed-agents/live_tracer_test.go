@@ -286,7 +286,7 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				"build":                                     {Output: "built image " + tracerTag("none") + "\nexisting sandboxes keep their image until update; list marks them as outdated\n"},
 			}
 			podmanResponses := map[string]lifecycleResponse{
-				"info --format json":                {Output: `{"host":{"cpus":4,"memTotal":4294967296}}`},
+				"info --format json":                {Output: `{"host":{"cpus":4,"memTotal":4294967296,"memFree":123456789,"swapTotal":0,"swapFree":0,"hostname":"private-engine-sentinel","store":"/private/engine/path"}}`},
 				"* exists *":                        {Exit: 1},
 				"exec --user=0:0 * ssh-host-key":    {Output: tracerHostKey + "\n"},
 				"exec --user=0:0 * ssh-authorize *": {},
@@ -363,6 +363,7 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 			}
 			assertTracedToolEvidence(t, records, result, failed)
 			assertTracedOperationEvidence(t, records, executableLog, fakes.PodmanLog, selected)
+			assertTracedEngineFailureEvidence(t, records, fakes.PodmanLog)
 			builds, created := 0, map[string]bool{}
 			commands := map[string]int{}
 			for _, call := range testutil.Invocations(t, executableLog) {
@@ -413,6 +414,45 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				t.Fatalf("Tool probes=%v; want %v", probes, wantProbes)
 			}
 		})
+	}
+}
+
+// assertTracedEngineFailureEvidence proves the expected rollback still passes its
+// case while retaining a sample, and every sample has one timed engine read rather
+// than observing normal negative exists probes, at the nested suite file seam.
+func assertTracedEngineFailureEvidence(t *testing.T, directory, podmanLog string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(directory, "engine-failures-"+livePlatform()+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence liveEngineFailureEvidence
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&evidence); err != nil {
+		t.Fatal(err)
+	}
+	rollback, queries := 0, 0
+	for _, sample := range evidence.Samples {
+		if sample.Case == "update" && sample.Operation == "update or rollback" {
+			rollback++
+		}
+		if sample.Source != "cli" || sample.Result != "fail" || sample.EngineQuery != "verified" || sample.MachineQuery != "not-applicable" || sample.MachineState != "unknown" || sample.CPUs == nil || *sample.CPUs != 4 || sample.MemoryBytes == nil || *sample.MemoryBytes != 4294967296 || sample.FreeMemoryBytes == nil || *sample.FreeMemoryBytes != 123456789 || sample.SwapBytes == nil || *sample.SwapBytes != 0 || sample.FreeSwapBytes == nil || *sample.FreeSwapBytes != 0 {
+			t.Fatalf("unexpected rollback/diagnostic sample: %+v", sample)
+		}
+	}
+	for _, call := range testutil.Invocations(t, podmanLog) {
+		if slices.Equal(call, []string{"info", "--format", "json"}) {
+			queries++
+		}
+	}
+	if rollback != 1 || queries != len(evidence.Samples)+1 {
+		t.Fatalf("rollback samples=%d info queries=%d samples=%d; want one rollback and one capacity read beyond diagnostic reads", rollback, queries, len(evidence.Samples))
+	}
+	for _, private := range []string{tracerGroup, directory, "private-engine-sentinel", "/private/engine/path", "sandboxed-agents.", "live-update"} {
+		if strings.Contains(string(data), private) {
+			t.Fatalf("private diagnostic fact retained: %q", private)
+		}
 	}
 }
 

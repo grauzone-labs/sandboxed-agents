@@ -121,9 +121,15 @@ func newLiveSuite(t *testing.T) *liveSuite {
 	suite.buildDirectory = t.TempDir()
 	suite.host.timings = &liveTimings{evidence: validationduration.Operations{SchemaVersion: 1, Kind: "live-suite-operations", Commit: suite.commit, Platform: suite.platform, Operations: []validationduration.Operation{}, Cases: []validationduration.OperationCase{}}}
 	suite.host.caseName = "suite"
+	suite.host.failures = &liveEngineFailures{directory: suite.recordDirectory, evidence: liveEngineFailureEvidence{SchemaVersion: 1, Kind: "live-engine-failures", Commit: suite.commit, Platform: suite.platform, Samples: []liveEngineFailureSample{}}}
 	suite.writeRecord(t, false)
 	if _, err := validationduration.WriteOperations(suite.recordDirectory, suite.host.timings.evidence); err != nil {
 		t.Fatalf("initialize operation timings: %v", err)
+	}
+	// Replace any earlier run's diagnostic artifact before the first operation.
+	// Its failure is supplemental and cannot change the suite's verdict.
+	if suite.host.failures.persist() != nil {
+		t.Log("live engine failure evidence could not be initialized")
 	}
 	t.Cleanup(func() {
 		suite.host.timings.Lock()
@@ -464,8 +470,8 @@ func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 			}
 			filename := liveRecordFilename(t)
 			entries, err := os.ReadDir(records)
-			if err != nil || len(entries) != 2 || entries[0].Name() != filename || entries[1].Name() != "operations-"+livePlatform()+".json" {
-				t.Fatalf("record directory holds %v (err=%v); want record and operation evidence beside %s", entries, err, filename)
+			if err != nil || len(entries) != 3 || entries[0].Name() != "engine-failures-"+livePlatform()+".json" || entries[1].Name() != filename || entries[2].Name() != "operations-"+livePlatform()+".json" {
+				t.Fatalf("record directory holds %v (err=%v); want record, operation and failure evidence beside %s", entries, err, filename)
 			}
 			data, err := os.ReadFile(filepath.Join(records, filename))
 			if err != nil {
