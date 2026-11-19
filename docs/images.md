@@ -128,7 +128,7 @@ Recovery builds no image and does not compare the replacement with the current i
 
 ### Updating every sandbox
 
-`update --all [--force]` takes no `NAME` and no `--with`; `update` with neither or both of `NAME` and `--all`, or `--all` with `--with`, fails with a usage message before any Podman call. After the preflight it reads one name inventory, `podman ps --all` and `podman volume ls`, and takes only the names of the current controller group's sandboxes, including those of which only volumes or only a backup remain ([ADR 0007](adr/0007-serialize-sandbox-lifecycle-commands.md#name-inventory-of-update---all)). The inventory supplies names and no state. For each name the command takes the sandbox's lifecycle lock and only then inspects its objects, so every decision rests on facts read under the lock. Every lock stays held until the command exits.
+`update --all [--force]` takes no `NAME` and no `--with`; `update` with neither or both of `NAME` and `--all`, or `--all` with `--with`, fails with a usage message before any Podman call. After the preflight it reads one name inventory, `podman ps --all` and `podman volume ls`, and takes only the names of the current controller group's sandboxes, including those of which only volumes or only a backup remain ([ADR 0007](adr/0007-serialize-sandbox-lifecycle-commands.md#name-inventory-of-update---all)). The inventory supplies names and no state. For each name the command takes the sandbox's lifecycle lock and only then inspects its objects, so every decision rests on facts read under the lock. Every lifecycle lock stays held until the command exits; the image-tag locks it takes while it ensures an image are released after each ensure.
 
 Per sandbox, after the lock and a fresh inspection:
 
