@@ -90,6 +90,17 @@ func buildLabeledImage(p podmanTarget, set []string, hash, baseID string, refres
 
 // buildLabeledImageUnderLock builds a tag while its caller holds that tag's exclusive image-tag lock.
 func buildLabeledImageUnderLock(p podmanTarget, set []string, hash, baseID string, refresh bool, output io.Writer) (string, error) {
+	return buildLabeledImageWithRunner(p, set, hash, baseID, refresh, func(args ...string) error {
+		result, err := p.query(args...)
+		if result != "" {
+			fmt.Fprint(output, result)
+		}
+		return err
+	})
+}
+
+// buildLabeledImageWithRunner applies identical build flags and evidence publication to serial and concurrent runners under the caller's image-tag lock.
+func buildLabeledImageWithRunner(p podmanTarget, set []string, hash, baseID string, refresh bool, run func(...string) error) (string, error) {
 	return image.BuildWithToolchains(context.Background(), nil, set, func(ctx context.Context, args ...string) error {
 		flags := []string{"--label", imageMarkerLabel + "=sandboxed-agents", "--label", assetHashLabel + "=" + hash, "--label", ToolchainsLabel + "=" + toolchainSet(set)}
 		if refresh {
@@ -111,11 +122,7 @@ func buildLabeledImageUnderLock(p podmanTarget, set []string, hash, baseID strin
 			if layerLabel != "" {
 				buildArgs = append(append(append([]string{}, buildArgs[:len(buildArgs)-1]...), "--layer-label", layerLabel), buildArgs[len(buildArgs)-1])
 			}
-			result, err := p.query(buildArgs...)
-			if result != "" {
-				fmt.Fprint(output, result)
-			}
-			return err
+			return run(buildArgs...)
 		})
 	})
 }
@@ -154,20 +161,39 @@ func rebuildImages(request Request, p podmanTarget, output, progress io.Writer) 
 			sets[toolchainSet(set)] = set
 		}
 	}
-	baseTag, err := buildLabeledImage(p, nil, hash, "", true, output, progress)
+	// Capture the base's immutable ID before another tag writer can replace it.
+	const notice = "existing sandboxes keep their image until update; list marks them as outdated"
+	baseID, err := func() (string, error) {
+		lock, err := acquireImageTagLock(p, image.Tag(hash, nil), progress)
+		if err != nil {
+			return "", err
+		}
+		defer lock.Close()
+		var tag string
+		if request.BuildJobs > 1 {
+			tag, err = rebuildBaseWithProgress(p, hash, output, progress)
+		} else {
+			tag, err = buildLabeledImageUnderLock(p, nil, hash, "", true, output)
+		}
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintln(output, "built image", tag)
+		if len(sets) == 0 {
+			return "", nil
+		}
+		base, err := inspectImage(p, tag)
+		if err != nil {
+			return "", fmt.Errorf("%w; %s", err, notice)
+		}
+		return base.ID, nil
+	}()
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(output, "built image", baseTag)
-	// Once the base changes, all pre-existing sandboxes retain their old images.
-	const notice = "existing sandboxes keep their image until update; list marks them as outdated"
 	if len(sets) == 0 {
 		fmt.Fprintln(output, notice)
 		return nil
-	}
-	base, err := inspectImage(p, baseTag)
-	if err != nil {
-		return fmt.Errorf("%w; %s", err, notice)
 	}
 	var names []string
 	for name := range sets {
@@ -176,14 +202,24 @@ func rebuildImages(request Request, p podmanTarget, output, progress io.Writer) 
 	slices.Sort(names)
 	var failures []error
 	var failedSets []string
-	for _, name := range names {
-		tag, err := buildLabeledImage(p, sets[name], hash, base.ID, true, output, progress)
+	results := make([]error, len(names))
+	if request.BuildJobs > 1 {
+		results = rebuildToolchains(p, sets, names, hash, baseID, request.BuildJobs, output, progress)
+	} else {
+		for i, name := range names {
+			tag, err := buildLabeledImage(p, sets[name], hash, baseID, true, output, progress)
+			results[i] = err
+			if err == nil {
+				fmt.Fprintln(output, "built image", tag)
+			}
+		}
+	}
+	for i, name := range names {
+		err := results[i]
 		if err != nil {
 			failures = append(failures, err)
 			failedSets = append(failedSets, name)
-			continue
 		}
-		fmt.Fprintln(output, "built image", tag)
 	}
 	if len(failures) > 0 {
 		return fmt.Errorf("failed toolchain sets: %s; %s: %w", strings.Join(failedSets, "; "), notice, errors.Join(failures...))

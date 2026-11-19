@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
@@ -20,6 +21,8 @@ type Request struct {
 	Options         map[string]string
 	Toolchains      []string
 	Resources       Resources
+	// BuildJobs bounds simultaneous toolchain rebuilds; build defaults to one.
+	BuildJobs int
 }
 
 type commandSpec struct {
@@ -45,7 +48,7 @@ var commands = map[string]commandSpec{
 	"version":             spec(0, 0, false, "", ""),
 	"list":                spec(0, 0, false, "", ""),
 	"check":               spec(0, 1, false, "", ""),
-	"build":               spec(0, 0, false, "with", ""),
+	"build":               spec(0, 0, false, "with jobs", ""),
 	"up":                  spec(1, 2, true, "with agents port memory cpus pids-limit shm-size", "ssh-config"),
 	"start":               spec(1, 1, true, "", "ssh-config"),
 	"stop":                spec(1, 1, true, "", "force"),
@@ -336,6 +339,16 @@ func parseForHost(args []string, group string, host Host) (Request, error) {
 			slices.Sort(names)
 			names = slices.Compact(names)
 			request.Toolchains = names
+		}
+	}
+	if request.Command == "build" {
+		request.BuildJobs = 1
+		if value, exists := request.Options["jobs"]; exists {
+			jobs, err := strconv.Atoi(value)
+			if err != nil || jobs < 1 {
+				return request, fmt.Errorf("--jobs must be a positive integer")
+			}
+			request.BuildJobs = jobs
 		}
 	}
 	if err := request.Resources.parse(request.Options); err != nil {

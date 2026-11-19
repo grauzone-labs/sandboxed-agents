@@ -90,8 +90,9 @@ func helpTopics() map[string]helpEntry {
 		},
 		"build": {
 			summary: "Build the base image and every existing toolchain set anew.",
-			usage:   []string{"build [--with SET]"},
+			usage:   []string{"build [--with SET] [--jobs N]"},
 			options: []helpOption{
+				{name: "jobs", value: "N", text: "Maximum simultaneous toolchain rebuilds after the base finishes; a positive integer.", defaultValue: "1"},
 				{name: "with", value: "SET", text: "Also build this toolchain set: comma-separated names of " + toolchains + "."},
 			},
 			examples: []string{"build", "build --with dotnet,playwright"},
