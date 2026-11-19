@@ -7,16 +7,20 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// BuildResult carries an immutable result from a trusted builder channel, never suite stdout.
-// Source and Step identify the primary result evidence; production final results use iidfile plus inspect.
+// BuildResult carries a primary immutable result or audit-only attempt from the trusted builder channel, never suite stdout.
+// Source and Step identify the producer evidence; production final results use iidfile plus inspect, while layer metadata grants no ownership.
 type BuildResult struct {
 	ID              string
 	Step            string
 	Source          string
 	Asset           string
 	LayerInvocation string
+	AttemptID       string
+	PublishedAt     time.Time
+	EndedAt         time.Time
 }
 
 // buildProof binds a full identity to its primary result or builder-controlled invocation evidence privately.
@@ -188,9 +192,60 @@ func cleanupWrongHash(labels map[string]string, asset string) bool {
 // foreignImageTags refuses every tag outside the canonical project namespace, allowing untagged intermediates.
 func foreignImageTags(tags []string) bool {
 	for _, tag := range tags {
-		if tag != "<none>:<none>" && !buildCommitLine.MatchString("COMMIT "+tag) {
+		if tag != "<none>:<none>" && !cleanupProjectTag(tag) {
 			return true
 		}
 	}
 	return false
+}
+
+// uniqueBuildRecord retains one independently verified result per full ID without assigning it to unrelated attempts.
+func uniqueBuildRecord(records []buildProof) []buildProof {
+	result := []buildProof{}
+	seen := map[string]bool{}
+	for _, record := range records {
+		key := record.FullID
+		if key == "" {
+			key = record.Token + "\x00" + record.Reason
+		}
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, record)
+		}
+	}
+	return result
+}
+
+// unownedLayerCandidates records correlation for audit; inheritable metadata never grants image ownership.
+func unownedLayerCandidates(attempts []BuildResult, images []cleanupImage, primary []buildProof) []buildProof {
+	proven := map[string]bool{}
+	for _, proof := range primary {
+		if proof.FullID != "" {
+			proven[proof.FullID] = true
+		}
+	}
+	seen := map[string]bool{}
+	records := []buildProof{}
+	for _, attempt := range attempts {
+		if attempt.Source != buildLayerSource || attempt.LayerInvocation == "" {
+			continue
+		}
+		for _, image := range images {
+			if !image.Verified || proven[image.ID] || seen[image.ID] || image.Labels[BuildInvocationLabel] != attempt.LayerInvocation {
+				continue
+			}
+			reason := "inheritable layer metadata lacks independent primary ownership proof"
+			for _, tag := range image.RepoTags {
+				if tag != "<none>:<none>" {
+					reason = "tagged image requires its own primary iid result"
+				}
+			}
+			if image.Created.Before(attempt.PublishedAt) || !attempt.EndedAt.IsZero() && image.Created.After(attempt.EndedAt) {
+				reason = "label candidate outside attempt window; no primary ownership proof"
+			}
+			records = append(records, buildProof{Token: image.ID, Step: "label-correlated candidate for " + attempt.Step, Result: attempt.Source, Reason: reason})
+			seen[image.ID] = true
+		}
+	}
+	return records
 }

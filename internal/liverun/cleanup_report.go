@@ -184,9 +184,14 @@ func (s *Service) finishCleanup(ctx context.Context, r *cleanupRun, log []byte, 
 	if err != nil || len(encoded)+1 > cleanupSummaryLimit {
 		return fmt.Errorf("sanitized cleanup report exceeds limit")
 	}
-	if _, err = out.Write(append(encoded, '\n')); err != nil {
+	n, err := out.Write(append(encoded, '\n'))
+	if err != nil {
 		return err
 	}
+	if n != len(encoded)+1 {
+		return io.ErrShortWrite
+	}
+	r.published = true
 	if r.report.Status == "partial" {
 		return fmt.Errorf("cleanup: partial (unproven images retained; see sanitized cleanup report)")
 	}

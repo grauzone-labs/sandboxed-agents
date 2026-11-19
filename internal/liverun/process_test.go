@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +58,27 @@ func TestMain(m *testing.M) {
 		service := liverun.New()
 		service.CoordinationRoot = filepath.Join(os.Getenv("LIVERUN_FIXTURE_ROOT"), "locks")
 		service.MachineDisk = func(string) (string, error) { return rootFixtureDisk(), nil }
+		if value := os.Getenv("LIVERUN_FIXTURE_FREE_BYTES"); value != "" {
+			service.FreeSpace = func(string) (uint64, error) { return strconv.ParseUint(value, 10, 64) }
+		}
+		if len(os.Args) > 1 && os.Args[1] == "_supervise" && os.Getenv("LIVERUN_FIXTURE_INHERITED_JOB") == "1" {
+			if os.Getenv("LIVERUN_FIXTURE_WAIT_LAUNCH") == "1" {
+				deadline := time.Now().Add(5 * time.Second)
+				directory := os.Args[len(os.Args)-1]
+				for {
+					if _, err := os.Stat(filepath.Join(directory, "launching.json")); err == nil {
+						break
+					}
+					if time.Now().After(deadline) {
+						os.Exit(3)
+					}
+					time.Sleep(time.Millisecond)
+				}
+			}
+			service.SessionProbe = func() (liverun.SessionPolicy, error) {
+				return liverun.SessionPolicy{InJob: true, KillOnClose: true, Breakaway: true}, nil
+			}
+		}
 		if err := service.RunDispatch(context.Background(), os.Args[1:], os.Stdout, os.Stderr); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -118,7 +140,11 @@ func hostFixture(role string, args []string) int {
 		}
 		return 0
 	case "ssh":
-		fmt.Println("Filesystem 1B-blocks Used Available Use% Mounted on\n/dev/sda 1000 100 900 10% /")
+		free := os.Getenv("LIVERUN_FIXTURE_ENGINE_FREE_BYTES")
+		if free == "" {
+			free = "900"
+		}
+		fmt.Printf("Filesystem 1B-blocks Used Available Use%% Mounted on\n/dev/sda 1000 100 %s 10%% /\n", free)
 		return 0
 	}
 	return 6
@@ -234,9 +260,21 @@ func TestRunSurvivesLauncherAndExcludesSecondSuite(t *testing.T) {
 	}
 }
 
-// TestKilledRunDoesNotLeaveStaleEngineLock proves owned process liveness blocks an orphan then admits a new run after it dies. It exercises the prepare/run/status commands and owned process artifacts seam.
+// TestKilledRunDoesNotLeaveStaleEngineLock proves the prepare/run/status process-artifact seam excludes an orphan, admits its completed removal, and preserves prior sampled high water through a supervisor kill.
 func TestKilledRunDoesNotLeaveStaleEngineLock(t *testing.T) {
 	root, private, args := fixtureSetup(t)
+	var before liverun.Snapshot
+	if err := json.Unmarshal(mustReadFile(t, filepath.Join(private, "before.json")), &before); err != nil {
+		t.Fatal(err)
+	}
+	samples := []liverun.PeakFilesystem{}
+	for _, disk := range before.Disks {
+		samples = append(samples, liverun.PeakFilesystem{Name: disk.Name, Path: disk.Path, StartFreeBytes: disk.FreeBytes, MinimumFreeBytes: disk.FreeBytes - 1, SampledGrowthBytes: 1, Samples: 2})
+	}
+	sum := sha256.Sum256([]byte(before.EngineID))
+	observed := filepath.Join(root, "locks", fmt.Sprintf("%x-observed-peak.json", sum))
+	cleanupArtifact(t, filepath.Dir(observed), filepath.Base(observed), liverun.PeakRecord{EngineID: before.EngineID, Revision: strings.Repeat("b", 40), SamplingComplete: true, Filesystems: samples})
+	previous := mustReadFile(t, observed)
 	binary, _ := os.Executable()
 	data, err := exec.Command(binary, "run", "-run-dir", private).CombinedOutput()
 	if err != nil {
@@ -297,6 +335,9 @@ func TestKilledRunDoesNotLeaveStaleEngineLock(t *testing.T) {
 	}
 	if _, err = os.Stat(filepath.Join(private, "exit-status")); err != nil {
 		t.Fatalf("plain exit file not retained: %v", err)
+	}
+	if !bytes.Equal(previous, mustReadFile(t, observed)) {
+		t.Fatal("interrupted sampler erased prior useful observations")
 	}
 	data, err = exec.Command(binary, next...).CombinedOutput()
 	if err != nil {
@@ -540,16 +581,100 @@ func TestKilledProducerDoesNotBlockIndependentCleanup(t *testing.T) {
 			unknown := "sha256:" + strings.Repeat("d", 64)
 			image := cleanupImageFixture(intermediate)
 			image.RepoTags = nil
-			image.Labels[liverun.BuildInvocationLabel] = invocation
-			fake.images = map[string]cleanupFakeImage{intermediate: image, unknown: cleanupImageFixture(unknown)}
+			image.Labels[liverun.BuildInvocationLabel] = strings.TrimPrefix(string(mustReadFile(t, filepath.Join(options.RunDir, "producer-ready"))), liverun.BuildInvocationLabel+"=")
+			final := "sha256:" + strings.Repeat("a", 64)
+			asset := strings.Repeat("e", 64)
+			if err := liverun.CaptureBuildResult(directory, "localhost/sandboxed-agents:none-"+asset, asset, func(path string) error { return os.WriteFile(path, []byte(final), 0600) }, func(string) (string, error) { return final, nil }); err != nil {
+				t.Fatal(err)
+			}
+			fake.images = map[string]cleanupFakeImage{intermediate: image, unknown: cleanupImageFixture(unknown), final: cleanupImageFixture(final)}
 			var report bytes.Buffer
 			err := svc.Cleanup(context.Background(), options, &report)
-			if got := cleanupRemoved(fake); len(got) != 1 || got[0] != intermediate {
+			if got := cleanupRemoved(fake); len(got) != 1 || got[0] != final {
 				t.Fatalf("killed producer blocked independent proof: %v err=%v report=%s", got, err, &report)
 			}
 			if err == nil || !strings.Contains(report.String(), "incomplete or invalid") || !strings.Contains(report.String(), unknown) || !strings.Contains(report.String(), `"after"`) {
 				t.Fatalf("orphan/unknown state lost: %v %s", err, &report)
 			}
 		})
+	}
+}
+
+// TestSupervisorInheritedJobRefusesBeforeBuild proves direct supervisor and public run process/artifact seams publish a named startup failure without starting a suite.
+func TestSupervisorInheritedJobRefusesBeforeBuild(t *testing.T) {
+	for _, phase := range []string{"_supervise", "run"} {
+		t.Run(phase, func(t *testing.T) {
+			root, private, _ := fixtureSetup(t)
+			t.Setenv("LIVERUN_FIXTURE_INHERITED_JOB", "1")
+			if phase == "run" {
+				t.Setenv("LIVERUN_FIXTURE_WAIT_LAUNCH", "1")
+			}
+			binary, _ := os.Executable()
+			data, err := exec.Command(binary, phase, "-run-dir", private).CombinedOutput()
+			if err == nil || !bytes.Contains(data, []byte("session-detachment")) {
+				t.Fatalf("missing named job refusal: %v %s", err, data)
+			}
+			var ended struct {
+				Code        int
+				FailedCheck string
+			}
+			if err := json.Unmarshal(mustReadFile(t, filepath.Join(private, "exit.json")), &ended); err != nil {
+				t.Fatal(err)
+			}
+			if ended.Code != 1 || ended.FailedCheck != "session-detachment" {
+				t.Fatalf("wrong refusal evidence: %+v", ended)
+			}
+			for _, path := range []string{filepath.Join(private, "started.json"), filepath.Join(root, "suite-ready")} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatal("unsafe supervisor reached suite/build", path)
+				}
+			}
+		})
+	}
+}
+
+// TestRunRechecksKnownSpaceDespiteUnboundedDecision proves the public run process seam repeats headroom guards before build on Linux and both native Windows filesystem roles.
+func TestRunRechecksKnownSpaceDespiteUnboundedDecision(t *testing.T) {
+	roles := []string{"host"}
+	if runtime.GOOS == "windows" {
+		roles = append(roles, "engine")
+	}
+	for _, role := range roles {
+		for _, source := range []string{"bound", "observed"} {
+			t.Run(role+"/"+source, func(t *testing.T) {
+				root, private, _ := fixtureSetup(t)
+				binary, _ := os.Executable()
+				name, path := "engine", "/"
+				if runtime.GOOS == "windows" {
+					if role == "host" {
+						name, path = "host", root
+					}
+					t.Setenv("LIVERUN_FIXTURE_ENGINE_FREE_BYTES", "900")
+				}
+				t.Setenv("LIVERUN_FIXTURE_FREE_BYTES", "100")
+				if role == "engine" {
+					t.Setenv("LIVERUN_FIXTURE_FREE_BYTES", "900")
+					t.Setenv("LIVERUN_FIXTURE_ENGINE_FREE_BYTES", "100")
+				}
+				digest := sha256.Sum256([]byte("fixture-engine:/"))
+				if source == "bound" {
+					cleanupArtifact(t, filepath.Join(root, "locks"), fmt.Sprintf("%x-peak.json", digest), liverun.PeakRecord{EngineID: "fixture-engine:/", PeakAdditionalBytes: 100, Basis: "recorded fixture conservative bound"})
+				} else {
+					cleanupArtifact(t, filepath.Join(root, "locks"), fmt.Sprintf("%x-observed-peak.json", digest), liverun.PeakRecord{EngineID: "fixture-engine:/", Filesystems: []liverun.PeakFilesystem{{Name: name, Path: path, SampledGrowthBytes: 100, Samples: 2}}})
+				}
+				data, err := exec.Command(binary, "run", "-run-dir", private).CombinedOutput()
+				if err == nil {
+					t.Fatalf("unbounded decision bypassed repeat headroom: %s", data)
+				}
+				if !bytes.Contains(mustReadFile(t, filepath.Join(private, "diagnostic.txt")), []byte("bytes")) {
+					t.Fatal("headroom diagnosis absent")
+				}
+				for _, file := range []string{filepath.Join(root, "suite-ready"), filepath.Join(private, "started.json")} {
+					if _, err := os.Stat(file); !os.IsNotExist(err) {
+						t.Fatal("known insufficiency reached suite/build")
+					}
+				}
+			})
+		}
 	}
 }

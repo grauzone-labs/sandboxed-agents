@@ -50,7 +50,6 @@ type PeakRecord struct {
 	SampleContext         string
 	SamplingComplete      bool
 	Filesystems           []PeakFilesystem
-	Components            []PeakComponent
 }
 
 // Target binds one selected engine and its read-only machine query endpoint.

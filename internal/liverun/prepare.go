@@ -109,17 +109,22 @@ func (s *Service) prepareLocked(ctx context.Context, o Options) (Snapshot, *os.F
 	}
 	var peak PeakRecord
 	err = readJSON(recordPath, &peak)
+	if err != nil && !os.IsNotExist(err) {
+		return lockedFail("peak-bound", fmt.Errorf("existing bound record unreadable: %w", err))
+	}
+	var observed PeakRecord
+	observedErr := readJSON(observedPeakPath(o, engine), &observed)
+	if observedErr != nil && !os.IsNotExist(observedErr) {
+		return lockedFail("peak-observation", fmt.Errorf("existing observed facts unreadable: %w", observedErr))
+	}
+	if required, insufficient := knownSpaceFailure(before, peak, observed); insufficient {
+		lock.Close()
+		return before, nil, headroomFailure(o, before, "headroom", required)
+	}
 	if err != nil || !admissiblePeak(peak, before) || observedPeakExceeds(o, before, peak.PeakAdditionalBytes) {
 		if !o.AllowUnbounded {
 			lock.Close()
 			return before, nil, headroomFailure(o, before, "peak-bound", 0)
-		}
-	} else {
-		for _, disk := range before.Disks {
-			if disk.FreeBytes <= peak.PeakAdditionalBytes {
-				lock.Close()
-				return before, nil, headroomFailure(o, before, "headroom", peak.PeakAdditionalBytes)
-			}
 		}
 	}
 	return before, lock, nil

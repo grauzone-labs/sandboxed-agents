@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // BuildEvidenceEnv enables the private host-only iidfile channel for an authorized live invocation.
@@ -21,7 +22,7 @@ type buildManifest struct {
 	Invocation, Revision, EngineID string
 }
 
-// buildPublication holds one builder-controlled final result independently of all output text.
+// buildPublication holds one primary final result or audit-only attempt independently of all output text.
 type buildPublication struct {
 	Version                        int
 	Invocation, Revision, EngineID string
@@ -77,7 +78,7 @@ func readBuildManifest(directory string) (buildManifest, error) {
 	return m, nil
 }
 
-// buildFinalSource and buildLayerSource identify the primary producer mechanisms, never stdout formats.
+// buildFinalSource and buildLayerSource identify primary final evidence and audit-only layer correlation, never stdout formats.
 const buildFinalSource = "podman --iidfile + image inspect under tag lock"
 const buildLayerSource = "podman --layer-label + exact image inspect"
 
@@ -125,15 +126,25 @@ func captureBuildResult(directory, tag, asset string, layers bool, build func(st
 	defer os.RemoveAll(private)
 	iid := filepath.Join(private, "result.id")
 	layerLabel := ""
-	if layers {
-		attempt := buildPublication{Version: 1, Invocation: m.Invocation, Revision: m.Revision, EngineID: m.EngineID, Result: BuildResult{Asset: asset, Step: "COMMIT " + tag, Source: buildLayerSource, LayerInvocation: m.Invocation}}
-		if publishBuildEvent(directory, "attempt-", attempt) == nil {
-			layerLabel = BuildInvocationLabel + "=" + m.Invocation
+	attemptID, randomErr := newBuildAttemptID()
+	var attempt *buildPublication
+	attemptPath := ""
+	if layers && randomErr == nil {
+		event := buildPublication{Version: 1, Invocation: m.Invocation, Revision: m.Revision, EngineID: m.EngineID, Result: BuildResult{Asset: asset, Step: "COMMIT " + tag, Source: buildLayerSource, AttemptID: attemptID, LayerInvocation: m.Invocation + ":" + attemptID, PublishedAt: time.Now().UTC()}}
+		attemptPath = filepath.Join(directory, "attempt-"+attemptID+".json")
+		if writeJSON(attemptPath, event) == nil {
+			attempt = &event
+			layerLabel = BuildInvocationLabel + "=" + event.Result.LayerInvocation
 		}
 	}
-	if err = build(iid, layerLabel); err != nil {
+	buildErr := build(iid, layerLabel)
+	if attempt != nil {
+		attempt.Result.EndedAt = time.Now().UTC()
+		_ = writeJSON(attemptPath, attempt)
+	}
+	if buildErr != nil {
 		_ = os.Remove(marker)
-		return err
+		return buildErr
 	}
 	data, err := cleanupRead(iid, 128)
 	id := canonicalImageID(strings.TrimSpace(string(data)))
@@ -144,7 +155,7 @@ func captureBuildResult(directory, tag, asset string, layers bool, build func(st
 	if err != nil || canonicalImageID(confirmed) != id {
 		return nil
 	}
-	event := buildPublication{Version: 1, Invocation: m.Invocation, Revision: m.Revision, EngineID: m.EngineID, Result: BuildResult{ID: id, Asset: asset, Step: "COMMIT " + tag, Source: buildFinalSource}}
+	event := buildPublication{Version: 1, Invocation: m.Invocation, Revision: m.Revision, EngineID: m.EngineID, Result: BuildResult{ID: id, Asset: asset, AttemptID: attemptID, Step: "COMMIT " + tag, Source: buildFinalSource}}
 	if publishBuildEvent(directory, "result-", event) == nil {
 		_ = os.Remove(marker)
 	}
@@ -189,9 +200,12 @@ func readBuildResults(o Options, before Snapshot) ([]BuildResult, error) {
 			return nil, fmt.Errorf("build channel exceeds total evidence limit")
 		}
 		var event buildPublication
-		if entry.Type()&os.ModeSymlink != 0 || strictBuildJSON(filepath.Join(directory, entry.Name()), &event) != nil || event.Version != 1 || event.Invocation != m.Invocation || event.Revision != m.Revision || event.EngineID != m.EngineID || !strings.HasPrefix(event.Result.Step, "COMMIT ") || !cleanupProjectTag(strings.TrimPrefix(event.Result.Step, "COMMIT ")) || !strings.HasSuffix(event.Result.Step, "-"+event.Result.Asset) || len(event.Result.Asset) != 64 || !validBuildResult(event.Result, m, strings.HasPrefix(entry.Name(), "attempt-")) {
+		if entry.Type()&os.ModeSymlink != 0 || strictBuildJSON(filepath.Join(directory, entry.Name()), &event) != nil || !validBuildPublication(event, m, strings.HasPrefix(entry.Name(), "attempt-")) {
 			partial = true
 			continue
+		}
+		if event.Result.Source == buildLayerSource && event.Result.EndedAt.IsZero() {
+			partial = true
 		}
 		results = append(results, event.Result)
 	}
@@ -219,10 +233,40 @@ func publishBuildEvent(directory, prefix string, event buildPublication) error {
 	return writeJSON(filepath.Join(directory, prefix+hex.EncodeToString(nonce)+".json"), event)
 }
 
-// validBuildResult admits either a primary final ID or a nonce-authorized intermediate attempt.
+// validBuildResult admits a primary final ID or a bound audit-only layer attempt; labels grant no ownership.
 func validBuildResult(result BuildResult, m buildManifest, attempt bool) bool {
 	if attempt {
-		return result.ID == "" && result.Source == buildLayerSource && result.LayerInvocation == m.Invocation
+		return result.ID == "" && result.Source == buildLayerSource && validAttemptID(result.AttemptID) && result.LayerInvocation == m.Invocation+":"+result.AttemptID && !result.PublishedAt.IsZero() && !result.PublishedAt.After(time.Now().UTC()) && (result.EndedAt.IsZero() || !result.EndedAt.Before(result.PublishedAt))
 	}
-	return fullImageID(result.ID) && result.Source == buildFinalSource && result.LayerInvocation == ""
+	return fullImageID(result.ID) && result.Source == buildFinalSource && result.LayerInvocation == "" && (result.AttemptID == "" || validAttemptID(result.AttemptID))
+}
+
+// validBuildPublication validates a typed event's invocation binding and canonical producer tag.
+func validBuildPublication(event buildPublication, m buildManifest, attempt bool) bool {
+	result := event.Result
+	if event.Version != 1 || event.Invocation != m.Invocation || event.Revision != m.Revision || event.EngineID != m.EngineID {
+		return false
+	}
+	if !strings.HasPrefix(result.Step, "COMMIT ") || !cleanupProjectTag(strings.TrimPrefix(result.Step, "COMMIT ")) {
+		return false
+	}
+	return len(result.Asset) == 64 && strings.HasSuffix(result.Step, "-"+result.Asset) && validBuildResult(result, m, attempt)
+}
+
+// validAttemptID admits only a full cryptographic per-attempt identity.
+func validAttemptID(id string) bool {
+	if len(id) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(id)
+	return err == nil
+}
+
+// newBuildAttemptID creates an unpredictable identity independent of every other build attempt.
+func newBuildAttemptID() (string, error) {
+	nonce := make([]byte, 32)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(nonce), nil
 }

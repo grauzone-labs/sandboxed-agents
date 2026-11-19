@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -319,7 +320,7 @@ func TestCleanupIncompleteProducerKeepsIndependentProof(t *testing.T) {
 	}
 }
 
-// TestCleanupRequiresBuilderLayerAttempt proves the Cleanup seam admits only nonce-labelled intermediates with an authorized primary attempt and retains cached/foreign/unknown IDs.
+// TestCleanupRequiresBuilderLayerAttempt proves the Cleanup seam audits layer correlation without owning inherited images, then admits an independent primary full ID.
 func TestCleanupRequiresBuilderLayerAttempt(t *testing.T) {
 	svc, fake, options := cleanupHarness(t)
 	svc.BuildEvidence = nil
@@ -327,32 +328,36 @@ func TestCleanupRequiresBuilderLayerAttempt(t *testing.T) {
 	if err := os.Mkdir(directory, 0700); err != nil {
 		t.Fatal(err)
 	}
-	invocation := strings.Repeat("f", 64)
 	asset := strings.Repeat("e", 64)
-	cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 1, "Invocation": invocation, "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
+	cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 1, "Invocation": strings.Repeat("f", 64), "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
 	id := "sha256:" + strings.Repeat("b", 64)
 	cached := "sha256:" + strings.Repeat("c", 64)
-	unknown := "sha256:" + strings.Repeat("d", 64)
 	image := cleanupImageFixture(id)
 	image.RepoTags = nil
-	image.Labels["io.sandboxed-agents.live-build-invocation"] = invocation
 	old := cleanupImageFixture(cached)
 	old.RepoTags = nil
-	old.Labels["io.sandboxed-agents.live-build-invocation"] = strings.Repeat("0", 64)
-	fake.images = map[string]cleanupFakeImage{id: image, cached: old, unknown: cleanupImageFixture(unknown)}
+	old.Labels[liverun.BuildInvocationLabel] = strings.Repeat("0", 64)
+	tag := "localhost/sandboxed-agents:none-" + asset
+	if err := liverun.CaptureLayerBuildResult(directory, tag, asset, func(iid, label string) error {
+		image.Created = time.Now().UTC()
+		image.Labels[liverun.BuildInvocationLabel] = strings.TrimPrefix(label, liverun.BuildInvocationLabel+"=")
+		return nil
+	}, func(string) (string, error) { return id, nil }); err != nil {
+		t.Fatal(err)
+	}
+	fake.images = map[string]cleanupFakeImage{id: image, cached: old}
 	var out bytes.Buffer
 	_ = svc.Cleanup(context.Background(), options, &out)
-	if len(cleanupRemoved(fake)) != 0 {
-		t.Fatal("label alone granted ownership")
+	if len(cleanupRemoved(fake)) != 0 || !strings.Contains(out.String(), "inheritable layer metadata") {
+		t.Fatalf("label correlation became ownership: %s", &out)
 	}
-	cleanupArtifact(t, directory, "attempt-primary.json", map[string]any{"Version": 1, "Invocation": invocation, "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage", "Result": map[string]any{"ID": "", "Step": "COMMIT localhost/sandboxed-agents:none-" + asset, "Source": "podman --layer-label + exact image inspect", "Asset": asset, "LayerInvocation": invocation}})
+	if err := liverun.CaptureBuildResult(directory, tag, asset, func(iid string) error { return os.WriteFile(iid, []byte(id), 0600) }, func(string) (string, error) { return id, nil }); err != nil {
+		t.Fatal(err)
+	}
 	out.Reset()
-	err := svc.Cleanup(context.Background(), options, &out)
+	_ = svc.Cleanup(context.Background(), options, &out)
 	if got := cleanupRemoved(fake); len(got) != 1 || got[0] != id {
-		t.Fatalf("primary intermediate not isolated: %v %v %s", got, err, &out)
-	}
-	if !strings.Contains(out.String(), cached) || !strings.Contains(out.String(), unknown) {
-		t.Fatal("unproven IDs omitted")
+		t.Fatalf("independent full primary result refused: %v %s", got, &out)
 	}
 }
 
@@ -390,5 +395,189 @@ func TestCleanupContradictoryAssetScopeStillReports(t *testing.T) {
 	err := svc.Cleanup(context.Background(), options, &out)
 	if err == nil || len(cleanupRemoved(fake)) != 0 || !strings.Contains(out.String(), `"after"`) || !strings.Contains(out.String(), "trusted asset identity inconsistent") {
 		t.Fatalf("contradictory scope lost audit or granted ownership: %v %s", err, &out)
+	}
+}
+
+// TestInheritedAttemptLabelsNeverGrantOwnership proves the Cleanup seam retains tagged finals and untagged foreign descendants without independent primary result IDs.
+func TestInheritedAttemptLabelsNeverGrantOwnership(t *testing.T) {
+	svc, fake, options := cleanupHarness(t)
+	svc.BuildEvidence = nil
+	directory := filepath.Join(options.RunDir, "build-evidence")
+	if err := os.Mkdir(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	asset := strings.Repeat("e", 64)
+	invocation := strings.Repeat("f", 64)
+	cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 1, "Invocation": invocation, "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
+	tagged := "sha256:" + strings.Repeat("b", 64)
+	foreign := "sha256:" + strings.Repeat("c", 64)
+	err := liverun.CaptureLayerBuildResult(directory, "localhost/sandboxed-agents:none-"+asset, asset, func(iid, label string) error {
+		nonce := strings.TrimPrefix(label, liverun.BuildInvocationLabel+"=")
+		a := cleanupImageFixture(tagged)
+		a.Created = time.Now().UTC()
+		a.Labels[liverun.BuildInvocationLabel] = nonce
+		b := cleanupImageFixture(foreign)
+		b.Created = time.Now().UTC()
+		b.RepoTags = nil
+		b.Labels[liverun.BuildInvocationLabel] = nonce
+		fake.images = map[string]cleanupFakeImage{tagged: a, foreign: b}
+		return nil
+	}, func(string) (string, error) { t.Fatal("missing iid reached final inspection"); return "", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err = svc.Cleanup(context.Background(), options, &out)
+	if len(cleanupRemoved(fake)) != 0 {
+		t.Fatalf("inherited labels authorized removal: %v %v %s", cleanupRemoved(fake), err, &out)
+	}
+	if !strings.Contains(out.String(), tagged) || !strings.Contains(out.String(), foreign) || !strings.Contains(out.String(), `"after"`) {
+		t.Fatalf("retained costs/audit missing: %s", &out)
+	}
+}
+
+// timingCollectorHost exposes collector completion at the injected process boundary without changing its real artifact writes.
+type timingCollectorHost struct {
+	liverun.Executor
+	ReturnedAt time.Time
+}
+
+// Execute records the clock only after the collector returned and its case artifact was retained.
+func (h *timingCollectorHost) Execute(ctx context.Context, in liverun.Invocation) ([]byte, error) {
+	data, err := h.Executor.Execute(ctx, in)
+	if in.Program == "go" {
+		h.ReturnedAt = time.Now().UTC()
+	}
+	return data, err
+}
+
+// timingPublicationWriter records when the main sanitized report actually reaches its caller.
+type timingPublicationWriter struct {
+	bytes.Buffer
+	PublishedAt time.Time
+}
+
+// Write forwards the complete report and records the external publication boundary clock.
+func (w *timingPublicationWriter) Write(data []byte) (int, error) {
+	n, err := w.Buffer.Write(data)
+	w.PublishedAt = time.Now().UTC()
+	return n, err
+}
+
+// TestCleanupRetainsComparablePostSuiteTotal proves the Cleanup-to-status artifact seam measures through collector and report publication while preserving the existing lower-bound field.
+func TestCleanupRetainsComparablePostSuiteTotal(t *testing.T) {
+	svc, fake, options := cleanupHarness(t)
+	host := &timingCollectorHost{Executor: fake}
+	svc.Executor = host
+	var out timingPublicationWriter
+	if err := svc.Cleanup(context.Background(), options, &out); err != nil {
+		t.Fatal(err)
+	}
+	var completion struct {
+		SuiteEndedAt, CompletedAt time.Time
+		PostSuiteTotalSeconds     float64
+	}
+	data, err := os.ReadFile(filepath.Join(options.RunDir, "cleanup-completion.json"))
+	if err != nil {
+		t.Fatalf("comparable completion evidence absent: %v", err)
+	}
+	if err = json.Unmarshal(data, &completion); err != nil {
+		t.Fatal(err)
+	}
+	if completion.CompletedAt.Before(host.ReturnedAt) || completion.CompletedAt.Before(out.PublishedAt) || completion.PostSuiteTotalSeconds < out.PublishedAt.Sub(completion.SuiteEndedAt).Seconds() {
+		t.Fatalf("total omitted collection/publication: %+v", completion)
+	}
+	var report liverun.CleanupReport
+	if err = json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if completion.PostSuiteTotalSeconds < report.PostSuiteSeconds {
+		t.Fatal("comparable total precedes prior lower bound")
+	}
+	var status bytes.Buffer
+	if err := svc.RunDispatch(context.Background(), []string{"status", "-run-dir", options.RunDir}, &status, &status); err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err = json.Unmarshal(status.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if state["post_suite_total_seconds"] != completion.PostSuiteTotalSeconds || strings.Contains(status.String(), options.RunDir) {
+		t.Fatalf("total unavailable or private path leaked: %s", &status)
+	}
+}
+
+// failedCleanupWriter refuses report publication at the caller's output boundary.
+type failedCleanupWriter struct{}
+
+// Write returns a real output error without publishing report bytes.
+func (failedCleanupWriter) Write([]byte) (int, error) { return 0, fmt.Errorf("fixture output failure") }
+
+// TestCleanupCompletionRequiresPublishedReport proves the Cleanup/status artifact seam never invents a comparable completed interval after an early refusal or failed publication.
+func TestCleanupCompletionRequiresPublishedReport(t *testing.T) {
+	for _, failure := range []string{"engine", "publication"} {
+		t.Run(failure, func(t *testing.T) {
+			svc, fake, options := cleanupHarness(t)
+			var out bytes.Buffer
+			var writer io.Writer = &out
+			if failure == "engine" {
+				fake.unreachable = true
+			} else {
+				writer = failedCleanupWriter{}
+			}
+			if err := svc.Cleanup(context.Background(), options, writer); err == nil {
+				t.Fatal("boundary failure lost")
+			}
+			if _, err := os.Stat(filepath.Join(options.RunDir, "cleanup-completion.json")); !os.IsNotExist(err) {
+				t.Fatalf("incomplete cleanup published comparable completion: %v", err)
+			}
+		})
+	}
+}
+
+// TestCleanupTimingLossIsSupplemental proves the Cleanup/status artifact seam preserves cleanup success and omits an unavailable optional total.
+func TestCleanupTimingLossIsSupplemental(t *testing.T) {
+	svc, _, options := cleanupHarness(t)
+	if err := os.Mkdir(filepath.Join(options.RunDir, "cleanup-completion.json"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := svc.Cleanup(context.Background(), options, &out); err != nil {
+		t.Fatalf("optional timing loss changed cleanup outcome: %v %s", err, &out)
+	}
+	out.Reset()
+	if err := svc.RunDispatch(context.Background(), []string{"status", "-run-dir", options.RunDir}, &out, &out); err != nil || strings.Contains(out.String(), "post_suite_total_seconds") {
+		t.Fatalf("unavailable total invented or actual status changed: %v %s", err, &out)
+	}
+}
+
+// TestCleanupDeduplicatesPrimaryResults proves the producer-to-Cleanup artifact seam records and removes one immutable ID once across independent primary result events.
+func TestCleanupDeduplicatesPrimaryResults(t *testing.T) {
+	svc, fake, options := cleanupHarness(t)
+	svc.BuildEvidence = nil
+	directory := filepath.Join(options.RunDir, "build-evidence")
+	if err := os.Mkdir(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	asset := strings.Repeat("e", 64)
+	id := "sha256:" + strings.Repeat("b", 64)
+	cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 1, "Invocation": strings.Repeat("f", 64), "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
+	for _, kind := range []string{"none", "dotnet"} {
+		if err := liverun.CaptureBuildResult(directory, "localhost/sandboxed-agents:"+kind+"-"+asset, asset, func(iid string) error { return os.WriteFile(iid, []byte(id), 0600) }, func(string) (string, error) { return id, nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id)}
+	var out bytes.Buffer
+	if err := svc.Cleanup(context.Background(), options, &out); err != nil || len(cleanupRemoved(fake)) != 1 {
+		t.Fatalf("primary results not handled once: %v %s", err, &out)
+	}
+	paths, err := filepath.Glob(filepath.Join(options.RunDir, "cleanup-*", "build-record.json"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("private build record missing: %v %v", paths, err)
+	}
+	var records []struct{ FullID string }
+	if err := json.Unmarshal(mustReadFile(t, paths[0]), &records); err != nil || len(records) != 1 || records[0].FullID != id {
+		t.Fatalf("duplicate primary attribution retained: %v %+v", err, records)
 	}
 }

@@ -198,6 +198,9 @@ func (s *Service) status(ctx context.Context, args []string, out, diagnostics io
 	}
 	state := map[string]any{"case": progress.Case, "operation": progress.Operation, "last_output_age_seconds": age, "ended": finished, "running": running, "free_space": summary}
 	if finished {
+		if total, ok := readCleanupTotal(directory, o, ended); ok {
+			state["post_suite_total_seconds"] = total
+		}
 		state["exit_code"] = ended.Code
 		state["interrupted"] = ended.Interrupted
 		state["log_verified"] = !ended.LogUnverified

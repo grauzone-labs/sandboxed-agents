@@ -65,6 +65,7 @@ type cleanupRun struct {
 	queries    int
 	report     CleanupReport
 	containers []Container
+	published  bool
 }
 
 // Cleanup applies the invocation's image eligibility rules and publishes sanitized evidence.
@@ -74,6 +75,7 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 	if err != nil {
 		return err
 	}
+	defer retainCleanupCompletion(run)
 	if err = s.checkCoordination(run.options); err != nil {
 		return fmt.Errorf("cleanup: pending (coordination root changed)")
 	}
@@ -138,20 +140,15 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 		if result.Source == "" || result.Step == "" {
 			continue
 		}
-		if result.Source == buildLayerSource && result.LayerInvocation != "" {
-			for _, image := range current {
-				if image.Verified && image.Labels[BuildInvocationLabel] == result.LayerInvocation {
-					trusted = append(trusted, buildProof{Token: image.ID, Step: "intermediate builder result for " + result.Step, Result: result.Source})
-				}
-			}
-		} else {
+		if result.Source != buildLayerSource {
 			trusted = append(trusted, buildProof{Token: result.ID, Step: result.Step, Result: result.Source})
 		}
 	}
 	if len(results) > 0 {
 		asset = results[0].Asset
 	}
-	record := resolveBuildRecord(trusted, current)
+	record := uniqueBuildRecord(resolveBuildRecord(trusted, current))
+	record = append(record, unownedLayerCandidates(results, current, record)...)
 	if err = cleanupWriteJSON(filepath.Join(run.directory, "build-record.json"), record, cleanupPrivateLimit); err != nil {
 		return fmt.Errorf("cleanup: pending (cannot retain build record)")
 	}

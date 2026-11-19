@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
 	"golang.org/x/sys/windows"
 	"os"
@@ -57,16 +58,10 @@ func nativeJobLauncher(args []string) int {
 }
 
 // nativeFixtureEscapeFlags isolates the fixture from a CI parent job only through documented permitted breakaway.
-func nativeFixtureEscapeFlags(t *testing.T) uint32 {
+func nativeFixtureEscapeFlags(t *testing.T) (uint32, bool) {
 	t.Helper()
-	var member int32
-	procedure := windows.NewLazySystemDLL("kernel32.dll").NewProc("IsProcessInJob")
-	ok, _, err := procedure.Call(uintptr(windows.CurrentProcess()), 0, uintptr(unsafe.Pointer(&member)))
-	if ok == 0 {
-		t.Fatal(err)
-	}
-	if member == 0 {
-		return 0
+	if !nativeFixtureInJob(t, windows.CurrentProcess()) {
+		return 0, false
 	}
 	var limits windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
 	if err := windows.QueryInformationJobObject(0, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)), nil); err != nil {
@@ -74,13 +69,25 @@ func nativeFixtureEscapeFlags(t *testing.T) uint32 {
 	}
 	flags := limits.BasicLimitInformation.LimitFlags
 	if flags&windows.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK != 0 {
-		return 0
+		return 0, true
 	}
 	if flags&windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK != 0 {
-		return windows.CREATE_BREAKAWAY_FROM_JOB
+		return windows.CREATE_BREAKAWAY_FROM_JOB, true
 	}
 	t.Skip("native CI parent job disallows fixture isolation; session-detachment refusal is required in this environment")
-	return 0
+	return 0, true
+}
+
+// nativeFixtureInJob verifies any inherited job before the fixture assigns its own jobs.
+func nativeFixtureInJob(t *testing.T, process windows.Handle) bool {
+	t.Helper()
+	var member int32
+	procedure := windows.NewLazySystemDLL("kernel32.dll").NewProc("IsProcessInJob")
+	ok, _, err := procedure.Call(uintptr(process), 0, uintptr(unsafe.Pointer(&member)))
+	if ok == 0 {
+		t.Fatal(err)
+	}
+	return member != 0
 }
 
 // nativeFixtureJob creates a private non-inherited kill-on-close job with explicit breakaway policy.
@@ -127,7 +134,7 @@ func resumeNativeFixture(t *testing.T, pid int) {
 
 // TestWindowsRunSurvivesJobClosure proves prepare/run at the native process/job seam either escape permitted jobs or refuse before suite/build startup.
 func TestWindowsRunSurvivesJobClosure(t *testing.T) {
-	escape := nativeFixtureEscapeFlags(t)
+	escape, parentInJob := nativeFixtureEscapeFlags(t)
 	for _, mode := range []string{"no-job", "breakaway", "silent", "restrictive", "nested-restrictive"} {
 		t.Run(mode, func(t *testing.T) {
 			root, private, args := fixtureSetup(t)
@@ -137,14 +144,23 @@ func TestWindowsRunSurvivesJobClosure(t *testing.T) {
 			var output bytes.Buffer
 			launcher.Stdout, launcher.Stderr = &output, &output
 			if err := launcher.Start(); err != nil {
+				if parentInJob && errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+					t.Skip("verified CI parent job prevents fixture launch isolation; native detachment remains unproven")
+				}
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = launcher.Process.Kill() })
-			process, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(launcher.Process.Pid))
+			t.Cleanup(func() { _ = launcher.Process.Kill(); _ = launcher.Wait() })
+			process, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(launcher.Process.Pid))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer windows.CloseHandle(process)
+			if nativeFixtureInJob(t, process) {
+				if parentInJob {
+					t.Skip("verified CI job hierarchy retains fixture launcher; native detachment remains unproven")
+				}
+				t.Fatal("fixture unexpectedly inherited a job from a parent verified outside all jobs")
+			}
 			jobs := []windows.Handle{}
 			if mode != "no-job" {
 				flags := uint32(0)

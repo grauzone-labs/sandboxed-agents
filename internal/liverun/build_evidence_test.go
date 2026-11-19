@@ -2,6 +2,7 @@ package liverun
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,5 +119,28 @@ func TestBuildChannelDisabledPreservesBuildAPI(t *testing.T) {
 	}, func(string) (string, error) { inspected = true; return "", nil })
 	if err != nil || inspected {
 		t.Fatalf("ordinary build changed: %v inspect=%v", err, inspected)
+	}
+}
+
+// TestLayerAttemptsHaveDistinctProducerIdentity proves the CaptureLayerBuildResult/typed artifact seam cannot attribute one nonce to multiple build attempts.
+func TestLayerAttemptsHaveDistinctProducerIdentity(t *testing.T) {
+	o, before, directory := buildChannelFixture(t)
+	asset := strings.Repeat("e", 64)
+	labels := []string{}
+	for _, kind := range []string{"none", "dotnet"} {
+		err := CaptureLayerBuildResult(directory, "localhost/sandboxed-agents:"+kind+"-"+asset, asset, func(iid, label string) error {
+			labels = append(labels, label)
+			return fmt.Errorf("fixture build failure")
+		}, func(string) (string, error) { return "", nil })
+		if err == nil {
+			t.Fatal("actual build failure lost")
+		}
+	}
+	if len(labels) != 2 || labels[0] == labels[1] {
+		t.Fatalf("attempts shared one identity: %v", labels)
+	}
+	results, err := readBuildResults(o, before)
+	if err != nil || len(results) != 2 {
+		t.Fatalf("attempt authority lost: %v %v", results, err)
 	}
 }

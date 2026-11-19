@@ -258,7 +258,7 @@ func cleanupRemoved(fake *cleanupFake) []string {
 
 // TestCleanupEligibility proves each exclusion through Cleanup and the fake whole-engine boundary. It exercises the Cleanup command seam.
 func TestCleanupEligibility(t *testing.T) {
-	for _, name := range []string{"presentbefore", "missingproof", "wronghash", "emptyhash", "usedothergroup", "ambiguous", "failedquery", "retention", "chainonly", "downloaded", "cache", "arbitrary", "latecontainer"} {
+	for _, name := range []string{"eligible", "presentbefore", "missingproof", "wronghash", "emptyhash", "usedothergroup", "shortid", "failedquery", "retention", "chainonly", "downloaded", "cache", "arbitrary", "latecontainer", "noncanonicaltag"} {
 		t.Run(name, func(t *testing.T) {
 			svc, fake, options := cleanupHarness(t)
 			id := "sha256:" + strings.Repeat("b", 64)
@@ -283,13 +283,15 @@ func TestCleanupEligibility(t *testing.T) {
 				image.Labels["io.sandboxed-agents.asset-sha256"] = ""
 			case "usedothergroup":
 				fake.containers = []liverun.Container{{ID: "other-group", Image: id}}
-			case "ambiguous":
+			case "shortid":
 				delete(fake.images, id)
 				id = "sha256:123456789abc" + strings.Repeat("a", 52)
 				image = cleanupImageFixture(id)
 				other := "sha256:123456789abc" + strings.Repeat("b", 52)
 				fake.images[other] = cleanupImageFixture(other)
 				cleanupBuildLog(t, fake, options.RunDir, "STEP 2/3: LABEL example=value", "123456789abc")
+			case "noncanonicaltag":
+				image.RepoTags = []string{"localhost/sandboxed-agents:zz-" + strings.Repeat("e", 64)}
 			case "failedquery":
 				fake.fail = "image inspect"
 			case "retention":
@@ -304,12 +306,50 @@ func TestCleanupEligibility(t *testing.T) {
 			fake.images[id] = image
 			var out bytes.Buffer
 			err := svc.Cleanup(context.Background(), options, &out)
+			var report liverun.CleanupReport
+			if parseErr := json.Unmarshal(out.Bytes(), &report); parseErr != nil {
+				t.Fatalf("audit missing: %v %s", err, &out)
+			}
+			if name == "eligible" {
+				if err != nil || len(cleanupRemoved(fake)) != 1 || cleanupRemoved(fake)[0] != id || len(report.Removed) != 1 {
+					t.Fatalf("positive control did not remove: %v %s", err, &out)
+				}
+				return
+			}
 			if len(cleanupRemoved(fake)) != 0 {
-				t.Fatalf("excluded image removed: %v; error %v; report %s", cleanupRemoved(fake), err, out.String())
+				t.Fatalf("excluded image removed: %v %v %s", cleanupRemoved(fake), err, &out)
 			}
-			if name == "failedquery" && (err == nil || !strings.Contains(out.String(), "unverified")) {
-				t.Fatalf("failed query treated as absence: %v %s", err, out.String())
+			want := "missing exact build proof"
+			switch name {
+			case "presentbefore":
+				want = "present before invocation"
+			case "wronghash", "emptyhash":
+				want = "asset hash differs from invocation"
+			case "usedothergroup", "latecontainer":
+				want = "referenced by a container (any controller group)"
+			case "failedquery":
+				want = "image inspection failed; unverified"
+			case "retention":
+				want = "retained by user"
+			case "noncanonicaltag":
+				want = "foreign or mixed image tags"
 			}
+			found := false
+			for _, item := range report.Skipped {
+				if item.ID == id && item.Reason == want {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("missing exclusion reason %q for %s: %v %s", want, id, err, &out)
+			}
+			if name == "shortid" && !strings.Contains(out.String(), "primary result lacks a complete immutable image ID") {
+				t.Fatal("short ID refusal misreported as full-ID ambiguity")
+			}
+			if name == "failedquery" && (err == nil || len(report.Unverified) == 0) {
+				t.Fatal("failed query treated as absence")
+			}
+
 		})
 	}
 }

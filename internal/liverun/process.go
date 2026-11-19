@@ -94,7 +94,11 @@ func (s *Service) launch(ctx context.Context, args []string, out, diagnostics io
 		return failCheck(options, "session-detachment", err)
 	}
 	detachCommand(cmd, policy)
-	if err = cmd.Start(); err != nil {
+	start := cmd.Start
+	if s.StartSupervisor != nil {
+		start = func() error { return s.StartSupervisor(cmd) }
+	}
+	if err = start(); err != nil {
 		if errors.Is(err, os.ErrPermission) {
 			return failCheck(options, "session-detachment", err)
 		}

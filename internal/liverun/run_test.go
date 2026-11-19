@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -389,7 +390,7 @@ func TestPrepareRejectsNullInventories(t *testing.T) {
 	}
 }
 
-// writePeakFixture supplies explicit reasoned component coverage at the host-record boundary, never a sampled-max multiplier.
+// writePeakFixture supplies a reasoned host-bound record and optional observations at the host-record boundary.
 func writePeakFixture(t *testing.T, path string, windows bool) {
 	t.Helper()
 	p := liverun.PeakRecord{EngineID: "engine:/private/storage", Revision: strings.Repeat("a", 40), PeakAdditionalBytes: 100, Basis: "fixture allowances cover every growth source at these literal byte budgets", SampleStartedAt: time.Now().Add(-time.Minute), SampleEndedAt: time.Now().Add(-time.Second), SampleIntervalSeconds: 10, SampleContext: "isolated fixture", SamplingComplete: true}
@@ -397,11 +398,7 @@ func writePeakFixture(t *testing.T, path string, windows bool) {
 	if windows {
 		p.Filesystems = append(p.Filesystems, liverun.PeakFilesystem{Name: "host", Path: `C:\private\ext4.vhdx`, StartFreeBytes: 900, MinimumFreeBytes: 850, SampledGrowthBytes: 50, Samples: 2})
 	}
-	for _, d := range p.Filesystems {
-		for _, kind := range []string{"images", "build-temporary", "suite-and-artifacts", "sampling-gaps-and-variation"} {
-			p.Components = append(p.Components, liverun.PeakComponent{Filesystem: d.Name, Kind: kind, Bytes: 25, Basis: "independently specified fixture allocation allowance"})
-		}
-	}
+
 	data, err := json.Marshal(p)
 	if err != nil {
 		t.Fatal(err)
@@ -480,5 +477,131 @@ func TestStatusSeparatesObservedPeakAndAdmittedBound(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"peak_recorded":true`) || !strings.Contains(out.String(), `"peak_bound_available":true`) {
 		t.Fatalf("admitted bound conflated with observation: %s", &out)
+	}
+}
+
+// TestUnboundedDecisionCannotBypassKnownSpace proves the prepare command/filesystem seam blocks known bounds and observed lower peaks on either Windows filesystem and Linux.
+func TestUnboundedDecisionCannotBypassKnownSpace(t *testing.T) {
+	for _, platform := range []string{"linux", "windows-host", "windows-engine"} {
+		for _, source := range []string{"bound", "observed", "contradicted"} {
+			t.Run(platform+"/"+source, func(t *testing.T) {
+				svc, fake, args, run := commandHarness(t)
+				args = append(args, "-allow-unbounded", "-unbounded-decision", "fixture missing-bound decision")
+				role, path := "engine", "/private/storage"
+				svc.FreeSpace = func(string) (uint64, error) { return 100, nil }
+				if strings.HasPrefix(platform, "windows") {
+					svc.Platform = "windows"
+					svc.MachineDisk = func(string) (string, error) { return `C:\private\ext4.vhdx`, nil }
+					if platform == "windows-host" {
+						role, path = "host", `C:\private\ext4.vhdx`
+					} else {
+						svc.FreeSpace = func(string) (uint64, error) { return 900, nil }
+						fake.answers = map[string]string{"ssh ": "Filesystem 1B-blocks Used Available Use% Mounted on\n/dev/sda 1000 900 100 90% /\n"}
+					}
+				}
+				boundPath := ""
+				for i, arg := range args {
+					if arg == "-peak-record" {
+						boundPath = args[i+1]
+					}
+				}
+				if source == "observed" {
+					if err := os.Remove(boundPath); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					if err := os.WriteFile(boundPath, []byte(`{"EngineID":"engine:/private/storage","PeakAdditionalBytes":100,"Basis":"recorded conservative fixture peak"}`), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if source != "bound" {
+					if err := os.MkdirAll(svc.CoordinationRoot, 0700); err != nil {
+						t.Fatal(err)
+					}
+					digest := sha256.Sum256([]byte("engine:/private/storage"))
+					cleanupArtifact(t, svc.CoordinationRoot, fmt.Sprintf("%x-observed-peak.json", digest), liverun.PeakRecord{EngineID: "engine:/private/storage", Filesystems: []liverun.PeakFilesystem{{Name: role, Path: path, SampledGrowthBytes: func() uint64 {
+						if source == "contradicted" {
+							return 101
+						}
+						return 100
+					}(), Samples: 2}}})
+				}
+				var out bytes.Buffer
+				err := svc.RunDispatch(context.Background(), args, &out, &out)
+				if err == nil || !strings.Contains(err.Error(), "headroom") {
+					t.Fatalf("known insufficiency bypassed: %v %s", err, &out)
+				}
+				if _, err := os.Stat(filepath.Join(run, "before.json")); !os.IsNotExist(err) {
+					t.Fatal("failed headroom published complete preparation")
+				}
+				for _, call := range fake.calls {
+					for _, arg := range call.Args {
+						if arg == "test" || arg == "build" {
+							t.Fatal("known insufficiency reached build")
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestRunNamesPermissionDeniedLaunch proves the public run/start boundary maps a real permission-shaped failure to session-detachment without publishing a started suite.
+func TestRunNamesPermissionDeniedLaunch(t *testing.T) {
+	svc, _, args, run := commandHarness(t)
+	var out bytes.Buffer
+	if err := svc.RunDispatch(context.Background(), args, &out, &out); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	svc.StartSupervisor = func(*exec.Cmd) error {
+		calls++
+		return &os.PathError{Op: "CreateProcess", Path: "/private/sentinel", Err: os.ErrPermission}
+	}
+	out.Reset()
+	err := svc.RunDispatch(context.Background(), []string{"run", "-run-dir", run}, &out, &out)
+	if calls != 1 || err == nil || !strings.Contains(err.Error(), "session-detachment") || strings.Contains(err.Error(), "sentinel") {
+		t.Fatalf("wrong launch failure: calls=%d err=%v", calls, err)
+	}
+	if _, err := os.Stat(filepath.Join(run, "started.json")); !os.IsNotExist(err) {
+		t.Fatal("failed launch published startup")
+	}
+}
+
+// TestUnboundedDecisionRefusesUnreadableFactsAndZeroSpace proves the prepare command/filesystem seam cannot waive unreadable existing facts or a measured zero-free filesystem.
+func TestUnboundedDecisionRefusesUnreadableFactsAndZeroSpace(t *testing.T) {
+	for _, kind := range []string{"bound", "observed", "zero"} {
+		t.Run(kind, func(t *testing.T) {
+			svc, _, args, _ := commandHarness(t)
+			bound := args[len(args)-1]
+			args = append(args, "-allow-unbounded", "-unbounded-decision", "fixture no-bound decision")
+			if kind == "bound" {
+				if err := os.Remove(bound); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(bound, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if kind == "observed" {
+				if err := os.MkdirAll(svc.CoordinationRoot, 0700); err != nil {
+					t.Fatal(err)
+				}
+				digest := sha256.Sum256([]byte("engine:/private/storage"))
+				if err := os.Mkdir(filepath.Join(svc.CoordinationRoot, fmt.Sprintf("%x-observed-peak.json", digest)), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if kind == "zero" {
+				if err := os.Remove(bound); err != nil {
+					t.Fatal(err)
+				}
+				svc.FreeSpace = func(string) (uint64, error) { return 0, nil }
+			}
+			var out bytes.Buffer
+			if err := svc.RunDispatch(context.Background(), args, &out, &out); err == nil {
+				t.Fatal("unbounded decision waived known/unreadable capacity")
+			}
+		})
 	}
 }

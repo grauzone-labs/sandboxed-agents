@@ -2,7 +2,10 @@ package liverun
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -15,17 +18,14 @@ type PeakFilesystem struct {
 	MinimumFreeBytes   uint64
 	SampledGrowthBytes uint64
 	Samples            int
+	SourceRevision     string
+	SourceStartedAt    time.Time
+	SourceEndedAt      time.Time
+	SourceComplete     bool
+	SourceContext      string
 }
 
-// PeakComponent is a maintainer-reasoned additional-space allowance for one filesystem and source of growth.
-type PeakComponent struct {
-	Filesystem string
-	Kind       string
-	Bytes      uint64
-	Basis      string
-}
-
-// peakPath names the last recorded run on the same host coordination root and engine.
+// peakPath names the maintainer-admitted conservative bound for this host user and engine.
 func peakPath(o Options, engine string) string {
 	return filepath.Join(o.LockRoot, engineKey(engine)+"-peak.json")
 }
@@ -63,7 +63,7 @@ func (s *Service) samplePeak(ctx context.Context, o Options, before Snapshot) fu
 		record.Basis = "sampled peak only; conservative bound missing: images, temporary build/suite/artifact storage, sampling gaps and future variation require reasoned coverage"
 		err := writeJSON(filepath.Join(o.RunDir, "peak.json"), record)
 		if err == nil {
-			err = writeJSON(observedPeakPath(o, before.EngineID), record)
+			err = retainObservedHighWater(o, record)
 		}
 		return err == nil
 	}
@@ -118,4 +118,87 @@ func observedPeakExceeds(o Options, before Snapshot, bound uint64) bool {
 		}
 	}
 	return false
+}
+
+// knownSpaceFailure refuses known bounds and matching sampled lower observations independently of any unbounded decision.
+func knownSpaceFailure(before Snapshot, records ...PeakRecord) (uint64, bool) {
+	for _, disk := range before.Disks {
+		if disk.FreeBytes == 0 {
+			return 0, true
+		}
+		for _, record := range records {
+			if record.EngineID != before.EngineID {
+				continue
+			}
+			if record.PeakAdditionalBytes > 0 && strings.TrimSpace(record.Basis) != "" && record.PeakAdditionalBytes >= disk.FreeBytes {
+				return record.PeakAdditionalBytes, true
+			}
+			for _, sample := range record.Filesystems {
+				if sample.Name == disk.Name && sample.Path == disk.Path && sample.Samples > 0 && sample.SampledGrowthBytes >= disk.FreeBytes {
+					return sample.SampledGrowthBytes, true
+				}
+			}
+		}
+	}
+	return 0, false
+}
+
+// retainObservedHighWater atomically preserves per-filesystem maxima and their source facts across interrupted or lower runs.
+func retainObservedHighWater(o Options, current PeakRecord) error {
+	path := observedPeakPath(o, current.EngineID)
+	var previous PeakRecord
+	err := readJSON(path, &previous)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil && previous.EngineID != current.EngineID {
+		return fmt.Errorf("previous observed engine identity unverified")
+	}
+	values := map[string]PeakFilesystem{}
+	key := func(s PeakFilesystem) string { return s.Name + "\x00" + s.Path }
+	for _, sample := range previous.Filesystems {
+		values[key(sample)] = peakSampleSource(sample, previous)
+	}
+	changed := err != nil
+	for _, sample := range current.Filesystems {
+		id := key(sample)
+		old, exists := values[id]
+		if !exists || sample.SampledGrowthBytes > old.SampledGrowthBytes || sample.SampledGrowthBytes == old.SampledGrowthBytes && current.SamplingComplete && !old.SourceComplete {
+			values[id] = peakSampleSource(sample, current)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	if len(values) > 64 {
+		return fmt.Errorf("observed filesystem history exceeds bound")
+	}
+	record := current
+	record.Filesystems = nil
+	record.SamplingComplete = true
+	record.SampleContext = "per-filesystem sampled high water; each source is retained separately; transients remain unobserved"
+	ids := make([]string, 0, len(values))
+	for id := range values {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		sample := values[id]
+		record.Filesystems = append(record.Filesystems, sample)
+		record.SamplingComplete = record.SamplingComplete && sample.SourceComplete
+	}
+	return writeJSON(path, record)
+}
+
+// peakSampleSource associates an observed maximum with the run that actually measured it.
+func peakSampleSource(sample PeakFilesystem, record PeakRecord) PeakFilesystem {
+	if sample.SourceRevision == "" {
+		sample.SourceRevision = record.Revision
+		sample.SourceStartedAt = record.SampleStartedAt
+		sample.SourceEndedAt = record.SampleEndedAt
+		sample.SourceComplete = record.SamplingComplete
+		sample.SourceContext = record.SampleContext
+	}
+	return sample
 }
