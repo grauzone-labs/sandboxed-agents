@@ -131,14 +131,6 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 	} else {
 		state = readBuildChannel(run.options, run.before)
 		results, proofErr = state.Results, state.Err
-		run.report.BuildPolicy = "unverified"
-		if state.Complete {
-			run.report.BuildPolicy = SingleCommitPolicy
-		} else if state.SingleCommitKnown {
-			run.report.BuildPolicy = "single-commit-and-unverified"
-		} else if state.LegacyKnown {
-			run.report.BuildPolicy = "legacy-or-unverified"
-		}
 	}
 	if proofErr != nil {
 		run.report.Unverified = append(run.report.Unverified, CleanupItem{Reason: "some trusted build evidence incomplete or invalid; only independent primary results admitted", Query: "private build-result channel"})
@@ -167,7 +159,6 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 			results = nil
 			trusted = nil
 			state.Complete = false
-			state.Open = true
 			break
 		}
 		boundAsset = result.Asset
@@ -179,6 +170,16 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 			proof.Reason = blocked[canonicalImageID(result.ID)]
 		}
 		trusted = append(trusted, proof)
+	}
+	if primaryChannel {
+		run.report.BuildPolicy = "unverified"
+		if state.Complete {
+			run.report.BuildPolicy = SingleCommitPolicy
+		} else if state.SingleCommitKnown {
+			run.report.BuildPolicy = "single-commit-and-unverified"
+		} else if state.LegacyKnown {
+			run.report.BuildPolicy = "legacy-or-unverified"
+		}
 	}
 	if len(results) > 0 {
 		asset = results[0].Asset

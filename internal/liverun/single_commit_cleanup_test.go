@@ -166,6 +166,63 @@ func TestSingleCommitCoverage(t *testing.T) {
 	}
 }
 
+// TestCleanupPrimaryAssetScopePolicy proves consistent primary receipts retain normal policy while contradictory assets withdraw all ownership and policy completeness at the producer/journal-to-Cleanup seam.
+func TestCleanupPrimaryAssetScopePolicy(t *testing.T) {
+	for _, mode := range []string{"consistent", "contradictory"} {
+		t.Run(mode, func(t *testing.T) {
+			svc, fake, options := cleanupHarness(t)
+			svc.BuildEvidence = nil
+			directory := filepath.Join(options.RunDir, "build-evidence")
+			if err := os.Mkdir(directory, 0700); err != nil {
+				t.Fatal(err)
+			}
+			cleanupArtifact(t, directory, "manifest.json", map[string]any{"Version": 2, "Invocation": strings.Repeat("f", 64), "Revision": strings.Repeat("a", 40), "EngineID": "engine:/private/storage"})
+			ids := []string{"sha256:" + strings.Repeat("b", 64), "sha256:" + strings.Repeat("c", 64)}
+			fake.images = map[string]cleanupFakeImage{}
+			for i, id := range ids {
+				asset := strings.Repeat("e", 64)
+				if mode == "contradictory" && i == 1 {
+					asset = strings.Repeat("d", 64)
+				}
+				tag := "localhost/sandboxed-agents:none-" + asset
+				if err := liverun.CaptureSingleCommitBuild(directory, tag, asset, false, func(path string) error { return os.WriteFile(path, []byte(id), 0600) }, func(string) (string, error) { return id, nil }); err != nil {
+					t.Fatal(err)
+				}
+				image := cleanupImageFixture(id)
+				image.Labels["io.sandboxed-agents.asset-sha256"] = asset
+				image.RepoTags = []string{tag}
+				if mode == "consistent" && i == 0 {
+					image.RepoTags = nil
+				}
+				fake.images[id] = image
+			}
+			var out bytes.Buffer
+			err := svc.Cleanup(context.Background(), options, &out)
+			var report liverun.CleanupReport
+			if e := json.Unmarshal(out.Bytes(), &report); e != nil {
+				t.Fatalf("no audit: %v %s", err, &out)
+			}
+			removed := cleanupRemoved(fake)
+			paths, _ := filepath.Glob(filepath.Join(options.RunDir, "cleanup-*", "build-record.json"))
+			if len(paths) != 1 {
+				t.Fatalf("missing primary record: %v", paths)
+			}
+			data, e := os.ReadFile(paths[0])
+			var record []struct{ Token string }
+			if e != nil || json.Unmarshal(data, &record) != nil {
+				t.Fatalf("unreadable record: %v", e)
+			}
+			if mode == "contradictory" {
+				if err == nil || report.Status != "unverified" || report.BuildPolicy != "single-commit-and-unverified" || len(removed) != 0 || len(fake.images) != 2 || len(record) != 0 || !strings.Contains(out.String(), "trusted asset identity inconsistent") {
+					t.Fatalf("contradictory primary scope granted ownership or optimistic policy: removed=%v record=%v err=%v %s", removed, record, err, &out)
+				}
+			} else if err != nil || report.Status != "complete" || report.BuildPolicy != "single-commit" || len(removed) != 2 || len(fake.images) != 0 || len(record) != 2 {
+				t.Fatalf("consistent primary control changed: removed=%v record=%v err=%v %s", removed, record, err, &out)
+			}
+		})
+	}
+}
+
 // TestInvalidAttemptArtifactsPreserveIndependentProof proves duplicate or filename-mismatched attempts quarantine their receipt while an independent primary final remains removable at the journal-to-Cleanup seam.
 func TestInvalidAttemptArtifactsPreserveIndependentProof(t *testing.T) {
 	for _, kind := range []string{"mismatched-name", "duplicate"} {
