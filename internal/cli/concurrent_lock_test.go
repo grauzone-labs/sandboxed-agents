@@ -306,7 +306,7 @@ func TestConcurrentImageFailureReleasesWaitingCommands(t *testing.T) {
 	}
 }
 
-// TestConcurrentWaitKeepsSameSandboxRefusalImmediate proves an up waiting inside a shared step
+// TestConcurrentWaitKeepsSameSandboxRefusalImmediate proves an up waiting inside an image-tag wait
 // retains its nonblocking lifecycle lock and refuses another up without object reads at the CLI seam.
 func TestConcurrentWaitKeepsSameSandboxRefusalImmediate(t *testing.T) {
 	f := linuxHost(t)
