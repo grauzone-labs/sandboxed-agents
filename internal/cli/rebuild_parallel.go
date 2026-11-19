@@ -22,8 +22,16 @@ type imageBuildOutcome struct {
 	log       *buildOutputSpool
 }
 
+// imageRebuildContext carries one selected target, asset hash, and captured base ID unchanged through a rebuild phase.
+// Value receivers keep concurrent workers on the same immutable build inputs; image sets and output sinks vary per operation.
+type imageRebuildContext struct {
+	target podmanTarget
+	hash   string
+	baseID string
+}
+
 // rebuildToolchains rebuilds sorted sets with bounded workers and publishes complete blocks without treating output failures as failed sets.
-func rebuildToolchains(p podmanTarget, sets map[string][]string, names []string, hash, baseID string, limit int, output, progress io.Writer) ([]error, error) {
+func (b imageRebuildContext) rebuildToolchains(sets map[string][]string, names []string, limit int, output, progress io.Writer) ([]error, error) {
 	type result struct {
 		index   int
 		outcome imageBuildOutcome
@@ -34,7 +42,7 @@ func rebuildToolchains(p podmanTarget, sets map[string][]string, names []string,
 	for range min(limit, len(names)) {
 		go func() {
 			for i := range jobs {
-				done <- result{i, rebuildSpooledImage(p, sets[names[i]], hash, baseID, publisher)}
+				done <- result{i, b.rebuildSpooledImage(sets[names[i]], publisher)}
 			}
 		}()
 	}
@@ -55,21 +63,20 @@ func rebuildToolchains(p podmanTarget, sets map[string][]string, names []string,
 }
 
 // rebuildSpooledImage holds one tag through build and primary evidence publication, releasing it before output publication.
-func rebuildSpooledImage(p podmanTarget, set []string, hash, baseID string, progress io.Writer) imageBuildOutcome {
-	lock, err := acquireImageTagLock(p, image.Tag(hash, set), progress)
+func (b imageRebuildContext) rebuildSpooledImage(set []string, progress io.Writer) imageBuildOutcome {
+	lock, err := acquireImageTagLock(b.target, image.Tag(b.hash, set), progress)
 	if err != nil {
-		return imageBuildOutcome{tag: image.Tag(hash, set), buildErr: err}
+		return imageBuildOutcome{tag: image.Tag(b.hash, set), buildErr: err}
 	}
 	defer lock.Close()
-	return buildSpooledImageUnderLock(p, set, hash, baseID, progress)
+	return b.buildSpooledImageUnderLock(set, progress)
 }
 
 // rebuildBaseWithProgress publishes a rebuilt base's output separately from its build result so toolchain work can continue after output errors.
-func rebuildBaseWithProgress(p podmanTarget, hash string, output, progress io.Writer) imageBuildOutcome {
+func (b imageRebuildContext) rebuildBaseWithProgress(output, progress io.Writer) imageBuildOutcome {
 	publisher := &serializedBuildWriter{writer: progress}
-	outcome := buildSpooledImageUnderLock(p, nil, hash, "", publisher)
-	outcome = publishRebuildOutcome(publisher, output, "base image", outcome)
-	return outcome
+	outcome := b.buildSpooledImageUnderLock(nil, publisher)
+	return publishRebuildOutcome(publisher, output, "base image", outcome)
 }
 
 // publishRebuildOutcome publishes one complete image block and its successful result under the publisher's exclusion, retaining accurate tag outcomes on I/O errors.
@@ -140,8 +147,8 @@ func (s *buildOutputSpool) publish(output io.Writer, name string) error {
 }
 
 // buildSpooledImageUnderLock uses the common build/evidence protocol and separates capture or context cleanup errors after a successful engine exit.
-func buildSpooledImageUnderLock(p podmanTarget, set []string, hash, baseID string, progress io.Writer) imageBuildOutcome {
-	outcome := imageBuildOutcome{tag: image.Tag(hash, set)}
+func (b imageRebuildContext) buildSpooledImageUnderLock(set []string, progress io.Writer) imageBuildOutcome {
+	outcome := imageBuildOutcome{tag: image.Tag(b.hash, set)}
 	log, err := newBuildOutputSpool()
 	if err != nil {
 		outcome.buildErr = err
@@ -149,9 +156,9 @@ func buildSpooledImageUnderLock(p podmanTarget, set []string, hash, baseID strin
 	}
 	outcome.log = log
 	rebuilt := false
-	_, err = buildLabeledImageWithRunner(p, set, hash, baseID, true, func(args ...string) error {
+	_, err = buildLabeledImageWithRunner(b.target, set, b.hash, b.baseID, true, func(args ...string) error {
 		writer := &buildProgressWriter{log: log, progress: progress, name: toolchainSet(set)}
-		command := p.command(context.Background(), 0, args...)
+		command := b.target.command(context.Background(), 0, args...)
 		captureErr := capture.Run(command, writer, writer)
 		rebuilt = command.ProcessState != nil && command.ProcessState.Success()
 		if captureErr != nil {

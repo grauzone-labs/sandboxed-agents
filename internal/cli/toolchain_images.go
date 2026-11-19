@@ -172,7 +172,7 @@ func rebuildImages(request Request, p podmanTarget, output, progress io.Writer) 
 		defer lock.Close()
 		var outcome imageBuildOutcome
 		if request.BuildJobs > 1 {
-			outcome = rebuildBaseWithProgress(p, hash, output, progress)
+			outcome = (imageRebuildContext{target: p, hash: hash}).rebuildBaseWithProgress(output, progress)
 		} else {
 			outcome.tag, outcome.buildErr = buildLabeledImageUnderLock(p, nil, hash, "", true, output)
 		}
@@ -213,7 +213,7 @@ func rebuildImages(request Request, p podmanTarget, output, progress io.Writer) 
 	outputErr := baseOutputErr
 	if request.BuildJobs > 1 {
 		var toolchainOutputErr error
-		buildFailures, toolchainOutputErr = rebuildToolchains(p, sets, names, hash, baseID, request.BuildJobs, output, progress)
+		buildFailures, toolchainOutputErr = (imageRebuildContext{target: p, hash: hash, baseID: baseID}).rebuildToolchains(sets, names, request.BuildJobs, output, progress)
 		outputErr = errors.Join(outputErr, toolchainOutputErr)
 	} else {
 		for i, name := range names {
