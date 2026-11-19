@@ -231,7 +231,9 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 		preflightDirectory = ""
 		_ = os.WriteFile(filepath.Join(directory, "preflight-timing-unverified"), []byte("preflight timing channel unavailable\n"), 0600)
 	}
-	suite := exec.Command("go", "test", "./cmd/sandboxed-agents", "-run", "^TestLiveSuite$", "-timeout", "120m", "-v")
+	// Minutes preserve the existing 120m argv while sharing the observation window.
+	suiteTimeout := strconv.FormatFloat(preflighttiming.MaxSeconds/time.Minute.Seconds(), 'f', -1, 64) + "m"
+	suite := exec.Command("go", "test", "./cmd/sandboxed-agents", "-run", "^TestLiveSuite$", "-timeout", suiteTimeout, "-v")
 	suite.Dir = options.Checkout
 	images := "0"
 	if options.Images {

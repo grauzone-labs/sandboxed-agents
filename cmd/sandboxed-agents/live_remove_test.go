@@ -96,7 +96,8 @@ trap '/bin/rm -f -- "$TEST_REMOVE_LOCK"' EXIT
 }
 
 // TestLiveRemoveWaitPreservesCancellation proves a queued suite removal obeys
-// its context before starting a process, through the held gate and fake CLI seam.
+// its context, reports not-started and avoids engine diagnostics while retaining
+// its failure timing/control markers, through the held gate and fake CLI seam.
 func TestLiveRemoveWaitPreservesCancellation(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	t.Setenv("PATH", fakes.Dir)
@@ -106,11 +107,12 @@ func TestLiveRemoveWaitPreservesCancellation(t *testing.T) {
 	host := suite.host
 	host.binary = liveFakeProgram(t)
 	host.environment = fakes.Env(os.Environ())
-	host.failures = nil
 	host.removals <- struct{}{}
 	defer func() { <-host.removals }()
 	blocked := make(chan struct{}, 1)
+	var events []string
 	host.report = func(line string) {
+		events = append(events, line)
 		if strings.Contains(line, "waiting for another suite remove") {
 			blocked <- struct{}{}
 		}
@@ -130,8 +132,21 @@ func TestLiveRemoveWaitPreservesCancellation(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("queued removal: %v", err)
 		}
+		if strings.Contains(err.Error(), "engine operations may still be running") || !strings.Contains(err.Error(), "host invocation was not started: suite remove gate") {
+			t.Errorf("queued removal implied an actual invocation: %v", err)
+		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("queued remove ignored cancellation")
+	}
+	timings := host.timings.evidence.Operations
+	if len(timings) != 1 || timings[0].Source != "cli" || timings[0].Operation != "cleanup" || timings[0].Result != "fail" {
+		t.Errorf("queued failure timing changed: %+v", timings)
+	}
+	if len(host.failures.evidence.Samples) != 0 {
+		t.Errorf("queue wait consumed engine diagnostic samples: %+v", host.failures.evidence.Samples)
+	}
+	if !strings.Contains(strings.Join(events, "\n"), "live operation cleanup: started") || !strings.Contains(strings.Join(events, "\n"), "live operation cleanup: finished after") {
+		t.Errorf("queued failure control markers lost: %v", events)
 	}
 	assertNoExternalCalls(t, fakes)
 }

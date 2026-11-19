@@ -177,6 +177,8 @@ func newLiveSuite(t *testing.T) *liveSuite {
 				collectionDirectory, lost = timingDirectory, suite.host.ledger.Unverified()
 			}
 			// Retain a refused channel explicitly; collection must not reuse its files.
+			// CollectPreflight reads only pointer presence, not the current seconds value.
+			// Assign T below so it includes journal reading and ledger close.
 			suite.host.timings.evidence.Preflight = validationduration.CollectPreflight(collectionDirectory, suite.commit, &seconds, lost)
 			suite.host.ledger.Close()
 		}

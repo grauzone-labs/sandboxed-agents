@@ -105,7 +105,13 @@ func hostFixture(role string, args []string) int {
 			return 0
 		}
 		if args[0] == "test" {
-			data, _ := json.Marshal(map[string]string{"overlap": os.Getenv(liverun.CaseOverlapEnv), "build_jobs": os.Getenv(liverun.BuildJobsEnv), "preflight_dir": os.Getenv(preflighttiming.DirEnv), "preflight_token": os.Getenv(preflighttiming.TokenEnv)})
+			timeout := ""
+			for index, arg := range args {
+				if arg == "-timeout" && index+1 < len(args) {
+					timeout = args[index+1]
+				}
+			}
+			data, _ := json.Marshal(map[string]string{"suite_timeout": timeout, "overlap": os.Getenv(liverun.CaseOverlapEnv), "build_jobs": os.Getenv(liverun.BuildJobsEnv), "preflight_dir": os.Getenv(preflighttiming.DirEnv), "preflight_token": os.Getenv(preflighttiming.TokenEnv)})
 			if err := os.WriteFile(filepath.Join(root, "suite-inputs.json"), data, 0600); err != nil {
 				return 2
 			}
@@ -716,6 +722,10 @@ func TestRunPreflightChannelIsSupplemental(t *testing.T) {
 			}
 			if inputs["preflight_token"] != "" {
 				t.Fatal("suite inherited a process token")
+			}
+			duration, err := time.ParseDuration(inputs["suite_timeout"])
+			if err != nil || inputs["suite_timeout"] != "120m" || duration.Seconds() != preflighttiming.MaxSeconds {
+				t.Fatalf("actual suite command timeout %q differs from measurement window %v: %v", inputs["suite_timeout"], preflighttiming.MaxSeconds, err)
 			}
 			if blocked {
 				if inputs["preflight_dir"] != "" {

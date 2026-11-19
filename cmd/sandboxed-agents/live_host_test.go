@@ -196,8 +196,9 @@ func (host liveHost) cli(input string, args ...string) (string, error) {
 	return host.cliContext(context.Background(), input, args...)
 }
 
-// cliContext supervises only the live invocation's host process tree. A deadline does not prove
-// a remote engine operation stopped; report that ambiguity for the suite's existing reconciliation.
+// cliContext supervises the invocation's host process tree. A cancelled remove-gate
+// wait starts no invocation or diagnostics. After an invocation is attempted, a deadline
+// cannot prove a remote operation stopped; retain that ambiguity for reconciliation.
 func (host liveHost) cliContext(ctx context.Context, input string, args ...string) (string, error) {
 	operation := liveCLIClass(args)
 	ctx, cancel := context.WithTimeout(ctx, host.operationBound(operation))
@@ -206,6 +207,7 @@ func (host liveHost) cliContext(ctx context.Context, input string, args ...strin
 	host.reportOperation(operation, "started")
 	output := liveOutput{lines: liveLineStream{report: host.report}}
 	var err error
+	removeNotStarted := false
 	if len(args) > 0 && args[0] == "remove" && host.removals != nil {
 		select {
 		case host.removals <- struct{}{}:
@@ -215,6 +217,7 @@ func (host liveHost) cliContext(ctx context.Context, input string, args ...strin
 			case host.removals <- struct{}{}:
 			case <-ctx.Done():
 				err = ctx.Err()
+				removeNotStarted = true
 			}
 		}
 		if err == nil {
@@ -237,11 +240,15 @@ func (host liveHost) cliContext(ctx context.Context, input string, args ...strin
 	host.reportOperation(operation, fmt.Sprintf("finished after %s", time.Since(started).Round(time.Millisecond)))
 	if err != nil {
 		err = fmt.Errorf("live CLI failed after %s (operation %s, bound %s): %w", time.Since(started).Round(time.Millisecond), operation, host.operationBound(operation), err)
-		if ctx.Err() != nil {
+		if removeNotStarted {
+			err = fmt.Errorf("%w; host invocation was not started: suite remove gate", err)
+		} else if ctx.Err() != nil {
 			err = fmt.Errorf("%w; host invocation cancelled; engine operations may still be running: reconcile recorded objects before cleanup", err)
 		}
 	}
-	host.observeFailure("cli", operation, err)
+	if !removeNotStarted {
+		host.observeFailure("cli", operation, err)
+	}
 	return output.String(), err
 }
 
