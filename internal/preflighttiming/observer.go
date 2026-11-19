@@ -17,7 +17,7 @@ const (
 
 // Phase records an entered interval; seconds and outcome exist only after its call returns.
 type Phase struct {
-	State   string   `json:"state"`
+	State   State    `json:"state"`
 	Outcome string   `json:"outcome,omitempty"`
 	Seconds *float64 `json:"seconds,omitempty"`
 }
@@ -78,9 +78,9 @@ func Observe[T any](o *Observer, scope Scope, call func() (T, error)) (T, error)
 	}
 	repeated := *phase != nil
 	if repeated {
-		*phase = &Phase{State: "repeated"}
+		*phase = &Phase{State: StateRepeated}
 	} else {
-		*phase = &Phase{State: "open"}
+		*phase = &Phase{State: StateOpen}
 	}
 	if !o.closed {
 		_ = writeFile(o.root, "inv-"+o.record.Token+".json", o.record)
@@ -90,12 +90,12 @@ func Observe[T any](o *Observer, scope Scope, call func() (T, error)) (T, error)
 	value, err := call()
 	seconds := time.Since(started).Seconds()
 	o.mu.Lock()
-	if !repeated && (*phase).State != "repeated" {
-		outcome := "pass"
+	if !repeated && (*phase).State != StateRepeated {
+		outcome := OutcomePass
 		if err != nil {
-			outcome = "fail"
+			outcome = OutcomeFail
 		}
-		*phase = &Phase{State: "closed", Outcome: outcome, Seconds: &seconds}
+		*phase = &Phase{State: StateClosed, Outcome: outcome, Seconds: &seconds}
 	}
 	if !o.closed {
 		_ = writeFile(o.root, "inv-"+o.record.Token+".json", o.record)

@@ -1,7 +1,6 @@
 package preflighttiming
 
 import (
-	"math"
 	"os"
 	"sync"
 )
@@ -87,7 +86,7 @@ func (l *Ledger) Finish(token, result string, seconds float64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	launch, ok := l.pending[token]
-	if !ok || result != "pass" && result != "fail" || seconds < 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+	if !ok || !ValidCompletion(result, &seconds) {
 		l.unverified = true
 		return
 	}

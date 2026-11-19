@@ -189,14 +189,7 @@ func retainOperationPhases(directory string, source sourceRecord, state Context)
 		}
 	}
 	if state.PreflightDir != "" {
-		lost := evidence.Preflight != nil && evidence.Preflight.LedgerUnverified
-		channel := state.PreflightDir
-		// A suite which refused its ledger cannot be made measurable by a later
-		// reread of that refused directory, even when its old manifest matches.
-		if evidence.Preflight != nil && slices.Contains(evidence.Preflight.Reasons, "channel-unavailable") {
-			channel = ""
-		}
-		evidence.Preflight = CollectPreflight(channel, evidence.Commit, evidence.SuiteSeconds, lost)
+		recollectPreflight(&evidence, state.PreflightDir)
 	}
 	_, err = WriteOperations(directory, evidence)
 	return err

@@ -13,11 +13,7 @@ import (
 )
 
 // ScopeTiming distinguishes a returned scope from an open or unentered call.
-type ScopeTiming struct {
-	State   string   `json:"state"`
-	Outcome string   `json:"outcome,omitempty"`
-	Seconds *float64 `json:"seconds,omitempty"`
-}
+type ScopeTiming = preflighttiming.Phase
 
 // ScopeTotals sums only closed observations, independently for each scope.
 type ScopeTotals struct {
@@ -63,15 +59,15 @@ var preflightReasons = []string{"channel-unavailable", "manifest-invalid", "revi
 // classifyScope retains absence as a classification, never a fabricated zero duration.
 func classifyScope(invocation *preflighttiming.Invocation, phase, other *preflighttiming.Phase) ScopeTiming {
 	if invocation == nil {
-		return ScopeTiming{State: "unobserved"}
+		return ScopeTiming{State: preflighttiming.StateUnobserved}
 	}
 	if phase != nil {
 		return ScopeTiming{State: phase.State, Outcome: phase.Outcome, Seconds: phase.Seconds}
 	}
 	if invocation.Returned || other != nil {
-		return ScopeTiming{State: "not-entered"}
+		return ScopeTiming{State: preflighttiming.StateNotEntered}
 	}
-	return ScopeTiming{State: "unknown"}
+	return ScopeTiming{State: preflighttiming.StateUnknown}
 }
 
 // CollectPreflight reads the bounded private channel and publishes only fixed vocabulary.
@@ -86,14 +82,14 @@ func CollectPreflight(directory, revision string, suiteSeconds *float64, ledgerU
 			journal, err = preflighttiming.Read(directory, revision)
 		}
 	}
-	channelReason := ""
+	channelFailure := ""
 	if err != nil {
-		channelReason = "channel-unavailable"
+		channelFailure = "channel-unavailable"
 		if errors.Is(err, preflighttiming.ErrManifest) {
-			channelReason = "manifest-invalid"
+			channelFailure = "manifest-invalid"
 		}
 		if errors.Is(err, preflighttiming.ErrRevision) {
-			channelReason = "revision-mismatch"
+			channelFailure = "revision-mismatch"
 		}
 	}
 	summary.InvalidFiles = journal.InvalidFiles
@@ -115,16 +111,16 @@ func CollectPreflight(directory, revision string, suiteSeconds *float64, ledgerU
 		row.TargetSelection = classifyScope(entry.Invocation, s, p)
 		summary.Rows = append(summary.Rows, row)
 	}
-	summarizePreflight(summary, suiteSeconds, channelReason)
+	summarizePreflight(summary, suiteSeconds, channelFailure)
 	return summary
 }
 
 // addScope counts one scope without treating an open or absent interval as zero.
 func addScope(total *ScopeTotals, scope ScopeTiming) {
 	switch scope.State {
-	case "closed":
+	case preflighttiming.StateClosed:
 		total.Measured++
-		if scope.Outcome == "pass" {
+		if scope.Outcome == preflighttiming.OutcomePass {
 			total.Pass++
 		} else {
 			total.Fail++
@@ -133,20 +129,20 @@ func addScope(total *ScopeTotals, scope ScopeTiming) {
 			total.Seconds = new(float64)
 		}
 		*total.Seconds += *scope.Seconds
-	case "open":
+	case preflighttiming.StateOpen:
 		total.Open++
-	case "not-entered":
+	case preflighttiming.StateNotEntered:
 		total.NotEntered++
 	}
 }
 
 // summarizePreflight derives all counts, sums and reasons from retained row facts.
-func summarizePreflight(summary *PreflightSummary, suiteSeconds *float64, channelReason string) {
+func summarizePreflight(summary *PreflightSummary, suiteSeconds *float64, channelFailure string) {
 	summary.Invocations, summary.Unobserved, summary.Unknown, summary.Unattributed = 0, 0, 0, 0
 	summary.Preflight, summary.TargetSelection = ScopeTotals{}, ScopeTotals{}
 	reasons := map[string]bool{}
-	if channelReason != "" {
-		reasons[channelReason] = true
+	if channelFailure != "" {
+		reasons[channelFailure] = true
 	}
 	if suiteSeconds == nil {
 		reasons["suite-unfinished"] = true
@@ -157,10 +153,10 @@ func summarizePreflight(summary *PreflightSummary, suiteSeconds *float64, channe
 		} else {
 			summary.Invocations++
 		}
-		if row.Preflight.State == "unobserved" || row.TargetSelection.State == "unobserved" {
+		if row.Preflight.State == preflighttiming.StateUnobserved || row.TargetSelection.State == preflighttiming.StateUnobserved {
 			summary.Unobserved++
 		}
-		if row.Preflight.State == "unknown" || row.TargetSelection.State == "unknown" || row.Sequence > 0 && row.Result == "" {
+		if row.Preflight.State == preflighttiming.StateUnknown || row.TargetSelection.State == preflighttiming.StateUnknown || row.Sequence > 0 && row.Result == "" {
 			summary.Unknown++
 		}
 		addScope(&summary.Preflight, row.Preflight)
@@ -194,20 +190,20 @@ func summarizePreflight(summary *PreflightSummary, suiteSeconds *float64, channe
 	if len(summary.Reasons) > 0 {
 		summary.State = "incomplete"
 	}
-	if summary.Invocations == 0 || channelReason == "channel-unavailable" {
+	if summary.Invocations == 0 || channelFailure == "channel-unavailable" {
 		summary.State = "not-collected"
 	}
-	if channelReason == "manifest-invalid" || channelReason == "revision-mismatch" {
+	if channelFailure == "manifest-invalid" || channelFailure == "revision-mismatch" {
 		summary.State = "invalid"
 	}
 }
 
 // validateScope permits seconds only for an actually returned, classified scope.
 func validateScope(scope ScopeTiming) bool {
-	if scope.State == "closed" {
-		return (scope.Outcome == "pass" || scope.Outcome == "fail") && scope.Seconds != nil && validSeconds(*scope.Seconds)
+	if scope.State == preflighttiming.StateClosed {
+		return scope.Outcome != "" && preflighttiming.ValidCompletion(scope.Outcome, scope.Seconds)
 	}
-	return slices.Contains([]string{"open", "not-entered", "unknown", "unobserved"}, scope.State) && scope.Outcome == "" && scope.Seconds == nil
+	return slices.Contains([]preflighttiming.State{preflighttiming.StateOpen, preflighttiming.StateNotEntered, preflighttiming.StateUnknown, preflighttiming.StateUnobserved}, scope.State) && scope.Outcome == "" && scope.Seconds == nil
 }
 
 // validatePreflight checks rows and independently reconciles the published summary.
@@ -228,26 +224,26 @@ func validatePreflight(summary *PreflightSummary, suiteSeconds *float64) error {
 				return fmt.Errorf("invalid unattributed observation")
 			}
 		} else {
-			if seen[row.Sequence] || !slices.Contains(operationCases, row.Case) || !slices.Contains(operationClasses, row.Operation) || (row.Result == "") != (row.Seconds == nil) || row.Result != "" && (row.Result != "pass" && row.Result != "fail" || !validSeconds(*row.Seconds)) {
+			if seen[row.Sequence] || !slices.Contains(operationCases, row.Case) || !slices.Contains(operationClasses, row.Operation) || !preflighttiming.ValidCompletion(row.Result, row.Seconds) {
 				return fmt.Errorf("invalid preflight launch")
 			}
 			seen[row.Sequence] = true
 		}
 	}
-	channelReason := ""
+	channelFailure := ""
 	for _, reason := range summary.Reasons {
 		if !slices.Contains(preflightReasons, reason) {
 			return fmt.Errorf("invalid preflight reason")
 		}
-		if slices.Contains(preflightReasons[:3], reason) {
-			if channelReason != "" || len(summary.Rows) != 0 {
+		if channelReason(reason) {
+			if channelFailure != "" || len(summary.Rows) != 0 {
 				return fmt.Errorf("invalid preflight channel state")
 			}
-			channelReason = reason
+			channelFailure = reason
 		}
 	}
 	expected := *summary
-	summarizePreflight(&expected, suiteSeconds, channelReason)
+	summarizePreflight(&expected, suiteSeconds, channelFailure)
 	if !sameMeasuredSeconds(summary.Preflight.Seconds, expected.Preflight.Seconds) || !sameMeasuredSeconds(summary.TargetSelection.Seconds, expected.TargetSelection.Seconds) {
 		return fmt.Errorf("inconsistent preflight seconds")
 	}
@@ -267,4 +263,23 @@ func sameMeasuredSeconds(actual, expected *float64) bool {
 		return actual == nil && expected == nil
 	}
 	return validSeconds(*actual) && validSeconds(*expected) && math.Abs(*actual-*expected) <= 1e-9*max(1, math.Abs(*expected))
+}
+
+// channelReason names directory/manifest failures independently of reason order.
+func channelReason(reason string) bool {
+	switch reason {
+	case "channel-unavailable", "manifest-invalid", "revision-mismatch":
+		return true
+	}
+	return false
+}
+
+// recollectPreflight owns sticky observation loss and suite refusal when replacing
+// a previous summary; only fresh journal data is recomputed, never core evidence.
+func recollectPreflight(evidence *Operations, directory string) {
+	lost := evidence.Preflight != nil && evidence.Preflight.LedgerUnverified
+	if evidence.Preflight != nil && slices.Contains(evidence.Preflight.Reasons, "channel-unavailable") {
+		directory = ""
+	}
+	evidence.Preflight = CollectPreflight(directory, evidence.Commit, evidence.SuiteSeconds, lost)
 }

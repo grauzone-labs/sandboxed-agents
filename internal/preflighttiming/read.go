@@ -1,7 +1,6 @@
 package preflighttiming
 
 import (
-	"math"
 	"sort"
 	"strings"
 )
@@ -18,20 +17,15 @@ type Journal struct {
 	InvalidFiles int
 }
 
-// validSeconds rejects non-finite or negative observation intervals.
-func validSeconds(seconds *float64) bool {
-	return seconds != nil && *seconds >= 0 && !math.IsNaN(*seconds) && !math.IsInf(*seconds, 0)
-}
-
 // validPhase preserves the distinction between entered-open and returned intervals.
 func validPhase(phase *Phase) bool {
 	if phase == nil {
 		return true
 	}
-	if phase.State == "open" {
+	if phase.State == StateOpen {
 		return phase.Outcome == "" && phase.Seconds == nil
 	}
-	return phase.State == "closed" && (phase.Outcome == "pass" || phase.Outcome == "fail") && validSeconds(phase.Seconds)
+	return phase.State == StateClosed && phase.Outcome != "" && ValidCompletion(phase.Outcome, phase.Seconds)
 }
 
 // Read joins a bounded channel for a revision; unavailable channels never imply zero work.
@@ -73,7 +67,7 @@ func Read(dir, revision string) (Journal, error) {
 		}
 		if kind == "launch" {
 			var launch Launch
-			if readFile(root, filename, &launch) != nil || launch.Version != 1 || launch.Run != m.Run || launch.Token != token || launch.Sequence < 1 || launch.Sequence > EntryLimit || sequences[launch.Sequence] || len(launch.Case) > 64 || len(launch.Operation) > 64 || (launch.Result == "") != (launch.Seconds == nil) || launch.Result != "" && (launch.Result != "pass" && launch.Result != "fail" || !validSeconds(launch.Seconds)) {
+			if readFile(root, filename, &launch) != nil || launch.Version != 1 || launch.Run != m.Run || launch.Token != token || launch.Sequence < 1 || launch.Sequence > EntryLimit || sequences[launch.Sequence] || len(launch.Case) > 64 || len(launch.Operation) > 64 || !ValidCompletion(launch.Result, launch.Seconds) {
 				journal.InvalidFiles++
 				continue
 			}

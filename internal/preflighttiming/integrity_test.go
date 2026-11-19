@@ -254,3 +254,82 @@ func TestJournalBoundsAndManifestIdentity(t *testing.T) {
 		}
 	}
 }
+
+// TestJournalSecondsStayWithinSuiteWindow proves the actual 120-minute window
+// boundary is readable while a larger finite interval is excluded as invalid
+// observation data rather than a manifest failure at the public journal seam.
+func TestJournalSecondsStayWithinSuiteWindow(t *testing.T) {
+	directory, ledger := observedChannel(t)
+	_, token, err := ledger.Launch("suite", "inspection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := observerFor(directory, token)
+	preflighttiming.Observe(observer, preflighttiming.Preflight, func() (int, error) { return 1, nil })
+	observer.Returned()
+	ledger.Finish(token, "pass", 1)
+	path := filepath.Join(directory, "inv-"+token+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var invocation preflighttiming.Invocation
+	if err := json.Unmarshal(data, &invocation); err != nil {
+		t.Fatal(err)
+	}
+	seconds := preflighttiming.MaxSeconds
+	invocation.Preflight.Seconds = &seconds
+	for _, valid := range []bool{true, false} {
+		if !valid {
+			seconds++
+		}
+		data, err := json.Marshal(invocation)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		journal, err := preflighttiming.Read(directory, strings.Repeat("a", 40))
+		if err != nil || len(journal.Entries) != 1 {
+			t.Fatalf("numeric corruption changed channel identity: %+v %v", journal, err)
+		}
+		if valid && (journal.InvalidFiles != 0 || journal.Entries[0].Invocation == nil) || !valid && (journal.InvalidFiles != 1 || journal.Entries[0].Invocation != nil) {
+			t.Fatalf("suite bound not enforced: valid %v journal %+v", valid, journal)
+		}
+	}
+	// Corrupting only a launch's inclusive interval must preserve the valid
+	// product observation as unattributed, rather than discard its closed scope.
+	seconds = 0.25
+	invocation.Preflight.Seconds = &seconds
+	data, err = json.Marshal(invocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	launchPath := filepath.Join(directory, "launch-"+token+".json")
+	data, err = os.ReadFile(launchPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var launch preflighttiming.Launch
+	if err := json.Unmarshal(data, &launch); err != nil {
+		t.Fatal(err)
+	}
+	oversized := preflighttiming.MaxSeconds + 1
+	launch.Seconds = &oversized
+	data, err = json.Marshal(launch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(launchPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	journal, err := preflighttiming.Read(directory, strings.Repeat("a", 40))
+	if err != nil || journal.InvalidFiles != 1 || len(journal.Entries) != 1 || journal.Entries[0].Launch != nil || journal.Entries[0].Invocation == nil || *journal.Entries[0].Invocation.Preflight.Seconds != 0.25 {
+		t.Fatalf("valid unattributed observation lost: %+v %v", journal, err)
+	}
+
+}

@@ -68,6 +68,7 @@ func TestRetainOperationsReconcilesCaseAndPhaseSeconds(t *testing.T) {
 func TestRetainPreservesDurationsWithUnsafeOperations(t *testing.T) {
 	const safe = `{"schema_version":1,"kind":"live-suite-operations","commit":"0123456789abcdef0123456789abcdef01234567","platform":"linux","operations":[{"case":"lifecycle","source":"cli","operation":"image build or sandbox start","result":"fail","seconds":2}],"cases":[{"name":"lifecycle","result":"fail","seconds":3,"unaccounted_seconds":1}]}`
 	for _, scenario := range []struct{ name, data string }{
+		{"corrupt-preflight", strings.Replace(safe, `"operations":`, `"preflight":{"state":"complete","reasons":[],"rows":[{"sequence":0,"preflight":{"state":"closed","outcome":"pass","seconds":1e308},"target_selection":{"state":"not-entered"}}]},"operations":`, 1)},
 		{"unknown-output", strings.Replace(safe, `"operations":`, `"output":"private path", "operations":`, 1)},
 		{"private-case", strings.Replace(safe, `"case":"lifecycle"`, `"case":"private-sandbox"`, 1)},
 		{"private-operation", strings.Replace(safe, `"operation":"image build or sandbox start"`, `"operation":"/private/command"`, 1)},
@@ -88,7 +89,7 @@ func TestRetainPreservesDurationsWithUnsafeOperations(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			retained, err := validationduration.Retain(strings.NewReader("    --- FAIL: TestLiveSuite/lifecycle (8.00s)\n"), path, validationduration.Context{HostLoad: "unknown", BaseImage: "unknown", BuildCache: "unknown"})
+			retained, err := validationduration.Retain(strings.NewReader("    --- FAIL: TestLiveSuite/lifecycle (8.00s)\n"), path, validationduration.Context{HostLoad: "unknown", BaseImage: "unknown", BuildCache: "unknown", PreflightDir: t.TempDir()})
 			if err == nil || !strings.Contains(err.Error(), "optional operation evidence") || retained != durations {
 				t.Fatalf("optional evidence must report error and retained duration path: path=%q err=%v", retained, err)
 			}

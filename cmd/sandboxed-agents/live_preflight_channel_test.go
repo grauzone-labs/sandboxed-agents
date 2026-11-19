@@ -29,9 +29,9 @@ func (host liveHost) timingEnvironment(operation string) ([]string, string) {
 
 // finishTiming records inclusive process results without exposing errors or output.
 func (host liveHost) finishTiming(token string, seconds float64, err error) {
-	result := "pass"
+	result := preflighttiming.OutcomePass
 	if err != nil {
-		result = "fail"
+		result = preflighttiming.OutcomeFail
 	}
 	host.ledger.Finish(token, result, seconds)
 }
