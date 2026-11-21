@@ -136,9 +136,8 @@ func TestStrictDecodeRejectsDuplicateMembers(t *testing.T) {
 		{"single", `{"status":"complete","removed":` + removed + `}`, true},
 		{"duplicate", `{"status":"complete","removed":` + removed + `,"removed":[]}`, false},
 		{"case-variant", `{"status":"complete","Removed":[],"removed":` + removed + `}`, false},
-		// encoding/json folds U+017F LATIN SMALL LETTER LONG S to "s" and U+212A KELVIN SIGN to "k".
+		// encoding/json folds U+017F LATIN SMALL LETTER LONG S to "s".
 		{"unicode-fold-variant", `{"status":"complete","\u017ftatus":"complete","removed":` + removed + `}`, false},
-		{"kelvin-fold-variant", `{"status":"complete","removed":[{"id":"a","size_bytes":1,"\u212aize_bytes":2,"size_verified":true}]}`, false},
 		{"nested", `{"status":"complete","removed":[{"id":"a","id":"b","size_bytes":1,"size_verified":true}]}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -151,6 +150,18 @@ func TestStrictDecodeRejectsDuplicateMembers(t *testing.T) {
 				t.Fatalf("unambiguous report misread: %+v", report)
 			}
 		})
+	}
+}
+
+// TestRejectDuplicateMembersFoldsKelvinSign proves the duplicate-member scan treats a name that starts with U+212A
+// KELVIN SIGN as the same member as its ASCII "k" spelling, as encoding/json does, while a single such member passes.
+// It exercises the strict private-evidence duplicate scan seam directly, without unknown-field rejection.
+func TestRejectDuplicateMembersFoldsKelvinSign(t *testing.T) {
+	if err := rejectDuplicateMembers([]byte(`{"key":1,"\u212aey":2}`)); err == nil {
+		t.Error("a Kelvin-sign variant of an earlier member was accepted")
+	}
+	if err := rejectDuplicateMembers([]byte(`{"\u212aey":1}`)); err != nil {
+		t.Errorf("a single Kelvin-sign member was refused: %v", err)
 	}
 }
 
