@@ -32,11 +32,10 @@ func (s *Service) inventory(ctx context.Context, o Options, before *Snapshot) er
 		}
 	}
 	if len(ids) > 0 {
-		data, err = s.podman(ctx, o, before.Target, append([]string{"image", "inspect"}, ids...)...)
+		before.Images, err = inspectBatches[Image](ids, func(batch []string) ([]byte, error) {
+			return s.podman(ctx, o, before.Target, append([]string{"image", "inspect"}, batch...)...)
+		})
 		if err != nil {
-			return err
-		}
-		if err = json.Unmarshal(data, &before.Images); err != nil {
 			return err
 		}
 		if len(before.Images) != len(ids) {
@@ -70,11 +69,10 @@ func (s *Service) inventory(ctx context.Context, o Options, before *Snapshot) er
 		ids = append(ids, container.ID)
 	}
 	if len(ids) > 0 {
-		data, err = s.podman(ctx, o, before.Target, append([]string{"container", "inspect"}, ids...)...)
+		before.Containers, err = inspectBatches[Container](ids, func(batch []string) ([]byte, error) {
+			return s.podman(ctx, o, before.Target, append([]string{"container", "inspect"}, batch...)...)
+		})
 		if err != nil {
-			return err
-		}
-		if err = json.Unmarshal(data, &before.Containers); err != nil {
 			return err
 		}
 		if len(before.Containers) != len(ids) {
@@ -94,6 +92,32 @@ func (s *Service) inventory(ctx context.Context, o Options, before *Snapshot) er
 		}
 	}
 	return nil
+}
+
+// inspectBatchSize bounds the IDs of one inspect query. Sixty-four full IDs keep a complete Podman command line far
+// below the 32,767-character CreateProcessW limit on Windows, which an unbatched inventory of about 450 IDs exceeds.
+const inspectBatchSize = 64
+
+// inspectBatches runs one inspect query per bounded batch of ids, in order, and concatenates the decoded answers.
+// Each batch must decode to one entry per requested ID; the caller still checks identities across the combined result.
+func inspectBatches[T any](ids []string, inspect func(batch []string) ([]byte, error)) ([]T, error) {
+	result := []T{}
+	for start := 0; start < len(ids); start += inspectBatchSize {
+		batch := ids[start:min(start+inspectBatchSize, len(ids))]
+		data, err := inspect(batch)
+		if err != nil {
+			return nil, err
+		}
+		var decoded []T
+		if err = json.Unmarshal(data, &decoded); err != nil {
+			return nil, err
+		}
+		if len(decoded) != len(batch) {
+			return nil, fmt.Errorf("incomplete inspection batch")
+		}
+		result = append(result, decoded...)
+	}
+	return result, nil
 }
 
 // imageIDPattern admits only full immutable image identifiers.
