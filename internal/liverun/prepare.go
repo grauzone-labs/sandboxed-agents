@@ -18,8 +18,19 @@ func (s *Service) prepare(ctx context.Context, o Options) (Snapshot, error) {
 	if err := os.MkdirAll(o.RunDir, 0700); err != nil {
 		return Snapshot{}, err
 	}
-	if _, err := os.Stat(filepath.Join(o.RunDir, "started.json")); err == nil {
-		return Snapshot{}, fmt.Errorf("run directory already used")
+	// Holding launch.lock and seeing no reservation keeps run's checked options bound to the supervisor.
+	launchLock, err := os.OpenFile(filepath.Join(o.RunDir, "launch.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("private run directory unavailable")
+	}
+	defer launchLock.Close()
+	if err = lockFile(launchLock); err != nil {
+		return Snapshot{}, fmt.Errorf("this run is already starting")
+	}
+	for _, name := range []string{"started.json", "launching.json"} {
+		if _, err := os.Stat(filepath.Join(o.RunDir, name)); err == nil {
+			return Snapshot{}, fmt.Errorf("run directory already used")
+		}
 	}
 	before, lock, err := s.prepareLocked(ctx, o)
 	if err != nil {

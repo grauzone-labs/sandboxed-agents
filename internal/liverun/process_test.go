@@ -531,6 +531,47 @@ func TestRunReservesDirectoryBeforeStartingSupervisor(t *testing.T) {
 	}
 }
 
+// TestPrepareRefusesClaimedRunDirectory proves prepare rewrites no prepared
+// file while run holds launch.lock or after run reserved the directory, so the
+// supervisor runs the options that run checked. It exercises the prepare
+// command and the run directory's launch artifacts seam.
+func TestPrepareRefusesClaimedRunDirectory(t *testing.T) {
+	for _, claim := range []string{"lock", "reservation"} {
+		t.Run(claim, func(t *testing.T) {
+			svc, _, args, run := commandHarness(t)
+			var out bytes.Buffer
+			if err := svc.RunDispatch(context.Background(), args, &out, &out); err != nil {
+				t.Fatal(err)
+			}
+			if claim == "lock" {
+				lock, err := os.OpenFile(filepath.Join(run, "launch.lock"), os.O_CREATE|os.O_RDWR, 0600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer lock.Close()
+				if err = liverun.LockRunFile(lock); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				cleanupArtifact(t, run, "launching.json", map[string]any{"RunDir": run})
+			}
+			files := map[string][]byte{}
+			for _, name := range []string{"options.json", "before.json", "preparation.json"} {
+				files[name] = mustReadFile(t, filepath.Join(run, name))
+			}
+			// The repeated prepare saves a different plan, so any rewrite would show.
+			if err := svc.RunDispatch(context.Background(), append(append([]string(nil), args...), "-images=false"), &out, &out); err == nil {
+				t.Fatal("prepare rewrote a claimed run directory")
+			}
+			for name, data := range files {
+				if !bytes.Equal(data, mustReadFile(t, filepath.Join(run, name))) {
+					t.Fatalf("%s rewritten for a claimed run directory", name)
+				}
+			}
+		})
+	}
+}
+
 // TestRunProgressPersistenceFailurePreservesSuiteExit proves a failed progress artifact cannot change the real suite outcome. It exercises the prepare/run/status commands and owned process artifacts seam.
 func TestRunProgressPersistenceFailurePreservesSuiteExit(t *testing.T) {
 	root, private, _ := fixtureSetup(t)
