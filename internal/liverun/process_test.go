@@ -474,6 +474,36 @@ func TestRunRefusesConcurrentLaunchOfSameDirectory(t *testing.T) {
 	waitFixture(t, filepath.Join(private, "exit.json"))
 }
 
+// TestDuplicateSupervisorCannotPublishCompletion proves a second supervisor
+// started for a running directory exits without writing exit evidence, so the
+// owning supervisor still publishes the suite's real exit code. It exercises
+// the run and _supervise commands and the owned exit artifact seam.
+func TestDuplicateSupervisorCannotPublishCompletion(t *testing.T) {
+	root, private, _ := fixtureSetup(t)
+	binary, _ := os.Executable()
+	if data, err := exec.Command(binary, "run", "-run-dir", private).CombinedOutput(); err != nil {
+		t.Fatalf("run: %v %s", err, data)
+	}
+	waitFixture(t, filepath.Join(root, "suite-ready"))
+	if data, err := exec.Command(binary, "_supervise", "-run-dir", private).CombinedOutput(); err == nil {
+		t.Fatalf("duplicate supervisor accepted: %s", data)
+	}
+	if _, err := os.Stat(filepath.Join(private, "exit.json")); !os.IsNotExist(err) {
+		t.Fatalf("duplicate supervisor published completion: %s", mustReadFile(t, filepath.Join(private, "exit.json")))
+	}
+	if err := os.WriteFile(filepath.Join(root, "release"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	waitFixture(t, filepath.Join(private, "exit.json"))
+	var ended struct{ Code int }
+	if err := json.Unmarshal(mustReadFile(t, filepath.Join(private, "exit.json")), &ended); err != nil {
+		t.Fatal(err)
+	}
+	if ended.Code != 7 {
+		t.Fatalf("exit evidence = %d; want the owning suite's 7", ended.Code)
+	}
+}
+
 // TestRunProgressPersistenceFailurePreservesSuiteExit proves a failed progress artifact cannot change the real suite outcome. It exercises the prepare/run/status commands and owned process artifacts seam.
 func TestRunProgressPersistenceFailurePreservesSuiteExit(t *testing.T) {
 	root, private, _ := fixtureSetup(t)

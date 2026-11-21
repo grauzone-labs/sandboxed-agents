@@ -160,6 +160,12 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 	if startedAt.IsZero() {
 		startedAt = time.Now().UTC()
 	}
+	claim, err := claimSupervision(directory)
+	if err != nil {
+		return err
+	}
+	// Deferred first, the claim outlives completion publication below.
+	defer claim.Close()
 	code := 1
 	logUnverified := false
 	peakUnverified := false
@@ -303,6 +309,27 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 		code = 1
 	}
 	return nil
+}
+
+// claimSupervision takes the run directory's exclusive supervisor lock for this
+// process's lifetime and refuses a directory whose suite already started or
+// ended, so only the owning supervisor ever publishes its completion.
+func claimSupervision(directory string) (*os.File, error) {
+	claim, err := os.OpenFile(filepath.Join(directory, "supervisor.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("private run directory unavailable")
+	}
+	if err = lockFile(claim); err != nil {
+		claim.Close()
+		return nil, fmt.Errorf("another supervisor owns this run")
+	}
+	for _, name := range []string{"started.json", "exit.json"} {
+		if _, err = os.Stat(filepath.Join(directory, name)); err == nil {
+			claim.Close()
+			return nil, fmt.Errorf("run directory already used")
+		}
+	}
+	return claim, nil
 }
 
 // writeExitText retains a portable plain integer exit file for shell callers.
