@@ -23,7 +23,8 @@ type liveEngineFailures struct {
 	directory string
 	evidence  liveEngineFailureEvidence
 	reserved  int
-	// truncationSaved records that a write carrying SamplesTruncated succeeded.
+	// truncationSaved records that a write carrying SamplesTruncated and every
+	// appended sample succeeded; a failed sample write clears it.
 	truncationSaved bool
 }
 
@@ -94,7 +95,7 @@ func (host liveHost) observeFailure(source, operation string, err error) {
 	// Reserve before probing: completed and in-flight snapshots share the same
 	// four-slot run budget (at most eight queries and 32 s of snapshot budgets).
 	// Persist suppression until one write succeeds; further failures incur no
-	// queries, and no writes once suppression is on disk.
+	// queries, and no writes once suppression and every sample are on disk.
 	failures.Lock()
 	if failures.reserved == 4 {
 		failures.evidence.SamplesTruncated = true
@@ -146,8 +147,12 @@ func (host liveHost) observeFailure(source, operation string, err error) {
 	failures.evidence.Samples = append(failures.evidence.Samples, sample)
 	if err := failures.persist(); err == nil {
 		failures.truncationSaved = failures.evidence.SamplesTruncated
-	} else if host.report != nil {
-		host.report("live engine failure evidence could not be persisted")
+	} else {
+		// The file now lacks this sample, so a later failure over budget must write again.
+		failures.truncationSaved = false
+		if host.report != nil {
+			host.report("live engine failure evidence could not be persisted")
+		}
 	}
 }
 

@@ -557,6 +557,40 @@ func TestLiveEngineFailureRetriesUnsavedTruncation(t *testing.T) {
 	}
 }
 
+// TestLiveEngineFailureRetriesSampleWriteAfterSavedTruncation proves a sample
+// whose write failed after another failure had already saved the truncation
+// flag is written by the next failure once storage recovers, without another
+// probe, at the fake process and sanitized file seams.
+func TestLiveEngineFailureRetriesSampleWriteAfterSavedTruncation(t *testing.T) {
+	host, fakes := newEngineFailureHost(t, map[string]lifecycleResponse{
+		"container inspect private-object": {Exit: 23, Output: "private-original"},
+		"info --format json":               {Output: `{"host":{"cpus":4,"memTotal":100,"memFree":0,"swapTotal":0,"swapFree":0}}`},
+	}, "linux")
+	host.report = func(string) {}
+	// Three slots are already in flight, and a failure over budget has saved the
+	// truncation flag meanwhile, as concurrent probes can leave the collector.
+	host.failures.reserved = 3
+	host.failures.evidence.SamplesTruncated = true
+	host.failures.truncationSaved = true
+	fail := func() {
+		t.Helper()
+		if _, err := host.podman("container", "inspect", "private-object"); exitStatus(t, err) != 23 {
+			t.Fatalf("diagnostics changed original result: %v", err)
+		}
+	}
+	directory := host.failures.directory
+	host.failures.directory = filepath.Join(directory, "missing")
+	fail()
+	host.failures.directory = directory
+	fail()
+	if evidence := readEngineFailureEvidence(t, host); len(evidence.Samples) != 1 || !evidence.SamplesTruncated {
+		t.Fatalf("unsaved sample was not retried: samples=%d truncated=%v", len(evidence.Samples), evidence.SamplesTruncated)
+	}
+	if calls := testutil.Invocations(t, fakes.PodmanLog); len(calls) != 3 {
+		t.Fatalf("the retry reopened the probe budget: %d calls", len(calls))
+	}
+}
+
 // TestLiveEngineFailureExpectedRollbackKeepsOtherDiagnostics proves the precise
 // injected rollback omits a false sample while later failures remain observable
 // and both invocations keep their timings at the fake CLI and Podman seams.
