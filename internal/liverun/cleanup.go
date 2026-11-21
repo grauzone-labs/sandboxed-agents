@@ -76,7 +76,6 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 	if err != nil {
 		return err
 	}
-	defer retainCleanupCompletion(run)
 	if err = s.checkCoordination(run.options); err != nil {
 		return fmt.Errorf("cleanup: pending (coordination root changed)")
 	}
@@ -85,6 +84,9 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 		return fmt.Errorf("cleanup: pending (engine exclusion unavailable)")
 	}
 	defer lock.Close()
+	// Deferred after the lock so completion evidence is published before a serialized rerun can take the lock.
+	// Completion needs a published report, which only a run that took the lock can reach.
+	defer retainCleanupCompletion(run)
 	if err = refuseActive(run.options, run.before.EngineID); err != nil {
 		return fmt.Errorf("cleanup: pending (owned suite may still be running)")
 	}
