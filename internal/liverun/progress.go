@@ -16,8 +16,9 @@ import (
 	"time"
 )
 
-// progressCaseLine admits only the suite's fixed case names.
-var progressCaseLine = regexp.MustCompile("TestLiveSuite/(" + strings.Join(validationduration.OperationCases(), "|") + ")(?:\\s|$|/)")
+// progressCaseLine admits only the suite's fixed case names, and only from the
+// go test -v headers and result lines, so a diagnostic naming a case cannot change it.
+var progressCaseLine = regexp.MustCompile("^(?:=== (?:RUN|PAUSE|CONT|NAME)|--- (?:PASS|FAIL|SKIP):)\\s+TestLiveSuite/(" + strings.Join(validationduration.OperationCases(), "|") + ")(?:\\s|$|/)")
 
 // progressClasses and progressCases retain private copies of the authoritative timing vocabulary.
 var progressClasses, progressCases = validationduration.OperationClasses(), validationduration.OperationCases()

@@ -56,6 +56,30 @@ func TestProgressIgnoresEmbeddedCommandPayload(t *testing.T) {
 	}
 }
 
+// TestProgressCaseComesOnlyFromTestMarkers proves a diagnostic that merely
+// mentions a suite case neither changes the active case nor clears its
+// operation, while verbose headers and result lines still do. It exercises the
+// output writer's private status seam.
+func TestProgressCaseComesOnlyFromTestMarkers(t *testing.T) {
+	var log bytes.Buffer
+	writer := &progressWriter{destination: &log, filename: filepath.Join(t.TempDir(), "progress.json")}
+	for _, step := range []struct{ line, caseName, operation string }{
+		{"=== RUN   TestLiveSuite/images\n", "images", ""},
+		{"test.go:1: live operation Tool update: started\n", "images", "Tool update"},
+		{"test.go:1: diagnostic mentions TestLiveSuite/update\n", "images", "Tool update"},
+		{"private output TestLiveSuite/update and more\n", "images", "Tool update"},
+		{"--- FAIL: TestLiveSuite/update (2.00s)\n", "update", ""},
+		{"=== PAUSE TestLiveSuite/images\n", "images", ""},
+	} {
+		if _, err := writer.Write([]byte(step.line)); err != nil {
+			t.Fatal(err)
+		}
+		if writer.state.Case != step.caseName || writer.state.Operation != step.operation {
+			t.Errorf("after %q: case=%q operation=%q; want %q %q", step.line, writer.state.Case, writer.state.Operation, step.caseName, step.operation)
+		}
+	}
+}
+
 // TestProgressKeepsCaseOperationCoherent proves interleaved verbose case markers
 // clear an operation belonging to another case at the private status writer seam.
 func TestProgressKeepsCaseOperationCoherent(t *testing.T) {
