@@ -186,6 +186,9 @@ func newLiveSuite(t *testing.T) *liveSuite {
 		seconds = time.Since(started).Seconds()
 		if _, err := validationduration.WriteOperations(suite.recordDirectory, suite.host.timings.evidence); err != nil {
 			t.Errorf("write operation timings: %v", err)
+			// The schema-2 record was published first so T includes its write; a
+			// failed final operations write fails the run, so republish it as fail.
+			suite.writeRecord(t, true)
 		}
 	})
 	t.Cleanup(func() { suite.writeRecord(t, true) })
@@ -391,6 +394,45 @@ func liveSuiteChild(t *testing.T, fakes testutil.Fakes, values map[string]string
 	command.Env = testutil.Env(testutil.Env(fakes.Env(os.Environ()), nestedExecutables()), environment)
 	output, err := command.CombinedOutput()
 	return string(output), err
+}
+
+// TestLiveOperationsWriteFailureFixture blocks the suite's final operations
+// write after initialization; its parent expects the failure and a fail record.
+func TestLiveOperationsWriteFailureFixture(t *testing.T) {
+	if os.Getenv("TEST_LIVE_OPERATIONS_WRITE_FAILURE") != "1" {
+		return
+	}
+	suite := newLiveSuite(t)
+	path := filepath.Join(suite.recordDirectory, "operations-"+suite.platform+".json")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	// A non-empty directory cannot be replaced by the final atomic write.
+	if err := os.MkdirAll(filepath.Join(path, "blocker"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLiveRecordFailsWhenFinalOperationsWriteFails proves the schema-2 record
+// reports fail when the suite's final operations write fails after the record
+// was published, through a nested suite fixture and the record file seam.
+func TestLiveRecordFailsWhenFinalOperationsWriteFails(t *testing.T) {
+	directory := t.TempDir()
+	filename := liveRecordFilename(t)
+	command := exec.Command(os.Args[0], "-test.v", "-test.run=^TestLiveOperationsWriteFailureFixture$")
+	command.Env = testutil.Env(testutil.Env(os.Environ(), nestedExecutables()), map[string]string{"TEST_LIVE_OPERATIONS_WRITE_FAILURE": "1", "SANDBOXED_AGENTS_GROUP": "live-operations", liveRecordDirEnv: directory, liveImagesEnv: "", liverun.CaseOverlapEnv: "", liverun.BuildJobsEnv: "", liverun.StopAfterFailureEnv: "", preflighttiming.DirEnv: ""})
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "write operation timings") {
+		t.Fatalf("fixture: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(filepath.Join(directory, filename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct{ Result string }
+	if err := json.Unmarshal(data, &record); err != nil || record.Result != "fail" {
+		t.Fatalf("record after a failed final operations write: %v %s", err, data)
+	}
 }
 
 // liveRecordFilename is the record file name of the test host's platform.
