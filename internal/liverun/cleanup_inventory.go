@@ -43,7 +43,7 @@ func (s *Service) cleanupQuery(ctx context.Context, r *cleanupRun, target Target
 	}
 	// Retain as much output as the encoded envelope allows, so evidence size never refuses an answer the raw limit admits.
 	envelope, _ := json.Marshal(evidence)
-	evidence.Output = cleanupEvidenceText(string(data), cleanupPrivateLimit/2-len(envelope))
+	evidence.Output = cleanupEvidenceText(data, cleanupPrivateLimit/2-len(envelope))
 	if saveErr := cleanupWriteJSON(filepath.Join(r.directory, fmt.Sprintf("query-%05d.json", r.queries)), evidence, cleanupPrivateLimit); saveErr != nil {
 		if err == nil {
 			return nil, errCleanupEvidenceLost
@@ -209,10 +209,12 @@ func boundedCleanupText(value string, limit int) string {
 }
 
 // cleanupEvidenceText returns the longest retained prefix of value, halving it on overflow, whose JSON encoding,
-// escaping and truncation marker included, fits within budget bytes.
-func cleanupEvidenceText(value string, budget int) string {
-	for limit := len(value); ; limit /= 2 {
-		text := boundedCleanupText(value, limit)
+// escaping and truncation marker included, fits within budget bytes. The first prefix is at most budget bytes, and
+// only one byte beyond the prefix is copied to keep the truncation marker, so an oversized answer is never copied or
+// encoded in full.
+func cleanupEvidenceText(value []byte, budget int) string {
+	for limit := min(len(value), max(budget, 0)); ; limit /= 2 {
+		text := boundedCleanupText(string(value[:min(len(value), limit+1)]), limit)
 		encoded, err := json.Marshal(text)
 		if err == nil && len(encoded) <= budget || limit == 0 {
 			return text
