@@ -43,6 +43,7 @@ type cleanupFakeImage struct {
 }
 
 // Execute returns literal whole-engine query answers and emulates only exact individual removals.
+// Container inspection answers only the IDs a query names, in the order it names them, as Podman does.
 // A set lateImage appears in the inventory from the second image listing on, as another writer would create it.
 func (f *cleanupFake) Execute(_ context.Context, in liverun.Invocation) ([]byte, error) {
 	f.calls = append(f.calls, in)
@@ -147,7 +148,22 @@ func (f *cleanupFake) Execute(_ context.Context, in liverun.Invocation) ([]byte,
 		}
 		return json.Marshal(values)
 	case "container":
-		return json.Marshal(f.containers)
+		if len(args) < 3 || args[1] != "inspect" {
+			return nil, fmt.Errorf("forbidden container call")
+		}
+		byID := map[string]liverun.Container{}
+		for _, c := range f.containers {
+			byID[c.ID] = c
+		}
+		containers := []liverun.Container{}
+		for _, id := range args[2:] {
+			c, ok := byID[id]
+			if !ok {
+				return nil, fmt.Errorf("no such container")
+			}
+			containers = append(containers, c)
+		}
+		return json.Marshal(containers)
 	case "rmi":
 		if len(args) != 3 || args[1] != "--no-prune" {
 			return nil, fmt.Errorf("forbidden removal")
@@ -733,5 +749,27 @@ func TestCollectForwardsPreflightWithoutHostQueries(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("collector not forwarded: %v", args)
+	}
+}
+
+// TestCleanupBatchesContainerInspection proves the Cleanup seam verifies 600 container references completely while
+// keeping every engine query's command line under the 32,767-character Windows CreateProcessW limit.
+func TestCleanupBatchesContainerInspection(t *testing.T) {
+	svc, fake, options := cleanupHarness(t)
+	for i := 0; i < 600; i++ {
+		fake.containers = append(fake.containers, liverun.Container{ID: fmt.Sprintf("%064x", i+1), Image: "sha256:" + strings.Repeat("c", 64)})
+	}
+	var out bytes.Buffer
+	if err := svc.Cleanup(context.Background(), options, &out); err != nil {
+		t.Fatalf("many containers left references unverified: %v %s", err, &out)
+	}
+	var report liverun.CleanupReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil || report.RemainingContainers != 600 {
+		t.Fatalf("container references incomplete: %v %+v", err, report)
+	}
+	for _, call := range fake.calls {
+		if length := len(call.Program + " " + strings.Join(call.Args, " ")); length >= 32767 {
+			t.Fatalf("query command line of %d characters exceeds the Windows limit", length)
+		}
 	}
 }

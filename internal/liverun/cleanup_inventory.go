@@ -93,8 +93,8 @@ func (s *Service) cleanupInventory(ctx context.Context, r *cleanupRun, target Ta
 	sort.Strings(ids)
 	images := []cleanupImage{}
 	issues := []CleanupItem{}
-	for start := 0; start < len(ids); start += 64 {
-		batch := ids[start:min(start+64, len(ids))]
+	for start := 0; start < len(ids); start += inspectBatchSize {
+		batch := ids[start:min(start+inspectBatchSize, len(ids))]
 		inspected, queryErr := s.cleanupQuery(ctx, r, target, append([]string{"image", "inspect"}, batch...)...)
 		decoded, valid := decodeCleanupImages(inspected, batch)
 		if queryErr != nil || !valid {
@@ -150,12 +150,13 @@ func (s *Service) cleanupReferences(ctx context.Context, r *cleanupRun, target T
 		r.containers = []Container{}
 		return used, nil
 	}
-	data, err = s.cleanupQuery(ctx, r, target, append([]string{"container", "inspect"}, ids...)...)
+	containers, err := inspectBatches[Container](ids, func(batch []string) ([]byte, error) {
+		return s.cleanupQuery(ctx, r, target, append([]string{"container", "inspect"}, batch...)...)
+	})
 	if err != nil {
 		return nil, err
 	}
-	var containers []Container
-	if json.Unmarshal(data, &containers) != nil || len(containers) != len(ids) {
+	if len(containers) != len(ids) {
 		return nil, fmt.Errorf("container inspection incomplete")
 	}
 	for _, container := range containers {
