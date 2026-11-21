@@ -502,6 +502,54 @@ func TestLiveEngineFailureCapsConcurrentDeadEngineProbes(t *testing.T) {
 	}
 }
 
+// TestLiveEngineFailureRetriesUnsavedTruncation proves a suppression flag whose
+// write failed is written by a later failure without reopening the probe budget,
+// and that once it is on disk later failures write nothing, at the fake process
+// and sanitized file seams.
+func TestLiveEngineFailureRetriesUnsavedTruncation(t *testing.T) {
+	host, fakes := newEngineFailureHost(t, map[string]lifecycleResponse{
+		"container inspect private-object": {Exit: 23, Output: "private-original"},
+		"info --format json":               {Output: `{"host":{"cpus":4,"memTotal":100,"memFree":0,"swapTotal":0,"swapFree":0}}`},
+	}, "linux")
+	persistFailures := 0
+	host.report = func(line string) {
+		if line == "live engine failure evidence could not be persisted" {
+			persistFailures++
+		}
+	}
+	fail := func() {
+		t.Helper()
+		if _, err := host.podman("container", "inspect", "private-object"); exitStatus(t, err) != 23 {
+			t.Fatalf("diagnostics changed original result: %v", err)
+		}
+	}
+	for range 4 {
+		fail()
+	}
+	directory := host.failures.directory
+	path := filepath.Join(directory, "engine-failures-linux.json")
+	host.failures.directory = filepath.Join(directory, "missing")
+	fail()
+	host.failures.directory = directory
+	if persistFailures != 1 || readEngineFailureEvidence(t, host).SamplesTruncated {
+		t.Fatalf("unwritable truncation: persist failures=%d", persistFailures)
+	}
+	fail()
+	if evidence := readEngineFailureEvidence(t, host); persistFailures != 1 || len(evidence.Samples) != 4 || !evidence.SamplesTruncated {
+		t.Fatalf("truncation was not retried: persist failures=%d samples=%d truncated=%v", persistFailures, len(evidence.Samples), evidence.SamplesTruncated)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	fail()
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("saved truncation was rewritten: %v", err)
+	}
+	if calls := testutil.Invocations(t, fakes.PodmanLog); len(calls) != 11 {
+		t.Fatalf("suppression reopened the probe budget: %d calls", len(calls))
+	}
+}
+
 // TestLiveEngineFailureExpectedRollbackKeepsOtherDiagnostics proves the precise
 // injected rollback omits a false sample while later failures remain observable
 // and both invocations keep their timings at the fake CLI and Podman seams.
