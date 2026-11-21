@@ -79,3 +79,42 @@ func TestInventoryBatchesInspectionsUnderWindowsLimit(t *testing.T) {
 		}
 	}
 }
+
+// TestInventoryRequiresEachListedContainerOnce proves the preparation inventory seam refuses a container inspection
+// that omits, repeats or substitutes a listed container ID, independent of inspect order, and accepts a reordered answer.
+func TestInventoryRequiresEachListedContainerOnce(t *testing.T) {
+	first, second := strings.Repeat("1", 64), strings.Repeat("2", 64)
+	image := "sha256:" + strings.Repeat("c", 64)
+	for _, tc := range []struct {
+		name     string
+		answer   map[string]Container
+		accepted bool
+	}{
+		{"exact", map[string]Container{}, true},
+		{"empty-id", map[string]Container{second: {Image: image}}, false},
+		{"duplicate-id", map[string]Container{second: {ID: first, Image: image}}, false},
+		{"unexpected-id", map[string]Container{second: {ID: strings.Repeat("3", 64), Image: image}}, false},
+		{"reordered", map[string]Container{first: {ID: second, Image: image}, second: {ID: first, Image: image}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := &inventoryEngine{containers: []string{first, second}, inspected: tc.answer}
+			svc := &Service{Executor: engine, Platform: "linux"}
+			before := Snapshot{}
+			err := svc.inventory(context.Background(), Options{}, &before)
+			if tc.accepted != (err == nil) {
+				t.Fatalf("accepted=%v, got %v", tc.accepted, err)
+			}
+		})
+	}
+}
+
+// TestInventoryRefusesDuplicateListedContainer proves the preparation inventory seam refuses a container list that names one ID twice.
+func TestInventoryRefusesDuplicateListedContainer(t *testing.T) {
+	id := strings.Repeat("1", 64)
+	engine := &inventoryEngine{containers: []string{id, id}}
+	svc := &Service{Executor: engine, Platform: "linux"}
+	before := Snapshot{}
+	if err := svc.inventory(context.Background(), Options{}, &before); err == nil {
+		t.Fatal("duplicate container list accepted")
+	}
+}

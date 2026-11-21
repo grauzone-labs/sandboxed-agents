@@ -62,10 +62,12 @@ func (s *Service) inventory(ctx context.Context, o Options, before *Snapshot) er
 		return fmt.Errorf("container inventory is not a complete array: %v", err)
 	}
 	ids = nil
+	listed := map[string]bool{}
 	for _, container := range containers {
-		if !validName(container.ID) {
+		if !validName(container.ID) || listed[container.ID] {
 			return fmt.Errorf("invalid container identity")
 		}
+		listed[container.ID] = true
 		ids = append(ids, container.ID)
 	}
 	if len(ids) > 0 {
@@ -84,6 +86,14 @@ func (s *Service) inventory(ctx context.Context, o Options, before *Snapshot) er
 			if !fullImageID(container.Image) {
 				return fmt.Errorf("invalid container image reference")
 			}
+			// Every listed ID must be answered exactly once, in any order, as cleanup later requires.
+			if !listed[container.ID] {
+				return fmt.Errorf("invalid container inspection")
+			}
+			delete(listed, container.ID)
+		}
+		if len(listed) != 0 {
+			return fmt.Errorf("missing container inspection")
 		}
 	}
 	for _, container := range before.Containers {
