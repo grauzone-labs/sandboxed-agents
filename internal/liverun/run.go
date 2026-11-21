@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/capture"
 )
@@ -47,6 +48,8 @@ type Service struct {
 	CoordinationRoot string
 	// BuildEvidence injects a trusted producer at the host boundary for offline policy tests.
 	BuildEvidence func(context.Context, string) ([]BuildResult, error)
+	// SuiteDeadline bounds the whole suite process, build included; zero selects the production default.
+	SuiteDeadline time.Duration
 }
 
 // New returns the production host boundaries for the current operating system.

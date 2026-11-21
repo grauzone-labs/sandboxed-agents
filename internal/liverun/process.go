@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/grauzone-labs/sandboxed-agents/internal/capture"
@@ -37,6 +38,10 @@ type startedRun struct {
 	PreparationStart   time.Time
 	PreparationEnd     time.Time
 }
+
+// suiteBuildAllowance extends the outer suite deadline past go test -timeout to
+// cover building the test binary and go test's own kill grace after the timeout.
+const suiteBuildAllowance = 30 * time.Minute
 
 // runDirectory parses the sole argument for phases that consume a prepared run.
 func runDirectory(args []string, diagnostics io.Writer) (string, error) {
@@ -266,15 +271,35 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 	})
 	// Capture uses UTF-8 bytes directly; PowerShell's 5.1 text encoding is never involved.
 	writer := &progressWriter{destination: log, filename: filepath.Join(directory, "progress.json")}
-	activate, release, err := prepareSuite(suite, lock)
+	activate, prepared, err := prepareSuite(suite, lock)
 	if err != nil {
 		return failCheck(options, "suite-supervision", err)
 	}
+	// The deadline goroutine and teardown may both release the suite's job.
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(prepared) }
 	defer release()
 	wait, err := capture.Start(suite, writer, writer)
 	if err != nil {
 		return failCheck(options, "suite-start", err)
 	}
+	limit := s.SuiteDeadline
+	if limit <= 0 {
+		limit = time.Duration(preflighttiming.MaxSeconds*float64(time.Second)) + suiteBuildAllowance
+	}
+	// go test -timeout bounds only the test binary; this outer deadline also bounds the build before it.
+	var abortMu sync.Mutex
+	suiteReaped, timedOut := false, false
+	expiry := time.AfterFunc(limit, func() {
+		abortMu.Lock()
+		defer abortMu.Unlock()
+		if !suiteReaped {
+			timedOut = true
+			release()
+			_ = abortSuite(suite)
+		}
+	})
+	defer expiry.Stop()
 	waited := false
 	defer func() {
 		if !waited {
@@ -303,6 +328,12 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 	err = wait()
 	waited = true
 	suiteEndedAt = time.Now().UTC()
+	abortMu.Lock()
+	suiteReaped = true
+	if timedOut {
+		failedCheck = "suite-deadline"
+	}
+	abortMu.Unlock()
 	logUnverified = writer.logFailed || log.Sync() != nil
 	if err == nil {
 		code = 0

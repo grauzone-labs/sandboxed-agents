@@ -63,6 +63,13 @@ func TestMain(m *testing.M) {
 		if value := os.Getenv("LIVERUN_FIXTURE_FREE_BYTES"); value != "" {
 			service.FreeSpace = func(string) (uint64, error) { return strconv.ParseUint(value, 10, 64) }
 		}
+		if value := os.Getenv("LIVERUN_FIXTURE_SUITE_DEADLINE"); value != "" {
+			deadline, err := time.ParseDuration(value)
+			if err != nil {
+				os.Exit(3)
+			}
+			service.SuiteDeadline = deadline
+		}
 		if len(os.Args) > 1 && os.Args[1] == "_supervise" && os.Getenv("LIVERUN_FIXTURE_INHERITED_JOB") == "1" {
 			if os.Getenv("LIVERUN_FIXTURE_WAIT_LAUNCH") == "1" {
 				deadline := time.Now().Add(5 * time.Second)
@@ -569,6 +576,48 @@ func TestPrepareRefusesClaimedRunDirectory(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRunAbortsSuitePastOuterDeadline proves the supervisor bounds the whole go
+// test process, build included: a suite still running at the outer deadline is
+// killed, its exit is retained as 137 with the suite-deadline check, and the
+// engine is released. It exercises the run command and owned process artifacts seam.
+func TestRunAbortsSuitePastOuterDeadline(t *testing.T) {
+	root, private, args := fixtureSetup(t)
+	t.Setenv("LIVERUN_FIXTURE_SUITE_DEADLINE", "1s")
+	binary, _ := os.Executable()
+	if data, err := exec.Command(binary, "run", "-run-dir", private).CombinedOutput(); err != nil {
+		t.Fatalf("run: %v %s", err, data)
+	}
+	// The fake suite never receives its release, so only the deadline can end it before its own 10 s exit.
+	waitFixture(t, filepath.Join(private, "exit.json"))
+	var ended struct {
+		Code        int
+		FailedCheck string
+	}
+	if err := json.Unmarshal(mustReadFile(t, filepath.Join(private, "exit.json")), &ended); err != nil {
+		t.Fatal(err)
+	}
+	if ended.Code != 137 || ended.FailedCheck != "suite-deadline" {
+		t.Fatalf("deadline exit evidence = %+v; want 137 suite-deadline", ended)
+	}
+	next := append([]string(nil), args...)
+	for i := range next {
+		if next[i] == private {
+			next[i] = filepath.Join(root, "next")
+		}
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		data, err := exec.Command(binary, next...).CombinedOutput()
+		if err == nil {
+			break
+		}
+		if !bytes.Contains(data, []byte("engine-exclusive")) || time.Now().After(deadline) {
+			t.Fatalf("engine was not released after the deadline: %v %s", err, data)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
