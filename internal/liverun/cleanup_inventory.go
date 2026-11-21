@@ -3,6 +3,7 @@ package liverun
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -44,6 +45,9 @@ func (s *Service) cleanupQuery(ctx context.Context, r *cleanupRun, target Target
 	envelope, _ := json.Marshal(evidence)
 	evidence.Output = cleanupEvidenceText(string(data), cleanupPrivateLimit/2-len(envelope))
 	if saveErr := cleanupWriteJSON(filepath.Join(r.directory, fmt.Sprintf("query-%05d.json", r.queries)), evidence, cleanupPrivateLimit); saveErr != nil {
+		if err == nil {
+			return nil, errCleanupEvidenceLost
+		}
 		return nil, fmt.Errorf("private query evidence could not be retained")
 	}
 	if err != nil {
@@ -51,6 +55,10 @@ func (s *Service) cleanupQuery(ctx context.Context, r *cleanupRun, target Target
 	}
 	return data, nil
 }
+
+// errCleanupEvidenceLost marks a command that succeeded although its private query evidence could not be retained.
+// Read-only callers still treat it as a failed query; a removal caller keeps the removal for final reconciliation.
+var errCleanupEvidenceLost = errors.New("private query evidence could not be retained")
 
 // errCleanupUnreachable keeps the engine-unreachable pending form distinct from an invalid identity.
 var errCleanupUnreachable = fmt.Errorf("engine connection unavailable")

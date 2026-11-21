@@ -34,6 +34,7 @@ type cleanupFake struct {
 	imagesCalls      int
 	lateImage        string
 	listingFiller    string
+	blockRemovalLog  string
 }
 
 // cleanupFakeImage supplies the literal image inspect payload, including size and parent.
@@ -47,6 +48,7 @@ type cleanupFakeImage struct {
 // Container inspection answers only the IDs a query names, in the order it names them, as Podman does.
 // A set lateImage appears in the inventory from the second image listing on, as another writer would create it.
 // A set listingFiller adds an ignored field to every image listing entry to enlarge a valid answer.
+// A set blockRemovalLog names a run directory whose next private query evidence file is occupied during each removal.
 func (f *cleanupFake) Execute(_ context.Context, in liverun.Invocation) ([]byte, error) {
 	f.calls = append(f.calls, in)
 	key := in.Program + " " + strings.Join(in.Args, " ")
@@ -186,6 +188,15 @@ func (f *cleanupFake) Execute(_ context.Context, in liverun.Invocation) ([]byte,
 		}
 		if !f.keepAfterRemoval {
 			delete(f.images, args[2])
+		}
+		if f.blockRemovalLog != "" {
+			attempts, _ := filepath.Glob(filepath.Join(f.blockRemovalLog, "cleanup-*"))
+			for _, attempt := range attempts {
+				queries, _ := filepath.Glob(filepath.Join(attempt, "query-*.json"))
+				if err := os.MkdirAll(filepath.Join(attempt, fmt.Sprintf("query-%05d.json", len(queries)+1), "occupied"), 0700); err != nil {
+					return nil, err
+				}
+			}
 		}
 		return []byte(args[2]), nil
 	case "system":
@@ -797,5 +808,32 @@ func TestCleanupKeepsLargeValidQueryAnswer(t *testing.T) {
 	err := svc.Cleanup(context.Background(), options, &out)
 	if got := cleanupRemoved(fake); err != nil || len(got) != 1 || got[0] != id {
 		t.Fatalf("valid large answer refused: %v %v %s", got, err, &out)
+	}
+}
+
+// TestCleanupKeepsRemovalWhoseEvidenceWasLost proves the Cleanup seam records a successful removal whose private query
+// evidence could not be saved once the final inventory confirms the image is gone, and keeps the audit loss visible.
+func TestCleanupKeepsRemovalWhoseEvidenceWasLost(t *testing.T) {
+	svc, fake, options := cleanupHarness(t)
+	id := "sha256:" + strings.Repeat("b", 64)
+	fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id)}
+	cleanupBuildLog(t, fake, options.RunDir, "STEP 2/3: LABEL example=value", id)
+	fake.blockRemovalLog = options.RunDir
+	var out bytes.Buffer
+	err := svc.Cleanup(context.Background(), options, &out)
+	var report liverun.CleanupReport
+	if decodeErr := json.Unmarshal(out.Bytes(), &report); decodeErr != nil {
+		t.Fatalf("report unavailable: %v %v", decodeErr, err)
+	}
+	if len(report.Removed) != 1 || report.Removed[0].ID != id {
+		t.Fatalf("confirmed removal dropped: %v %s", err, &out)
+	}
+	if err == nil || report.Status != "unverified" || !strings.Contains(out.String(), "removal evidence could not be retained") {
+		t.Fatalf("evidence loss hidden: %v %s", err, &out)
+	}
+	for _, item := range report.Unverified {
+		if item.ID == id {
+			t.Fatalf("reconciled removal reported unverified: %s", &out)
+		}
 	}
 }

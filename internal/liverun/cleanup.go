@@ -208,6 +208,7 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 	if err = cleanupWriteJSON(filepath.Join(run.directory, "removal-plan.json"), plan, cleanupSummaryLimit/2); err != nil {
 		return fmt.Errorf("cleanup: pending (cannot retain removal plan)")
 	}
+	evidenceLost := []string{}
 	for index, item := range plan {
 		if item.Reason != "" {
 			if item.Reason == "missing exact build proof" && run.report.Status == "complete" {
@@ -241,7 +242,13 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 			run.skipRemainder(plan[index+1:])
 			break
 		}
-		if _, err = s.cleanupQuery(ctx, run, target, "rmi", "--no-prune", item.ID); err != nil {
+		if _, err = s.cleanupQuery(ctx, run, target, "rmi", "--no-prune", item.ID); errors.Is(err, errCleanupEvidenceLost) {
+			// The removal ran; keep it for final reconciliation and keep the audit loss visible.
+			run.report.Unverified = append(run.report.Unverified, CleanupItem{Reason: "removal evidence could not be retained; final inventory reconciles the removal", Query: "podman rmi --no-prune ID"})
+			evidenceLost = append(evidenceLost, item.ID)
+			run.report.Removed = append(run.report.Removed, item)
+			continue
+		} else if err != nil {
 			item.Reason = "removal failed; retained or unverified"
 			item.Query = "podman rmi --no-prune ID"
 			run.report.Unverified = append(run.report.Unverified, item)
@@ -279,6 +286,11 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 			}
 		}
 		run.report.RemainingContainers = len(run.containers)
+	} else {
+		// A removal without retained evidence counts only when the final inventory confirms it.
+		for _, id := range evidenceLost {
+			run.report.Unverified = append(run.report.Unverified, CleanupItem{ID: id, Reason: "removal evidence lost and final inventory unverified", Query: "podman images --all --no-trunc"})
+		}
 	}
 	return s.finishCleanup(ctx, run, log, asset, out, finalErr)
 }
