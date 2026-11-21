@@ -59,6 +59,15 @@ func TestLiveOverlapFixture(t *testing.T) {
 		}, func(t *testing.T, local *liveSuite) { local.rebuildImages(t); local.imagesRan = true })
 		return
 	}
+	if os.Getenv("TEST_LIVE_SERIAL_FAILURE") == "1" {
+		// No case ensures the base, so the remaining cases fall back to serial order.
+		suite.runConcurrent(t, []liveCase{
+			{"lifecycle", func(t *testing.T, local *liveSuite) { local.host.mustCLI(t, "", "check", "serial-first") }},
+			{"update", func(t *testing.T, local *liveSuite) { local.host.mustCLI(t, "", "check", "serial-update") }},
+			{"agent", func(t *testing.T, local *liveSuite) { local.host.mustCLI(t, "", "check", "serial-agent") }},
+		}, func(t *testing.T, local *liveSuite) { local.rebuildImages(t); local.imagesRan = true })
+		return
+	}
 	if mode := os.Getenv("TEST_LIVE_OBSERVE_FAILURE"); mode != "" {
 		liveObservedFailureCases(t, suite, os.Getenv(liveRecordDirEnv), mode)
 		return
@@ -545,6 +554,34 @@ func TestLiveOverlapBaseFailurePreservesRemainingCases(t *testing.T) {
 				if check.Result != want {
 					t.Errorf("%s=%s; want %s", check.Name, check.Result, want)
 				}
+			}
+		})
+	}
+}
+
+// TestLiveSerialFallbackStopsAfterFailure proves a serial fallback case failure
+// stops the remaining cases and images under fail-fast and lets them run without
+// it, at the nested scheduler's fake CLI seam.
+func TestLiveSerialFallbackStopsAfterFailure(t *testing.T) {
+	for _, stop := range []string{"", "1"} {
+		t.Run("stop-"+stop, func(t *testing.T) {
+			fakes := testutil.Install(t, fakeExecutable)
+			directory := t.TempDir()
+			log := filepath.Join(directory, "cli.jsonl")
+			command := fixtureLiveCommand(t, fakes, "TestLiveOverlapFixture", map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", "TEST_LIVE_SERIAL_FAILURE": "1", livePreparedExecutableEnv: liveFakeProgram(t), liveRecordDirEnv: directory, liveImagesEnv: "1", "SANDBOXED_AGENTS_GROUP": "live-serial", liverun.CaseOverlapEnv: "2", liverun.StopAfterFailureEnv: stop, "TEST_SANDBOXED_AGENTS_LOG": log, "TEST_SANDBOXED_AGENTS_RESPONSES": `{"version":{},"check serial-first":{},"check serial-update":{"Exit":1},"check serial-agent":{},"build":{}}`, "TEST_PODMAN_RESPONSES": `{"ps --all --format {{.Names}}":{},"volume ls --format {{.Name}}":{}}`})
+			if output, err := command.CombinedOutput(); err == nil {
+				t.Fatalf("failed serial case passed: %s", output)
+			}
+			want := []string{"version", "check serial-first", "check serial-update"}
+			if stop == "" {
+				want = append(want, "check serial-agent", "build")
+			}
+			var got []string
+			for _, call := range testutil.Invocations(t, log) {
+				got = append(got, strings.Join(call, " "))
+			}
+			if !slices.Equal(got, want) {
+				t.Fatalf("calls %v; want %v", got, want)
 			}
 		})
 	}

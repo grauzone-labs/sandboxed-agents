@@ -121,6 +121,8 @@ func (suite *liveSuite) isolatedCase(t *testing.T, item liveCase, configure func
 // runConcurrent overlaps independent cases and initial toolchain work, then
 // joins every case's cleanup before permitting the single image rebuild tail.
 // The first case's existing up ensures the base; no preparatory up is added.
+// Without an ensured base the remaining cases and images run serially, and the
+// failure policy applies before each of them.
 func (suite *liveSuite) runConcurrent(t *testing.T, cases []liveCase, images func(*testing.T, *liveSuite)) {
 	var independent sync.WaitGroup
 	capacity := len(cases)
@@ -149,9 +151,13 @@ func (suite *liveSuite) runConcurrent(t *testing.T, cases []liveCase, images fun
 		t.Log("base image not ensured; running remaining cases serially")
 		suite.work = nil
 		for _, item := range cases[1:] {
+			if suite.stopping() {
+				t.Logf("live case %s not started after an earlier failure", item.name)
+				return
+			}
 			suite.isolatedCase(t, item, nil)
 		}
-		if images != nil {
+		if images != nil && !suite.stopping() {
 			suite.isolatedCase(t, liveCase{"images", images}, nil)
 		}
 		return
