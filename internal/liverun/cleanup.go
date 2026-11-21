@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -209,6 +210,10 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 		return fmt.Errorf("cleanup: pending (cannot retain removal plan)")
 	}
 	evidenceLost := []string{}
+	plannedNames := map[string][]string{}
+	for _, image := range current {
+		plannedNames[image.ID] = image.RepoTags
+	}
 	for index, item := range plan {
 		if item.Reason != "" {
 			if item.Reason == "missing exact build proof" && run.report.Status == "complete" {
@@ -241,6 +246,20 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 			run.report.Unverified = append(run.report.Unverified, CleanupItem{ID: item.ID, Reason: "checkout changed or unverified", Query: "git revision / status"})
 			run.skipRemainder(plan[index+1:])
 			break
+		}
+		// The engine lock does not exclude other clients, so reread the names a removal by ID would also drop.
+		answer, inspectErr := s.cleanupQuery(ctx, run, target, "image", "inspect", item.ID)
+		reread, verified := decodeCleanupImages(answer, []string{item.ID})
+		if inspectErr != nil || !verified {
+			item.Reason = "image names unverified before removal; retained"
+			item.Query = "podman image inspect ID"
+			run.report.Unverified = append(run.report.Unverified, item)
+			continue
+		}
+		if !sameImageNames(plannedNames[item.ID], reread[item.ID].RepoTags) {
+			item.Reason = "image names changed since planning"
+			run.report.Skipped = append(run.report.Skipped, item)
+			continue
 		}
 		if _, err = s.cleanupQuery(ctx, run, target, "rmi", "--no-prune", item.ID); errors.Is(err, errCleanupEvidenceLost) {
 			// The removal ran; keep it for final reconciliation and keep the audit loss visible.
@@ -382,6 +401,22 @@ func (s *Service) cleanupCheckout(ctx context.Context, r *cleanupRun) error {
 	}
 	_ = cleanupWriteJSON(filepath.Join(r.directory, "checkout-diagnostic.json"), map[string]string{"error": boundedCleanupText(fmt.Sprint(err), 4096)}, cleanupPrivateLimit)
 	return fmt.Errorf("cleanup: pending (checkout changed or unverified)")
+}
+
+// sameImageNames reports whether two image name lists hold the same names, in any order.
+func sameImageNames(planned, current []string) bool {
+	if len(planned) != len(current) {
+		return false
+	}
+	left, right := append([]string(nil), planned...), append([]string(nil), current...)
+	sort.Strings(left)
+	sort.Strings(right)
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // skipRemainder accounts for every unattempted image after a destructive-action guard fails.

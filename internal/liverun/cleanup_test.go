@@ -35,6 +35,7 @@ type cleanupFake struct {
 	lateImage        string
 	listingFiller    string
 	blockRemovalLog  string
+	lateTag          string
 }
 
 // cleanupFakeImage supplies the literal image inspect payload, including size and parent.
@@ -48,6 +49,7 @@ type cleanupFakeImage struct {
 // Container inspection answers only the IDs a query names, in the order it names them, as Podman does.
 // A set lateImage appears in the inventory from the second image listing on, as another writer would create it.
 // A set listingFiller adds an ignored field to every image listing entry to enlarge a valid answer.
+// A set lateTag replaces every image's names at the second container listing, as a client outside the lock would retag.
 // A set blockRemovalLog names a run directory whose next private query evidence file is occupied during each removal.
 func (f *cleanupFake) Execute(_ context.Context, in liverun.Invocation) ([]byte, error) {
 	f.calls = append(f.calls, in)
@@ -154,6 +156,12 @@ func (f *cleanupFake) Execute(_ context.Context, in liverun.Invocation) ([]byte,
 		if f.lateReference != "" && f.psCalls == 2 {
 			c := liverun.Container{ID: "other-group-container", Image: f.lateReference}
 			f.containers = append(f.containers, c)
+		}
+		if f.lateTag != "" && f.psCalls == 2 {
+			for id, image := range f.images {
+				image.RepoTags = []string{f.lateTag}
+				f.images[id] = image
+			}
 		}
 		values := []map[string]string{}
 		for _, c := range f.containers {
@@ -735,17 +743,22 @@ func TestCleanupBatchesPrimaryInspections(t *testing.T) {
 	if err := svc.Cleanup(context.Background(), options, &out); err != nil {
 		t.Fatal(err)
 	}
-	inspections := 0
-	for _, call := range fake.calls {
+	inspections, rechecks := 0, 0
+	for i, call := range fake.calls {
 		if call.Program == "podman" && len(call.Args) > 1 && call.Args[0] == "image" && call.Args[1] == "inspect" {
+			// A single-ID inspect directly before removing that ID is the name recheck, not an inventory inspection.
+			if len(call.Args) == 3 && i+1 < len(fake.calls) && strings.Join(fake.calls[i+1].Args, " ") == "rmi --no-prune "+call.Args[2] {
+				rechecks++
+				continue
+			}
 			inspections++
 			if len(call.Args) != 4 {
 				t.Fatalf("not a batch: %v", call.Args)
 			}
 		}
 	}
-	if inspections != 1 || len(cleanupRemoved(fake)) != 2 {
-		t.Fatalf("inspections=%d removals=%v", inspections, cleanupRemoved(fake))
+	if inspections != 1 || rechecks != 2 || len(cleanupRemoved(fake)) != 2 {
+		t.Fatalf("inspections=%d rechecks=%d removals=%v", inspections, rechecks, cleanupRemoved(fake))
 	}
 }
 
@@ -835,5 +848,23 @@ func TestCleanupKeepsRemovalWhoseEvidenceWasLost(t *testing.T) {
 		if item.ID == id {
 			t.Fatalf("reconciled removal reported unverified: %s", &out)
 		}
+	}
+}
+
+// TestCleanupSkipsImageRetaggedBeforeRemoval proves the Cleanup seam rereads an image's names immediately before
+// removal and retains an image that another engine client tagged after the removal plan was made.
+func TestCleanupSkipsImageRetaggedBeforeRemoval(t *testing.T) {
+	svc, fake, options := cleanupHarness(t)
+	id := "sha256:" + strings.Repeat("b", 64)
+	fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id)}
+	cleanupBuildLog(t, fake, options.RunDir, "STEP 2/3: LABEL example=value", id)
+	fake.lateTag = "registry.example/foreign:tag"
+	var out bytes.Buffer
+	err := svc.Cleanup(context.Background(), options, &out)
+	if got := cleanupRemoved(fake); len(got) != 0 {
+		t.Fatalf("retagged image removed: %v %v %s", got, err, &out)
+	}
+	if !strings.Contains(out.String(), "image names changed since planning") {
+		t.Fatalf("retained retagged image not explained: %v %s", err, &out)
 	}
 }
