@@ -1,6 +1,7 @@
 package liverun
 
 import (
+	"errors"
 	"fmt"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -209,4 +210,11 @@ func sessionJobPolicy() (SessionPolicy, error) {
 	p.Breakaway = flags&windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK != 0
 	p.SilentBreakaway = flags&windows.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK != 0
 	return p, nil
+}
+
+// replaceBusy reports a replacement refused because a reader holds the
+// destination open without delete sharing, as os.ReadFile does; the handle
+// closes after the read, so publication can retry.
+func replaceBusy(err error) bool {
+	return errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_ACCESS_DENIED) || errors.Is(err, windows.ERROR_LOCK_VIOLATION)
 }

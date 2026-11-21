@@ -106,5 +106,22 @@ func writeJSON(path string, v any) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	return os.Rename(name, path)
+	return retryReplace(func() error { return os.Rename(name, path) }, replaceBusy, replaceRetryWindow)
+}
+
+// replaceRetryWindow bounds how long publication waits for readers that hold the destination open.
+const replaceRetryWindow = 500 * time.Millisecond
+
+// retryReplace runs replace until it succeeds, fails with an error that busy
+// does not classify as a transient open handle, or the window has passed, and
+// returns the last error.
+func retryReplace(replace func() error, busy func(error) bool, window time.Duration) error {
+	deadline := time.Now().Add(window)
+	for {
+		err := replace()
+		if err == nil || !busy(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }

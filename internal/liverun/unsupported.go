@@ -41,3 +41,6 @@ func abortSuite(cmd *exec.Cmd) error { return cmd.Process.Kill() }
 func sessionJobPolicy() (SessionPolicy, error) {
 	return SessionPolicy{}, fmt.Errorf("unsupported host session inspection")
 }
+
+// replaceBusy reports no transient replacement failure on unsupported host platforms.
+func replaceBusy(error) bool { return false }

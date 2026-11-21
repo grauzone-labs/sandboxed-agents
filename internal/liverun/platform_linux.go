@@ -104,3 +104,6 @@ func abortSuite(cmd *exec.Cmd) error { return syscall.Kill(-cmd.Process.Pid, sys
 
 // sessionJobPolicy reports no Windows job for a Linux process.
 func sessionJobPolicy() (SessionPolicy, error) { return SessionPolicy{}, nil }
+
+// replaceBusy reports no transient replacement failure: Linux renames over open files.
+func replaceBusy(error) bool { return false }

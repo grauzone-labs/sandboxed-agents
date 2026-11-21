@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestVirtualDiskReadsBasePathLiterally proves the WSL disk lookup finds the one
@@ -26,5 +27,30 @@ func TestVirtualDiskReadsBasePathLiterally(t *testing.T) {
 	}
 	if got, err := virtualDisk(base); err == nil {
 		t.Fatalf("two disks accepted: %q", got)
+	}
+}
+
+// TestWriteJSONOutlastsOpenReader proves artifact publication succeeds while a
+// reader briefly holds the destination open through os.Open, which grants no
+// delete sharing on Windows. It exercises the writeJSON publication seam.
+func TestWriteJSONOutlastsOpenReader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "processes.json")
+	if err := writeJSON(path, activeRun{RunDir: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- writeJSON(path, activeRun{RunDir: "second"}) }()
+	time.Sleep(50 * time.Millisecond)
+	reader.Close()
+	if err = <-done; err != nil {
+		t.Fatalf("open reader interrupted publication: %v", err)
+	}
+	var active activeRun
+	if err = readJSON(path, &active); err != nil || active.RunDir != "second" {
+		t.Fatalf("published record = %+v, %v", active, err)
 	}
 }
