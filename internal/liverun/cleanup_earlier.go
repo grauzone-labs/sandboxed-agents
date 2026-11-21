@@ -16,10 +16,16 @@ const (
 	cleanupEarlierReason = "removed by an earlier cleanup of this run"
 )
 
-// cleanupEarlierLimit caps the earlier cleanups of a run that a rerun reads reports from: only the 16 newest by
-// their completion time, so a run directory with many attempts cannot make a rerun read without bound.
-// A removal that only an older cleanup lists stays unverified.
-const cleanupEarlierLimit = 16
+// Bounds of the earlier-cleanup scan. A rerun reads at most cleanupEarlierScanLimit entries of the run directory,
+// in directory order, which need not be age order; entries past that bound are not considered. So it reads at
+// most that many completion records and reports. Newest first by completion time, it takes removals from at
+// most cleanupEarlierLimit bound earlier cleanups that removed something, and stops reading reports once it has
+// them; a cleanup that removed nothing does not count toward that limit. A removal that only an earlier cleanup
+// outside these bounds lists stays unverified.
+const (
+	cleanupEarlierLimit     = 16
+	cleanupEarlierScanLimit = 1024
+)
 
 // earlierCleanup names one bound earlier attempt directory and when that cleanup completed.
 type earlierCleanup struct {
@@ -29,8 +35,8 @@ type earlierCleanup struct {
 
 // earlierRemovals returns the canonical full IDs that bound earlier cleanups of this run removed.
 // It reads only real attempt directories inside the run directory through a held root, the current attempt
-// excluded, and at most cleanupEarlierLimit reports; a cleanup that fails any check contributes nothing,
-// so no earlier report is trusted in part.
+// excluded, within the scan bounds above; a cleanup that fails any check contributes nothing, so no earlier
+// report is trusted in part. Removals listed under removed_earlier are never carried forward.
 func earlierRemovals(run *cleanupRun) map[string]bool {
 	removed := map[string]bool{}
 	root, err := os.OpenRoot(run.options.RunDir)
@@ -38,21 +44,8 @@ func earlierRemovals(run *cleanupRun) map[string]bool {
 		return removed
 	}
 	defer root.Close()
-	directory, err := root.Open(".")
-	if err != nil {
-		return removed
-	}
-	entries, err := directory.ReadDir(-1)
-	directory.Close()
-	if err != nil {
-		return removed
-	}
 	candidates := []earlierCleanup{}
-	for _, entry := range entries {
-		name := entry.Name()
-		if !entry.IsDir() || !strings.HasPrefix(name, "cleanup-") || name == filepath.Base(run.directory) {
-			continue
-		}
+	for _, name := range earlierCleanupNames(root, filepath.Base(run.directory), cleanupEarlierScanLimit) {
 		if attempt, completion, ok := openEarlierCleanup(root, name, run); ok {
 			attempt.Close()
 			candidates = append(candidates, earlierCleanup{name: name, completed: completion.CompletedAt})
@@ -64,12 +57,45 @@ func earlierRemovals(run *cleanupRun) map[string]bool {
 		}
 		return candidates[i].name < candidates[j].name
 	})
-	for _, candidate := range candidates[:min(len(candidates), cleanupEarlierLimit)] {
-		for _, id := range earlierCleanupRemovals(root, candidate.name, run) {
+	contributing := 0
+	for _, candidate := range candidates {
+		if contributing == cleanupEarlierLimit {
+			break
+		}
+		ids := earlierCleanupRemovals(root, candidate.name, run)
+		if len(ids) == 0 {
+			continue
+		}
+		contributing++
+		for _, id := range ids {
 			removed[id] = true
 		}
 	}
 	return removed
+}
+
+// earlierCleanupNames reads at most limit entries of the run directory in chunks, in directory order, and returns
+// the real attempt directories among them other than exclude; entries past the limit are not considered.
+func earlierCleanupNames(root *os.Root, exclude string, limit int) []string {
+	directory, err := root.Open(".")
+	if err != nil {
+		return nil
+	}
+	defer directory.Close()
+	names := []string{}
+	for read := 0; read < limit; {
+		entries, err := directory.ReadDir(min(64, limit-read))
+		read += len(entries)
+		for _, entry := range entries {
+			if entry.IsDir() && strings.HasPrefix(entry.Name(), "cleanup-") && entry.Name() != exclude {
+				names = append(names, entry.Name())
+			}
+		}
+		if err != nil || len(entries) == 0 {
+			break
+		}
+	}
+	return names
 }
 
 // openEarlierCleanup opens one attempt directory as a held root and admits it only when it is a real directory,

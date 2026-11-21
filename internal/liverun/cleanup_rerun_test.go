@@ -335,14 +335,38 @@ func TestCleanupRerunRechecksEarlierRemovalInFinalInventory(t *testing.T) {
 	}
 }
 
-// TestCleanupRerunReadsOnlyNewestEarlierCleanups proves that a rerun reads at most the 16 newest bound earlier
-// cleanups of the run, so a removal that only an older one lists stays unverified. It exercises the Cleanup command
-// seam with copies of a real attempt, each renamed and given a later completion time.
-func TestCleanupRerunReadsOnlyNewestEarlierCleanups(t *testing.T) {
+// TestCleanupRerunStaysCompleteAcrossManyReruns proves that reruns which remove nothing never push the cleanup that
+// removed an image out of the earlier cleanups read, so twenty sequential cleanups of one run all end complete with
+// the image under removed_earlier from the second on. It exercises the Cleanup command seam against the fake engine.
+func TestCleanupRerunStaysCompleteAcrossManyReruns(t *testing.T) {
+	svc, fake, options := cleanupHarness(t)
+	id := "sha256:" + strings.Repeat("b", 64)
+	fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id)}
+	cleanupBuildLog(t, fake, options.RunDir, "STEP 2/3: LABEL example=value", id)
+	for run := 1; run <= 20; run++ {
+		report, err := cleanupRerunReport(t, svc, options)
+		if run == 1 {
+			if err != nil || len(report.Removed) != 1 {
+				t.Fatalf("first cleanup did not remove the proven result: %v %+v", err, report)
+			}
+			continue
+		}
+		if err != nil || report.Status != "complete" || len(report.Removed) != 0 || len(report.RemovedEarlier) != 1 || report.RemovedEarlier[0].ID != id {
+			t.Fatalf("cleanup %d lost the earlier removal: %v %+v", run, err, report)
+		}
+	}
+}
+
+// TestCleanupRerunReadsOnlyNewestContributingCleanups proves that a rerun reads the removals of at most the 16 newest
+// bound earlier cleanups that removed something, so with 16 newer such cleanups a removal that only the oldest lists
+// stays unverified. It exercises the Cleanup command seam with copies of a real attempt, each renamed, given a later
+// completion time and a removal of another image.
+func TestCleanupRerunReadsOnlyNewestContributingCleanups(t *testing.T) {
 	for _, newer := range []int{15, 16} {
 		t.Run(fmt.Sprint(newer), func(t *testing.T) {
 			svc, fake, options := cleanupHarness(t)
 			id := "sha256:" + strings.Repeat("b", 64)
+			other := "sha256:" + strings.Repeat("c", 64)
 			fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id)}
 			cleanupBuildLog(t, fake, options.RunDir, "STEP 2/3: LABEL example=value", id)
 			if first, err := cleanupRerunReport(t, svc, options); err != nil || len(first.Removed) != 1 {
@@ -355,7 +379,9 @@ func TestCleanupRerunReadsOnlyNewestEarlierCleanups(t *testing.T) {
 				if err := os.CopyFS(copied, os.DirFS(source)); err != nil {
 					t.Fatal(err)
 				}
-				cleanupEditEarlier(t, copied, "cleanup-report.json", func(value map[string]any) { value["removed"] = []any{} })
+				cleanupEditEarlier(t, copied, "cleanup-report.json", func(value map[string]any) {
+					value["removed"] = []any{map[string]any{"id": other, "size_bytes": 1, "size_verified": true}}
+				})
 				cleanupEditEarlier(t, copied, "completion.json", func(value map[string]any) {
 					completed, err := time.Parse(time.RFC3339Nano, value["CompletedAt"].(string))
 					if err != nil {
