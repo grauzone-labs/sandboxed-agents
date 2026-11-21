@@ -48,6 +48,7 @@ type CleanupReport struct {
 	SuiteExitCode       int                `json:"suite_exit_code"`
 	Interrupted         bool               `json:"interrupted"`
 	Removed             []CleanupItem      `json:"removed"`
+	RemovedEarlier      []CleanupItem      `json:"removed_earlier,omitempty"`
 	Skipped             []CleanupItem      `json:"skipped"`
 	Unverified          []CleanupItem      `json:"unverified"`
 	Before              CleanupMeasurement `json:"before"`

@@ -89,7 +89,7 @@ func resolveBuildRecord(proofs []buildProof, images []cleanupImage) []buildProof
 		case !fullImageID(id):
 			proof.Reason = "primary result lacks a complete immutable image ID"
 		case !present:
-			proof.Reason = "build result absent from complete current inventory"
+			proof.Reason = cleanupAbsentReason
 		case !image.Verified:
 			proof.Reason = "image inspection failed; build result unverified"
 		default:

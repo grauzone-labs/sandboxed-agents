@@ -185,12 +185,18 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 		asset = results[0].Asset
 	}
 	record := uniqueBuildRecord(resolveBuildRecord(trusted, current))
+	markEarlierRemovals(record, earlierRemovals(run))
 
 	if err = cleanupWriteJSON(filepath.Join(run.directory, "build-record.json"), record, cleanupPrivateLimit); err != nil {
 		return fmt.Errorf("cleanup: pending (cannot retain build record)")
 	}
 	for _, entry := range record {
-		if entry.Reason != "" {
+		switch entry.Reason {
+		case "":
+		case cleanupEarlierReason:
+			// Its bytes were counted by the earlier report; this one records only the fact.
+			run.report.RemovedEarlier = append(run.report.RemovedEarlier, CleanupItem{ID: canonicalImageID(entry.Token), Reason: entry.Reason})
+		default:
 			run.report.Unverified = append(run.report.Unverified, CleanupItem{ID: entry.Token, Reason: entry.Reason, Query: "build output / full inventory / image inspect"})
 		}
 	}
