@@ -26,7 +26,7 @@ func buildChannelFixture(t *testing.T) (Options, Snapshot, string) {
 	return o, before, directory
 }
 
-// TestBuildChannelConcurrentPublication proves independent primary producers publish complete typed events without lost updates. It exercises the CaptureBuildResult producer and typed private artifacts seam.
+// TestBuildChannelConcurrentPublication proves independent primary producers publish complete typed events with distinct attempt identities and without lost updates. It exercises the CaptureBuildResult producer and typed private artifacts seam.
 func TestBuildChannelConcurrentPublication(t *testing.T) {
 	o, before, directory := buildChannelFixture(t)
 	var workers sync.WaitGroup
@@ -45,6 +45,14 @@ func TestBuildChannelConcurrentPublication(t *testing.T) {
 	results, err := readBuildResults(o, before)
 	if err != nil || len(results) != 12 {
 		t.Fatalf("lost or partial publication: %d %v", len(results), err)
+	}
+	// Every worker returns the same image ID, so only distinct attempt IDs show 12 independent receipts.
+	attempts := map[string]bool{}
+	for _, result := range results {
+		attempts[result.AttemptID] = true
+	}
+	if len(attempts) != 12 {
+		t.Fatalf("receipts share attempt identities: %d distinct of %d", len(attempts), len(results))
 	}
 }
 
