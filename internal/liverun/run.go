@@ -23,6 +23,10 @@ type Invocation struct {
 
 // Executor executes queries and the durations collector without exposing their output.
 type Executor interface {
+	// Execute runs one invocation and returns its captured output. It can return
+	// that output together with an error: the collector reads both to tell a
+	// failed command from case durations that were retained while optional
+	// operation evidence failed.
 	Execute(context.Context, Invocation) ([]byte, error)
 }
 
