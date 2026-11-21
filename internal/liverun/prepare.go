@@ -90,10 +90,6 @@ func (s *Service) prepareLocked(ctx context.Context, o Options) (Snapshot, *os.F
 	if err = refuseActive(o, engine); err != nil {
 		return lockedFail("engine-exclusive", err)
 	}
-	before.Disks, err = s.disks(ctx, o, target)
-	if err != nil {
-		return lockedFail("filesystem", err)
-	}
 	data, err = s.podman(ctx, o, target, "system", "df")
 	if err != nil {
 		return lockedFail("storage-measurement", err)
@@ -101,6 +97,11 @@ func (s *Service) prepareLocked(ctx context.Context, o Options) (Snapshot, *os.F
 	before.SystemDF = string(data)
 	if err = s.inventory(ctx, o, &before); err != nil {
 		return lockedFail("inventory", err)
+	}
+	// Measure free space after the last inventory step, so the headroom gate below compares the latest reading.
+	before.Disks, err = s.disks(ctx, o, target)
+	if err != nil {
+		return lockedFail("filesystem", err)
 	}
 	before.Complete = true
 	if err = writeJSON(filepath.Join(o.RunDir, "preparation.json"), before); err != nil {
