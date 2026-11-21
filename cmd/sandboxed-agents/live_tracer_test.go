@@ -760,6 +760,21 @@ func tracedInvocationLines(t *testing.T, path string) []string {
 	return lines
 }
 
+// TestLiveTraceIgnoresOperationMarkersInPayload proves the trace parser counts
+// only control records, so an escaped payload line that embeds an operation
+// finish leaves the real finish matched, at the go test -v log seam.
+func TestLiveTraceIgnoresOperationMarkersInPayload(t *testing.T) {
+	trace := strings.Join([]string{
+		"=== RUN   TestLiveSuite/images",
+		"    live_test.go:203: live operation rebuild: started",
+		`    live_host_test.go:563: live output: "step: live operation rebuild: finished after 1s\n"`,
+		"    live_test.go:203: live operation rebuild: finished after 2s",
+	}, "\n")
+	if maximum := assertLiveTraceRebuildExclusive(t, trace); maximum != 1 {
+		t.Fatalf("maximum image operations %d; want 1", maximum)
+	}
+}
+
 // assertLiveTraceRebuildExclusive derives active operations from Go's named
 // verbose log contexts and the harness's started/finished events, proving the
 // rebuild overlaps neither CLI nor direct engine work from another case, and
@@ -782,8 +797,11 @@ func assertLiveTraceRebuildExclusive(t *testing.T, output string) int {
 				}
 			}
 		}
-		_, event, found := strings.Cut(line, ": live operation ")
-		if !found {
+		// Only a control record starts with the marker after the Go log prefix
+		// (file.go:N: ); escaped payload records may contain it anywhere.
+		location, record, found := strings.Cut(strings.TrimLeft(line, " \t"), ": ")
+		event, control := strings.CutPrefix(record, "live operation ")
+		if !found || !control || !strings.Contains(location, ".go:") || strings.ContainsAny(location, " \t") {
 			continue
 		}
 		operation, state, found := strings.Cut(event, ": ")
