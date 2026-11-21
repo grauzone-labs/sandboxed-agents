@@ -274,7 +274,7 @@ func TestPrivateLogFailureRemainsUnverified(t *testing.T) {
 	}
 }
 
-// TestCleanupIncompleteProducerKeepsIndependentProof proves the Cleanup seam still reports and removes primary-proven images after failed or interrupted producers.
+// TestCleanupIncompleteProducerKeepsIndependentProof proves the Cleanup seam still reports and removes primary-proven images after failed or interrupted producers, and reports each leftover channel entry as incomplete producer evidence.
 func TestCleanupIncompleteProducerKeepsIndependentProof(t *testing.T) {
 	for _, leftover := range []string{"returned-failure", ".pending-orphan", "iid-orphan", ".publish-orphan", "result-malformed.json"} {
 		t.Run(leftover, func(t *testing.T) {
@@ -318,6 +318,12 @@ func TestCleanupIncompleteProducerKeepsIndependentProof(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(out.String(), unknown) || !strings.Contains(out.String(), `"after"`) || strings.Contains(out.String(), "sentinel") {
 				t.Fatalf("incomplete cleanup not safely reported: %v %s", err, &out)
+			}
+			// A leftover channel entry must surface as incomplete producer evidence; a returned failure leaves only an
+			// open attempt, which by design is no channel error.
+			const incomplete = "some trusted build evidence incomplete or invalid; only independent primary results admitted"
+			if leftover != "returned-failure" && !strings.Contains(out.String(), incomplete) {
+				t.Fatalf("incomplete producer not reported: %v %s", err, &out)
 			}
 		})
 	}
