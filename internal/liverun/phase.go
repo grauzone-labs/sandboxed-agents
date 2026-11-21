@@ -123,6 +123,20 @@ func (s *Service) parseOptions(args []string, diagnostics io.Writer) (Options, e
 	if within(o.RecordDir, o.RunDir) || within(o.RunDir, o.RecordDir) {
 		return o, fmt.Errorf("private run and record directories must be separate")
 	}
+	// Repeat both checks on physical paths, so a symbolic link cannot alias the directories.
+	resolved := map[string]string{}
+	for _, p := range []string{o.Checkout, o.RunDir, o.RecordDir} {
+		if resolved[p], err = resolveAliases(p); err != nil {
+			return o, fmt.Errorf("private run, record and checkout paths cannot be resolved")
+		}
+	}
+	checkout, run, record := resolved[o.Checkout], resolved[o.RunDir], resolved[o.RecordDir]
+	if within(checkout, run) || within(checkout, record) {
+		return o, fmt.Errorf("private run and record directories must be outside checkout")
+	}
+	if within(record, run) || within(run, record) {
+		return o, fmt.Errorf("private run and record directories must be separate")
+	}
 	if o.PeakRecord != "" {
 		o.PeakRecord, err = filepath.Abs(o.PeakRecord)
 		if err != nil {
@@ -136,6 +150,33 @@ func (s *Service) parseOptions(args []string, diagnostics io.Writer) (Options, e
 func within(directory, path string) bool {
 	rel, err := filepath.Rel(directory, path)
 	return err == nil && (rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."))
+}
+
+// resolveAliases returns the physical form of an absolute path whose final components need not exist yet. It resolves
+// the longest existing prefix, follows a dangling symbolic link to its target, and keeps the missing remainder.
+// A path that needs more than 255 resolution steps, such as a link loop, is refused.
+func resolveAliases(path string) (string, error) {
+	path = filepath.Clean(path)
+	rest := ""
+	for step := 0; step < 255; step++ {
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			return filepath.Join(resolved, rest), nil
+		}
+		if target, err := os.Readlink(path); err == nil {
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(path), target)
+			}
+			path = filepath.Clean(target)
+			continue
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return filepath.Join(path, rest), nil
+		}
+		rest = filepath.Join(filepath.Base(path), rest)
+		path = parent
+	}
+	return "", fmt.Errorf("path resolution exceeded its bound")
 }
 
 // query runs one read-only process within a short bound and keeps diagnostics private.
