@@ -58,6 +58,12 @@ func startLiveTerminal(t *testing.T, environment []string, program string, args 
 			windows.CloseHandle(job)
 		}
 		if console != 0 {
+			// Before Windows 11 24H2, ClosePseudoConsole waits while the output pipe
+			// is neither drained nor closed, and no reader exists yet: close it first.
+			if outputRead != 0 {
+				windows.CloseHandle(outputRead)
+				outputRead = 0
+			}
 			windows.ClosePseudoConsole(console)
 		}
 		for _, handle := range []windows.Handle{inputRead, inputWrite, outputRead, outputWrite, information.Thread, information.Process} {
