@@ -118,18 +118,39 @@ func rebuildFixture(t *testing.T, sets ...string) (*fixture, string) {
 	return f, dir
 }
 
+// rebuildCompletion publishes one CLI exit status to any number of observers by closing a channel.
+type rebuildCompletion struct {
+	finished chan struct{}
+	status   int
+}
+
+// wait returns the CLI exit status, failing the test when the CLI has not exited within the bound.
+func (c *rebuildCompletion) wait(t *testing.T) int {
+	t.Helper()
+	select {
+	case <-c.finished:
+		return c.status
+	case <-time.After(10 * time.Second):
+		t.Fatal("rebuild CLI did not exit")
+		return 0
+	}
+}
+
 // startRebuild runs the real CLI with safe live stream snapshots and returns its eventual exit status.
-func startRebuild(t *testing.T, f *fixture, args ...string) (*rebuildBuffer, *rebuildBuffer, chan int) {
+func startRebuild(t *testing.T, f *fixture, args ...string) (*rebuildBuffer, *rebuildBuffer, *rebuildCompletion) {
 	t.Helper()
 	stdout, stderr := &rebuildBuffer{}, &rebuildBuffer{}
-	done := make(chan int, 1)
-	go func() { done <- cli.RunWithHost(args, stdout, stderr, f.host) }()
+	done := &rebuildCompletion{finished: make(chan struct{})}
+	go func() {
+		done.status = cli.RunWithHost(args, stdout, stderr, f.host)
+		close(done.finished)
+	}()
 	t.Cleanup(func() {
 		for _, name := range []string{"none", "azure", "dotnet", "native", "playwright"} {
 			_ = os.WriteFile(filepath.Join(os.Getenv("REBUILD_FAKE_DIRECTORY"), name+".release"), nil, 0600)
 		}
 		select {
-		case <-done:
+		case <-done.finished:
 		case <-time.After(5 * time.Second):
 			t.Error("held CLI did not exit after releases")
 		}
@@ -154,8 +175,7 @@ func TestBuildJobsBoundsToolchainsAfterBase(t *testing.T) {
 	waitHandshakeFile(t, filepath.Join(dir, "native.started"))
 	releaseHandshakeFile(t, filepath.Join(dir, "native.release"))
 	releaseHandshakeFile(t, filepath.Join(dir, "dotnet.release"))
-	status := <-done
-	done <- status
+	status := done.wait(t)
 	if status != 1 || !strings.Contains(stderr.String(), "failed toolchain sets: azure; existing sandboxes keep their image until update; list marks them as outdated") {
 		t.Fatalf("status=%d stderr=%s", status, stderr.String())
 	}
@@ -215,8 +235,7 @@ func TestBuildJobsPublishesLiveProgressAndGroupedOutput(t *testing.T) {
 	}
 	releaseHandshakeFile(t, filepath.Join(dir, "azure.release"))
 	releaseHandshakeFile(t, filepath.Join(dir, "dotnet.release"))
-	status := <-done
-	done <- status
+	status := done.wait(t)
 	if status != 0 {
 		t.Fatalf("status=%d stderr=%s", status, stderr.String())
 	}
@@ -261,8 +280,7 @@ func TestBuildJobsOneKeepsLiteralOutputAndArgv(t *testing.T) {
 				args = append(args, option)
 			}
 			stdout, stderr, done := startRebuild(t, f, args...)
-			status := <-done
-			done <- status
+			status := done.wait(t)
 			hash, err := image.Hash(image.Context())
 			if err != nil {
 				t.Fatal(err)
@@ -334,8 +352,7 @@ func TestBuildJobsShowsBaseProgressBeforeToolchains(t *testing.T) {
 	releaseHandshakeFile(t, filepath.Join(dir, "none.release"))
 	waitHandshakeFile(t, filepath.Join(dir, "azure.started"))
 	releaseHandshakeFile(t, filepath.Join(dir, "azure.release"))
-	status := <-done
-	done <- status
+	status := done.wait(t)
 	if status != 0 || !strings.Contains(stdout.String(), "build output for base image:\n") {
 		t.Fatalf("status=%d stdout=%s stderr=%s", status, stdout.String(), stderr.String())
 	}
@@ -358,8 +375,7 @@ func TestBuildJobsKeepsSortedFailuresAndCompleteLargeLogs(t *testing.T) {
 	waitHandshakeFile(t, filepath.Join(dir, "native.started"))
 	waitRebuildOutput(t, stdout, "end native\n")
 	releaseHandshakeFile(t, filepath.Join(dir, "azure.release"))
-	status := <-done
-	done <- status
+	status := done.wait(t)
 	if status != 1 || !strings.Contains(stderr.String(), "failed toolchain sets: azure; native; existing sandboxes keep their image until update; list marks them as outdated") {
 		t.Fatalf("status=%d stderr=%s", status, stderr.String())
 	}
