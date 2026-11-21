@@ -33,6 +33,7 @@ type cleanupFake struct {
 	disconnectAfter  int
 	imagesCalls      int
 	lateImage        string
+	listingFiller    string
 }
 
 // cleanupFakeImage supplies the literal image inspect payload, including size and parent.
@@ -45,6 +46,7 @@ type cleanupFakeImage struct {
 // Execute returns literal whole-engine query answers and emulates only exact individual removals.
 // Container inspection answers only the IDs a query names, in the order it names them, as Podman does.
 // A set lateImage appears in the inventory from the second image listing on, as another writer would create it.
+// A set listingFiller adds an ignored field to every image listing entry to enlarge a valid answer.
 func (f *cleanupFake) Execute(_ context.Context, in liverun.Invocation) ([]byte, error) {
 	f.calls = append(f.calls, in)
 	key := in.Program + " " + strings.Join(in.Args, " ")
@@ -120,9 +122,18 @@ func (f *cleanupFake) Execute(_ context.Context, in liverun.Invocation) ([]byte,
 		sort.Strings(ids)
 		values := []map[string]string{}
 		for _, id := range ids {
-			values = append(values, map[string]string{"Id": id})
+			value := map[string]string{"Id": id}
+			if f.listingFiller != "" {
+				value["Comment"] = f.listingFiller
+			}
+			values = append(values, value)
 		}
-		return json.Marshal(values)
+		// Podman writes HTML characters literally, so the raw answer stays smaller than its escaped evidence.
+		var listing bytes.Buffer
+		encoder := json.NewEncoder(&listing)
+		encoder.SetEscapeHTML(false)
+		err := encoder.Encode(values)
+		return listing.Bytes(), err
 	case "image":
 		if len(args) < 3 || args[1] != "inspect" {
 			return nil, fmt.Errorf("forbidden image call")
@@ -771,5 +782,20 @@ func TestCleanupBatchesContainerInspection(t *testing.T) {
 		if length := len(call.Program + " " + strings.Join(call.Args, " ")); length >= 32767 {
 			t.Fatalf("query command line of %d characters exceeds the Windows limit", length)
 		}
+	}
+}
+
+// TestCleanupKeepsLargeValidQueryAnswer proves the Cleanup seam parses a 3 MiB image listing that is within the raw
+// read limit even though its JSON-escaped form exceeds the private evidence bound, and still removes the proven image.
+func TestCleanupKeepsLargeValidQueryAnswer(t *testing.T) {
+	svc, fake, options := cleanupHarness(t)
+	id := "sha256:" + strings.Repeat("b", 64)
+	fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id)}
+	cleanupBuildLog(t, fake, options.RunDir, "STEP 2/3: LABEL example=value", id)
+	fake.listingFiller = strings.Repeat("<", 3<<20)
+	var out bytes.Buffer
+	err := svc.Cleanup(context.Background(), options, &out)
+	if got := cleanupRemoved(fake); err != nil || len(got) != 1 || got[0] != id {
+		t.Fatalf("valid large answer refused: %v %v %s", got, err, &out)
 	}
 }
