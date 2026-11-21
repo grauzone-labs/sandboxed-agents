@@ -225,8 +225,11 @@ func (host liveHost) assertNoBakedSSHKeys(t *testing.T, tag string) {
 	// bytes after the tar end marker and must not block on its stdout pipe.
 	_, drainErr := io.Copy(io.Discard, stream)
 	waitErr := <-done
-	if ctx.Err() != nil {
-		waitErr = fmt.Errorf("live Podman operation image archive ended after %s: %w; engine operations may still be running", time.Since(started).Round(time.Millisecond), errors.Join(ctx.Err(), waitErr))
+	// RunOwned's own result names a deadline that ended capture; a save that
+	// completed stays complete even when its result arrives after the deadline,
+	// and a parser cancellation stays a tar failure, not a timeout.
+	if errors.Is(waitErr, context.DeadlineExceeded) {
+		waitErr = fmt.Errorf("live Podman operation image archive ended after %s: %w; engine operations may still be running", time.Since(started).Round(time.Millisecond), waitErr)
 	}
 	processErr = waitErr
 	if err != io.EOF || drainErr != nil || waitErr != nil || layers == 0 {

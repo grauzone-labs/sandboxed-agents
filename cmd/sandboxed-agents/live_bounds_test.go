@@ -347,6 +347,28 @@ func TestLiveImageArchiveReportsBoundedOperation(t *testing.T) {
 	}
 }
 
+// TestLiveImageArchiveLateResultKeepsCompletedSave proves an image save that
+// completed within its class bound stays a pass when flushing its final stderr
+// fragment delivers the result after the bound, at the fake Podman seam.
+func TestLiveImageArchiveLateResultKeepsCompletedSave(t *testing.T) {
+	fakes := testutil.Install(t, fakeExecutable)
+	t.Setenv("PATH", fakes.Dir)
+	responses, err := json.Marshal(map[string]lifecycleResponse{"image save --format docker-archive fixture-image": {Output: tracerArchive(t), Stderr: "final fragment"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const bound = 2 * time.Second
+	host := liveHost{caseName: "images", timings: &liveTimings{}, environment: testutil.Env(fakes.Env(os.Environ()), map[string]string{"TEST_PODMAN_RESPONSES": string(responses)}), operationBounds: map[string]time.Duration{"image archive": bound}, report: func(line string) {
+		if strings.HasPrefix(line, "live output: ") {
+			time.Sleep(bound + 500*time.Millisecond)
+		}
+	}}
+	host.assertNoBakedSSHKeys(t, "fixture-image")
+	if operations := host.timings.evidence.Operations; len(operations) != 1 || operations[0].Result != "pass" {
+		t.Fatalf("completed save attribution: %+v", operations)
+	}
+}
+
 // TestLiveToolFaultInjectionIsUpdateWork proves fixture mutation and repair do
 // not masquerade as read-only probes in timings at the scripted process seams.
 func TestLiveToolFaultInjectionIsUpdateWork(t *testing.T) {
