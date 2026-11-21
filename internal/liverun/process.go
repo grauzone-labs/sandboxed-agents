@@ -103,7 +103,14 @@ func (s *Service) launch(ctx context.Context, args []string, out, diagnostics io
 	if s.StartSupervisor != nil {
 		start = func() error { return s.StartSupervisor(cmd) }
 	}
+	// The reservation outlives launch.lock, so a retry cannot spawn a second supervisor while startup is pending.
+	reservation := filepath.Join(directory, "launching.json")
+	if err = writeJSON(reservation, activeRun{RunDir: directory}); err != nil {
+		return fmt.Errorf("reserve private run directory")
+	}
 	if err = start(); err != nil {
+		// No process started, so nothing can continue under the reservation.
+		_ = os.Remove(reservation)
 		if errors.Is(err, os.ErrPermission) {
 			return failCheck(options, "session-detachment", err)
 		}
@@ -112,8 +119,9 @@ func (s *Service) launch(ctx context.Context, args []string, out, diagnostics io
 	defer cmd.Process.Release()
 	owner, err := ownedProcess(cmd.Process.Pid)
 	if err == nil {
-		err = writeJSON(filepath.Join(directory, "launching.json"), activeRun{Supervisor: owner, RunDir: directory})
+		err = writeJSON(reservation, activeRun{Supervisor: owner, RunDir: directory})
 	}
+	// A failure keeps the identity-free reservation: the detached supervisor may still run.
 	if err != nil {
 		return fmt.Errorf("startup ownership unverified; inspect status before retrying")
 	}

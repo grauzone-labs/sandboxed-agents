@@ -504,6 +504,33 @@ func TestDuplicateSupervisorCannotPublishCompletion(t *testing.T) {
 	}
 }
 
+// TestRunReservesDirectoryBeforeStartingSupervisor proves run persists its
+// launch reservation before it spawns the supervisor, and clears it when the
+// spawn fails so no detached process can continue. It exercises the run
+// command and the injected supervisor-start boundary seam.
+func TestRunReservesDirectoryBeforeStartingSupervisor(t *testing.T) {
+	svc, _, args, run := commandHarness(t)
+	var out bytes.Buffer
+	if err := svc.RunDispatch(context.Background(), args, &out, &out); err != nil {
+		t.Fatal(err)
+	}
+	reserved := false
+	svc.StartSupervisor = func(*exec.Cmd) error {
+		_, err := os.Stat(filepath.Join(run, "launching.json"))
+		reserved = err == nil
+		return fmt.Errorf("spawn refused")
+	}
+	if err := svc.RunDispatch(context.Background(), []string{"run", "-run-dir", run}, &out, &out); err == nil {
+		t.Fatal("failed spawn reported a start")
+	}
+	if !reserved {
+		t.Fatal("supervisor spawned before the run directory was reserved")
+	}
+	if _, err := os.Stat(filepath.Join(run, "launching.json")); !os.IsNotExist(err) {
+		t.Fatalf("reservation kept after a spawn that started no process: %v", err)
+	}
+}
+
 // TestRunProgressPersistenceFailurePreservesSuiteExit proves a failed progress artifact cannot change the real suite outcome. It exercises the prepare/run/status commands and owned process artifacts seam.
 func TestRunProgressPersistenceFailurePreservesSuiteExit(t *testing.T) {
 	root, private, _ := fixtureSetup(t)
