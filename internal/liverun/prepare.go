@@ -209,8 +209,21 @@ func (s *Service) target(ctx context.Context, o Options) (Target, string, error)
 	if err != nil {
 		return target, "", engineFault("malformed target", "engine storage identity is malformed", err)
 	}
+	// Linux measures the graph root on the local filesystem, which is meaningless for a remote service.
+	if s.Platform != "windows" && remoteService(data) {
+		return target, "", engineFault("unsafe target", "a local Podman engine is required; remote service storage cannot be measured", nil)
+	}
 	target.Storage = storage
 	return target, identity, nil
+}
+
+// remoteService reports whether a podman info answer says the client talks to a remote service, for example through
+// CONTAINER_HOST or a remote default connection; an unparseable answer counts as remote.
+func remoteService(data []byte) bool {
+	var info struct {
+		Host struct{ ServiceIsRemote bool }
+	}
+	return json.Unmarshal(data, &info) != nil || info.Host.ServiceIsRemote
 }
 
 // windowsAbsolute accepts an absolute non-option Windows path without control characters.
