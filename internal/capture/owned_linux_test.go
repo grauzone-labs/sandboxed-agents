@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -295,5 +296,43 @@ func TestRunOwnedCancellationEndsStalledGate(t *testing.T) {
 	assertOwnedProcessExited(t, gate)
 	if entries, err := os.ReadDir(records); err != nil || len(entries) != 0 {
 		t.Fatalf("cancelled gate stayed recorded: %v %v", entries, err)
+	}
+}
+
+// blockingReader is a caller's Stdin whose Read blocks until release closes.
+type blockingReader struct{ release chan struct{} }
+
+// Read blocks until the reader is released and then reports end of input.
+func (r blockingReader) Read([]byte) (int, error) {
+	<-r.release
+	return 0, io.EOF
+}
+
+// TestRunOwnedRefusedStartIgnoresBlockedStdin proves a tracked RunOwned call
+// whose command exec refuses returns the Start error promptly even when the
+// caller's Stdin reader blocks forever. It exercises the RunOwned start gate
+// and the caller's input copy seam on Linux.
+func TestRunOwnedRefusedStartIgnoresBlockedStdin(t *testing.T) {
+	plain := filepath.Join(t.TempDir(), "plain")
+	if err := os.WriteFile(plain, []byte("data\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	capture.TrackOwnedGroups(t.TempDir())
+	t.Cleanup(func() { capture.TrackOwnedGroups("") })
+	input := blockingReader{release: make(chan struct{})}
+	t.Cleanup(func() { close(input.release) })
+	command := exec.Command(plain)
+	command.Stdin = input
+	command.WaitDelay = time.Minute
+	done := make(chan error, 1)
+	go func() { done <- capture.RunOwned(context.Background(), command, nil, nil) }()
+	select {
+	case err := <-done:
+		var path *os.PathError
+		if !errors.As(err, &path) || path.Op != "fork/exec" || !errors.Is(err, syscall.EACCES) {
+			t.Fatalf("refused start returned %v; want the fork/exec EACCES error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a refused start waited on the caller's blocked Stdin reader")
 	}
 }
