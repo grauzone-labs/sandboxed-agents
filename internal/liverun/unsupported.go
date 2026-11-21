@@ -44,3 +44,9 @@ func sessionJobPolicy() (SessionPolicy, error) {
 
 // replaceBusy reports no transient replacement failure on unsupported host platforms.
 func replaceBusy(error) bool { return false }
+
+// prepareOwnedGroups records no invocation groups where no owned process family is supported.
+func prepareOwnedGroups(string) (string, error) { return "", nil }
+
+// abortOwnedGroups has no recorded invocation groups to end on an unsupported host.
+func abortOwnedGroups(string) {}

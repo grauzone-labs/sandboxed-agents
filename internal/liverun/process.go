@@ -251,6 +251,10 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 		preflightDirectory = ""
 		_ = os.WriteFile(filepath.Join(directory, "preflight-timing-unverified"), []byte("preflight timing channel unavailable\n"), 0600)
 	}
+	ownedGroups, err := prepareOwnedGroups(directory)
+	if err != nil {
+		return failCheck(options, "suite-supervision", err)
+	}
 	// Minutes preserve the existing 120m argv while sharing the observation window.
 	suiteTimeout := strconv.FormatFloat(preflighttiming.MaxSeconds/time.Minute.Seconds(), 'f', -1, 64) + "m"
 	suite := exec.Command("go", "test", "./cmd/sandboxed-agents", "-run", "^TestLiveSuite$", "-timeout", suiteTimeout, "-v")
@@ -266,6 +270,7 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 		BuildEvidenceEnv:              buildDirectory,
 		preflighttiming.DirEnv:        preflightDirectory,
 		preflighttiming.TokenEnv:      "",
+		OwnedGroupsEnv:                ownedGroups,
 		"SANDBOXED_AGENTS_LIVE_TESTS": "1", "SANDBOXED_AGENTS_GROUP": options.Group,
 		"SANDBOXED_AGENTS_LIVE_RECORD_DIR": options.RecordDir, "SANDBOXED_AGENTS_LIVE_IMAGES_TESTS": images,
 	})
@@ -279,6 +284,10 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(prepared) }
 	defer release()
+	// Deferred before the suite's abort below, so it runs once the suite is reaped
+	// and before completion is published: a suite that dies mid-invocation leaves
+	// that invocation's process group running.
+	defer abortOwnedGroups(ownedGroups)
 	wait, err := capture.Start(suite, writer, writer)
 	if err != nil {
 		return failCheck(options, "suite-start", err)

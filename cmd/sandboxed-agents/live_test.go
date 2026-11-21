@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/capture"
 	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
 	"github.com/grauzone-labs/sandboxed-agents/internal/preflighttiming"
 	"github.com/grauzone-labs/sandboxed-agents/internal/release"
@@ -134,6 +135,9 @@ func newLiveSuite(t *testing.T) *liveSuite {
 	}
 	suite.imagesSelected = os.Getenv(liveImagesEnv) == "1"
 	suite.stopAfterFailure = os.Getenv(liverun.StopAfterFailureEnv) == "1"
+	// The supervisor ends the invocations this binary leaves running if it dies mid-invocation.
+	capture.TrackOwnedGroups(os.Getenv(liverun.OwnedGroupsEnv))
+	t.Cleanup(func() { capture.TrackOwnedGroups("") })
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -388,7 +392,7 @@ func liveSuiteChild(t *testing.T, fakes testutil.Fakes, values map[string]string
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", fakes.Dir)
-	environment := map[string]string{testutil.LiveTestsEnv: "1", liveImagesEnv: "", liveRecordDirEnv: "", liverun.CaseOverlapEnv: "", liverun.BuildJobsEnv: "", liverun.StopAfterFailureEnv: ""}
+	environment := map[string]string{testutil.LiveTestsEnv: "1", liveImagesEnv: "", liveRecordDirEnv: "", liverun.CaseOverlapEnv: "", liverun.BuildJobsEnv: "", liverun.StopAfterFailureEnv: "", liverun.OwnedGroupsEnv: ""}
 	maps.Copy(environment, values)
 	command := exec.Command(testExecutable, "-test.v", "-test.run=^TestLiveSuite$")
 	command.Env = testutil.Env(testutil.Env(fakes.Env(os.Environ()), nestedExecutables()), environment)
@@ -469,6 +473,22 @@ func TestLiveSuiteOptInSelectsOnlyExplicitOne(t *testing.T) {
 			}
 			assertOnlyPreflightQueries(t, fakes)
 		})
+	}
+}
+
+// TestLiveSuiteTracksOwnedInvocationGroups proves the Linux suite records each
+// CLI invocation's process group in the directory its supervisor names: with an
+// unwritable directory the first invocation fails on its record instead of
+// running untracked. It exercises the nested test process and the
+// liverun.OwnedGroupsEnv input seam.
+func TestLiveSuiteTracksOwnedInvocationGroups(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("only Linux records owned invocation groups")
+	}
+	fakes := testutil.Install(t, fakeExecutable)
+	output, err := liveSuiteChild(t, fakes, map[string]string{"SANDBOXED_AGENTS_GROUP": "live-offline", liveRecordDirEnv: t.TempDir(), liverun.OwnedGroupsEnv: filepath.Join(t.TempDir(), "missing")})
+	if err == nil || !strings.Contains(output, "--- FAIL: TestLiveSuite/preflight") || !strings.Contains(output, "record owned process group") {
+		t.Fatalf("err=%v output=%s; want the first invocation to fail on its group record", err, output)
 	}
 }
 

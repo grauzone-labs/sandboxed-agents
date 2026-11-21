@@ -218,3 +218,10 @@ func sessionJobPolicy() (SessionPolicy, error) {
 func replaceBusy(err error) bool {
 	return errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_ACCESS_DENIED) || errors.Is(err, windows.ERROR_LOCK_VIOLATION)
 }
+
+// prepareOwnedGroups records no invocation groups: each owned invocation's job
+// nests in the suite's kill-on-close job, which ends it with the suite.
+func prepareOwnedGroups(string) (string, error) { return "", nil }
+
+// abortOwnedGroups has no recorded groups to end; closing the suite job ends them.
+func abortOwnedGroups(string) {}

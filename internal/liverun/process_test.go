@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/capture"
 	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
 	"github.com/grauzone-labs/sandboxed-agents/internal/preflighttiming"
 )
@@ -123,6 +124,9 @@ func hostFixture(role string, args []string) int {
 			if err := os.WriteFile(filepath.Join(root, "suite-inputs.json"), data, 0600); err != nil {
 				return 2
 			}
+			if os.Getenv("LIVERUN_FIXTURE_ORPHAN_INVOCATION") == "1" && orphanInvocation(root) != nil {
+				return 2
+			}
 			fmt.Println("=== RUN   TestLiveSuite/images")
 			fmt.Println("host_test.go:1: sandboxed-agents build private-image /private/path")
 			fmt.Println("UTF-8 fixture: café")
@@ -167,6 +171,24 @@ func hostFixture(role string, args []string) int {
 		return 0
 	}
 	return 6
+}
+
+// orphanInvocation starts a tracked owned invocation that this fake suite never
+// waits for, and names its group record in root/invocation once it exists.
+// The suite's exit then leaves the invocation running in its own process group,
+// as a test binary that dies mid-invocation does.
+func orphanInvocation(root string) error {
+	directory := os.Getenv(liverun.OwnedGroupsEnv)
+	capture.TrackOwnedGroups(directory)
+	go func() { _ = capture.RunOwned(context.Background(), exec.Command("sleep", "60"), nil, nil) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if entries, err := os.ReadDir(directory); err == nil && len(entries) == 1 {
+			return os.WriteFile(filepath.Join(root, "invocation"), []byte(entries[0].Name()), 0600)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fmt.Errorf("owned invocation was not recorded")
 }
 
 // fixtureSetup installs fake host programs beside an isolated checkout and prepares the real command.

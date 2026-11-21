@@ -8,8 +8,28 @@ import (
 	"os/exec"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 )
+
+// ownedGroups holds the directory that records running Linux invocation groups; empty disables it.
+var ownedGroups atomic.Pointer[string]
+
+// TrackOwnedGroups makes each later RunOwned call on Linux record its process group while it runs,
+// as an empty file named PID.STARTTICK in directory, where PID is the group leader and STARTTICK its
+// /proc start tick. The record is written before RunOwned waits and removed when it returns, so a
+// supervisor that outlives a dying caller can end the invocations the caller left running. A call
+// whose record cannot be written ends its invocation and fails. An empty directory stops recording.
+// Windows and other hosts record nothing: there each invocation's job nests in the caller's job.
+func TrackOwnedGroups(directory string) { ownedGroups.Store(&directory) }
+
+// trackedGroupDirectory returns the directory set by TrackOwnedGroups, or empty when untracked.
+func trackedGroupDirectory() string {
+	if directory := ownedGroups.Load(); directory != nil {
+		return *directory
+	}
+	return ""
+}
 
 // RunOwned captures an unstarted exec.Command whose local process group/tree belongs to the
 // caller. Cancellation terminates that group on Linux or its job on Windows, then drains output
