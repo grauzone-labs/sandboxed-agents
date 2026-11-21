@@ -325,6 +325,14 @@ func checkRebuildArgv(t *testing.T, dir, name, hash string) {
 		want = append(want, "--pull=never", "--build-arg", "BASE_IMAGE=sha256:"+strings.Repeat("b", 64), "--label", "io.sandboxed-agents.base-image=sha256:"+strings.Repeat("b", 64))
 	}
 	want = append(want, "CONTEXT")
+	// The fake engine reads neither path, so the build file's place in the context is checked here.
+	file := filepath.Join("toolchains", "Containerfile")
+	if name == "none" {
+		file = "Containerfile"
+	}
+	if len(args) > 2 && args[2] != filepath.Join(args[len(args)-1], file) {
+		t.Fatalf("%s build file %q is not %s in context %q", name, args[2], file, args[len(args)-1])
+	}
 	if len(args) > 2 {
 		args[2] = "CONTAINERFILE"
 		args[len(args)-1] = "CONTEXT"
