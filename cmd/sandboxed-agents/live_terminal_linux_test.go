@@ -29,6 +29,8 @@ type liveTerminal struct {
 	done       chan struct{}
 	readerDone chan struct{}
 	exit       int
+	// exited and drained are written before done and readerDone close.
+	exited, drained time.Time
 }
 
 // startLiveTerminal starts program under a new session whose controlling
@@ -100,6 +102,7 @@ func startLiveTerminal(t *testing.T, environment []string, program string, args 
 				terminal.mutex.Unlock()
 			}
 			if err != nil {
+				terminal.drained = time.Now()
 				return
 			}
 		}
@@ -111,6 +114,7 @@ func startLiveTerminal(t *testing.T, environment []string, program string, args 
 		} else if err != nil {
 			terminal.exit = -1
 		}
+		terminal.exited = time.Now()
 		close(terminal.done)
 	}()
 	return terminal
@@ -147,6 +151,25 @@ func (terminal *liveTerminal) Wait(timeout time.Duration) (int, bool) {
 	case <-deadline:
 		return 0, false
 	}
+}
+
+// completedAt reports, without blocking, when the command had both exited and
+// drained its terminal, the moment Wait first reports it finished.
+func (terminal *liveTerminal) completedAt() (time.Time, bool) {
+	select {
+	case <-terminal.done:
+	default:
+		return time.Time{}, false
+	}
+	select {
+	case <-terminal.readerDone:
+	default:
+		return time.Time{}, false
+	}
+	if terminal.drained.After(terminal.exited) {
+		return terminal.drained, true
+	}
+	return terminal.exited, true
 }
 
 // Close ends a still running command, or the owned descendants that still hold

@@ -25,5 +25,8 @@ func (terminal *liveTerminal) Output() string { return "" }
 // Wait reports no completed process on an unsupported terminal platform.
 func (terminal *liveTerminal) Wait(time.Duration) (int, bool) { return 0, false }
 
+// completedAt reports no completed process on an unsupported terminal platform.
+func (terminal *liveTerminal) completedAt() (time.Time, bool) { return time.Time{}, false }
+
 // Close is inert because no terminal is created on this platform.
 func (terminal *liveTerminal) Close() {}

@@ -115,16 +115,23 @@ func (host liveHost) startTerminal(t *testing.T, args ...string) *timedLiveTermi
 
 // Wait records the first completed invocation after its terminal output drains
 // and preserves that result across later waits, including after slow diagnostics.
-// A class deadline ends the owned invocation and reports finished=true with exit=-1;
-// finished describes the host process lifetime, not a successful command result.
+// A class deadline ends an invocation that had not completed by then and reports
+// finished=true with exit=-1; finished describes the host process lifetime, not a
+// successful command result. An invocation that completed by the class deadline
+// keeps its own result even when Wait first runs after that deadline.
 func (terminal *timedLiveTerminal) Wait(timeout time.Duration) (int, bool) {
 	if terminal.completed {
 		return terminal.result, true
 	}
 	deadline := time.Now().Add(timeout)
+	classDeadline := terminal.started.Add(terminal.host.operationBound(terminal.operation))
 	for {
 		terminal.Output()
-		left := time.Until(terminal.started.Add(terminal.host.operationBound(terminal.operation)))
+		left := time.Until(classDeadline)
+		if completed, ok := terminal.liveTerminal.completedAt(); left <= 0 && ok && !completed.After(classDeadline) {
+			// Collect the on-time result; a positive wait lets a finished terminal win.
+			left = 100 * time.Millisecond
+		}
 		if left <= 0 {
 			terminal.test.Errorf("live operation %s exceeded class bound %s after %s; host invocation cancelled; engine operations may still be running: reconcile recorded objects before cleanup", terminal.operation, terminal.host.operationBound(terminal.operation), time.Since(terminal.started).Round(time.Millisecond))
 			terminal.completed, terminal.result = true, -1

@@ -32,6 +32,8 @@ type liveTerminal struct {
 	closeConsole sync.Once
 	closeHandles sync.Once
 	exit         int
+	// exited is written before done closes.
+	exited time.Time
 }
 
 // startLiveTerminal starts program attached to a fresh pseudo console of 120
@@ -162,6 +164,7 @@ func startLiveTerminal(t *testing.T, environment []string, program string, args 
 		} else {
 			terminal.exit = int(code)
 		}
+		terminal.exited = time.Now()
 		close(terminal.done)
 	}()
 	ready = true
@@ -200,6 +203,18 @@ func (terminal *liveTerminal) Wait(timeout time.Duration) (int, bool) {
 		return terminal.exit, true
 	case <-deadline:
 		return 0, false
+	}
+}
+
+// completedAt reports, without blocking, when the command exited. The pseudo
+// console renders the remaining output only once Wait closes it after the exit,
+// so the exit is the moment the command completed.
+func (terminal *liveTerminal) completedAt() (time.Time, bool) {
+	select {
+	case <-terminal.done:
+		return terminal.exited, true
+	default:
+		return time.Time{}, false
 	}
 }
 

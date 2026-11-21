@@ -100,3 +100,37 @@ func TestLiveTerminalFramesPayloadLines(t *testing.T) {
 		t.Fatalf("host control records changed: %q", records)
 	}
 }
+
+// TestLiveTerminalLateWaitKeepsOnTimeResult proves an invocation that completed
+// before its class deadline keeps its own passing result when the first Wait runs
+// after that deadline, through the timed terminal seam and the fake process.
+func TestLiveTerminalLateWaitKeepsOnTimeResult(t *testing.T) {
+	if livePlatform() == "" {
+		t.Skip("terminal support requires Linux or Windows")
+	}
+	const bound = 2 * time.Second
+	environment := append(os.Environ(), "TEST_FAKE_LOG="+filepath.Join(t.TempDir(), "calls.jsonl"), "TEST_FAKE_OUTPUT=done\n")
+	host := liveHost{binary: fakeExecutable, environment: environment, timings: &liveTimings{}, operationBounds: map[string]time.Duration{"inspection": bound}}
+	terminal := host.startTerminal(t, "write-and-exit")
+	defer terminal.Close()
+	for {
+		if completed, ok := terminal.liveTerminal.completedAt(); ok {
+			if completed.After(terminal.started.Add(bound)) {
+				t.Skip("the fake process did not complete within its class bound on this host")
+			}
+			break
+		}
+		if time.Since(terminal.started) > bound {
+			t.Skip("the fake process did not complete within its class bound on this host")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(time.Until(terminal.started.Add(bound + 100*time.Millisecond)))
+	exit, finished := terminal.Wait(5 * time.Second)
+	if !finished || exit != 0 {
+		t.Fatalf("on-time invocation became a timeout: finished=%v exit=%d", finished, exit)
+	}
+	if timings := host.timings.evidence.Operations; len(timings) != 1 || timings[0].Result != "pass" {
+		t.Fatalf("on-time invocation timing: %+v", timings)
+	}
+}
