@@ -20,9 +20,9 @@ import (
 )
 
 // TestLiveTimingTokensCorrelateActualChildren proves concurrent built-source CLI
-// children receive distinct tokens, exact existing operation durations (equal
-// durations included) and no ambient token reuse; a cancelled remove queue creates
-// no launch at the host seam.
+// children receive distinct tokens, each its own case's exact existing operation
+// duration (equal durations included) and no ambient token reuse; a cancelled
+// remove queue creates no launch at the host seam.
 func TestLiveTimingTokensCorrelateActualChildren(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	t.Setenv("PATH", fakes.Dir)
@@ -39,10 +39,15 @@ func TestLiveTimingTokensCorrelateActualChildren(t *testing.T) {
 	environment := testutil.Env(fakes.Env(os.Environ()), map[string]string{preflighttiming.DirEnv: directory, preflighttiming.TokenEnv: "ambient-token-must-not-be-used"})
 	original := append([]string(nil), environment...)
 	host := liveHost{binary: executable, environment: environment, ledger: ledger, timings: &liveTimings{}, caseName: "lifecycle", removals: make(chan struct{}, 1)}
+	// Distinct case names identify each child, so a launch is compared with its own
+	// operation and never with a sibling that happens to measure the same duration.
+	cases := []string{"lifecycle", "update"}
 	var group sync.WaitGroup
-	for range 2 {
+	for _, name := range cases {
+		local := host
+		local.caseName = name
 		group.Go(func() {
-			if _, err := host.cli("", "version"); err != nil {
+			if _, err := local.cli("", "version"); err != nil {
 				t.Error(err)
 			}
 		})
@@ -60,25 +65,28 @@ func TestLiveTimingTokensCorrelateActualChildren(t *testing.T) {
 	if err != nil || len(journal.Entries) != 2 {
 		t.Fatalf("actual child launches = %d, error %v; want 2", len(journal.Entries), err)
 	}
-	// Each launch must carry exactly one recorded preflight duration, so the two lists match as multisets.
-	// Concurrent children may share a duration: the Windows monotonic clock advances once per timer tick,
-	// so two version children that start and end within the same ticks measure identical seconds.
-	retained, recorded := []float64{}, []float64{}
+	// Each launch must carry exactly the duration recorded for its own case. Concurrent children may
+	// share a duration: the Windows monotonic clock advances once per timer tick, so two version
+	// children that start and end within the same ticks measure identical seconds.
+	var launched []string
 	for _, entry := range journal.Entries {
 		if entry.Launch == nil || entry.Invocation == nil || !entry.Invocation.Returned || entry.Invocation.Preflight != nil || entry.Invocation.TargetSelection != nil || entry.Launch.Result != "pass" || entry.Launch.Seconds == nil {
 			t.Fatalf("uncorrelated version: %+v", entry)
 		}
-		retained = append(retained, *entry.Launch.Seconds)
-	}
-	for _, operation := range host.timings.evidence.Operations {
-		if operation.Operation == "preflight" {
-			recorded = append(recorded, operation.Seconds)
+		launched = append(launched, entry.Launch.Case)
+		var recorded []float64
+		for _, operation := range host.timings.evidence.Operations {
+			if operation.Operation == "preflight" && operation.Case == entry.Launch.Case {
+				recorded = append(recorded, operation.Seconds)
+			}
+		}
+		if len(recorded) != 1 || recorded[0] != *entry.Launch.Seconds {
+			t.Fatalf("ledger did not retain case %s's exact existing duration: launch %v, recorded %v", entry.Launch.Case, *entry.Launch.Seconds, recorded)
 		}
 	}
-	slices.Sort(retained)
-	slices.Sort(recorded)
-	if !slices.Equal(retained, recorded) {
-		t.Fatalf("ledger did not retain the exact existing durations: %v, recorded %v", retained, recorded)
+	slices.Sort(launched)
+	if !slices.Equal(launched, cases) {
+		t.Fatalf("launch cases %v; want %v", launched, cases)
 	}
 	if !reflect.DeepEqual(original, host.environment) {
 		t.Fatal("shared host environment mutated")
