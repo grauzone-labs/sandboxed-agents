@@ -30,8 +30,9 @@ func TestLiveRemoveGroupLockContract(t *testing.T) {
 }
 
 // TestLiveRemoveCoordinatesCaseHosts proves two case host copies queue their
-// remove operations instead of hitting the group lock's nonblocking refusal,
-// through an atomic fake lock held across a scripted CLI process handshake.
+// remove operations instead of hitting the group lock's nonblocking refusal and
+// record one invocation timing each, through an atomic fake lock held across a
+// scripted CLI process handshake.
 func TestLiveRemoveCoordinatesCaseHosts(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("atomic shell fake uses Linux /bin/sh; Windows compiles the same host gate")
@@ -93,11 +94,15 @@ trap '/bin/rm -f -- "$TEST_REMOVE_LOCK"' EXIT
 	if len(calls) != 2 {
 		t.Fatalf("remove calls %v; want both invocations retained", calls)
 	}
+	if timings := suite.host.timings.evidence.Operations; len(timings) != 2 || timings[0].Operation != "cleanup" || timings[1].Operation != "cleanup" {
+		t.Errorf("queued removes recorded %+v; want one cleanup invocation each", timings)
+	}
 }
 
 // TestLiveRemoveWaitPreservesCancellation proves a queued suite removal obeys
-// its context, reports not-started and avoids engine diagnostics while retaining
-// its failure timing/control markers, through the held gate and fake CLI seam.
+// its context, reports not-started and records neither an invocation timing nor
+// engine diagnostics while retaining its control markers, through the held gate
+// and fake CLI seam.
 func TestLiveRemoveWaitPreservesCancellation(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	t.Setenv("PATH", fakes.Dir)
@@ -138,15 +143,49 @@ func TestLiveRemoveWaitPreservesCancellation(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("queued remove ignored cancellation")
 	}
-	timings := host.timings.evidence.Operations
-	if len(timings) != 1 || timings[0].Source != "cli" || timings[0].Operation != "cleanup" || timings[0].Result != "fail" {
-		t.Errorf("queued failure timing changed: %+v", timings)
+	if timings := host.timings.evidence.Operations; len(timings) != 0 {
+		t.Errorf("a removal that never launched recorded an invocation: %+v", timings)
 	}
 	if len(host.failures.evidence.Samples) != 0 {
 		t.Errorf("queue wait consumed engine diagnostic samples: %+v", host.failures.evidence.Samples)
 	}
 	if !strings.Contains(strings.Join(events, "\n"), "live operation cleanup: started") || !strings.Contains(strings.Join(events, "\n"), "live operation cleanup: finished after") {
 		t.Errorf("queued failure control markers lost: %v", events)
+	}
+	assertNoExternalCalls(t, fakes)
+}
+
+// TestLiveCLICancelledBeforeLaunchStartsNothing proves a remove whose context is
+// already done when it acquires a free gate starts no invocation, timing record or
+// engine diagnostics and does not claim engine work may still run, at the cliContext seam.
+func TestLiveCLICancelledBeforeLaunchStartsNothing(t *testing.T) {
+	fakes := testutil.Install(t, fakeExecutable)
+	t.Setenv("PATH", fakes.Dir)
+	t.Setenv("SANDBOXED_AGENTS_GROUP", "live-remove")
+	t.Setenv(liveRecordDirEnv, t.TempDir())
+	suite := newLiveSuite(t)
+	host := suite.host
+	host.binary = liveFakeProgram(t)
+	host.environment = fakes.Env(os.Environ())
+	var events []string
+	host.report = func(line string) { events = append(events, line) }
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := host.cliContext(ctx, "", "remove", "cancelled", "--volumes")
+	if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "engine operations may still be running") || !strings.Contains(err.Error(), "host invocation was not started: cancelled before launch") {
+		t.Fatalf("cancelled removal: %v", err)
+	}
+	if timings := host.timings.evidence.Operations; len(timings) != 0 {
+		t.Errorf("a removal that never launched recorded an invocation: %+v", timings)
+	}
+	if len(host.failures.evidence.Samples) != 0 {
+		t.Errorf("a removal that never launched sampled the engine: %+v", host.failures.evidence.Samples)
+	}
+	if len(host.removals) != 0 {
+		t.Error("the cancelled removal kept the suite remove gate")
+	}
+	if !strings.Contains(strings.Join(events, "\n"), "live operation cleanup: finished after") {
+		t.Errorf("cancelled removal control markers lost: %v", events)
 	}
 	assertNoExternalCalls(t, fakes)
 }

@@ -197,8 +197,11 @@ func (host liveHost) cli(input string, args ...string) (string, error) {
 }
 
 // cliContext supervises the invocation's host process tree. A cancelled remove-gate
-// wait starts no invocation or diagnostics. After an invocation is attempted, a deadline
-// cannot prove a remote operation stopped; retain that ambiguity for reconciliation.
+// wait, or a context already done before launch, starts no invocation, timing record,
+// timing token or diagnostics; its control markers still report the total wait. The
+// invocation's timing starts after the gate, so queue wait never counts as process
+// time. After an invocation is attempted, a deadline cannot prove a remote operation
+// stopped; retain that ambiguity for reconciliation.
 func (host liveHost) cliContext(ctx context.Context, input string, args ...string) (string, error) {
 	operation := liveCLIClass(args)
 	ctx, cancel := context.WithTimeout(ctx, host.operationBound(operation))
@@ -207,7 +210,7 @@ func (host liveHost) cliContext(ctx context.Context, input string, args ...strin
 	host.reportOperation(operation, "started")
 	output := liveOutput{lines: liveLineStream{report: host.report}}
 	var err error
-	removeNotStarted := false
+	notStarted := ""
 	if len(args) > 0 && args[0] == "remove" && host.removals != nil {
 		select {
 		case host.removals <- struct{}{}:
@@ -217,36 +220,40 @@ func (host liveHost) cliContext(ctx context.Context, input string, args ...strin
 			case host.removals <- struct{}{}:
 			case <-ctx.Done():
 				err = ctx.Err()
-				removeNotStarted = true
+				notStarted = "suite remove gate"
 			}
 		}
 		if err == nil {
 			defer func() { <-host.removals }()
 		}
 	}
-	var token string
 	if err == nil {
-		environment, issued := host.timingEnvironment(operation)
-		token = issued
+		if err = ctx.Err(); err != nil {
+			notStarted = "cancelled before launch"
+		}
+	}
+	if notStarted == "" {
+		launched := time.Now()
+		environment, token := host.timingEnvironment(operation)
 		command := exec.Command(host.binary, args...)
 		command.Env = environment
 		command.Stdin = strings.NewReader(input)
 		command.WaitDelay = time.Second
 		err = capture.RunOwned(ctx, command, &output, &output)
+		output.Flush()
+		seconds := host.recordOperation("cli", operation, launched, err)
+		host.finishTiming(token, seconds, err)
 	}
-	output.Flush()
-	seconds := host.recordOperation("cli", operation, started, err)
-	host.finishTiming(token, seconds, err)
 	host.reportOperation(operation, fmt.Sprintf("finished after %s", time.Since(started).Round(time.Millisecond)))
 	if err != nil {
 		err = fmt.Errorf("live CLI failed after %s (operation %s, bound %s): %w", time.Since(started).Round(time.Millisecond), operation, host.operationBound(operation), err)
-		if removeNotStarted {
-			err = fmt.Errorf("%w; host invocation was not started: suite remove gate", err)
+		if notStarted != "" {
+			err = fmt.Errorf("%w; host invocation was not started: %s", err, notStarted)
 		} else if ctx.Err() != nil {
 			err = fmt.Errorf("%w; host invocation cancelled; engine operations may still be running: reconcile recorded objects before cleanup", err)
 		}
 	}
-	if !removeNotStarted {
+	if notStarted == "" {
 		host.observeFailure("cli", operation, err)
 	}
 	return output.String(), err
