@@ -2,6 +2,7 @@ package preflighttiming_test
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,7 +10,8 @@ import (
 )
 
 // TestJournalSeparatesReturnedScopes proves one launched preflight and a failed
-// target-only call retain their distinct values and outcomes at the journal seam.
+// target-only call retain their distinct values and outcomes at the journal seam, and that
+// neither the run directory nor the ledger can be reused once the channel exists.
 func TestJournalSeparatesReturnedScopes(t *testing.T) {
 	revision := strings.Repeat("a", 40)
 	dir, err := preflighttiming.Create(t.TempDir(), revision)
@@ -59,7 +61,10 @@ func TestJournalSeparatesReturnedScopes(t *testing.T) {
 	if first.Preflight == nil || first.Preflight.Outcome != "pass" || first.TargetSelection != nil || second.TargetSelection == nil || second.TargetSelection.Outcome != "fail" || second.Preflight != nil || !first.Returned || !second.Returned {
 		t.Fatalf("scopes %+v %+v", first, second)
 	}
-	if _, err = preflighttiming.Create(strings.TrimSuffix(dir, "/preflight-timing"), revision); err == nil {
+	if filepath.Base(dir) != "preflight-timing" {
+		t.Fatalf("channel directory %q", dir)
+	}
+	if _, err = preflighttiming.Create(filepath.Dir(dir), revision); err == nil {
 		t.Fatal("stale run directory reused")
 	}
 	if _, err = preflighttiming.OpenLedger(dir, revision); err == nil {
