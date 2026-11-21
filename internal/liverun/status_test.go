@@ -142,6 +142,12 @@ func TestStatusPublishesExitRecordBeforeShellStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(run, 0700) })
+	// A process that bypasses directory permissions, such as one with CAP_DAC_OVERRIDE, cannot see the fault.
+	if probe, err := os.CreateTemp(run, ".permission-probe-"); err == nil {
+		probe.Close()
+		_ = os.Remove(probe.Name())
+		t.Skip("directory permissions do not block file creation for this process")
+	}
 	if out, err := status(); err == nil {
 		t.Fatalf("unpublished exit record reported: %s", out)
 	}
