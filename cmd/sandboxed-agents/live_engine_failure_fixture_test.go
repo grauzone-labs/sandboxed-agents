@@ -493,12 +493,19 @@ func TestLiveEngineFailureCapsConcurrentDeadEngineProbes(t *testing.T) {
 		t.Fatalf("probe budget exceeded or timings lost: calls=%d timings=%d", len(calls), len(host.timings.evidence.Operations))
 	}
 	// The exhausted run must issue neither another query nor another rewrite.
+	// Removing the verified report exposes even an identical rewrite.
+	path := filepath.Join(host.failures.directory, "engine-failures-windows-11.json")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := host.podman("container", "inspect", "private-object"); exitStatus(t, err) != 23 {
 		t.Fatalf("suppression changed original result: %v", err)
 	}
-	after, err := os.ReadFile(filepath.Join(host.failures.directory, "engine-failures-windows-11.json"))
-	if err != nil || string(after) != string(data) || len(testutil.Invocations(t, fakes.PodmanLog)) != 21 {
-		t.Fatalf("exhausted run queried or changed evidence: %v", err)
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("exhausted run rewrote evidence: %v", err)
+	}
+	if calls := len(testutil.Invocations(t, fakes.PodmanLog)); calls != 21 {
+		t.Fatalf("exhausted run queried the engine: %d calls", calls)
 	}
 }
 
