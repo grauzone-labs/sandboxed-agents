@@ -183,12 +183,21 @@ func (terminal *liveTerminal) completedAt() (time.Time, bool) {
 	return terminal.exited, true
 }
 
-// Close ends a still running command, or the owned descendants that still hold
-// the terminal after the command exited, and releases the terminal.
+// Close ends a still running command, also one that released the terminal, or
+// the owned descendants that still hold the terminal after the command exited,
+// and releases the terminal.
 func (terminal *liveTerminal) Close() {
+	finished := false
 	select {
-	case <-terminal.readerDone:
+	case <-terminal.done:
+		select {
+		case <-terminal.readerDone:
+			finished = true
+		default:
+		}
 	default:
+	}
+	if !finished {
 		// The command leads its own session, so its group covers the podman
 		// exec it may have started; ending the whole group frees the terminal.
 		// A descendant that ignores hangups keeps the group, and so its ID,
@@ -302,5 +311,33 @@ func TestLiveTerminalRejectsCompletionAfterClassDeadline(t *testing.T) {
 	output, err := command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "inspection exceeded class bound") || strings.Contains(string(output), "kept its passing result") {
 		t.Fatalf("late completion fixture: %v\n%s", err, output)
+	}
+}
+
+// TestLiveTerminalCloseEndsCommandThatReleasedTerminal proves Close still ends
+// a running command that closed all of its terminal descriptors, whose output
+// reader has therefore finished first, through the Linux terminal seam and the
+// command's process state.
+func TestLiveTerminalCloseEndsCommandThatReleasedTerminal(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh on this host")
+	}
+	terminal := startLiveTerminal(t, testutil.Env(os.Environ(), map[string]string{"PATH": "/usr/bin:/bin"}), "/bin/sh", "-c", `exec </dev/null >/dev/null 2>&1; exec sleep 30`)
+	pid := terminal.command.Process.Pid
+	defer unix.Kill(pid, unix.SIGKILL)
+	select {
+	case <-terminal.readerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the command did not release its terminal")
+	}
+	closed := make(chan struct{})
+	go func() {
+		terminal.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Close waited on running command %d instead of ending it", pid)
 	}
 }
