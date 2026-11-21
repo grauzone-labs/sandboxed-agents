@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +11,8 @@ import (
 )
 
 // TestWaitingHostLockNamesOSFailures proves each lock kind retains its error context and cause
-// for both the nonblocking attempt and the blocking wait at the injected OS-lock boundary.
+// for both the nonblocking attempt and the blocking wait at the injected OS-lock boundary, and closes the
+// descriptor whose lock failed.
 func TestWaitingHostLockNamesOSFailures(t *testing.T) {
 	for _, kind := range []string{"image-tag", "port-allocation"} {
 		for _, stage := range []string{"attempt", "wait"} {
@@ -41,7 +43,10 @@ func TestWaitingHostLockNamesOSFailures(t *testing.T) {
 				if attempted == nil {
 					t.Fatal("OS lock boundary was not reached")
 				}
-				if _, err := attempted.Stat(); !errors.Is(err, os.ErrClosed) {
+				// Seek checks the descriptor's closed state on every platform. Stat does not: on Windows it
+				// queries the stale handle value directly, so a closed handle reports an invalid handle, never
+				// os.ErrClosed.
+				if _, err := attempted.Seek(0, io.SeekCurrent); !errors.Is(err, os.ErrClosed) {
 					t.Errorf("failed descriptor not closed: %v", err)
 				}
 				info, statErr := os.Stat(filepath.Join(dir, "resource"))
