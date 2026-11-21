@@ -279,11 +279,14 @@ func (host liveHost) podmanOperation(operation string, args ...string) (string, 
 	host.reportOperation(operation, "started")
 	output := liveOutput{lines: liveLineStream{report: host.report}}
 	err := capture.Run(command, &output, &output)
+	// Classify before the late bookkeeping below: a result that completed within
+	// the bound stays that result even when flushing or reporting runs past it.
+	elapsed, timedOut := time.Since(started).Round(time.Millisecond), ctx.Err()
 	output.Flush()
 	host.recordOperation("podman", operation, started, err)
 	host.reportOperation(operation, fmt.Sprintf("finished after %s", time.Since(started).Round(time.Millisecond)))
-	if ctx.Err() != nil {
-		err = fmt.Errorf("live Podman operation %s ended after %s: %w; engine operations may still be running", operation, time.Since(started).Round(time.Millisecond), errors.Join(ctx.Err(), err))
+	if timedOut != nil {
+		err = fmt.Errorf("live Podman operation %s ended after %s: %w; engine operations may still be running", operation, elapsed, errors.Join(timedOut, err))
 	}
 	if !expectedLiveAbsence(args, err) {
 		host.observeFailure("podman", operation, err)

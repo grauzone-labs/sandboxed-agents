@@ -97,6 +97,25 @@ func TestLiveDirectPodmanBoundStreamsOutput(t *testing.T) {
 	}
 }
 
+// TestLiveDirectPodmanLateReportKeepsResult proves a direct engine read that
+// completed within its class bound keeps its own result, so a normal absence stays
+// recognizable, when the finished report runs past the bound, through the fake Podman seam.
+func TestLiveDirectPodmanLateReportKeepsResult(t *testing.T) {
+	fakes := testutil.Install(t, fakeExecutable)
+	t.Setenv("PATH", fakes.Dir)
+	args := []string{"container", "exists", "gone"}
+	responses, _ := json.Marshal(map[string]lifecycleResponse{strings.Join(args, " "): {Exit: 1}})
+	host := liveHost{environment: testutil.Env(fakes.Env(os.Environ()), map[string]string{"TEST_PODMAN_RESPONSES": string(responses)}), operationBounds: map[string]time.Duration{"cleanup": 2 * time.Second}, report: func(line string) {
+		if strings.Contains(line, "finished after") {
+			time.Sleep(2500 * time.Millisecond)
+		}
+	}}
+	_, err := host.podmanOperation("cleanup", args...)
+	if !expectedLiveAbsence(args, err) || err != nil && strings.Contains(err.Error(), "engine operations may still be running") {
+		t.Fatalf("completed absence was reported as a timeout: %v", err)
+	}
+}
+
 // TestLiveTerminalClassBoundFixture exercises a stalled interactive installation
 // at the suite terminal seam; its parent expects its reported deadline failure.
 func TestLiveTerminalClassBoundFixture(t *testing.T) {
