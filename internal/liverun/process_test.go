@@ -264,18 +264,25 @@ func TestRunSurvivesLauncherAndExcludesSecondSuite(t *testing.T) {
 	if data, err := second.CombinedOutput(); err == nil || !bytes.Contains(data, []byte("engine-exclusive")) {
 		t.Fatalf("second suite admitted: %v %s", err, data)
 	}
-	status := exec.Command(binary, "status", "-run-dir", private)
-	data, err = status.CombinedOutput()
-	if err != nil {
-		t.Fatalf("status: %v %s", err, data)
-	}
-	for _, secret := range []string{"private-image", "/private/path", root} {
-		if bytes.Contains(data, []byte(secret)) {
-			t.Fatalf("status leaked %q: %s", secret, data)
+	// suite-ready proves the suite wrote its output, not that the supervisor drained it into progress.json.
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		data, err = exec.Command(binary, "status", "-run-dir", private).CombinedOutput()
+		if err != nil {
+			t.Fatalf("status: %v %s", err, data)
 		}
-	}
-	if !bytes.Contains(data, []byte("Tool update")) || !bytes.Contains(data, []byte("images")) {
-		t.Fatalf("status missed progress: %s", data)
+		for _, secret := range []string{"private-image", "/private/path", root} {
+			if bytes.Contains(data, []byte(secret)) {
+				t.Fatalf("status leaked %q: %s", secret, data)
+			}
+		}
+		if bytes.Contains(data, []byte("Tool update")) && bytes.Contains(data, []byte("images")) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("status missed progress: %s", data)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if err := os.WriteFile(filepath.Join(root, "release"), nil, 0600); err != nil {
 		t.Fatal(err)
