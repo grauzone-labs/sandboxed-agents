@@ -25,7 +25,7 @@ func TestLiveToolProbeRejectsExposedIPv6Listener(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			output, err := exec.Command(node, "testdata/live_t3code_probe_harness.js", scenario).CombinedOutput()
 			if err == nil || !strings.Contains(string(output), "IPv6 service is not bound to loopback") {
-				t.Fatalf("exposed IPv6 probe: %v %s; want a loopback failure", err, output)
+				t.Fatalf("exposed IPv6 probe: %v %q; want a loopback failure", err, output)
 			}
 		})
 	}
@@ -38,11 +38,11 @@ func TestLiveToolProbeReportsObservedIdentity(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			output, err := exec.Command(node, "testdata/live_t3code_probe_harness.js", scenario).CombinedOutput()
 			if err != nil {
-				t.Fatalf("probe %s: %v %s", scenario, err, output)
+				t.Fatalf("probe %s: %v %q", scenario, err, output)
 			}
 			var observation liveToolObservation
 			if err := json.Unmarshal(output, &observation); err != nil {
-				t.Fatalf("read observed service identity: %v %s", err, output)
+				t.Fatalf("read observed service identity: %v %q", err, output)
 			}
 			if observation.UID != 1000 || observation.GID != 1000 || observation.ServicePID != 201 || observation.HTTPStatus != 200 {
 				t.Fatalf("unexpected service observation: %+v", observation)
@@ -61,7 +61,7 @@ func TestLiveToolProbeRejectsProcessIdentityMismatch(t *testing.T) {
 				t.Run(scenario, func(t *testing.T) {
 					output, err := exec.Command(node, "testdata/live_t3code_probe_harness.js", scenario).CombinedOutput()
 					if err == nil || !strings.Contains(string(output), "Tool "+field+" differs from 1000") {
-						t.Fatalf("mismatched identity probe: %v %s; want a %s failure", err, output, field)
+						t.Fatalf("mismatched identity probe: %v %q; want a %s failure", err, output, field)
 					}
 				})
 			}

@@ -13,6 +13,12 @@ import (
 // agentStatusPattern reads the host's one-line agents status report.
 var agentStatusPattern = regexp.MustCompile(`(?m)^opencode: (not enabled|enabled; version (\S+); pin (\S+); session (true|false); signed in \S+)$`)
 
+// liveTerminalTrace permits the same readiness helpers to observe native and timed terminals.
+type liveTerminalTrace interface {
+	Output() string
+	Wait(time.Duration) (int, bool)
+}
+
 // agent enables opencode in a fresh sandbox through a real npm install, starts
 // its session through a pseudo-terminal the suite provides, detaches, and
 // checks the session, its stop, and the disable through agents status. It
@@ -27,7 +33,7 @@ func (suite *liveSuite) agent(t *testing.T) {
 	if !enabled || !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+`).MatchString(version) || session {
 		t.Fatalf("after enable: enabled=%v version=%q session=%v; want enabled with an installed version and no session", enabled, version, session)
 	}
-	terminal := startLiveTerminal(t, host.environment, host.binary, "agents", "session", name, agent)
+	terminal := host.startTerminal(t, "agents", "session", name, agent)
 	defer terminal.Close()
 	// Let the session render before detaching: tmux must own the terminal
 	// when the prefix arrives, and a quiet screen shows the agent is up.
@@ -51,7 +57,7 @@ func (suite *liveSuite) agent(t *testing.T) {
 		t.Fatalf("after detaching: enabled=%v session=%v; want a running session", enabled, session)
 	}
 	if output := host.mustCLI(t, "", "agents", "session", name, agent, "--stop"); !strings.Contains(output, "stopped session "+agent) {
-		t.Fatalf("session stop did not name the session:\n%s", output)
+		t.Fatalf("session stop did not name the session:\n%q", output)
 	}
 	if enabled, _, session := host.agentStatus(t, name, agent); !enabled || session {
 		t.Fatalf("after stop: enabled=%v session=%v; want no session", enabled, session)
@@ -70,7 +76,7 @@ func (host liveHost) agentStatus(t *testing.T, name, agent string) (bool, string
 	output := host.mustCLI(t, "", "agents", "status", name, agent)
 	match := agentStatusPattern.FindStringSubmatch(output)
 	if match == nil {
-		t.Fatalf("unreadable agents status:\n%s", output)
+		t.Fatalf("unreadable agents status:\n%q", output)
 	}
 	if match[1] == "not enabled" {
 		return false, "", false
@@ -79,7 +85,7 @@ func (host liveHost) agentStatus(t *testing.T, name, agent string) (bool, string
 }
 
 // waitForTerminalOutput waits until the command wrote anything at all.
-func waitForTerminalOutput(t *testing.T, terminal *liveTerminal, timeout time.Duration) {
+func waitForTerminalOutput(t *testing.T, terminal liveTerminalTrace, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for terminal.Output() == "" {
@@ -94,7 +100,7 @@ func waitForTerminalOutput(t *testing.T, terminal *liveTerminal, timeout time.Du
 }
 
 // settleTerminalOutput waits until the output stayed unchanged for quiet, or limit passed.
-func settleTerminalOutput(terminal *liveTerminal, quiet, limit time.Duration) {
+func settleTerminalOutput(terminal liveTerminalTrace, quiet, limit time.Duration) {
 	deadline := time.Now().Add(limit)
 	last, since := len(terminal.Output()), time.Now()
 	for time.Now().Before(deadline) {

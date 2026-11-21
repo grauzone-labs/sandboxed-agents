@@ -7,11 +7,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 	"golang.org/x/sys/unix"
 )
 
@@ -25,6 +29,8 @@ type liveTerminal struct {
 	done       chan struct{}
 	readerDone chan struct{}
 	exit       int
+	// exited and drained are written before done and readerDone close.
+	exited, drained time.Time
 }
 
 // startLiveTerminal starts program under a new session whose controlling
@@ -96,6 +102,7 @@ func startLiveTerminal(t *testing.T, environment []string, program string, args 
 				terminal.mutex.Unlock()
 			}
 			if err != nil {
+				terminal.drained = time.Now()
 				return
 			}
 		}
@@ -107,6 +114,7 @@ func startLiveTerminal(t *testing.T, environment []string, program string, args 
 		} else if err != nil {
 			terminal.exit = -1
 		}
+		terminal.exited = time.Now()
 		close(terminal.done)
 	}()
 	return terminal
@@ -123,6 +131,17 @@ func (terminal *liveTerminal) Output() string {
 	terminal.mutex.Lock()
 	defer terminal.mutex.Unlock()
 	return terminal.output.String()
+}
+
+// outputSince returns only the bytes written after the first cursor bytes; the
+// captured output only grows, so earlier bytes are never copied again.
+func (terminal *liveTerminal) outputSince(cursor int) string {
+	terminal.mutex.Lock()
+	defer terminal.mutex.Unlock()
+	if data := terminal.output.Bytes(); cursor < len(data) {
+		return string(data[cursor:])
+	}
+	return ""
 }
 
 // Wait returns the exit status once the command has ended within timeout and
@@ -145,21 +164,180 @@ func (terminal *liveTerminal) Wait(timeout time.Duration) (int, bool) {
 	}
 }
 
-// Close ends a still running command and releases the terminal.
-func (terminal *liveTerminal) Close() {
+// completedAt reports, without blocking, when the command had both exited and
+// drained its terminal, the moment Wait first reports it finished.
+func (terminal *liveTerminal) completedAt() (time.Time, bool) {
 	select {
 	case <-terminal.done:
 	default:
+		return time.Time{}, false
+	}
+	select {
+	case <-terminal.readerDone:
+	default:
+		return time.Time{}, false
+	}
+	if terminal.drained.After(terminal.exited) {
+		return terminal.drained, true
+	}
+	return terminal.exited, true
+}
+
+// Close ends a still running command, also one that released the terminal, or
+// the owned descendants that still hold the terminal after the command exited,
+// and releases the terminal.
+func (terminal *liveTerminal) Close() {
+	finished := false
+	select {
+	case <-terminal.done:
+		select {
+		case <-terminal.readerDone:
+			finished = true
+		default:
+		}
+	default:
+	}
+	if !finished {
 		// The command leads its own session, so its group covers the podman
 		// exec it may have started; ending the whole group frees the terminal.
+		// A descendant that ignores hangups keeps the group, and so its ID,
+		// alive after the command exits; it must end here as well.
 		unix.Kill(-terminal.command.Process.Pid, unix.SIGKILL)
-		<-terminal.done
 	}
+	<-terminal.done
 	// Closing the master ends the reader; wait for it so nothing appends to
 	// the output after Close returns.
 	terminal.master.Close()
 	select {
 	case <-terminal.readerDone:
 	case <-time.After(5 * time.Second):
+	}
+}
+
+// TestLiveTerminalLingerBoundFixture exercises a class timeout whose command exits
+// while a descendant ignoring hangups keeps the terminal; its parent expects the
+// reported deadline failure and checks that the descendant ended.
+func TestLiveTerminalLingerBoundFixture(t *testing.T) {
+	pidFile := os.Getenv("TEST_LIVE_TERMINAL_LINGER")
+	if pidFile == "" {
+		return
+	}
+	host := liveHost{binary: "/bin/sh", environment: testutil.Env(os.Environ(), map[string]string{"PATH": "/usr/bin:/bin"}), operationBounds: map[string]time.Duration{"inspection": 500 * time.Millisecond}, report: func(line string) { t.Log(line) }}
+	terminal := host.startTerminal(t, "-c", `trap "" HUP; sleep 30 & echo $! > "$TEST_LIVE_TERMINAL_LINGER"; echo shell done; exit 0`)
+	defer terminal.Close()
+	terminal.Wait(5 * time.Second)
+}
+
+// TestLiveTerminalClassBoundEndsLingeringDescendant proves a class timeout ends
+// the owned process group even after the command itself exited, so a descendant
+// that ignores hangups and keeps the terminal stops, through the timed terminal
+// seam in a nested fixture and the descendant's process state.
+func TestLiveTerminalClassBoundEndsLingeringDescendant(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh on this host")
+	}
+	pidFile := filepath.Join(t.TempDir(), "descendant.pid")
+	values := nestedExecutables()
+	values["TEST_LIVE_TERMINAL_LINGER"] = pidFile
+	command := exec.Command(os.Args[0], "-test.v", "-test.run=^TestLiveTerminalLingerBoundFixture$")
+	command.Env = testutil.Env(os.Environ(), values)
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "inspection exceeded class bound") {
+		t.Fatalf("terminal fixture: %v\n%q", err, output)
+	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		t.Fatalf("invalid descendant pid %q", data)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for liveProcessRunning(pid) {
+		if time.Now().After(deadline) {
+			unix.Kill(pid, unix.SIGKILL)
+			t.Fatalf("class timeout left descendant %d holding the terminal", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// liveProcessRunning reports whether pid names a process that has neither exited
+// nor become a zombie awaiting its reaper.
+func liveProcessRunning(pid int) bool {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	_, fields, found := strings.Cut(string(data), ") ")
+	return found && !strings.HasPrefix(fields, "Z") && !strings.HasPrefix(fields, "X")
+}
+
+// TestLiveTerminalLateCompletionFixture waits on a terminal that reports itself
+// finished with a completion stamped after its class deadline, as a command
+// that completes while Wait's timer fires can; its parent expects the class
+// timeout to be reported.
+func TestLiveTerminalLateCompletionFixture(t *testing.T) {
+	if os.Getenv("TEST_LIVE_TERMINAL_LATE_COMPLETION") != "1" {
+		return
+	}
+	master, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const bound = 200 * time.Millisecond
+	started := time.Now()
+	done, readerDone := make(chan struct{}), make(chan struct{})
+	late := started.Add(bound + time.Second)
+	inner := &liveTerminal{master: master, done: done, readerDone: readerDone, exited: late, drained: late}
+	close(done)
+	close(readerDone)
+	host := liveHost{timings: &liveTimings{}, operationBounds: map[string]time.Duration{"inspection": bound}}
+	terminal := &timedLiveTerminal{liveTerminal: inner, host: host, started: started, operation: "inspection", test: t}
+	defer terminal.Close()
+	if exit, finished := terminal.Wait(5 * time.Second); finished && exit == 0 {
+		t.Log("late completion kept its passing result")
+	}
+}
+
+// TestLiveTerminalRejectsCompletionAfterClassDeadline proves the timed terminal
+// treats a completion stamped after the class deadline as a class timeout even
+// when the platform Wait reports it finished, through the timed terminal seam
+// in a nested fixture.
+func TestLiveTerminalRejectsCompletionAfterClassDeadline(t *testing.T) {
+	command := exec.Command(os.Args[0], "-test.v", "-test.run=^TestLiveTerminalLateCompletionFixture$")
+	command.Env = testutil.Env(os.Environ(), map[string]string{"TEST_LIVE_TERMINAL_LATE_COMPLETION": "1"})
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "inspection exceeded class bound") || strings.Contains(string(output), "kept its passing result") {
+		t.Fatalf("late completion fixture: %v\n%s", err, output)
+	}
+}
+
+// TestLiveTerminalCloseEndsCommandThatReleasedTerminal proves Close still ends
+// a running command that closed all of its terminal descriptors, whose output
+// reader has therefore finished first, through the Linux terminal seam and the
+// command's process state.
+func TestLiveTerminalCloseEndsCommandThatReleasedTerminal(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh on this host")
+	}
+	terminal := startLiveTerminal(t, testutil.Env(os.Environ(), map[string]string{"PATH": "/usr/bin:/bin"}), "/bin/sh", "-c", `exec </dev/null >/dev/null 2>&1; exec sleep 30`)
+	pid := terminal.command.Process.Pid
+	defer unix.Kill(pid, unix.SIGKILL)
+	select {
+	case <-terminal.readerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the command did not release its terminal")
+	}
+	closed := make(chan struct{})
+	go func() {
+		terminal.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Close waited on running command %d instead of ending it", pid)
 	}
 }

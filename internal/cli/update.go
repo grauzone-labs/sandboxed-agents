@@ -30,7 +30,7 @@ func updateSandbox(request Request, p podmanTarget, output, progress io.Writer) 
 		fmt.Fprintf(output, "sandbox %s already up to date\n", request.Name)
 		return nil
 	}
-	tag, err := ensureImage(p, plan.set, output)
+	tag, err := ensureImage(p, plan.set, output, progress)
 	if err != nil {
 		return err
 	}

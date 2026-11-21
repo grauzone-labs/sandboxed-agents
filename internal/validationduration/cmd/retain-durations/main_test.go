@@ -39,3 +39,72 @@ func TestRunRetainsStdinWithUnknownContext(t *testing.T) {
 		t.Fatal("collection changed schema 2 record")
 	}
 }
+
+// TestRunRetainsPreparationAndPostSuiteSeconds proves timestamp inputs become
+// elapsed seconds, without retaining timestamps, through the offline command seam.
+func TestRunRetainsPreparationAndPostSuiteSeconds(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "live-suite-linux.json")
+	const source = `{"schema_version":2,"kind":"live-suite","commit":"0123456789abcdef0123456789abcdef01234567","platform":"linux","result":"fail","image_part_selected":false,"image_part_ran":false,"image_coverage_complete":false,"checks":[]}`
+	if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output, diagnostics bytes.Buffer
+	args := []string{"-record", path, "-preparation-start", "2026-11-18T08:00:00Z", "-preparation-end", "2026-11-18T08:00:37.5Z", "-post-suite-start", "2026-11-18T09:00:00Z", "-post-suite-end", "2026-11-18T09:01:02Z"}
+	if err := run(args, strings.NewReader(""), &output, &diagnostics); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(directory, "durations-linux.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"preparation_seconds":37.5`) || !strings.Contains(string(data), `"post_suite_seconds":62`) || strings.Contains(string(data), "2026-") {
+		t.Fatalf("phase evidence: %s", data)
+	}
+}
+
+// TestRunReportsRetainedDurationsWhenOptionalEvidenceIsInvalid proves the command
+// returns the independent durations path and an explicit optional-evidence error.
+func TestRunReportsRetainedDurationsWhenOptionalEvidenceIsInvalid(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "live-suite-linux.json")
+	const source = `{"schema_version":2,"kind":"live-suite","commit":"0123456789abcdef0123456789abcdef01234567","platform":"linux","result":"fail","image_part_selected":false,"image_part_ran":false,"image_coverage_complete":false,"checks":[]}`
+	if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "operations-linux.json"), []byte(`{"partial":`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output, diagnostics bytes.Buffer
+	err := run([]string{"-record", path}, strings.NewReader("    --- FAIL: TestLiveSuite/preflight (19.58s)\n"), &output, &diagnostics)
+	if err == nil || !strings.Contains(err.Error(), "optional operation evidence") || output.String() != filepath.Join(directory, "durations-linux.json")+"\n" {
+		t.Fatalf("output=%q err=%v", output.String(), err)
+	}
+}
+
+// TestRunCollectsPrivatePreflightChannel proves the offline flag reaches the
+// typed operations collector and missing observations stay absent without
+// leaking the private directory, at the command's files/stdin seam.
+func TestRunCollectsPrivatePreflightChannel(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "live-suite-linux.json")
+	const source = `{"schema_version":2,"kind":"live-suite","commit":"0123456789abcdef0123456789abcdef01234567","platform":"linux","result":"fail","image_part_selected":false,"image_part_ran":false,"image_coverage_complete":false,"checks":[]}`
+	if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	operations := filepath.Join(directory, "operations-linux.json")
+	if err := os.WriteFile(operations, []byte(`{"schema_version":1,"kind":"live-suite-operations","commit":"0123456789abcdef0123456789abcdef01234567","platform":"linux","operations":[],"cases":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out, diagnostics bytes.Buffer
+	if err := run([]string{"-record", path, "-preflight-dir", filepath.Join(directory, "private-channel")}, strings.NewReader(""), &out, &diagnostics); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(operations)
+	if err != nil || !strings.Contains(string(data), `"state":"not-collected"`) || !strings.Contains(string(data), `"channel-unavailable"`) || strings.Contains(string(data), "private-channel") || strings.Contains(string(data), "suite_seconds") {
+		t.Fatalf("optional channel evidence %s, %v", data, err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != source {
+		t.Fatal("collector changed suite record")
+	}
+}

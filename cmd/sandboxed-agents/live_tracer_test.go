@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
 	"github.com/grauzone-labs/sandboxed-agents/internal/cli"
+	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 )
 
@@ -226,190 +228,402 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 		t.Skip("nested offline guard; the outer suite runs the tracer")
 	}
 	sets := []string{"none", "dotnet", "playwright", "azure", "native"}
-	for _, scenario := range []struct {
+	var baselineCLI, baselineEngine []string
+	type tracerScenario struct {
 		images, failIdentity bool
 		bindFailure          string
-	}{{false, false, ""}, {true, false, ""}, {false, true, ""}, {false, false, "extra-volume"}, {false, false, "host-bind"}, {false, false, "unsafe-options"}} {
+		overlap              string
+	}
+	// runScenario traces one scenario. An overlap comparison needs the default
+	// serial run's invocations; a focused run that skipped that scenario builds
+	// it first as a nested reference.
+	var runScenario func(*testing.T, tracerScenario)
+	runScenario = func(t *testing.T, scenario tracerScenario) {
+		parallelImages := scenario.overlap == "2" || scenario.overlap == "9"
 		selected := scenario.images
 		failed := scenario.failIdentity || scenario.bindFailure != ""
-		label := "images-selected-" + strconv.FormatBool(selected) + "-tool-identity-failure-" + strconv.FormatBool(scenario.failIdentity)
-		if scenario.bindFailure != "" {
-			label += "-" + scenario.bindFailure
+		if scenario.overlap != "" && selected && !failed && baselineCLI == nil {
+			t.Run("serial-reference", func(t *testing.T) { runScenario(t, tracerScenario{images: true}) })
+			if baselineCLI == nil {
+				t.Fatal("the default serial reference recorded no invocation baseline")
+			}
 		}
-		t.Run(label, func(t *testing.T) {
-			fakes := testutil.Install(t, fakeExecutable)
-			data, err := os.ReadFile(fakeExecutable)
-			if err != nil {
+		fakes := testutil.Install(t, fakeExecutable)
+		data, err := os.ReadFile(fakeExecutable)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The scripted executable lives outside the fake PATH directory, which
+		// also serves as the host state root of the nested run.
+		scripted := filepath.Join(t.TempDir(), "sandboxed-agents")
+		if err := os.WriteFile(scripted, data, 0700); err != nil {
+			t.Fatal(err)
+		}
+		running := func(name, set string) string {
+			return name + "\trunning\t" + tracerPort + "\tvolume\t" + set + "\t-\t3\t-\n"
+		}
+		var outdated []string
+		for _, set := range sets {
+			outdated = append(outdated, "image-"+set+"\trunning\t"+tracerPort+"\tvolume\t"+set+"\t-\t3\toutdated; use update image-"+set+"\n")
+		}
+		executableResponses := map[string]lifecycleResponse{
+			"check":   {},
+			"version": {Output: "sandboxed-agents development\nasset-sha256 " + tracerAssetHash + "\n"},
+			"list": {Sequence: []scriptedAnswer{
+				{Output: tracerListing(running("live-lifecycle", "none"))}, {Output: tracerListing("live-lifecycle\tstopped\t" + tracerPort + "\tvolume\tnone\t-\t3\t-\n")},
+				{Output: tracerListing(running("live-lifecycle", "none"))}, {Output: tracerListing()},
+				{Output: tracerListing(running("live-update", "none"))}, {Output: tracerListing(running("live-update", "none"))},
+				{Output: tracerListing(outdated...)},
+			}},
+			"up live-lifecycle": {}, "check live-lifecycle": {}, "stop live-lifecycle": {}, "start live-lifecycle": {},
+			"stop image-none": {}, "start image-none": {},
+			"up live-update --with native":             {},
+			"update live-update --with none":           {Output: "sandbox live-update updated\n"},
+			"update live-update --with native --force": {Exit: 1, Output: "readiness wait failed: no SSH key exchange; restored sandbox live-update to its previous state\n"},
+			"check live-update":                        {},
+			"shell live-update":                        {Output: tracerAuthorized + "\n"},
+			"up live-agent":                            {},
+			"agents enable live-agent opencode":        {},
+			"agents status live-agent opencode": {Sequence: []scriptedAnswer{
+				{Output: "opencode: enabled; version 1.2.3; pin none; session false; signed in unknown\n"},
+				{Output: "opencode: enabled; version 1.2.3; pin none; session true; signed in unknown\n"},
+				{Output: "opencode: enabled; version 1.2.3; pin none; session false; signed in unknown\n"},
+				{Output: "opencode: not enabled\n"},
+			}},
+			"agents session live-agent opencode":        {Output: "opencode session screen\n", ExitOnInput: "\x02d"},
+			"agents session live-agent opencode --stop": {Output: "stopped session opencode\n"},
+			"agents disable live-agent opencode":        {},
+			"build":                                     {Output: "built image " + tracerTag("none") + "\nexisting sandboxes keep their image until update; list marks them as outdated\n"},
+		}
+		podmanResponses := map[string]lifecycleResponse{
+			"info --format json":                {Output: `{"host":{"cpus":4,"memTotal":4294967296,"memFree":123456789,"swapTotal":0,"swapFree":0,"hostname":"private-engine-sentinel","store":"/private/engine/path"}}`},
+			"* exists *":                        {Exit: 1},
+			"exec --user=0:0 * ssh-host-key":    {Output: tracerHostKey + "\n"},
+			"exec --user=0:0 * ssh-authorize *": {},
+			"exec --user=0:0 * sh -c cat /proc/1/comm; cat /proc/1/status":                   {Output: "sshd\nName:\tsshd\nUid:\t0\t0\t0\t0\n"},
+			"exec --user=1000:1000 * cat /sys/fs/cgroup/memory.swap.max":                     {Output: "0\n"},
+			"ps --all --format {{.Names}}":                                                   {},
+			"volume ls --format {{.Name}}":                                                   {},
+			"container inspect " + cli.DerivedNames(tracerGroup, "live-lifecycle").Container: {Output: tracerContainer("none", 1)},
+			"container inspect " + cli.DerivedNames(tracerGroup, "live-update").Container: {Sequence: []scriptedAnswer{
+				{Output: tracerContainer("native", 1)}, {Output: tracerContainer("none", 1)}, {Output: tracerContainer("none", 1)},
+			}},
+			"image save --format docker-archive " + tracerTag("none"): {Output: tracerArchive(t)},
+		}
+		tracerToolResponses(t, executableResponses, podmanResponses, scenario.failIdentity)
+		if scenario.bindFailure != "" {
+			podmanResponses["container inspect "+cli.DerivedNames(tracerGroup, "live-t3code").Container] = lifecycleResponse{Output: tracerToolBindFailure(t, scenario.bindFailure)}
+		}
+		for _, name := range []string{"live-lifecycle", "live-update", "live-agent", "live-t3code"} {
+			executableResponses["remove "+name+" --volumes"] = lifecycleResponse{}
+			executableResponses["remove "+name+" --volumes --force"] = lifecycleResponse{}
+		}
+		for _, set := range sets {
+			executableResponses["up image-"+set+" --with "+set] = lifecycleResponse{}
+			executableResponses["shell image-"+set] = lifecycleResponse{}
+			executableResponses["remove image-"+set+" --volumes"] = lifecycleResponse{}
+			executableResponses["remove image-"+set+" --volumes --force"] = lifecycleResponse{}
+			podmanResponses["container inspect "+cli.DerivedNames(tracerGroup, "image-"+set).Container] = lifecycleResponse{Output: tracerContainer(set, 1)}
+			podmanResponses["image inspect "+tracerTag(set)] = lifecycleResponse{Sequence: []scriptedAnswer{{Output: tracerImage(set, 1)}, {Output: tracerImage(set, 2)}}}
+		}
+		if parallelImages {
+			executableResponses["build --jobs 3"] = executableResponses["build"]
+			delete(executableResponses, "build")
+		}
+		executableScript, err := json.Marshal(executableResponses)
+		if err != nil {
+			t.Fatal(err)
+		}
+		podmanScript, err := json.Marshal(podmanResponses)
+		if err != nil {
+			t.Fatal(err)
+		}
+		records := t.TempDir()
+		executableLog := filepath.Join(fakes.Dir, "sandboxed-agents.jsonl")
+		values := map[string]string{
+			"SANDBOXED_AGENTS_GROUP": tracerGroup, liveRecordDirEnv: records, liveImagesEnv: map[bool]string{false: "", true: "1"}[selected],
+			"TEST_SANDBOXED_AGENTS_EXECUTABLE": scripted, livePreparedExecutableEnv: scripted,
+			"TEST_SANDBOXED_AGENTS_LOG": executableLog, "TEST_SANDBOXED_AGENTS_RESPONSES": string(executableScript),
+			"TEST_PODMAN_RESPONSES": string(podmanScript),
+			"TEST_SSH_OUTPUT":       "debug1: SSH2_MSG_NEWKEYS received\n", "TEST_SSH_EXIT": "255",
+			"TEST_SSH_KNOWN_HOSTS": "[127.0.0.1]:" + tracerPort + " " + tracerHostKey + "\n",
+		}
+		values[liverun.CaseOverlapEnv] = scenario.overlap
+		if parallelImages {
+			values[liverun.BuildJobsEnv] = "3"
+		}
+		var output string
+		if parallelImages {
+			cleanupReady := filepath.Join(records, "cleanup-ready")
+			cleanupRelease := filepath.Join(records, "cleanup-release")
+			archiveReady := filepath.Join(records, "archive-ready")
+			buildReady := filepath.Join(records, "build-ready")
+			// The body's own absence check answers at once; only the second probe,
+			// the registered cleanup's, holds the lifecycle case.
+			podmanResponses["volume exists "+cli.DerivedNames(tracerGroup, "live-lifecycle").SSH] = lifecycleResponse{Sequence: []scriptedAnswer{{Exit: 1}, {Exit: 1, ReadyFile: cleanupReady, WaitFor: cleanupRelease}}}
+			executableResponses["up live-update --with native"] = lifecycleResponse{WaitFor: cleanupReady}
+			build := executableResponses["build --jobs 3"]
+			build.ReadyFile = buildReady
+			executableResponses["build --jobs 3"] = build
+			archive := podmanResponses["image save --format docker-archive "+tracerTag("none")]
+			archive.ReadyFile = archiveReady
+			podmanResponses["image save --format docker-archive "+tracerTag("none")] = archive
+			executableScript, _ = json.Marshal(executableResponses)
+			podmanScript, _ = json.Marshal(podmanResponses)
+			values["TEST_SANDBOXED_AGENTS_RESPONSES"] = string(executableScript)
+			values["TEST_PODMAN_RESPONSES"] = string(podmanScript)
+			values[testutil.LiveTestsEnv] = "1"
+			command := fixtureLiveCommand(t, fakes, "TestLiveSuite", values)
+			if scenario.overlap == "9" {
+				command.Args = append(command.Args, "-test.parallel=1")
+			}
+			var log bytes.Buffer
+			command.Stdout, command.Stderr = &log, &log
+			if err := command.Start(); err != nil {
 				t.Fatal(err)
 			}
-			// The scripted executable lives outside the fake PATH directory, which
-			// also serves as the host state root of the nested run.
-			scripted := filepath.Join(t.TempDir(), "sandboxed-agents")
-			if err := os.WriteFile(scripted, data, 0700); err != nil {
-				t.Fatal(err)
-			}
-			running := func(name, set string) string {
-				return name + "\trunning\t" + tracerPort + "\tvolume\t" + set + "\t-\t3\t-\n"
-			}
-			var outdated []string
-			for _, set := range sets {
-				outdated = append(outdated, "image-"+set+"\trunning\t"+tracerPort+"\tvolume\t"+set+"\t-\t3\toutdated; use update image-"+set+"\n")
-			}
-			executableResponses := map[string]lifecycleResponse{
-				"check":   {},
-				"version": {Output: "sandboxed-agents development\nasset-sha256 " + tracerAssetHash + "\n"},
-				"list": {Sequence: []scriptedAnswer{
-					{Output: tracerListing(running("live-lifecycle", "none"))}, {Output: tracerListing("live-lifecycle\tstopped\t" + tracerPort + "\tvolume\tnone\t-\t3\t-\n")},
-					{Output: tracerListing(running("live-lifecycle", "none"))}, {Output: tracerListing()},
-					{Output: tracerListing(running("live-update", "none"))}, {Output: tracerListing(running("live-update", "none"))},
-					{Output: tracerListing(outdated...)},
-				}},
-				"up live-lifecycle": {}, "check live-lifecycle": {}, "stop live-lifecycle": {}, "start live-lifecycle": {},
-				"stop image-none": {}, "start image-none": {},
-				"up live-update --with native":             {},
-				"update live-update --with none":           {Output: "sandbox live-update updated\n"},
-				"update live-update --with native --force": {Exit: 1, Output: "readiness wait failed: no SSH key exchange; restored sandbox live-update to its previous state\n"},
-				"check live-update":                        {},
-				"shell live-update":                        {Output: tracerAuthorized + "\n"},
-				"up live-agent":                            {},
-				"agents enable live-agent opencode":        {},
-				"agents status live-agent opencode": {Sequence: []scriptedAnswer{
-					{Output: "opencode: enabled; version 1.2.3; pin none; session false; signed in unknown\n"},
-					{Output: "opencode: enabled; version 1.2.3; pin none; session true; signed in unknown\n"},
-					{Output: "opencode: enabled; version 1.2.3; pin none; session false; signed in unknown\n"},
-					{Output: "opencode: not enabled\n"},
-				}},
-				"agents session live-agent opencode":        {Output: "opencode session screen\n", ExitOnInput: "\x02d"},
-				"agents session live-agent opencode --stop": {Output: "stopped session opencode\n"},
-				"agents disable live-agent opencode":        {},
-				"build":                                     {Output: "built image " + tracerTag("none") + "\nexisting sandboxes keep their image until update; list marks them as outdated\n"},
-			}
-			podmanResponses := map[string]lifecycleResponse{
-				"* exists *":                        {Exit: 1},
-				"exec --user=0:0 * ssh-host-key":    {Output: tracerHostKey + "\n"},
-				"exec --user=0:0 * ssh-authorize *": {},
-				"exec --user=0:0 * sh -c cat /proc/1/comm; cat /proc/1/status":                   {Output: "sshd\nName:\tsshd\nUid:\t0\t0\t0\t0\n"},
-				"exec --user=1000:1000 * cat /sys/fs/cgroup/memory.swap.max":                     {Output: "0\n"},
-				"ps --all --format {{.Names}}":                                                   {},
-				"volume ls --format {{.Name}}":                                                   {},
-				"container inspect " + cli.DerivedNames(tracerGroup, "live-lifecycle").Container: {Output: tracerContainer("none", 1)},
-				"container inspect " + cli.DerivedNames(tracerGroup, "live-update").Container: {Sequence: []scriptedAnswer{
-					{Output: tracerContainer("native", 1)}, {Output: tracerContainer("none", 1)}, {Output: tracerContainer("none", 1)},
-				}},
-				"image save --format docker-archive " + tracerTag("none"): {Output: tracerArchive(t)},
-			}
-			tracerToolResponses(t, executableResponses, podmanResponses, scenario.failIdentity)
-			if scenario.bindFailure != "" {
-				podmanResponses["container inspect "+cli.DerivedNames(tracerGroup, "live-t3code").Container] = lifecycleResponse{Output: tracerToolBindFailure(t, scenario.bindFailure)}
-			}
-			for _, name := range []string{"live-lifecycle", "live-update", "live-agent", "live-t3code"} {
-				executableResponses["remove "+name+" --volumes"] = lifecycleResponse{}
-				executableResponses["remove "+name+" --volumes --force"] = lifecycleResponse{}
-			}
-			for _, set := range sets {
-				executableResponses["up image-"+set+" --with "+set] = lifecycleResponse{}
-				executableResponses["shell image-"+set] = lifecycleResponse{}
-				executableResponses["remove image-"+set+" --volumes"] = lifecycleResponse{}
-				executableResponses["remove image-"+set+" --volumes --force"] = lifecycleResponse{}
-				podmanResponses["container inspect "+cli.DerivedNames(tracerGroup, "image-"+set).Container] = lifecycleResponse{Output: tracerContainer(set, 1)}
-				podmanResponses["image inspect "+tracerTag(set)] = lifecycleResponse{Sequence: []scriptedAnswer{{Output: tracerImage(set, 1)}, {Output: tracerImage(set, 2)}}}
-			}
-			executableScript, err := json.Marshal(executableResponses)
-			if err != nil {
-				t.Fatal(err)
-			}
-			podmanScript, err := json.Marshal(podmanResponses)
-			if err != nil {
-				t.Fatal(err)
-			}
-			records := t.TempDir()
-			executableLog := filepath.Join(fakes.Dir, "sandboxed-agents.jsonl")
-			output, err := liveSuiteChild(t, fakes, map[string]string{
-				"SANDBOXED_AGENTS_GROUP": tracerGroup, liveRecordDirEnv: records, liveImagesEnv: map[bool]string{false: "", true: "1"}[selected],
-				"TEST_SANDBOXED_AGENTS_EXECUTABLE": scripted, livePreparedExecutableEnv: scripted,
-				"TEST_SANDBOXED_AGENTS_LOG": executableLog, "TEST_SANDBOXED_AGENTS_RESPONSES": string(executableScript),
-				"TEST_PODMAN_RESPONSES": string(podmanScript),
-				"TEST_SSH_OUTPUT":       "debug1: SSH2_MSG_NEWKEYS received\n", "TEST_SSH_EXIT": "255",
-				"TEST_SSH_KNOWN_HOSTS": "[127.0.0.1]:" + tracerPort + " " + tracerHostKey + "\n",
-			})
-			failure := "disagrees with CLI status or containment"
-			if scenario.bindFailure != "" {
-				failure = "unexpected HostConfig.Binds"
-			}
-			if (!failed && (err != nil || !strings.Contains(output, "--- PASS: TestLiveSuite"))) || (failed && (err == nil || !strings.Contains(output, "--- FAIL: TestLiveSuite/t3code") || !strings.Contains(output, failure))) {
-				t.Fatalf("traced suite: %v\n%s", err, output)
-			}
-			data, err = os.ReadFile(filepath.Join(records, liveRecordFilename(t)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var record struct {
-				Result                string `json:"result"`
-				ImagePartSelected     bool   `json:"image_part_selected"`
-				ImagePartRan          bool   `json:"image_part_ran"`
-				ImageCoverageComplete bool   `json:"image_coverage_complete"`
-				Checks                []struct{ Name, Result string }
-			}
-			if err := json.Unmarshal(data, &record); err != nil {
-				t.Fatal(err)
-			}
-			images := map[bool]string{false: "not-run", true: "pass"}[selected]
-			result := map[bool]string{false: "pass", true: "fail"}[failed]
-			wantChecks := []struct{ Name, Result string }{{"preflight", "pass"}, {"lifecycle", "pass"}, {"update", "pass"}, {"agent", "pass"}, {"t3code", result}, {"images", images}}
-			if record.Result != result || record.ImagePartSelected != selected || record.ImagePartRan != selected || record.ImageCoverageComplete != selected || !slices.Equal(record.Checks, wantChecks) {
-				t.Fatalf("record=%s; want %s with image fields %v and checks %v", data, result, selected, wantChecks)
-			}
-			assertTracedToolEvidence(t, records, result, failed)
-			builds, created := 0, map[string]bool{}
-			commands := map[string]int{}
-			for _, call := range testutil.Invocations(t, executableLog) {
-				commands[strings.Join(call, " ")]++
-				if slices.Equal(call, []string{"build"}) {
-					builds++
+			defer func() {
+				if command.ProcessState == nil {
+					command.Process.Kill()
+					command.Wait()
 				}
-				if len(call) >= 2 && call[0] == "up" {
-					created[call[1]] = true
-				}
-				if len(call) >= 3 && call[0] == "remove" && call[2] == "--volumes" {
-					delete(created, call[1])
+			}()
+			waitLiveMarker(t, cleanupReady)
+			// The held probe must be the registered cleanup's: the body's earlier
+			// absence check of the same volume already returned.
+			probe := []string{"volume", "exists", cli.DerivedNames(tracerGroup, "live-lifecycle").SSH}
+			probes := 0
+			for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
+				if slices.Equal(call, probe) {
+					probes++
 				}
 			}
-			if builds != map[bool]int{false: 0, true: 1}[selected] || len(created) != 0 {
-				t.Fatalf("builds=%d sandboxes without a remove=%v; want %d builds and none left", builds, created, map[bool]int{false: 0, true: 1}[selected])
+			if probes != 2 {
+				t.Fatalf("the held SSH volume probe is call %d; want the cleanup's second call", probes)
 			}
-			if !failed {
-				for command, want := range map[string]int{
-					"up live-t3code": 2, "stop live-t3code": 2, "start live-t3code": 1, "restart live-t3code": 1,
-					"tools enable live-t3code t3code": 2, "tools enable live-t3code t3code --channel nightly": 1,
-					"tools enable live-t3code t3code --version 0.17.1": 1, "tools update live-t3code t3code": 4,
-					"update live-t3code --with native": 1, "update live-t3code --with none --force": 1,
-					"tools delete live-t3code t3code": 2, "tools status live-t3code t3code": 15,
-				} {
-					if commands[command] != want {
-						t.Fatalf("traced %q %d times; want %d", command, commands[command], want)
+			if scenario.overlap == "9" {
+				initial, readErr := os.ReadFile(filepath.Join(records, "operations-"+livePlatform()+".json"))
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				var fields map[string]json.RawMessage
+				if err := json.Unmarshal(initial, &fields); err != nil {
+					t.Fatal(err)
+				}
+				if string(fields["go_test_parallel"]) != "1" {
+					t.Errorf("initial operation evidence missing actual Go parallel cap: %s", initial)
+				}
+			}
+			// Let initial image coverage reach its last engine operation while another
+			// case is held in an absence check. Completion ordering below also
+			// proves every independent invocation finishes before rebuild.
+			waitLiveMarker(t, archiveReady)
+			if _, err := os.Stat(buildReady); !os.IsNotExist(err) {
+				t.Error("build started while a lifecycle absence check was in flight")
+			}
+			if err := os.WriteFile(cleanupRelease, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			err = command.Wait()
+			output = log.String()
+			maximumImageOperations := assertLiveTraceRebuildExclusive(t, output)
+			if scenario.overlap == "9" {
+				if maximumImageOperations != 1 {
+					t.Errorf("Go parallel1 admitted %d simultaneous image operations with shared budget9", maximumImageOperations)
+				}
+				for _, set := range sets {
+					if !strings.Contains(output, "=== CONT  TestLiveSuite/images/initial/"+set+"\n") {
+						t.Errorf("initial %s did not run as an actual parallel Go subtest", set)
 					}
 				}
 			}
-			probes := map[string]int{}
-			for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
-				if slices.Contains(call, "build") || slices.Contains(call, "create") || slices.Contains(call, "rm") {
-					t.Fatalf("the suite changed Podman objects directly: %v", call)
+		} else {
+			output, err = liveSuiteChild(t, fakes, values)
+		}
+
+		failure := "disagrees with CLI status or containment"
+		if scenario.bindFailure != "" {
+			failure = "unexpected HostConfig.Binds"
+		}
+		if (!failed && (err != nil || !strings.Contains(output, "--- PASS: TestLiveSuite"))) || (failed && (err == nil || !strings.Contains(output, "--- FAIL: TestLiveSuite/t3code") || !strings.Contains(output, failure))) {
+			t.Fatalf("traced suite: %v\n%q", err, output)
+		}
+		data, err = os.ReadFile(filepath.Join(records, liveRecordFilename(t)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var record struct {
+			Result                string `json:"result"`
+			ImagePartSelected     bool   `json:"image_part_selected"`
+			ImagePartRan          bool   `json:"image_part_ran"`
+			ImageCoverageComplete bool   `json:"image_coverage_complete"`
+			Checks                []struct{ Name, Result string }
+		}
+		if err := json.Unmarshal(data, &record); err != nil {
+			t.Fatal(err)
+		}
+		images := map[bool]string{false: "not-run", true: "pass"}[selected]
+		result := map[bool]string{false: "pass", true: "fail"}[failed]
+		wantChecks := []struct{ Name, Result string }{{"preflight", "pass"}, {"lifecycle", "pass"}, {"update", "pass"}, {"agent", "pass"}, {"t3code", result}, {"images", images}}
+		if record.Result != result || record.ImagePartSelected != selected || record.ImagePartRan != selected || record.ImageCoverageComplete != selected || !slices.Equal(record.Checks, wantChecks) {
+			t.Fatalf("record=%s; want %s with image fields %v and checks %v", data, result, selected, wantChecks)
+		}
+		settingsData, err := os.ReadFile(filepath.Join(records, "operations-"+livePlatform()+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var settings struct {
+			Overlap    int `json:"case_overlap"`
+			Jobs       int `json:"build_jobs"`
+			GoParallel int `json:"go_test_parallel"`
+		}
+		if err = json.Unmarshal(settingsData, &settings); err != nil {
+			t.Fatal(err)
+		}
+		wantOverlap, wantJobs := 1, 1
+		if parallelImages {
+			wantOverlap, wantJobs = 2, 3
+		}
+		if scenario.overlap == "9" {
+			wantOverlap = 9
+			if settings.GoParallel != 1 {
+				t.Errorf("final operation Go parallel cap=%d; want1", settings.GoParallel)
+			}
+		}
+		if settings.Overlap != wantOverlap || settings.Jobs != wantJobs {
+			t.Fatalf("configured concurrency omitted from operations: %s", settingsData)
+		}
+		assertTracedToolEvidence(t, records, result, failed)
+		assertTracedOperationEvidence(t, records, executableLog, fakes.PodmanLog, selected)
+		assertTracedEngineFailureEvidence(t, records, fakes.PodmanLog)
+		if selected && !failed {
+			cliCalls, engineCalls := tracedInvocationLines(t, executableLog), tracedInvocationLines(t, fakes.PodmanLog)
+			if scenario.overlap == "" {
+				baselineCLI, baselineEngine = cliCalls, engineCalls
+			} else if scenario.overlap == "1" {
+				if !slices.Equal(cliCalls, baselineCLI) || !slices.Equal(engineCalls, baselineEngine) {
+					t.Fatal("overlap1 changed the default serial invocation sequence")
 				}
-				if index := slices.Index(call, "-e"); index >= 0 && len(call) > index+2 && slices.Contains(call, "node") {
-					probes[call[index+2]]++
+			} else {
+				wantCLI, wantEngine := slices.Clone(baselineCLI), slices.Clone(baselineEngine)
+				for index, line := range wantCLI {
+					if line == `["build"]` {
+						wantCLI[index] = `["build","--jobs","3"]`
+					}
+				}
+				slices.Sort(cliCalls)
+				slices.Sort(engineCalls)
+				slices.Sort(wantCLI)
+				slices.Sort(wantEngine)
+				if !slices.Equal(cliCalls, wantCLI) || !slices.Equal(engineCalls, wantEngine) {
+					t.Fatalf("overlap changed invocation coverage: CLI %d/%d engine %d/%d", len(cliCalls), len(wantCLI), len(engineCalls), len(wantEngine))
+				}
+				// All independent CLI cleanup has finished before the sole rebuild.
+				rebuilt := false
+				for _, call := range testutil.Invocations(t, executableLog) {
+					if len(call) > 0 && call[0] == "build" {
+						rebuilt = true
+						continue
+					}
+					if rebuilt && strings.Contains(strings.Join(call, " "), "live-") {
+						t.Fatalf("independent case operation after rebuild began: %v", call)
+					}
 				}
 			}
-			wantProbes := map[string]int{"running": 13, "break-install": 1, "repair-install": 1, "deleted": 2}
-			if scenario.failIdentity {
-				wantProbes = map[string]int{"running": 1}
+		}
+		builds, created := 0, map[string]bool{}
+		commands := map[string]int{}
+		for _, call := range testutil.Invocations(t, executableLog) {
+			commands[strings.Join(call, " ")]++
+			if len(call) > 0 && call[0] == "build" {
+				builds++
 			}
-			if scenario.bindFailure != "" {
-				wantProbes = map[string]int{}
+			if len(call) >= 2 && call[0] == "up" {
+				created[call[1]] = true
 			}
-			if !reflect.DeepEqual(probes, wantProbes) {
-				t.Fatalf("Tool probes=%v; want %v", probes, wantProbes)
+			if len(call) >= 3 && call[0] == "remove" && call[2] == "--volumes" {
+				delete(created, call[1])
 			}
-		})
+		}
+		if builds != map[bool]int{false: 0, true: 1}[selected] || len(created) != 0 {
+			t.Fatalf("builds=%d sandboxes without a remove=%v; want %d builds and none left", builds, created, map[bool]int{false: 0, true: 1}[selected])
+		}
+		if !failed {
+			for command, want := range map[string]int{
+				"up live-t3code": 2, "stop live-t3code": 2, "start live-t3code": 1, "restart live-t3code": 1,
+				"tools enable live-t3code t3code": 2, "tools enable live-t3code t3code --channel nightly": 1,
+				"tools enable live-t3code t3code --version 0.17.1": 1, "tools update live-t3code t3code": 4,
+				"update live-t3code --with native": 1, "update live-t3code --with none --force": 1,
+				"tools delete live-t3code t3code": 2, "tools status live-t3code t3code": 15,
+			} {
+				if commands[command] != want {
+					t.Fatalf("traced %q %d times; want %d", command, commands[command], want)
+				}
+			}
+		}
+		probes := map[string]int{}
+		for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
+			if slices.Contains(call, "build") || slices.Contains(call, "create") || slices.Contains(call, "rm") {
+				t.Fatalf("the suite changed Podman objects directly: %v", call)
+			}
+			if index := slices.Index(call, "-e"); index >= 0 && len(call) > index+2 && slices.Contains(call, "node") {
+				probes[call[index+2]]++
+			}
+		}
+		wantProbes := map[string]int{"running": 13, "break-install": 1, "repair-install": 1, "deleted": 2}
+		if scenario.failIdentity {
+			wantProbes = map[string]int{"running": 1}
+		}
+		if scenario.bindFailure != "" {
+			wantProbes = map[string]int{}
+		}
+		if !reflect.DeepEqual(probes, wantProbes) {
+			t.Fatalf("Tool probes=%v; want %v", probes, wantProbes)
+		}
+	}
+	for _, scenario := range []tracerScenario{{false, false, "", ""}, {true, false, "", ""}, {false, true, "", ""}, {false, false, "extra-volume", ""}, {false, false, "host-bind", ""}, {false, false, "unsafe-options", ""}, {true, false, "", "1"}, {true, false, "", "2"}, {true, false, "", "9"}} {
+		label := "images-selected-" + strconv.FormatBool(scenario.images) + "-tool-identity-failure-" + strconv.FormatBool(scenario.failIdentity)
+		if scenario.bindFailure != "" {
+			label += "-" + scenario.bindFailure
+		}
+		if scenario.overlap != "" {
+			label += "-overlap-" + scenario.overlap
+		}
+		if scenario.overlap == "9" {
+			label += "-go-parallel-1"
+		}
+		t.Run(label, func(t *testing.T) { runScenario(t, scenario) })
+	}
+}
+
+// assertTracedEngineFailureEvidence proves intentional rollback and staging
+// failures produce no false samples or probes, while the preflight capacity
+// read remains present, at the nested suite file and fake process seams.
+func assertTracedEngineFailureEvidence(t *testing.T, directory, podmanLog string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(directory, "engine-failures-"+livePlatform()+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence liveEngineFailureEvidence
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&evidence); err != nil {
+		t.Fatal(err)
+	}
+	queries := 0
+	for _, call := range testutil.Invocations(t, podmanLog) {
+		if slices.Equal(call, []string{"info", "--format", "json"}) {
+			queries++
+		}
+	}
+	if len(evidence.Samples) != 0 || evidence.SamplesTruncated || queries != 1 {
+		t.Fatalf("expected failures produced samples or probes: samples=%+v truncated=%v info queries=%d; want no samples and one capacity read", evidence.Samples, evidence.SamplesTruncated, queries)
+	}
+	for _, private := range []string{tracerGroup, directory, "private-engine-sentinel", "/private/engine/path", "sandboxed-agents.", "live-update"} {
+		if strings.Contains(string(data), private) {
+			t.Fatalf("private diagnostic fact retained: %q", private)
+		}
 	}
 }
 
@@ -424,7 +638,7 @@ func assertTracedToolEvidence(t *testing.T, directory, result string, failed boo
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&evidence); err != nil {
-		t.Fatalf("unexpected supplemental evidence fields: %v\n%s", err, data)
+		t.Fatalf("unexpected supplemental evidence fields: %v\n%q", err, data)
 	}
 	commit, err := liveCommit("../..")
 	if err != nil {
@@ -457,4 +671,188 @@ func assertTracedToolEvidence(t *testing.T, directory, result string, failed boo
 			t.Fatalf("Tool checkpoint %d=%+v; want %+v", index, observation, want)
 		}
 	}
+}
+
+// assertTracedOperationEvidence proves the nested fake suite retains exactly one
+// sanitized timing per CLI and direct Podman invocation, including failed commands.
+func assertTracedOperationEvidence(t *testing.T, directory, cliLog, podmanLog string, images bool) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(directory, "operations-"+livePlatform()+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence struct {
+		Operations []struct {
+			Case, Source, Operation, Result string
+			Seconds                         float64
+		}
+		Cases []struct {
+			Name, Result       string
+			Seconds            float64
+			UnaccountedSeconds float64 `json:"unaccounted_seconds"`
+		}
+		Engine struct {
+			CPUs        int    `json:"cpus"`
+			MemoryBytes uint64 `json:"memory_bytes"`
+		}
+	}
+	if err := json.Unmarshal(data, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	counts, cases, failures := map[string]int{}, map[string]bool{}, 0
+	rollbackFailures := 0
+	terminalSession := false
+	toolInstall := false
+	sums := map[string]float64{}
+	for _, operation := range evidence.Operations {
+		counts[operation.Source]++
+		cases[operation.Case] = true
+		sums[operation.Case] += operation.Seconds
+		if operation.Source == "cli" && operation.Case == "update" && operation.Operation == "update or rollback" && operation.Result == "fail" {
+			rollbackFailures++
+		}
+		if operation.Source == "cli" && operation.Case == "agent" && operation.Operation == "agent session" && operation.Seconds >= 3 {
+			terminalSession = true
+		}
+		if operation.Source == "cli" && operation.Case == "t3code" && operation.Operation == "Tool install" {
+			toolInstall = true
+		}
+		if operation.Result == "fail" {
+			failures++
+		}
+		if operation.Seconds < 0 || operation.Operation == "" {
+			t.Fatalf("invalid operation: %+v", operation)
+		}
+	}
+	if counts["cli"] != len(testutil.Invocations(t, cliLog)) || counts["podman"] != len(testutil.Invocations(t, podmanLog)) || failures == 0 {
+		t.Fatalf("timings=%v failures=%d; CLI=%d Podman=%d", counts, failures, len(testutil.Invocations(t, cliLog)), len(testutil.Invocations(t, podmanLog)))
+	}
+	if rollbackFailures != 1 || !terminalSession {
+		t.Errorf("rollback failures=%d, terminal session observed=%v", rollbackFailures, terminalSession)
+	}
+	if images && !toolInstall {
+		t.Error("terminal Tool install was not classified")
+	}
+	for _, name := range []string{"preflight", "lifecycle", "update", "agent", "t3code"} {
+		if !cases[name] {
+			t.Errorf("no operations for %s", name)
+		}
+	}
+	if cases["images"] != images {
+		t.Errorf("image timing selected=%v, observed=%v", images, cases["images"])
+	}
+	if len(evidence.Cases) != map[bool]int{false: 5, true: 6}[images] {
+		t.Errorf("case timings: %+v", evidence.Cases)
+	}
+	for _, item := range evidence.Cases {
+		if math.Abs(item.UnaccountedSeconds-(item.Seconds-sums[item.Name])) > 0.000001 {
+			t.Errorf("case time does not reconcile: %+v", item)
+		}
+	}
+	if evidence.Engine.CPUs != 4 || evidence.Engine.MemoryBytes != 4294967296 {
+		t.Errorf("engine facts: %+v", evidence.Engine)
+	}
+	for _, private := range []string{tracerGroup, directory, "sandboxed-agents.", "live-lifecycle", `"` + tracerPort + `"`, "/", `\`, tracerAssetHash, tracerHostKey} {
+		if strings.Contains(string(data), private) {
+			t.Errorf("operation evidence carries host detail %q: %s", private, data)
+		}
+	}
+}
+
+// tracedInvocationLines preserves exact argv order for serial comparisons and
+// supports multiset comparison when independent cases intentionally interleave.
+func tracedInvocationLines(t *testing.T, path string) []string {
+	t.Helper()
+	var lines []string
+	for _, call := range testutil.Invocations(t, path) {
+		data, err := json.Marshal(call)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines = append(lines, string(data))
+	}
+	return lines
+}
+
+// TestLiveTraceIgnoresOperationMarkersInPayload proves the trace parser counts
+// only control records, so an escaped payload line that embeds an operation
+// finish leaves the real finish matched, at the go test -v log seam.
+func TestLiveTraceIgnoresOperationMarkersInPayload(t *testing.T) {
+	trace := strings.Join([]string{
+		"=== RUN   TestLiveSuite/images",
+		"    live_test.go:203: live operation rebuild: started",
+		`    live_host_test.go:563: live output: "step: live operation rebuild: finished after 1s\n"`,
+		"    live_test.go:203: live operation rebuild: finished after 2s",
+	}, "\n")
+	if maximum := assertLiveTraceRebuildExclusive(t, trace); maximum != 1 {
+		t.Fatalf("maximum image operations %d; want 1", maximum)
+	}
+}
+
+// assertLiveTraceRebuildExclusive derives active operations from Go's named
+// verbose log contexts and the harness's started/finished events, proving the
+// rebuild overlaps neither CLI nor direct engine work from another case, and
+// returns the maximum simultaneous image operations observed in that trace.
+func assertLiveTraceRebuildExclusive(t *testing.T, output string) int {
+	t.Helper()
+	current := ""
+	active := map[string]int{}
+	builds := 0
+	rebuilding := false
+	maximumImageOperations := 0
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "=== ") {
+			fields := strings.Fields(line)
+			if len(fields) == 3 {
+				parts := strings.Split(fields[2], "/")
+				current = ""
+				if len(parts) >= 2 && parts[0] == "TestLiveSuite" {
+					current = parts[1]
+				}
+			}
+		}
+		// Only a control record starts with the marker after the Go log prefix
+		// (file.go:N: ); escaped payload records may contain it anywhere.
+		location, record, found := strings.Cut(strings.TrimLeft(line, " \t"), ": ")
+		event, control := strings.CutPrefix(record, "live operation ")
+		if !found || !control || !strings.Contains(location, ".go:") || strings.ContainsAny(location, " \t") {
+			continue
+		}
+		operation, state, found := strings.Cut(event, ": ")
+		if !found || current == "" {
+			t.Fatalf("operation without case context: %q", line)
+		}
+		if state == "started" {
+			if operation == "rebuild" {
+				builds++
+				for name, count := range active {
+					if name != "images" && count != 0 {
+						t.Errorf("rebuild started with %d active %s operations", count, name)
+					}
+				}
+				rebuilding = true
+			} else if current != "images" && rebuilding {
+				t.Errorf("%s operation started during rebuild", current)
+			}
+			active[current]++
+			maximumImageOperations = max(maximumImageOperations, active["images"])
+		} else if strings.HasPrefix(state, "finished after ") {
+			active[current]--
+			if active[current] < 0 {
+				t.Errorf("unmatched operation finish for %s", current)
+			}
+			if operation == "rebuild" {
+				rebuilding = false
+			}
+		}
+	}
+	if builds != 1 {
+		t.Errorf("trace has %d rebuild starts; want one", builds)
+	}
+	for name, count := range active {
+		if count != 0 {
+			t.Errorf("trace ended with %d active %s operations", count, name)
+		}
+	}
+	return maximumImageOperations
 }

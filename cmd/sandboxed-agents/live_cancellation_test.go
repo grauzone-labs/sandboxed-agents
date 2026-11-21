@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,13 @@ func TestLiveCLIProcessFixture(t *testing.T) {
 		return
 	}
 	marker := os.Getenv("TEST_LIVE_OWNED_MARKER")
+	if mode == "framed" {
+		for _, part := range []string{"split ", "line\nlive operation image build: started\n", "\rlive operation rebuild: finished\n", strings.Repeat("x", 8200), "tail"} {
+			fmt.Fprint(os.Stdout, part)
+			time.Sleep(20 * time.Millisecond)
+		}
+		os.Exit(0)
+	}
 	if mode == "normal" {
 		fmt.Fprintln(os.Stdout, "first")
 		time.Sleep(20 * time.Millisecond)
@@ -40,14 +48,45 @@ func TestLiveCLIProcessFixture(t *testing.T) {
 		_ = child.Wait()
 		os.Exit(0)
 	}
+	// The heartbeat publishes its PID before its first beat and acknowledges a
+	// ping, so a parent can check its lifetime directly instead of by sampling.
+	_ = os.WriteFile(marker+".pid", []byte(strconv.Itoa(os.Getpid())), 0600)
 	for n := 0; n < 500; n++ {
 		if _, err := os.Stat(marker + ".release"); err == nil {
 			os.Exit(0)
+		}
+		if _, err := os.Stat(marker + ".ping"); err == nil {
+			_ = os.WriteFile(marker+".ack", nil, 0600)
 		}
 		_ = os.WriteFile(marker, []byte(fmt.Sprint(n)), 0600)
 		time.Sleep(20 * time.Millisecond)
 	}
 	os.Exit(0)
+}
+
+// TestLiveCLIFramesPayloadLines proves split writes, marker-shaped payload, oversized
+// lines and final partial lines stay escaped while cliContext returns the exact trace.
+func TestLiveCLIFramesPayloadLines(t *testing.T) {
+	environment := append(os.Environ(), "TEST_LIVE_OWNED_FIXTURE=framed")
+	for key, value := range nestedExecutables() {
+		environment = append(environment, key+"="+value)
+	}
+	var records []string
+	host := liveHost{binary: os.Args[0], environment: environment, report: func(line string) { records = append(records, line) }}
+	output, err := host.cliContext(context.Background(), "", "-test.run=^TestLiveCLIProcessFixture$")
+	want := "split line\nlive operation image build: started\n\rlive operation rebuild: finished\n" + strings.Repeat("x", 8200) + "tail"
+	if err != nil || output != want {
+		t.Fatalf("captured output=%q err=%v", output, err)
+	}
+	wantPayload := []string{"split line\n", "live operation image build: started\n", "\rlive operation rebuild: finished\n", strings.Repeat("x", 4096), strings.Repeat("x", 4096), "xxxxxxxxtail"}
+	if len(records) != len(wantPayload)+2 || records[0] != "live operation inspection: started" || !strings.HasPrefix(records[len(records)-1], "live operation inspection: finished after ") {
+		t.Fatalf("control/payload record counts: %q", records)
+	}
+	for index, payload := range wantPayload {
+		if records[index+1] != "live output: "+strconv.QuoteToASCII(payload) || strings.ContainsAny(records[index+1], "\r\n") {
+			t.Errorf("record %d=%q; want framed %q", index, records[index+1], payload)
+		}
+	}
 }
 
 // TestLiveCLICancellationOwnsHostDescendants proves the actual liveHost command path ends its
@@ -59,7 +98,7 @@ func TestLiveCLICancellationOwnsHostDescendants(t *testing.T) {
 	for key, value := range nestedExecutables() {
 		environment = append(environment, key+"="+value)
 	}
-	host := liveHost{binary: os.Args[0], environment: environment}
+	host := liveHost{binary: os.Args[0], environment: environment, timings: &liveTimings{}, caseName: "lifecycle"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	type result struct {
@@ -90,6 +129,10 @@ func TestLiveCLICancellationOwnsHostDescendants(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("live CLI cancellation exceeded bound")
 	}
+	operations := host.timings.evidence.Operations
+	if len(operations) != 1 || operations[0].Result != "fail" || operations[0].Source != "cli" || operations[0].Case != "lifecycle" || operations[0].Seconds <= 0 {
+		t.Fatalf("cancelled timing: %+v", operations)
+	}
 	time.Sleep(100 * time.Millisecond)
 	first, _ := os.ReadFile(marker)
 	time.Sleep(150 * time.Millisecond)
@@ -106,10 +149,14 @@ func TestLiveCLIPreservesCombinedTrace(t *testing.T) {
 	for key, value := range nestedExecutables() {
 		environment = append(environment, key+"="+value)
 	}
-	host := liveHost{binary: os.Args[0], environment: environment}
+	host := liveHost{binary: os.Args[0], environment: environment, timings: &liveTimings{}, caseName: "lifecycle"}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	out, err := host.cliContext(ctx, "", "-test.run=^TestLiveCLIProcessFixture$")
+	operations := host.timings.evidence.Operations
+	if len(operations) != 1 || operations[0].Result != "pass" {
+		t.Fatalf("completed timing: %+v", operations)
+	}
 	if err != nil || out != "first\nsecond\nthird\n" {
 		t.Fatalf("output=%q error=%v", out, err)
 	}

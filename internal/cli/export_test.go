@@ -1,6 +1,9 @@
 package cli
 
-import "time"
+import (
+	"io"
+	"time"
+)
 
 // SetReadinessDeadline shortens the readiness wait for tests that drive the
 // executable boundary, where no clock can be injected.
@@ -22,4 +25,10 @@ func SetToolStatusTimeouts(records, upstream time.Duration) func() {
 	previousRecords, previousUpstream := toolRecordQueryTimeout, toolUpstreamQueryTimeout
 	toolRecordQueryTimeout, toolUpstreamQueryTimeout = records, upstream
 	return func() { toolRecordQueryTimeout, toolUpstreamQueryTimeout = previousRecords, previousUpstream }
+}
+
+// HoldImageTagLock takes the image-tag lock for tag on platform's host-state root, for tests that
+// stand in for another command holding that tag while a CLI run waits on it.
+func HoldImageTagLock(platform, tag string) (io.Closer, error) {
+	return acquireImageTagLock(podmanTarget{host: Host{Platform: platform}}, tag, io.Discard)
 }

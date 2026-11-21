@@ -31,13 +31,16 @@ func agentEffects(t *testing.T, home string, version *string, installs *int) man
 			t.Fatalf("unexpected installation process=%+v", p)
 		}
 		*installs++
-		if len(p.Args) != 6 || strings.Join(p.Args[:3], " ") != "install --global --prefix" || p.Args[4] != "--" {
+		if len(p.Args) != 7 || strings.Join(p.Args[:3], " ") != "install --global --prefix" || p.Args[5] != "--" {
 			t.Fatalf("npm arguments=%q", p.Args)
 		}
-		prefix, spec := p.Args[3], p.Args[5]
+		prefix, spec := p.Args[3], p.Args[6]
 		packageName, installed := spec, *version
 		if at := strings.LastIndex(spec, "@"); at > 0 {
 			packageName, installed = spec[:at], spec[at+1:]
+		}
+		if p.Args[4] != "--allow-scripts="+packageName {
+			t.Fatalf("npm arguments=%q; want the installed package's own scripts allowed", p.Args)
 		}
 		command := ""
 		for _, a := range catalog.Default.Agents {

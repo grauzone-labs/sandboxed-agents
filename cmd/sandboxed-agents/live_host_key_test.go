@@ -131,10 +131,10 @@ func TestLiveSSHHostKeyReportsManagerFailure(t *testing.T) {
 	message := err.Error()
 	for _, fragment := range []string{"read live SSH host key for demo after ", "exit status 1", "manager stderr: ", "ssh_host_ed25519_key.pub"} {
 		if !strings.Contains(message, fragment) {
-			t.Fatalf("failure omits %q:\n%s", fragment, message)
+			t.Fatalf("failure omits %q:\n%q", fragment, message)
 		}
 	}
 	if strings.Contains(message, "deadline exceeded") || strings.Contains(message, "killed") {
-		t.Fatalf("manager failure was reported as a deadline kill:\n%s", message)
+		t.Fatalf("manager failure was reported as a deadline kill:\n%q", message)
 	}
 }

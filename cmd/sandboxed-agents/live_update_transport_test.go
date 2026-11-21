@@ -41,7 +41,7 @@ func TestLiveUpdateFailurePreservesMachineSSH(t *testing.T) {
 			failing := failingLiveUpdateHost(t, host, "2222")
 			out, err := failing.cli("", platform)
 			if err != nil || !strings.Contains(out, "readiness-failed-after-preflight") {
-				t.Fatalf("transport/readiness sequence: %v %s", err, out)
+				t.Fatalf("transport/readiness sequence: %v %q", err, out)
 			}
 			calls := testutil.Invocations(t, log)
 			want := 0
@@ -67,7 +67,7 @@ func TestLiveUpdateFailurePreservesMachineSSH(t *testing.T) {
 			} {
 				out, err := failing.cli("", append([]string{"forward"}, args...)...)
 				if err != nil || out != "transport-ok" {
-					t.Fatalf("non-readiness call intercepted: %v %s", err, out)
+					t.Fatalf("non-readiness call intercepted: %v %q", err, out)
 				}
 				calls = testutil.Invocations(t, log)
 				if !slices.Equal(calls[len(calls)-1], args) {

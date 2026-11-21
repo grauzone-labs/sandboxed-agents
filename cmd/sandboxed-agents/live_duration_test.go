@@ -107,6 +107,12 @@ func TestLiveDurationRetentionAfterInterruption(t *testing.T) {
 	if err := release.EvaluateStableGate(evidence); err != nil {
 		t.Fatalf("baseline gate: %v", err)
 	}
+	operationsName := "operations-" + livePlatform() + ".json"
+	operations, err := os.ReadFile(filepath.Join(directory, operationsName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	records[operationsName] = operations
 	records[filepath.Base(supplemental)] = timing
 	if err := release.EvaluateStableGate(evidence); err != nil {
 		t.Fatalf("supplemental file affected passing gate: %v", err)
@@ -114,6 +120,10 @@ func TestLiveDurationRetentionAfterInterruption(t *testing.T) {
 	records[liveRecordFilename(t)] = after
 	if err := release.EvaluateStableGate(evidence); err == nil || !strings.Contains(err.Error(), "did not pass") {
 		t.Fatalf("gate accepted interrupted run: %v", err)
+	}
+	records[liveRecordFilename(t)] = operations
+	if err := release.EvaluateStableGate(evidence); err == nil {
+		t.Fatal("operation evidence replaced required gate record")
 	}
 	records[liveRecordFilename(t)] = timing
 	if err := release.EvaluateStableGate(evidence); err == nil {

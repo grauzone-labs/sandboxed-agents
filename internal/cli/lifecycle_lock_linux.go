@@ -8,6 +8,11 @@ import (
 
 // lockLifecycleFile acquires a nonblocking exclusive Linux advisory lock on the file.
 func lockLifecycleFile(file *os.File) error {
+	return tryFileLock(file)
+}
+
+// tryFileLock attempts an exclusive OS file lock without waiting.
+func tryFileLock(file *os.File) error {
 	return unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 }
 
@@ -15,4 +20,9 @@ func lockLifecycleFile(file *os.File) error {
 // held.
 func lifecycleLockBusy(err error) bool {
 	return errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN)
+}
+
+// lockFileWaiting waits for an exclusive Linux advisory lock, released when the file is closed.
+func lockFileWaiting(file *os.File) error {
+	return unix.Flock(int(file.Fd()), unix.LOCK_EX)
 }

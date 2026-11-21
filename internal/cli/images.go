@@ -62,11 +62,25 @@ func prepareUp(request Request, p podmanTarget, output, progress io.Writer) erro
 	if err != nil {
 		return err
 	}
-	port, err := allocatePort(p, request.Options["port"])
+	// Preserve early port errors without holding the allocation lock during image builds.
+	// This probe is not a claim; only the fresh allocation below selects the actual port.
+	if _, err := allocatePort(p, request.Options["port"]); err != nil {
+		return err
+	}
+	tag, err := ensureImage(p, request.Toolchains, output, progress)
 	if err != nil {
 		return err
 	}
-	tag, err := ensureImage(p, request.Toolchains, output)
+	portLock, err := acquirePortAllocationLock(p, progress)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if portLock != nil {
+			portLock.Close()
+		}
+	}()
+	port, err := allocatePort(p, request.Options["port"])
 	if err != nil {
 		return err
 	}
@@ -109,6 +123,9 @@ func prepareUp(request Request, p podmanTarget, output, progress io.Writer) erro
 		return fail(err)
 	}
 	containerCreated = true
+	// The container now records the claim, so other creations can read it before starting.
+	portLock.Close()
+	portLock = nil
 	if _, err := p.query("start", names.Container); err != nil {
 		return fail(err)
 	}

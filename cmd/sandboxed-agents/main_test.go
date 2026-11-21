@@ -613,11 +613,13 @@ type lifecycleResponse struct {
 	Sequence           []scriptedAnswer
 }
 
-// scriptedAnswer is one answer of a sequence for the same argv.
+// scriptedAnswer is one answer of a sequence for the same argv. A non-empty
+// ReadyFile or WaitFor holds only this invocation, replacing the response's own.
 type scriptedAnswer struct {
-	Output string
-	Stderr string
-	Exit   int
+	Output             string
+	Stderr             string
+	Exit               int
+	ReadyFile, WaitFor string
 }
 
 // lifecycleHarness installs fake processes with scripted Podman responses and isolated host state.

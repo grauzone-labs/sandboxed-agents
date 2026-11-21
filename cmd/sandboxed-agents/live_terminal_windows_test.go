@@ -5,11 +5,16 @@ package main_test
 import (
 	"bytes"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 	"unsafe"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 	"golang.org/x/sys/windows"
 )
 
@@ -18,6 +23,7 @@ import (
 type liveTerminal struct {
 	console      windows.Handle
 	process      windows.Handle
+	job          windows.Handle
 	attributes   *windows.ProcThreadAttributeListContainer
 	input        *os.File
 	output       *os.File
@@ -26,7 +32,10 @@ type liveTerminal struct {
 	done         chan struct{}
 	readerDone   chan struct{}
 	closeConsole sync.Once
+	closeHandles sync.Once
 	exit         int
+	// exited is written before done closes.
+	exited time.Time
 }
 
 // startLiveTerminal starts program attached to a fresh pseudo console of 120
@@ -34,19 +43,53 @@ type liveTerminal struct {
 func startLiveTerminal(t *testing.T, environment []string, program string, args ...string) *liveTerminal {
 	t.Helper()
 	var inputRead, inputWrite, outputRead, outputWrite windows.Handle
+	var console, job windows.Handle
+	var information windows.ProcessInformation
+	var attributes *windows.ProcThreadAttributeListContainer
+	ready := false
+	defer func() {
+		if ready {
+			return
+		}
+		// A failed assignment/resume never leaves a suspended child or its handles.
+		if information.Process != 0 {
+			windows.TerminateProcess(information.Process, 1)
+			windows.WaitForSingleObject(information.Process, windows.INFINITE)
+		}
+		if job != 0 {
+			windows.CloseHandle(job)
+		}
+		if console != 0 {
+			// Before Windows 11 24H2, ClosePseudoConsole waits while the output pipe
+			// is neither drained nor closed, and no reader exists yet: close it first.
+			if outputRead != 0 {
+				windows.CloseHandle(outputRead)
+				outputRead = 0
+			}
+			windows.ClosePseudoConsole(console)
+		}
+		for _, handle := range []windows.Handle{inputRead, inputWrite, outputRead, outputWrite, information.Thread, information.Process} {
+			if handle != 0 {
+				windows.CloseHandle(handle)
+			}
+		}
+		if attributes != nil {
+			attributes.Delete()
+		}
+	}()
 	if err := windows.CreatePipe(&inputRead, &inputWrite, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := windows.CreatePipe(&outputRead, &outputWrite, nil, 0); err != nil {
 		t.Fatal(err)
 	}
-	var console windows.Handle
 	if err := windows.CreatePseudoConsole(windows.Coord{X: 120, Y: 40}, inputRead, outputWrite, 0, &console); err != nil {
 		t.Fatalf("create pseudo console: %v", err)
 	}
 	// The pseudo console duplicated its ends of both pipes.
 	windows.CloseHandle(inputRead)
 	windows.CloseHandle(outputWrite)
+	inputRead, outputWrite = 0, 0
 	attributes, err := windows.NewProcThreadAttributeList(1)
 	if err != nil {
 		t.Fatal(err)
@@ -78,14 +121,31 @@ func startLiveTerminal(t *testing.T, environment []string, program string, args 
 		block = append(block, encoded...)
 	}
 	block = append(block, 0)
-	var information windows.ProcessInformation
-	err = windows.CreateProcess(nil, commandLine, nil, nil, false, windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT, &block[0], nil, &startup.StartupInfo, &information)
+	job, err = windows.CreateJobObject(nil, nil)
+	if err != nil {
+		t.Fatalf("create terminal process job: %v", err)
+	}
+	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
+	limits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits))); err != nil {
+		t.Fatalf("configure terminal process job: %v", err)
+	}
+	// Suspend before assigning the job so no child can escape between creation
+	// and containment. The private job has no breakaway flags or inherited handle.
+	err = windows.CreateProcess(nil, commandLine, nil, nil, false, windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT|windows.CREATE_SUSPENDED, &block[0], nil, &startup.StartupInfo, &information)
 	if err != nil {
 		t.Fatalf("start %s in a pseudo console: %v", program, err)
 	}
+	if err := windows.AssignProcessToJobObject(job, information.Process); err != nil {
+		t.Fatalf("assign terminal process job: %v", err)
+	}
+	if count, err := windows.ResumeThread(information.Thread); err != nil || count != 1 {
+		t.Fatalf("resume terminal process: suspend count %d, error %v", count, err)
+	}
 	windows.CloseHandle(information.Thread)
+	information.Thread = 0
 	terminal := &liveTerminal{
-		console: console, process: information.Process, attributes: attributes,
+		console: console, process: information.Process, job: job, attributes: attributes,
 		input: os.NewFile(uintptr(inputWrite), "pseudo-console-input"), output: os.NewFile(uintptr(outputRead), "pseudo-console-output"),
 		done: make(chan struct{}), readerDone: make(chan struct{}),
 	}
@@ -112,8 +172,10 @@ func startLiveTerminal(t *testing.T, environment []string, program string, args 
 		} else {
 			terminal.exit = int(code)
 		}
+		terminal.exited = time.Now()
 		close(terminal.done)
 	}()
+	ready = true
 	return terminal
 }
 
@@ -129,6 +191,17 @@ func (terminal *liveTerminal) Output() string {
 	terminal.mutex.Lock()
 	defer terminal.mutex.Unlock()
 	return terminal.buffer.String()
+}
+
+// outputSince returns only the bytes rendered after the first cursor bytes; the
+// captured output only grows, so earlier bytes are never copied again.
+func (terminal *liveTerminal) outputSince(cursor int) string {
+	terminal.mutex.Lock()
+	defer terminal.mutex.Unlock()
+	if data := terminal.buffer.Bytes(); cursor < len(data) {
+		return string(data[cursor:])
+	}
+	return ""
 }
 
 // Wait returns the exit status once the command has ended within timeout and
@@ -152,23 +225,98 @@ func (terminal *liveTerminal) Wait(timeout time.Duration) (int, bool) {
 	}
 }
 
-// Close ends a still running command and releases the pseudo console.
-func (terminal *liveTerminal) Close() {
+// completedAt reports, without blocking, when the command exited. The pseudo
+// console renders the remaining output only once Wait closes it after the exit,
+// so the exit is the moment the command completed.
+func (terminal *liveTerminal) completedAt() (time.Time, bool) {
 	select {
 	case <-terminal.done:
+		return terminal.exited, true
 	default:
-		windows.TerminateProcess(terminal.process, 1)
+		return time.Time{}, false
+	}
+}
+
+// Close ends a still running command and releases the pseudo console.
+func (terminal *liveTerminal) Close() {
+	terminal.closeHandles.Do(func() {
+		// Kill-on-close ends every member even when the CLI itself already exited.
+		windows.CloseHandle(terminal.job)
 		<-terminal.done
+		terminal.closeConsole.Do(func() { windows.ClosePseudoConsole(terminal.console) })
+		// Closing the console ends the output pipe; give the reader a bounded
+		// moment to see that before the handles go away.
+		select {
+		case <-terminal.readerDone:
+		case <-time.After(5 * time.Second):
+		}
+		terminal.input.Close()
+		terminal.output.Close()
+		terminal.attributes.Delete()
+		windows.CloseHandle(terminal.process)
+	})
+}
+
+// TestLiveWindowsTerminalCloseOwnsDescendants proves closing a ConPTY ends its
+// owned child tree, observed through the owned heartbeat's process handle, while
+// an independently started heartbeat survives and acknowledges a later request,
+// at the PTY seam.
+func TestLiveWindowsTerminalCloseOwnsDescendants(t *testing.T) {
+	directory := t.TempDir()
+	marker, independent := filepath.Join(directory, "owned"), filepath.Join(directory, "independent")
+	environment := append(os.Environ(), "TEST_LIVE_OWNED_FIXTURE=tree", "TEST_LIVE_OWNED_MARKER="+marker)
+	for key, value := range nestedExecutables() {
+		environment = append(environment, key+"="+value)
 	}
-	terminal.closeConsole.Do(func() { windows.ClosePseudoConsole(terminal.console) })
-	// Closing the console ends the output pipe; give the reader a bounded
-	// moment to see that before the handles go away.
-	select {
-	case <-terminal.readerDone:
-	case <-time.After(5 * time.Second):
+	unowned := exec.Command(os.Args[0], "-test.run=^TestLiveCLIProcessFixture$")
+	unowned.Env = testutil.Env(environment, map[string]string{"TEST_LIVE_OWNED_FIXTURE": "heartbeat", "TEST_LIVE_OWNED_MARKER": independent})
+	if err := unowned.Start(); err != nil {
+		t.Fatal(err)
 	}
-	terminal.input.Close()
-	terminal.output.Close()
-	terminal.attributes.Delete()
-	windows.CloseHandle(terminal.process)
+	defer func() { _ = os.WriteFile(independent+".release", nil, 0600); _ = unowned.Wait() }()
+	terminal := startLiveTerminal(t, environment, os.Args[0], "-test.run=^TestLiveCLIProcessFixture$")
+	defer terminal.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		ownedData, ownedErr := os.ReadFile(marker)
+		independentData, independentErr := os.ReadFile(independent)
+		if ownedErr == nil && independentErr == nil && len(ownedData) > 0 && len(independentData) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("heartbeat fixture did not start: owned=%v independent=%v", ownedErr, independentErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Open the owned heartbeat while it runs: the handle pins its identity, so
+	// its exit is observed directly rather than inferred from a quiet marker.
+	data, err := os.ReadFile(marker + ".pid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 32)
+	if err != nil {
+		t.Fatalf("invalid owned heartbeat pid %q", data)
+	}
+	owned, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
+	if err != nil {
+		t.Fatalf("open owned heartbeat: %v", err)
+	}
+	defer windows.CloseHandle(owned)
+	terminal.Close()
+	if event, err := windows.WaitForSingleObject(owned, 5000); event != windows.WAIT_OBJECT_0 {
+		t.Fatalf("owned descendant survived terminal close: wait %#x, %v", event, err)
+	}
+	// A request sent after Close must still reach the unowned process.
+	if err := os.WriteFile(independent+".ping", nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(independent + ".ack"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("terminal close stopped an unowned process")
+		}
+	}
 }

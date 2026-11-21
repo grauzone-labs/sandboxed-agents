@@ -37,11 +37,13 @@ type scriptedResponse struct {
 	Sequence           []scriptedAnswer
 }
 
-// scriptedAnswer is one answer of a sequence for the same argv.
+// scriptedAnswer is one answer of a sequence for the same argv. A non-empty
+// ReadyFile or WaitFor holds only this invocation, replacing the response's own.
 type scriptedAnswer struct {
-	Output string
-	Stderr string
-	Exit   int
+	Output             string
+	Stderr             string
+	Exit               int
+	ReadyFile, WaitFor string
 }
 
 // priorInvocations counts how often this exact argv was logged, this call included.
@@ -213,6 +215,12 @@ func main() {
 			// The same argv answers differently over time; the last answer repeats.
 			answer := response.Sequence[min(priorInvocations(prefix)-1, len(response.Sequence)-1)]
 			response.Output, response.Stderr, response.Exit = answer.Output, answer.Stderr, answer.Exit
+			if answer.ReadyFile != "" {
+				response.ReadyFile = answer.ReadyFile
+			}
+			if answer.WaitFor != "" {
+				response.WaitFor = answer.WaitFor
+			}
 		}
 		if response.HoldOutputUntil != "" {
 			executable, err := os.Executable()
@@ -295,6 +303,23 @@ func main() {
 					os.Exit(125)
 				}
 				typed = append(typed, next)
+			}
+		}
+		// A telemetry fixture writes the primary API file independently of stdout, only on successful builds.
+		if prefix == "TEST_PODMAN" && response.Exit == 0 && os.Getenv("TEST_PODMAN_IIDFILE_CONTENT") != "" {
+			args := os.Args[1:]
+			if len(args) > 2 && args[0] == "--connection" {
+				args = args[2:]
+			}
+			if len(args) > 0 && args[0] == "build" {
+				for i, arg := range args {
+					if arg == "--iidfile" && i+1 < len(args) {
+						if err := os.WriteFile(args[i+1], []byte(os.Getenv("TEST_PODMAN_IIDFILE_CONTENT")), 0600); err != nil {
+							fmt.Fprintln(os.Stderr, err)
+							os.Exit(125)
+						}
+					}
+				}
 			}
 		}
 		code = response.Exit

@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"maps"
 	"os"
@@ -13,10 +14,16 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/capture"
+	"github.com/grauzone-labs/sandboxed-agents/internal/liverun"
+	"github.com/grauzone-labs/sandboxed-agents/internal/preflighttiming"
 	"github.com/grauzone-labs/sandboxed-agents/internal/release"
 	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
+	"github.com/grauzone-labs/sandboxed-agents/internal/validationduration"
 )
 
 // The live suite is one opt-in entry point. SANDBOXED_AGENTS_LIVE_TESTS=1 selects
@@ -50,6 +57,11 @@ type liveSuite struct {
 	commit, platform, assetHash               string
 	imagesSelected, imagesRan, imagesComplete bool
 	results                                   map[string]string
+	stopAfterFailure, failed                  bool
+	overlap, buildJobs                        int
+	stateMu                                   sync.Mutex
+	afterBaseUp                               func()
+	work                                      *liveWork
 }
 
 // TestLiveSuite runs the live cases against real Podman on the selected host in a dedicated controller group and writes the platform's validation record, only when explicitly opted in.
@@ -64,10 +76,29 @@ func TestLiveSuite(t *testing.T) {
 	}
 	suite.host.removeGroupStateOnCleanup(t)
 	suite.host.assertNoGroupObjectsOnCleanup(t)
+	if suite.overlap > 1 {
+		var images func(*testing.T, *liveSuite)
+		if suite.imagesSelected {
+			images = func(t *testing.T, local *liveSuite) { local.images(t) }
+		}
+		suite.runConcurrent(t, []liveCase{
+			{"lifecycle", func(t *testing.T, local *liveSuite) { local.lifecycle(t) }},
+			{"update", func(t *testing.T, local *liveSuite) { local.update(t) }},
+			{"agent", func(t *testing.T, local *liveSuite) { local.agent(t) }},
+			{"t3code", func(t *testing.T, local *liveSuite) { local.t3code(t) }},
+		}, images)
+		if !suite.imagesSelected {
+			t.Run("images", func(t *testing.T) { t.Skip("set " + liveImagesEnv + "=1 to select host-wide image rebuild coverage") })
+		}
+		return
+	}
 	suite.run(t, "lifecycle", suite.lifecycle)
 	suite.run(t, "update", suite.update)
 	suite.run(t, "agent", suite.agent)
 	suite.run(t, "t3code", suite.t3code)
+	if suite.stopAfterFailure && suite.failed {
+		return
+	}
 	if suite.imagesSelected {
 		suite.imagesComplete = suite.run(t, "images", suite.images)
 	} else {
@@ -78,11 +109,14 @@ func TestLiveSuite(t *testing.T) {
 // newLiveSuite checks the run's inputs, resolves the checkout's commit from the
 // git metadata files, and writes the failing record, all before any program runs.
 func newLiveSuite(t *testing.T) *liveSuite {
+	started := time.Now()
 	t.Helper()
-	suite := &liveSuite{host: liveHost{binary: executable, environment: os.Environ()}, results: map[string]string{}}
+	suite := &liveSuite{host: liveHost{binary: executable, environment: os.Environ(), removals: make(chan struct{}, 1)}, results: map[string]string{}}
 	for _, name := range liveCheckNames {
 		suite.results[name] = "not-run"
 	}
+	suite.overlap = livePositiveInput(t, liverun.CaseOverlapEnv)
+	suite.buildJobs = livePositiveInput(t, liverun.BuildJobsEnv)
 	suite.platform = livePlatform()
 	if suite.platform == "" {
 		t.Fatalf("the live suite runs on Linux amd64 or Windows 11 x64, not %s", runtime.GOOS)
@@ -100,6 +134,10 @@ func newLiveSuite(t *testing.T) *liveSuite {
 		t.Fatalf("%s: %v", liveRecordDirEnv, err)
 	}
 	suite.imagesSelected = os.Getenv(liveImagesEnv) == "1"
+	suite.stopAfterFailure = os.Getenv(liverun.StopAfterFailureEnv) == "1"
+	// The supervisor ends the invocations this binary leaves running if it dies mid-invocation.
+	capture.TrackOwnedGroups(os.Getenv(liverun.OwnedGroupsEnv))
+	t.Cleanup(func() { capture.TrackOwnedGroups("") })
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -108,16 +146,89 @@ func newLiveSuite(t *testing.T) *liveSuite {
 	if err != nil {
 		t.Fatalf("resolve the checkout's commit: %v", err)
 	}
+	timingDirectory := os.Getenv(preflighttiming.DirEnv)
+	if timingDirectory != "" {
+		if os.Getenv("TEST_SANDBOXED_AGENTS_EXECUTABLE") == "" && os.Getenv(livePreparedExecutableEnv) == "" {
+			suite.host.ledger, _ = preflighttiming.OpenLedger(timingDirectory, suite.commit)
+		}
+		if suite.host.ledger == nil {
+			t.Log("preflight timing unavailable")
+		}
+	}
 	suite.buildDirectory = t.TempDir()
+	suite.host.timings = &liveTimings{evidence: validationduration.Operations{SchemaVersion: 1, Kind: "live-suite-operations", Commit: suite.commit, Platform: suite.platform, CaseOverlap: suite.overlap, BuildJobs: suite.buildJobs, GoTestParallel: liveGoTestParallel(t), Operations: []validationduration.Operation{}, Cases: []validationduration.OperationCase{}}}
+	suite.host.caseName = "suite"
+	suite.host.failures = &liveEngineFailures{directory: suite.recordDirectory, evidence: liveEngineFailureEvidence{SchemaVersion: 1, Kind: "live-engine-failures", Commit: suite.commit, Platform: suite.platform, Samples: []liveEngineFailureSample{}}}
 	suite.writeRecord(t, false)
+	if _, err := validationduration.WriteOperations(suite.recordDirectory, suite.host.timings.evidence); err != nil {
+		t.Fatalf("initialize operation timings: %v", err)
+	}
+	// Replace any earlier run's diagnostic artifact before the first operation.
+	// Its failure is supplemental and cannot change the suite's verdict.
+	if suite.host.failures.persist() != nil {
+		t.Log("live engine failure evidence could not be initialized")
+	}
+	t.Cleanup(func() {
+		suite.host.timings.Lock()
+		defer suite.host.timings.Unlock()
+		// This monotonic endpoint includes case/group cleanup and the final schema-2
+		// write, excluding only this last operations serialization and write.
+		seconds := 0.0
+		suite.host.timings.evidence.SuiteSeconds = &seconds
+		if timingDirectory != "" {
+			collectionDirectory, lost := "", false
+			if suite.host.ledger != nil {
+				collectionDirectory, lost = timingDirectory, suite.host.ledger.Unverified()
+			}
+			// Retain a refused channel explicitly; collection must not reuse its files.
+			// CollectPreflight reads only pointer presence, not the current seconds value.
+			// Assign T below so it includes journal reading and ledger close.
+			suite.host.timings.evidence.Preflight = validationduration.CollectPreflight(collectionDirectory, suite.commit, &seconds, lost)
+			suite.host.ledger.Close()
+		}
+
+		seconds = time.Since(started).Seconds()
+		if _, err := validationduration.WriteOperations(suite.recordDirectory, suite.host.timings.evidence); err != nil {
+			t.Errorf("write operation timings: %v", err)
+			// The schema-2 record was published first so T includes its write; a
+			// failed final operations write fails the run, so republish it as fail.
+			suite.writeRecord(t, true)
+		}
+	})
 	t.Cleanup(func() { suite.writeRecord(t, true) })
 	return suite
 }
 
 // run records a case's result from its subtest outcome.
 func (suite *liveSuite) run(t *testing.T, name string, body func(*testing.T)) bool {
-	passed := t.Run(name, body)
+	if suite.stopAfterFailure && suite.failed {
+		return false
+	}
+	previousHost := suite.host
+	passed := t.Run(name, func(t *testing.T) {
+		suite.host.caseName = name
+		suite.host.report = func(line string) { t.Log(line) }
+		started := time.Now()
+		t.Cleanup(func() {
+			seconds := time.Since(started).Seconds()
+			timings := suite.host.timings
+			timings.Lock()
+			defer timings.Unlock()
+			result := "pass"
+			if t.Failed() {
+				result = "fail"
+			} else if t.Skipped() {
+				result = "skip"
+			}
+			timings.evidence.Cases = append(timings.evidence.Cases, validationduration.OperationCase{Name: name, Result: result, Seconds: seconds})
+		})
+		body(t)
+	})
+	// Restore only case-local state: preflight may select a connection and binary.
+	suite.host.caseName = previousHost.caseName
+	suite.host.report = previousHost.report
 	suite.results[name] = map[bool]string{true: "pass", false: "fail"}[passed]
+	suite.failed = suite.failed || !passed
 	return passed
 }
 
@@ -215,6 +326,17 @@ func (suite *liveSuite) preflight(t *testing.T) {
 	// coverage from a skip.
 	suite.host.mustCLI(t, "", "check")
 	suite.host.selectConnection(t)
+	capacity, capacityErr := suite.host.podman("info", "--format", "json")
+	facts, factsErr := decodeLiveEngineFacts([]byte(capacity))
+	var engine *validationduration.Engine
+	if capacityErr != nil || factsErr != nil || facts.CPUs == nil || facts.MemoryBytes == nil || *facts.CPUs > uint64(^uint(0)>>1) {
+		t.Log("engine capacity unavailable")
+	} else {
+		engine = &validationduration.Engine{CPUs: int(*facts.CPUs), MemoryBytes: *facts.MemoryBytes}
+	}
+	suite.host.timings.Lock()
+	suite.host.timings.evidence.Engine = engine
+	suite.host.timings.Unlock()
 	if prepared := os.Getenv(livePreparedExecutableEnv); prepared != "" {
 		suite.host.binary = prepared
 	} else {
@@ -223,7 +345,7 @@ func (suite *liveSuite) preflight(t *testing.T) {
 	version := suite.host.mustCLI(t, "", "version")
 	hashes := regexp.MustCompile(`(?m)^asset-sha256 ([a-f0-9]{64})\r?$`).FindStringSubmatch(version)
 	if len(hashes) != 2 {
-		t.Fatalf("version omitted the asset hash: %s", version)
+		t.Fatalf("version omitted the asset hash: %q", version)
 	}
 	suite.assetHash = hashes[1]
 }
@@ -235,6 +357,7 @@ func (suite *liveSuite) lifecycle(t *testing.T) {
 	const name = "live-lifecycle"
 	host.cleanupSandbox(t, name)
 	host.mustCLI(t, "", "up", name)
+	suite.baseEnsured()
 	host.assertNoSwap(t, name, host.inspectContainer(t, name))
 	key := host.sshHostKey(t, name)
 	host.assertSSHServer(t, name, key)
@@ -268,12 +391,52 @@ func liveSuiteChild(t *testing.T, fakes testutil.Fakes, values map[string]string
 	if err != nil {
 		t.Fatal(err)
 	}
-	environment := map[string]string{testutil.LiveTestsEnv: "1", liveImagesEnv: "", liveRecordDirEnv: ""}
+	t.Setenv("PATH", fakes.Dir)
+	environment := map[string]string{testutil.LiveTestsEnv: "1", liveImagesEnv: "", liveRecordDirEnv: "", liverun.CaseOverlapEnv: "", liverun.BuildJobsEnv: "", liverun.StopAfterFailureEnv: "", liverun.OwnedGroupsEnv: ""}
 	maps.Copy(environment, values)
 	command := exec.Command(testExecutable, "-test.v", "-test.run=^TestLiveSuite$")
 	command.Env = testutil.Env(testutil.Env(fakes.Env(os.Environ()), nestedExecutables()), environment)
 	output, err := command.CombinedOutput()
 	return string(output), err
+}
+
+// TestLiveOperationsWriteFailureFixture blocks the suite's final operations
+// write after initialization; its parent expects the failure and a fail record.
+func TestLiveOperationsWriteFailureFixture(t *testing.T) {
+	if os.Getenv("TEST_LIVE_OPERATIONS_WRITE_FAILURE") != "1" {
+		return
+	}
+	suite := newLiveSuite(t)
+	path := filepath.Join(suite.recordDirectory, "operations-"+suite.platform+".json")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	// A non-empty directory cannot be replaced by the final atomic write.
+	if err := os.MkdirAll(filepath.Join(path, "blocker"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLiveRecordFailsWhenFinalOperationsWriteFails proves the schema-2 record
+// reports fail when the suite's final operations write fails after the record
+// was published, through a nested suite fixture and the record file seam.
+func TestLiveRecordFailsWhenFinalOperationsWriteFails(t *testing.T) {
+	directory := t.TempDir()
+	filename := liveRecordFilename(t)
+	command := exec.Command(os.Args[0], "-test.v", "-test.run=^TestLiveOperationsWriteFailureFixture$")
+	command.Env = testutil.Env(testutil.Env(os.Environ(), nestedExecutables()), map[string]string{"TEST_LIVE_OPERATIONS_WRITE_FAILURE": "1", "SANDBOXED_AGENTS_GROUP": "live-operations", liveRecordDirEnv: directory, liveImagesEnv: "", liverun.CaseOverlapEnv: "", liverun.BuildJobsEnv: "", liverun.StopAfterFailureEnv: "", preflighttiming.DirEnv: ""})
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "write operation timings") {
+		t.Fatalf("fixture: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(filepath.Join(directory, filename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct{ Result string }
+	if err := json.Unmarshal(data, &record); err != nil || record.Result != "fail" {
+		t.Fatalf("record after a failed final operations write: %v %s", err, data)
+	}
 }
 
 // liveRecordFilename is the record file name of the test host's platform.
@@ -297,7 +460,7 @@ func TestLiveSuiteOptInSelectsOnlyExplicitOne(t *testing.T) {
 			calls := testutil.Invocations(t, fakes.PodmanLog)
 			if value != "1" {
 				if selected || err != nil || len(calls) != 0 || !strings.Contains(output, "--- SKIP: TestLiveSuite") {
-					t.Fatalf("unexpected live selection for %q: selected=%v err=%v calls=%v\n%s", value, selected, err, calls, output)
+					t.Fatalf("unexpected live selection for %q: selected=%v err=%v calls=%v\n%q", value, selected, err, calls, output)
 				}
 				if entries, err := os.ReadDir(records); err != nil || len(entries) != 0 {
 					t.Fatalf("skipped suite wrote %v", entries)
@@ -306,10 +469,26 @@ func TestLiveSuiteOptInSelectsOnlyExplicitOne(t *testing.T) {
 			}
 			// The empty fake prerequisite answers fail the preflight, so the opted-in run fails without any mutation.
 			if !selected || err == nil || len(calls) == 0 || !strings.Contains(output, "--- FAIL: TestLiveSuite/preflight") {
-				t.Fatalf("opt-in: selected=%v err=%v calls=%v\n%s", selected, err, calls, output)
+				t.Fatalf("opt-in: selected=%v err=%v calls=%v\n%q", selected, err, calls, output)
 			}
 			assertOnlyPreflightQueries(t, fakes)
 		})
+	}
+}
+
+// TestLiveSuiteTracksOwnedInvocationGroups proves the Linux suite records each
+// CLI invocation's process group in the directory its supervisor names: with an
+// unwritable directory the first invocation fails on its record instead of
+// running untracked. It exercises the nested test process and the
+// liverun.OwnedGroupsEnv input seam.
+func TestLiveSuiteTracksOwnedInvocationGroups(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("only Linux records owned invocation groups")
+	}
+	fakes := testutil.Install(t, fakeExecutable)
+	output, err := liveSuiteChild(t, fakes, map[string]string{"SANDBOXED_AGENTS_GROUP": "live-offline", liveRecordDirEnv: t.TempDir(), liverun.OwnedGroupsEnv: filepath.Join(t.TempDir(), "missing")})
+	if err == nil || !strings.Contains(output, "--- FAIL: TestLiveSuite/preflight") || !strings.Contains(output, "record owned process group") {
+		t.Fatalf("err=%v output=%s; want the first invocation to fail on its group record", err, output)
 	}
 }
 
@@ -394,7 +573,7 @@ func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 			const group = "live-offline-redaction"
 			output, err := liveSuiteChild(t, fakes, map[string]string{"SANDBOXED_AGENTS_GROUP": group, liveRecordDirEnv: records, liveImagesEnv: selection})
 			if err == nil {
-				t.Fatalf("offline live run passed:\n%s", output)
+				t.Fatalf("offline live run passed:\n%q", output)
 			}
 			for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
 				for _, argument := range call {
@@ -405,8 +584,8 @@ func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 			}
 			filename := liveRecordFilename(t)
 			entries, err := os.ReadDir(records)
-			if err != nil || len(entries) != 1 || entries[0].Name() != filename {
-				t.Fatalf("record directory holds %v (err=%v); want only %s", entries, err, filename)
+			if err != nil || len(entries) != 3 || entries[0].Name() != "engine-failures-"+livePlatform()+".json" || entries[1].Name() != filename || entries[2].Name() != "operations-"+livePlatform()+".json" {
+				t.Fatalf("record directory holds %v (err=%v); want record, operation and failure evidence beside %s", entries, err, filename)
 			}
 			data, err := os.ReadFile(filepath.Join(records, filename))
 			if err != nil {
@@ -414,7 +593,7 @@ func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 			}
 			var fields map[string]json.RawMessage
 			if err := json.Unmarshal(data, &fields); err != nil {
-				t.Fatalf("record is not one JSON object: %v\n%s", err, data)
+				t.Fatalf("record is not one JSON object: %v\n%q", err, data)
 			}
 			want := map[string]string{
 				"schema_version": "2", "kind": `"live-suite"`, "commit": `"` + commit + `"`,
@@ -428,7 +607,7 @@ func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 				got[key] = string(value)
 			}
 			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("record fields=%v\nwant %v\noutput:\n%s", got, want, output)
+				t.Fatalf("record fields=%v\nwant %v\noutput:\n%q", got, want, output)
 			}
 			// A host or account named like a fixed word of the record, such as a
 			// user called agent, cannot be told from that word and is not a leak.
@@ -452,4 +631,34 @@ func TestLiveSuiteWritesRedactedFailingRecord(t *testing.T) {
 			}
 		})
 	}
+}
+
+// livePositiveInput accepts a positive suite input before any engine work and
+// supplies the unmeasured serial default when the variable is absent or empty.
+func livePositiveInput(t *testing.T, name string) int {
+	t.Helper()
+	value := os.Getenv(name)
+	if value == "" {
+		return 1
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 1 {
+		t.Fatal(name + " must be a positive integer")
+	}
+	return parsed
+}
+
+// liveGoTestParallel reads the configured Go test cap without changing the flag
+// or inferring it from host capacity or the suite's independent-work budget.
+func liveGoTestParallel(t *testing.T) int {
+	t.Helper()
+	option := flag.Lookup("test.parallel")
+	if option == nil {
+		t.Fatal("Go test parallel cap is unavailable")
+	}
+	value, err := strconv.Atoi(option.Value.String())
+	if err != nil || value < 1 {
+		t.Fatal("Go test parallel cap is invalid")
+	}
+	return value
 }

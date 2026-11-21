@@ -8,8 +8,32 @@ import (
 	"os/exec"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 )
+
+// ownedGroups holds the directory that records running Linux invocation groups; empty disables it.
+var ownedGroups atomic.Pointer[string]
+
+// TrackOwnedGroups makes each later RunOwned call on Linux record its process group while it runs,
+// as an empty file named PID.STARTTICK in directory, where PID is the group leader and STARTTICK its
+// /proc start tick. The command starts behind a gate and runs only once its record exists, and the
+// record is removed when RunOwned returns, so a supervisor that outlives a dying caller can end the
+// invocations the caller left running, and a caller that dies before recording leaves nothing that
+// ran. A call whose record cannot be written ends its invocation and fails. A command that exec
+// refuses returns the same *os.PathError Start returns for it, but command.Process then describes the
+// exited gate instead of staying nil, and ProcessState must not be read: the Cmd finishes in the
+// background once the copy of a caller's Stdin reader ends. An empty directory stops recording.
+// Windows and other hosts record nothing: there each invocation's job nests in the caller's job.
+func TrackOwnedGroups(directory string) { ownedGroups.Store(&directory) }
+
+// trackedGroupDirectory returns the directory set by TrackOwnedGroups, or empty when untracked.
+func trackedGroupDirectory() string {
+	if directory := ownedGroups.Load(); directory != nil {
+		return *directory
+	}
+	return ""
+}
 
 // RunOwned captures an unstarted exec.Command whose local process group/tree belongs to the
 // caller. Cancellation terminates that group on Linux or its job on Windows, then drains output
@@ -41,12 +65,9 @@ func RunOwned(ctx context.Context, command *exec.Cmd, stdout, stderr io.Writer) 
 	if err != nil {
 		return err
 	}
-	if err := activate(); err != nil {
-		treeErr := terminate()
-		killErr := command.Process.Kill()
-		waitErr, _ := wait()
-		return errors.Join(err, treeErr, killErr, waitErr)
-	}
+	// Cancellation is watched from the start, so it also ends a start gate that stalls before exec.
+	// Such a gate closes its status pipe when killed, so activation then succeeds and the wait below
+	// reports the killed process beside the cancellation.
 	done := make(chan struct{})
 	stopped := make(chan error, 1)
 	go func() {
@@ -57,6 +78,22 @@ func RunOwned(ctx context.Context, command *exec.Cmd, stdout, stderr io.Writer) 
 			stopped <- nil
 		}
 	}()
+	if err := activate(); err != nil {
+		close(done)
+		stopErr := <-stopped
+		treeErr := terminate()
+		if refused, ok := errors.AsType[*startRefused](err); ok {
+			// Reap the exited gate directly: Cmd.Wait would also wait for the copy of a caller's
+			// Stdin reader, which may block forever. The Cmd releases its pipes in the background
+			// once that copy and the output copies end.
+			_, _ = command.Process.Wait()
+			go wait()
+			return refused.err
+		}
+		killErr := command.Process.Kill()
+		waitErr, _ := wait()
+		return errors.Join(ctx.Err(), err, stopErr, treeErr, killErr, waitErr)
+	}
 	waitErr, drainExpired := wait()
 	close(done)
 	stopErr := <-stopped
@@ -71,6 +108,14 @@ func RunOwned(ctx context.Context, command *exec.Cmd, stdout, stderr io.Writer) 
 	}
 	return errors.Join(waitErr, stopErr)
 }
+
+// startRefused carries the error Start would have returned for a command that a start gate could not
+// execute. RunOwned returns only that error once the exited gate is reaped, without waiting for the
+// copy of the caller's Stdin.
+type startRefused struct{ err error }
+
+// Error reports the refused start's own error.
+func (r *startRefused) Error() string { return r.err.Error() }
 
 // ownedWriter serializes both captured streams when they share one destination.
 type ownedWriter struct {

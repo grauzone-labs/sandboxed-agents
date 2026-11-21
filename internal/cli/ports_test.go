@@ -143,7 +143,7 @@ func TestUpSkipsUnavailableHostPorts(t *testing.T) {
 		return nil
 	}
 	status, output, calls := f.run(t, "up", "demo")
-	if status != 0 || !strings.Contains(output, "127.0.0.1:2223:22/tcp") || !reflect.DeepEqual(probed, []uint16{2222, 2223}) {
+	if status != 0 || !strings.Contains(output, "127.0.0.1:2223:22/tcp") || !reflect.DeepEqual(probed, []uint16{2222, 2223, 2222, 2223}) {
 		t.Fatalf("status=%d output=%q probes=%v", status, output, probed)
 	}
 	assertNewSandbox(t, calls, "", "default", "demo", baseTag(t), "", "2223", "8589934592", "4", "2048", "1073741824")
