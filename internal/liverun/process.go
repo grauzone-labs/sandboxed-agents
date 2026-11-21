@@ -1,6 +1,7 @@
 package liverun
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -351,6 +352,7 @@ func completion(directory string, candidate *exitEvidence) (exitEvidence, bool, 
 }
 
 // readCompletion refuses malformed existing artifacts instead of inventing an authoritative successful exit.
+// A required field that is absent or JSON null is incomplete; an explicit 0 or false is accepted.
 func readCompletion(path string, ended *exitEvidence) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -361,7 +363,7 @@ func readCompletion(path string, ended *exitEvidence) error {
 		return fmt.Errorf("completion fields unverified")
 	}
 	for _, name := range []string{"Code", "EndedAt", "Interrupted"} {
-		if fields[name] == nil {
+		if value := bytes.TrimSpace(fields[name]); value == nil || bytes.Equal(value, []byte("null")) {
 			return fmt.Errorf("completion fields incomplete")
 		}
 	}
