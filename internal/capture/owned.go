@@ -64,15 +64,9 @@ func RunOwned(ctx context.Context, command *exec.Cmd, stdout, stderr io.Writer) 
 	if err != nil {
 		return err
 	}
-	if err := activate(); err != nil {
-		treeErr := terminate()
-		killErr := command.Process.Kill()
-		waitErr, _ := wait()
-		if refused, ok := errors.AsType[*startRefused](err); ok {
-			return refused.err
-		}
-		return errors.Join(err, treeErr, killErr, waitErr)
-	}
+	// Cancellation is watched from the start, so it also ends a start gate that stalls before exec.
+	// Such a gate closes its status pipe when killed, so activation then succeeds and the wait below
+	// reports the killed process beside the cancellation.
 	done := make(chan struct{})
 	stopped := make(chan error, 1)
 	go func() {
@@ -83,6 +77,17 @@ func RunOwned(ctx context.Context, command *exec.Cmd, stdout, stderr io.Writer) 
 			stopped <- nil
 		}
 	}()
+	if err := activate(); err != nil {
+		close(done)
+		stopErr := <-stopped
+		treeErr := terminate()
+		killErr := command.Process.Kill()
+		waitErr, _ := wait()
+		if refused, ok := errors.AsType[*startRefused](err); ok {
+			return refused.err
+		}
+		return errors.Join(ctx.Err(), err, stopErr, treeErr, killErr, waitErr)
+	}
 	waitErr, drainExpired := wait()
 	close(done)
 	stopErr := <-stopped

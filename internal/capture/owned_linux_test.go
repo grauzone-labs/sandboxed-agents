@@ -261,3 +261,39 @@ func TestRunOwnedTrackedStartFailureMatchesStart(t *testing.T) {
 		})
 	}
 }
+
+// TestRunOwnedCancellationEndsStalledGate proves cancelling a tracked RunOwned
+// call ends a gate that was released but stalls before it executes the
+// command: RunOwned returns the cancellation, the group is gone and its record
+// removed. It exercises the RunOwned start gate and cancellation seam on Linux.
+func TestRunOwnedCancellationEndsStalledGate(t *testing.T) {
+	records := t.TempDir()
+	capture.TrackOwnedGroups(records)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	gate := 0
+	// Stopping the gate before its release byte arrives leaves it released but unable to exec.
+	capture.SetOwnedRecordHook(func(pid int) {
+		gate = pid
+		_ = syscall.Kill(pid, syscall.SIGSTOP)
+		time.AfterFunc(200*time.Millisecond, cancel)
+	})
+	t.Cleanup(func() {
+		capture.TrackOwnedGroups("")
+		capture.SetOwnedRecordHook(nil)
+	})
+	done := make(chan error, 1)
+	go func() { done <- capture.RunOwned(ctx, exec.Command("/bin/sleep", "30"), nil, nil) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled stalled gate returned %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancellation did not interrupt the stalled gate")
+	}
+	assertOwnedProcessExited(t, gate)
+	if entries, err := os.ReadDir(records); err != nil || len(entries) != 0 {
+		t.Fatalf("cancelled gate stayed recorded: %v %v", entries, err)
+	}
+}
