@@ -15,7 +15,18 @@ import (
 func freeSpace(path string) (uint64, error) {
 	var stat unix.Statfs_t
 	err := unix.Statfs(path, &stat)
-	return stat.Bavail * uint64(stat.Bsize), err
+	return availableBytes(stat), err
+}
+
+// availableBytes converts available blocks to bytes in the filesystem's fragment
+// size, the unit statvfs counts blocks in, and uses the block size when the
+// filesystem reports no fragment size.
+func availableBytes(stat unix.Statfs_t) uint64 {
+	unit := uint64(stat.Frsize)
+	if unit == 0 {
+		unit = uint64(stat.Bsize)
+	}
+	return stat.Bavail * unit
 }
 
 // lockFile takes an exclusive nonblocking kernel lock.
