@@ -78,8 +78,11 @@ func strictBuildJSON(path string, value any) error {
 	return strictDecode(data, value)
 }
 
-// strictDecode decodes exactly one typed JSON value and rejects trailing or unknown fields.
+// strictDecode decodes exactly one typed JSON value and rejects duplicate members and trailing or unknown fields.
 func strictDecode(data []byte, value any) error {
+	if err := rejectDuplicateMembers(data); err != nil {
+		return err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
@@ -89,6 +92,52 @@ func strictDecode(data []byte, value any) error {
 		return fmt.Errorf("extra build evidence data")
 	}
 	return nil
+}
+
+// duplicateFrame tracks one open JSON object or array while rejectDuplicateMembers scans its first value.
+type duplicateFrame struct {
+	object    bool
+	expectKey bool
+	seen      map[string]bool
+}
+
+// rejectDuplicateMembers scans the first JSON value in data without recursion and refuses any object that names a
+// member twice. Names compare case-insensitively, as encoding/json matches struct fields, so a case variant cannot
+// silently replace an earlier member either.
+func rejectDuplicateMembers(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	stack := []*duplicateFrame{}
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		var top *duplicateFrame
+		if len(stack) > 0 {
+			top = stack[len(stack)-1]
+		}
+		if delim, ok := token.(json.Delim); ok && (delim == '}' || delim == ']') {
+			stack = stack[:len(stack)-1]
+		} else if top != nil && top.object && top.expectKey {
+			name := strings.ToLower(token.(string))
+			if top.seen[name] {
+				return fmt.Errorf("duplicate member in private evidence")
+			}
+			top.seen[name] = true
+			top.expectKey = false
+			continue
+		} else {
+			if top != nil && top.object {
+				top.expectKey = true
+			}
+			if delim, ok := token.(json.Delim); ok {
+				stack = append(stack, &duplicateFrame{object: delim == '{', expectKey: delim == '{', seen: map[string]bool{}})
+			}
+		}
+		if len(stack) == 0 {
+			return nil
+		}
+	}
 }
 
 // readBuildManifest validates the private channel's version and immutable invocation metadata.

@@ -108,6 +108,32 @@ func TestBuildChannelEvidenceFailuresPreserveBuildOutcome(t *testing.T) {
 	}
 }
 
+// TestStrictDecodeRejectsDuplicateMembers proves the strict private-evidence decoder refuses a report that names a
+// member twice, at the top level, in any letter case, or inside a nested object, and still accepts one unambiguous Removed array.
+func TestStrictDecodeRejectsDuplicateMembers(t *testing.T) {
+	removed := `[{"id":"sha256:` + strings.Repeat("b", 64) + `","size_bytes":1,"size_verified":true}]`
+	for _, tc := range []struct {
+		name, data string
+		accepted   bool
+	}{
+		{"single", `{"status":"complete","removed":` + removed + `}`, true},
+		{"duplicate", `{"status":"complete","removed":` + removed + `,"removed":[]}`, false},
+		{"case-variant", `{"status":"complete","Removed":[],"removed":` + removed + `}`, false},
+		{"nested", `{"status":"complete","removed":[{"id":"a","id":"b","size_bytes":1,"size_verified":true}]}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var report CleanupReport
+			err := strictDecode([]byte(tc.data), &report)
+			if tc.accepted != (err == nil) {
+				t.Fatalf("accepted=%v, got %v", tc.accepted, err)
+			}
+			if tc.accepted && (len(report.Removed) != 1 || report.Removed[0].ID != "sha256:"+strings.Repeat("b", 64)) {
+				t.Fatalf("unambiguous report misread: %+v", report)
+			}
+		})
+	}
+}
+
 // TestBuildChannelDisabledPreservesBuildAPI proves ordinary builds request neither iidfile nor inspection. It exercises the CaptureBuildResult producer and typed private artifacts seam.
 func TestBuildChannelDisabledPreservesBuildAPI(t *testing.T) {
 	inspected := false
