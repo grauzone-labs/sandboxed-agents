@@ -7,11 +7,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/grauzone-labs/sandboxed-agents/internal/testutil"
 	"golang.org/x/sys/unix"
 )
 
@@ -145,16 +149,19 @@ func (terminal *liveTerminal) Wait(timeout time.Duration) (int, bool) {
 	}
 }
 
-// Close ends a still running command and releases the terminal.
+// Close ends a still running command, or the owned descendants that still hold
+// the terminal after the command exited, and releases the terminal.
 func (terminal *liveTerminal) Close() {
 	select {
-	case <-terminal.done:
+	case <-terminal.readerDone:
 	default:
 		// The command leads its own session, so its group covers the podman
 		// exec it may have started; ending the whole group frees the terminal.
+		// A descendant that ignores hangups keeps the group, and so its ID,
+		// alive after the command exits; it must end here as well.
 		unix.Kill(-terminal.command.Process.Pid, unix.SIGKILL)
-		<-terminal.done
 	}
+	<-terminal.done
 	// Closing the master ends the reader; wait for it so nothing appends to
 	// the output after Close returns.
 	terminal.master.Close()
@@ -162,4 +169,64 @@ func (terminal *liveTerminal) Close() {
 	case <-terminal.readerDone:
 	case <-time.After(5 * time.Second):
 	}
+}
+
+// TestLiveTerminalLingerBoundFixture exercises a class timeout whose command exits
+// while a descendant ignoring hangups keeps the terminal; its parent expects the
+// reported deadline failure and checks that the descendant ended.
+func TestLiveTerminalLingerBoundFixture(t *testing.T) {
+	pidFile := os.Getenv("TEST_LIVE_TERMINAL_LINGER")
+	if pidFile == "" {
+		return
+	}
+	host := liveHost{binary: "/bin/sh", environment: testutil.Env(os.Environ(), map[string]string{"PATH": "/usr/bin:/bin"}), operationBounds: map[string]time.Duration{"inspection": 500 * time.Millisecond}, report: func(line string) { t.Log(line) }}
+	terminal := host.startTerminal(t, "-c", `trap "" HUP; sleep 30 & echo $! > "$TEST_LIVE_TERMINAL_LINGER"; echo shell done; exit 0`)
+	defer terminal.Close()
+	terminal.Wait(5 * time.Second)
+}
+
+// TestLiveTerminalClassBoundEndsLingeringDescendant proves a class timeout ends
+// the owned process group even after the command itself exited, so a descendant
+// that ignores hangups and keeps the terminal stops, through the timed terminal
+// seam in a nested fixture and the descendant's process state.
+func TestLiveTerminalClassBoundEndsLingeringDescendant(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh on this host")
+	}
+	pidFile := filepath.Join(t.TempDir(), "descendant.pid")
+	values := nestedExecutables()
+	values["TEST_LIVE_TERMINAL_LINGER"] = pidFile
+	command := exec.Command(os.Args[0], "-test.v", "-test.run=^TestLiveTerminalLingerBoundFixture$")
+	command.Env = testutil.Env(os.Environ(), values)
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "inspection exceeded class bound") {
+		t.Fatalf("terminal fixture: %v\n%q", err, output)
+	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		t.Fatalf("invalid descendant pid %q", data)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for liveProcessRunning(pid) {
+		if time.Now().After(deadline) {
+			unix.Kill(pid, unix.SIGKILL)
+			t.Fatalf("class timeout left descendant %d holding the terminal", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// liveProcessRunning reports whether pid names a process that has neither exited
+// nor become a zombie awaiting its reaper.
+func liveProcessRunning(pid int) bool {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	_, fields, found := strings.Cut(string(data), ") ")
+	return found && !strings.HasPrefix(fields, "Z") && !strings.HasPrefix(fields, "X")
 }
