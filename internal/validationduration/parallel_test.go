@@ -16,7 +16,7 @@ import (
 // retains each fixed case once, preserves failing records, omits nested/program
 // output, and refuses a duplicated completion at the public collector seam.
 func TestCollectActualParallelVerboseOutput(t *testing.T) {
-	command := exec.Command("go", "test", "-v", "-count=1", "./testdata/parallel")
+	command := exec.Command("go", "test", "-json=false", "-v", "-count=1", "./testdata/parallel")
 	command.Env = testutil.Env(os.Environ(), map[string]string{testutil.LiveTestsEnv: "", "SANDBOXED_AGENTS_LIVE_IMAGES_TESTS": ""})
 	output, err := command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "=== CONT") || !strings.Contains(string(output), "--- FAIL: TestLiveSuite/update") {
@@ -29,7 +29,7 @@ func TestCollectActualParallelVerboseOutput(t *testing.T) {
 // t.Run cases and nested parallel image units retain six results, privacy and
 // duplicate refusal through the actual Go subprocess and collector seams.
 func TestCollectActualConcurrentRunOutput(t *testing.T) {
-	command := exec.Command("go", "test", "-v", "-count=1", "./testdata/concurrent")
+	command := exec.Command("go", "test", "-json=false", "-v", "-count=1", "./testdata/concurrent")
 	command.Env = testutil.Env(os.Environ(), map[string]string{testutil.LiveTestsEnv: "", "SANDBOXED_AGENTS_LIVE_IMAGES_TESTS": ""})
 	output, err := command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "TestLiveSuite/images/initial/native") {
