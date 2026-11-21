@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -181,7 +182,7 @@ func fixtureSetup(t *testing.T, additional ...string) (string, string, []string)
 		suffix = ".exe"
 	}
 	for _, role := range []string{"go", "git", "podman", "ssh"} {
-		if err := os.Link(binary, filepath.Join(bin, role+suffix)); err != nil {
+		if err := installFixtureProgram(binary, filepath.Join(bin, role+suffix)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -201,6 +202,28 @@ func fixtureSetup(t *testing.T, additional ...string) (string, string, []string)
 		t.Fatalf("prepare: %v\n%s", err, data)
 	}
 	return root, private, args
+}
+
+// installFixtureProgram hard-links the test executable to destination and copies
+// it with executable permissions when the two paths are on different filesystems.
+func installFixtureProgram(binary, destination string) error {
+	if os.Link(binary, destination) == nil {
+		return nil
+	}
+	source, err := os.Open(binary)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	target, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0700)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(target, source)
+	if closeErr := target.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 // waitFixture waits for observable process evidence rather than assuming a scheduling delay.
