@@ -149,14 +149,17 @@ func (s *Service) query(ctx context.Context, o Options, program string, args ...
 	return data, nil
 }
 
-// failCheck saves engine diagnostics privately and returns only the failed check name.
+// failCheck saves engine diagnostics privately and returns only the failed check name and whether the save succeeded.
 func failCheck(o Options, name string, err error) error {
-	_ = os.WriteFile(filepath.Join(o.RunDir, "diagnostic.txt"), []byte(fmt.Sprint(err)+"\n"), 0600)
+	retained := "private diagnostic retained"
+	if os.WriteFile(filepath.Join(o.RunDir, "diagnostic.txt"), []byte(fmt.Sprint(err)+"\n"), 0600) != nil {
+		retained = "private diagnostic could not be retained"
+	}
 	var fault *engineFailure
 	if name == "engine" && errors.As(err, &fault) {
-		return fmt.Errorf("check engine failed; %s: %s; private diagnostic retained", fault.kind, fault.reason)
+		return fmt.Errorf("check engine failed; %s: %s; %s", fault.kind, fault.reason, retained)
 	}
-	return fmt.Errorf("check %s failed; private diagnostic retained", name)
+	return fmt.Errorf("check %s failed; %s", name, retained)
 }
 
 // normalizeConcurrency supplies serial defaults for legacy private options and
