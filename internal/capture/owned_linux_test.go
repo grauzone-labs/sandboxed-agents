@@ -2,12 +2,14 @@ package capture_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -115,4 +117,96 @@ func TestRunOwnedRefusesUnrecordableGroup(t *testing.T) {
 		t.Fatalf("err = %v after %v; want a prompt record failure", err, time.Since(started))
 	}
 	assertOwnedProcessExited(t, command.Process.Pid)
+}
+
+// TestOwnedGateCallerFixture is a tracked RunOwned caller that dies after its
+// command started but before the command's group is recorded; its parent
+// checks that the command never runs. It returns at once when unconfigured.
+func TestOwnedGateCallerFixture(t *testing.T) {
+	directory := os.Getenv("CAPTURE_TEST_GATE_RECORDS")
+	if directory == "" {
+		return
+	}
+	capture.TrackOwnedGroups(directory)
+	capture.SetOwnedRecordHook(func(pid int) {
+		_ = os.WriteFile(os.Getenv("CAPTURE_TEST_GATE_PID"), []byte(strconv.Itoa(pid)), 0600)
+		_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
+	})
+	command := exec.Command("/bin/sh", "-c", `: > "$1"; exec sleep 30`, "sh", os.Getenv("CAPTURE_TEST_GATE_MARKER"))
+	_ = capture.RunOwned(context.Background(), command, nil, nil)
+	t.Fatal("the caller outlived its own kill")
+}
+
+// TestRunOwnedGatesCommandUntilRecorded proves a tracked RunOwned command does
+// not run before its process group is recorded: when the caller dies between
+// starting the command and recording it, the command never executes and its
+// process ends. It exercises the RunOwned start gate through a nested caller
+// and the started process's state.
+func TestRunOwnedGatesCommandUntilRecorded(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh on this host")
+	}
+	root := t.TempDir()
+	records, pidFile, marker := filepath.Join(root, "records"), filepath.Join(root, "pid"), filepath.Join(root, "marker")
+	if err := os.Mkdir(records, 0700); err != nil {
+		t.Fatal(err)
+	}
+	caller := exec.Command(os.Args[0], "-test.run=^TestOwnedGateCallerFixture$")
+	caller.Env = append(os.Environ(), "CAPTURE_TEST_GATE_RECORDS="+records, "CAPTURE_TEST_GATE_PID="+pidFile, "CAPTURE_TEST_GATE_MARKER="+marker)
+	output, err := caller.CombinedOutput()
+	if status, ok := err.(*exec.ExitError); !ok || status.Sys().(syscall.WaitStatus).Signal() != syscall.SIGKILL {
+		t.Fatalf("caller did not die at the hook: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(string(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+	assertOwnedProcessExited(t, pid)
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("the command ran before its group was recorded: %v", err)
+	}
+	if entries, err := os.ReadDir(records); err != nil || len(entries) != 0 {
+		t.Fatalf("records after the caller died before recording: %v %v", entries, err)
+	}
+}
+
+// TestRunOwnedTrackedCommandSeesUnchangedProcess proves the start gate of a
+// tracked RunOwned call leaves the command's argv, environment, open
+// descriptors, signal state, standard streams and exit status exactly as an
+// untracked call gives them. It exercises the TrackOwnedGroups and RunOwned
+// process seam on Linux.
+func TestRunOwnedTrackedCommandSeesUnchangedProcess(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh on this host")
+	}
+	script := `tr '\0' ' ' < /proc/$$/cmdline; echo; env | sort; ls /proc/$$/fd; grep -E '^Sig(Blk|Ign)' /proc/$$/status; read -r line; echo "input $line"; echo failure >&2; exit 3`
+	run := func(tracked bool) (string, string, error) {
+		t.Helper()
+		if tracked {
+			capture.TrackOwnedGroups(t.TempDir())
+			defer capture.TrackOwnedGroups("")
+		}
+		command := exec.Command("/bin/sh", "-c", script, "name")
+		command.Args[0] = "custom-argv0"
+		command.Env = []string{"KEEP=value", "PATH=/usr/bin:/bin"}
+		command.Dir = t.TempDir()
+		command.Stdin = strings.NewReader("given\n")
+		var stdout, stderr strings.Builder
+		err := capture.RunOwned(context.Background(), command, &stdout, &stderr)
+		return strings.ReplaceAll(stdout.String(), command.Dir, "DIR"), stderr.String(), err
+	}
+	wantOut, wantErr, wantStatus := run(false)
+	gotOut, gotErr, gotStatus := run(true)
+	var want, got *exec.ExitError
+	if !errors.As(wantStatus, &want) || !errors.As(gotStatus, &got) || want.ExitCode() != 3 || got.ExitCode() != 3 {
+		t.Fatalf("exit status: untracked %v, tracked %v", wantStatus, gotStatus)
+	}
+	if gotOut != wantOut || gotErr != wantErr || !strings.HasPrefix(gotOut, "custom-argv0 -c ") {
+		t.Fatalf("tracked command differs:\nuntracked %q %q\ntracked   %q %q", wantOut, wantErr, gotOut, gotErr)
+	}
 }
