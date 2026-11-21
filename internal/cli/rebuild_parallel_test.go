@@ -179,6 +179,10 @@ func TestBuildJobsBoundsToolchainsAfterBase(t *testing.T) {
 	if status != 1 || !strings.Contains(stderr.String(), "failed toolchain sets: azure; existing sandboxes keep their image until update; list marks them as outdated") {
 		t.Fatalf("status=%d stderr=%s", status, stderr.String())
 	}
+	// Workers of one rebuild read the base in turn and never report each other as lock contention.
+	if strings.Contains(stderr.String(), "waiting for ") {
+		t.Fatalf("uncontended rebuild reported a lock wait: %s", stderr.String())
+	}
 	data, err := os.ReadFile(filepath.Join(dir, "events"))
 	if err != nil {
 		t.Fatal(err)
@@ -582,5 +586,59 @@ func assertSingleRebuildAttempts(t *testing.T, dir string, names ...string) {
 		if starts != 1 || ends != 1 {
 			t.Fatalf("%s attempts: %s", name, data)
 		}
+	}
+}
+
+// TestBuildPublishesToolchainOnCurrentBase proves a rebuild whose captured base was replaced while it
+// waited for a toolchain tag builds that tag from the current base, serially and with workers, so it
+// cannot overwrite a newer rebuild's tag with an outdated one, at the RunWithHost/fake Podman seam.
+func TestBuildPublishesToolchainOnCurrentBase(t *testing.T) {
+	for _, jobs := range []string{"--jobs=1", "--jobs=2"} {
+		t.Run(jobs, func(t *testing.T) {
+			f, dir := rebuildFixture(t, "dotnet")
+			t.Setenv("REBUILD_FAKE_BASE_TAG", baseTag(t))
+			older, newer := "sha256:"+strings.Repeat("1", 64), "sha256:"+strings.Repeat("2", 64)
+			if err := os.WriteFile(filepath.Join(dir, "base.id"), []byte(older), 0600); err != nil {
+				t.Fatal(err)
+			}
+			releaseHandshakeFile(t, filepath.Join(dir, "none.release"))
+			releaseHandshakeFile(t, filepath.Join(dir, "dotnet.release"))
+			hash, err := image.Hash(image.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The test stands in for a newer rebuild that holds the toolchain tag.
+			held, err := cli.HoldImageTagLock(f.host.Platform, image.Tag(hash, []string{"dotnet"}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = held.Close() })
+			_, stderr, done := startRebuild(t, f, "build", jobs)
+			// This rebuild has rebuilt and read the older base and now waits for the toolchain tag.
+			waitRebuildOutput(t, stderr, "waiting for image-tag lock")
+			// The newer rebuild replaces the base and publishes the toolchain tag before releasing it.
+			if err := os.WriteFile(filepath.Join(dir, "base.id"), []byte(newer), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := held.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if status := done.wait(t); status != 0 {
+				t.Fatalf("status=%d stderr=%s", status, stderr.String())
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "dotnet.argv"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var args []string
+			if err := json.Unmarshal(data, &args); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"BASE_IMAGE=" + newer, "io.sandboxed-agents.base-image=" + newer} {
+				if !slices.Contains(args, want) {
+					t.Fatalf("toolchain tag built from a replaced base: argv=%q want %q", args, want)
+				}
+			}
+		})
 	}
 }

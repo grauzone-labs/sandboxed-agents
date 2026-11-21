@@ -22,12 +22,16 @@ type imageBuildOutcome struct {
 	log       *buildOutputSpool
 }
 
-// imageRebuildContext carries one selected target, asset hash, and captured base ID unchanged through a rebuild phase.
-// Value receivers keep concurrent workers on the same immutable build inputs; image sets and output sinks vary per operation.
+// imageRebuildContext carries one selected target and asset hash unchanged through a rebuild phase.
+// Value receivers keep concurrent workers on the same immutable build inputs; image sets, output sinks,
+// and the base ID each toolchain build reads under its own tag lock vary per operation. baseRead
+// serializes those base reads among one rebuild's workers, so they never wait on each other's
+// base-lock hold or report that wait as contention.
 type imageRebuildContext struct {
-	target podmanTarget
-	hash   string
-	baseID string
+	target   podmanTarget
+	hash     string
+	baseID   string
+	baseRead *sync.Mutex
 }
 
 // rebuildToolchains rebuilds sorted sets with bounded workers and publishes complete blocks without treating output failures as failed sets.
@@ -62,13 +66,21 @@ func (b imageRebuildContext) rebuildToolchains(sets map[string][]string, names [
 	return buildFailures, errors.Join(outputErrors...)
 }
 
-// rebuildSpooledImage holds one tag through build and primary evidence publication, releasing it before output publication.
+// rebuildSpooledImage holds one toolchain tag through build and primary evidence publication, releasing it
+// before output publication. It builds from the base that is current once the tag is held, as
+// rebuildToolchainImage does, so a replaced base cannot overwrite a newer rebuild's tag.
 func (b imageRebuildContext) rebuildSpooledImage(set []string, progress io.Writer) imageBuildOutcome {
 	lock, err := acquireImageTagLock(b.target, image.Tag(b.hash, set), progress)
 	if err != nil {
 		return imageBuildOutcome{tag: image.Tag(b.hash, set), buildErr: err}
 	}
 	defer lock.Close()
+	b.baseRead.Lock()
+	b.baseID, err = currentBaseID(b.target, b.hash, progress)
+	b.baseRead.Unlock()
+	if err != nil {
+		return imageBuildOutcome{tag: image.Tag(b.hash, set), buildErr: err}
+	}
 	return b.buildSpooledImageUnderLock(set, progress)
 }
 

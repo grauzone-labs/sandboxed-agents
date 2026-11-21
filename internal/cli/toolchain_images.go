@@ -8,6 +8,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/grauzone-labs/sandboxed-agents/image"
 	"github.com/grauzone-labs/sandboxed-agents/internal/catalog"
@@ -77,15 +78,36 @@ func inspectImage(p podmanTarget, name string) (imageRecord, error) {
 	return records[0], nil
 }
 
-// buildLabeledImage builds an image with product, asset, toolchain, and base-image labels and
-// the requested refresh policy.
-func buildLabeledImage(p podmanTarget, set []string, hash, baseID string, refresh bool, output, progress io.Writer) (string, error) {
+// rebuildToolchainImage refreshes a toolchain tag under its image-tag lock from the base that is
+// current once the lock is held, so a rebuild whose base was replaced while it waited cannot
+// overwrite a newer rebuild's tag with one built from the replaced base.
+func rebuildToolchainImage(p podmanTarget, set []string, hash string, output, progress io.Writer) (string, error) {
 	lock, err := acquireImageTagLock(p, image.Tag(hash, set), progress)
 	if err != nil {
 		return "", err
 	}
 	defer lock.Close()
-	return buildLabeledImageUnderLock(p, set, hash, baseID, refresh, output)
+	baseID, err := currentBaseID(p, hash, progress)
+	if err != nil {
+		return "", err
+	}
+	return buildLabeledImageUnderLock(p, set, hash, baseID, true, output)
+}
+
+// currentBaseID reads the base tag's immutable ID under the base image-tag lock. Callers hold a
+// toolchain tag lock, which keeps ensureImage's toolchain-then-base lock order.
+func currentBaseID(p podmanTarget, hash string, progress io.Writer) (string, error) {
+	tag := image.Tag(hash, nil)
+	lock, err := acquireImageTagLock(p, tag, progress)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	base, err := inspectImage(p, tag)
+	if err != nil {
+		return "", err
+	}
+	return base.ID, nil
 }
 
 // buildLabeledImageUnderLock builds a tag while its caller holds that tag's exclusive image-tag lock.
@@ -161,13 +183,14 @@ func rebuildImages(request Request, p podmanTarget, output, progress io.Writer) 
 			sets[toolchainSet(set)] = set
 		}
 	}
-	// Capture the base's immutable ID before another tag writer can replace it.
+	// Confirm the rebuilt base is readable before toolchain work. Each toolchain build reads the
+	// base again under its own tag lock, because another rebuild can replace the base meanwhile.
 	const notice = "existing sandboxes keep their image until update; list marks them as outdated"
 	var baseOutputErr error
-	baseID, err := func() (string, error) {
+	err = func() error {
 		lock, err := acquireImageTagLock(p, image.Tag(hash, nil), progress)
 		if err != nil {
-			return "", err
+			return err
 		}
 		defer lock.Close()
 		var outcome imageBuildOutcome
@@ -178,19 +201,18 @@ func rebuildImages(request Request, p podmanTarget, output, progress io.Writer) 
 		}
 		baseOutputErr = outcome.outputErr
 		if outcome.buildErr != nil {
-			return "", outcome.buildErr
+			return outcome.buildErr
 		}
 		if request.BuildJobs <= 1 {
 			fmt.Fprintln(output, "built image", outcome.tag)
 		}
 		if len(sets) == 0 {
-			return "", nil
+			return nil
 		}
-		base, err := inspectImage(p, outcome.tag)
-		if err != nil {
-			return "", fmt.Errorf("%w; %s", err, notice)
+		if _, err := inspectImage(p, outcome.tag); err != nil {
+			return fmt.Errorf("%w; %s", err, notice)
 		}
-		return base.ID, nil
+		return nil
 	}()
 	if err != nil {
 		return errors.Join(err, baseOutputErr)
@@ -213,11 +235,11 @@ func rebuildImages(request Request, p podmanTarget, output, progress io.Writer) 
 	outputErr := baseOutputErr
 	if request.BuildJobs > 1 {
 		var toolchainOutputErr error
-		buildFailures, toolchainOutputErr = (imageRebuildContext{target: p, hash: hash, baseID: baseID}).rebuildToolchains(sets, names, request.BuildJobs, output, progress)
+		buildFailures, toolchainOutputErr = (imageRebuildContext{target: p, hash: hash, baseRead: &sync.Mutex{}}).rebuildToolchains(sets, names, request.BuildJobs, output, progress)
 		outputErr = errors.Join(outputErr, toolchainOutputErr)
 	} else {
 		for i, name := range names {
-			tag, err := buildLabeledImage(p, sets[name], hash, baseID, true, output, progress)
+			tag, err := rebuildToolchainImage(p, sets[name], hash, output, progress)
 			buildFailures[i] = err
 			if err == nil {
 				fmt.Fprintln(output, "built image", tag)

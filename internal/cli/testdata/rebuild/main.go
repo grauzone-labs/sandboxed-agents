@@ -15,6 +15,15 @@ import (
 // main records build intervals and output around explicit releases without ever calling an engine.
 func main() {
 	args := os.Args[1:]
+	// An opted-in base tag answers from a file the test replaces, modelling another writer of the tag.
+	if base := os.Getenv("REBUILD_FAKE_BASE_TAG"); base != "" && len(args) == 3 && args[0] == "image" && args[1] == "inspect" && args[2] == base {
+		id, err := os.ReadFile(filepath.Join(os.Getenv("REBUILD_FAKE_DIRECTORY"), "base.id"))
+		if err != nil {
+			panic(err)
+		}
+		fmt.Printf(`[{"Id":%q}]`, id)
+		return
+	}
 	if len(args) == 0 || args[0] != "build" {
 		command := exec.Command(os.Getenv("REBUILD_FAKE_DELEGATE"), args...)
 		command.Stdout, command.Stderr = os.Stdout, os.Stderr
