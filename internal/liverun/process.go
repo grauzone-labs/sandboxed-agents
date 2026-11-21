@@ -344,11 +344,11 @@ func completion(directory string, candidate *exitEvidence) (exitEvidence, bool, 
 		return ended, false, nil
 	}
 	ended = *candidate
-	if err = writeExitText(directory, ended.Code); err != nil {
+	// The authoritative record commits first; a failed shell write is repaired from it on the next call.
+	if err = writeJSON(filepath.Join(directory, "exit.json"), ended); err != nil {
 		return ended, false, err
 	}
-	err = writeJSON(filepath.Join(directory, "exit.json"), ended)
-	return ended, err == nil, err
+	return ended, true, writeExitText(directory, ended.Code)
 }
 
 // readCompletion refuses malformed existing artifacts instead of inventing an authoritative successful exit.

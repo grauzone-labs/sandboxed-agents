@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -47,5 +48,42 @@ func TestStatusRejectsNullCompletionFields(t *testing.T) {
 				t.Fatalf("null %s published a shell status: %v", field, err)
 			}
 		})
+	}
+}
+
+// deadOwnership records a supervisor and suite child that both provably ended, so status may recover the run.
+func deadOwnership(t *testing.T, run string) {
+	t.Helper()
+	dead := map[string]any{"PID": 2147483647, "Identity": "dead"}
+	cleanupArtifact(t, run, "processes.json", map[string]any{"RunDir": run, "Supervisor": dead, "Child": dead})
+}
+
+// TestStatusPublishesExitRecordBeforeShellStatus proves a failed exit.json
+// publication leaves the shell's exit-status untouched, so a shell caller never
+// reads a code that the authoritative record does not hold. It exercises the
+// status command's interrupted-recovery and exit artifact seam.
+func TestStatusPublishesExitRecordBeforeShellStatus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permissions cannot block file creation on Windows")
+	}
+	status, run := preparedStatusRun(t)
+	if _, err := status(); err != nil {
+		t.Fatal(err)
+	}
+	cleanupArtifact(t, run, "started.json", map[string]any{"StartedAt": time.Now().UTC()})
+	deadOwnership(t, run)
+	if err := os.WriteFile(filepath.Join(run, "exit-status"), []byte("stale\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// A read-only directory refuses the exit record's temporary file while the existing shell status stays writable.
+	if err := os.Chmod(run, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(run, 0700) })
+	if out, err := status(); err == nil {
+		t.Fatalf("unpublished exit record reported: %s", out)
+	}
+	if got := string(mustReadFile(t, filepath.Join(run, "exit-status"))); got != "stale\n" {
+		t.Fatalf("shell status written before exit record: %q", got)
 	}
 }
