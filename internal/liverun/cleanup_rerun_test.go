@@ -335,6 +335,31 @@ func TestCleanupRerunRechecksEarlierRemovalInFinalInventory(t *testing.T) {
 	}
 }
 
+// TestCleanupRerunNeverCarriesEarlierRemovalsForward proves that a rerun which listed an image only under
+// removed_earlier is no evidence that the image was removed: once the cleanup that removed it is gone, the next
+// cleanup reports the image as unverified and exits non-zero. It exercises the Cleanup command seam against the fake
+// engine, deleting the first cleanup's private attempt directory.
+func TestCleanupRerunNeverCarriesEarlierRemovalsForward(t *testing.T) {
+	svc, fake, options := cleanupHarness(t)
+	id := "sha256:" + strings.Repeat("b", 64)
+	fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id)}
+	cleanupBuildLog(t, fake, options.RunDir, "STEP 2/3: LABEL example=value", id)
+	if first, err := cleanupRerunReport(t, svc, options); err != nil || len(first.Removed) != 1 {
+		t.Fatalf("first cleanup did not remove the proven result: %v %+v", err, first)
+	}
+	removing := cleanupAttemptDir(t, options.RunDir)
+	if second, err := cleanupRerunReport(t, svc, options); err != nil || len(second.RemovedEarlier) != 1 {
+		t.Fatalf("second cleanup did not list the earlier removal: %v %+v", err, second)
+	}
+	if err := os.RemoveAll(removing); err != nil {
+		t.Fatal(err)
+	}
+	report, err := cleanupRerunReport(t, svc, options)
+	if err == nil || report.Status != "unverified" || len(report.RemovedEarlier) != 0 || len(report.Unverified) != 1 || report.Unverified[0].ID != id || report.Unverified[0].Reason != "build result absent from complete current inventory" {
+		t.Fatalf("removed_earlier carried forward: %v %+v", err, report)
+	}
+}
+
 // TestCleanupRerunStaysCompleteAcrossManyReruns proves that reruns which remove nothing never push the cleanup that
 // removed an image out of the earlier cleanups read, so twenty sequential cleanups of one run all end complete with
 // the image under removed_earlier from the second on. It exercises the Cleanup command seam against the fake engine.
