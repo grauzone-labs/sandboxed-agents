@@ -20,8 +20,9 @@ var ownedGroups atomic.Pointer[string]
 // /proc start tick. The command starts behind a gate and runs only once its record exists, and the
 // record is removed when RunOwned returns, so a supervisor that outlives a dying caller can end the
 // invocations the caller left running, and a caller that dies before recording leaves nothing that
-// ran. A call whose record cannot be written ends its invocation and fails. An empty directory stops
-// recording.
+// ran. A call whose record cannot be written ends its invocation and fails. A command that exec
+// refuses returns the same *os.PathError Start returns for it, but command.Process and ProcessState
+// then describe the exited gate instead of staying nil. An empty directory stops recording.
 // Windows and other hosts record nothing: there each invocation's job nests in the caller's job.
 func TrackOwnedGroups(directory string) { ownedGroups.Store(&directory) }
 
@@ -67,6 +68,9 @@ func RunOwned(ctx context.Context, command *exec.Cmd, stdout, stderr io.Writer) 
 		treeErr := terminate()
 		killErr := command.Process.Kill()
 		waitErr, _ := wait()
+		if refused, ok := errors.AsType[*startRefused](err); ok {
+			return refused.err
+		}
 		return errors.Join(err, treeErr, killErr, waitErr)
 	}
 	done := make(chan struct{})
@@ -93,6 +97,13 @@ func RunOwned(ctx context.Context, command *exec.Cmd, stdout, stderr io.Writer) 
 	}
 	return errors.Join(waitErr, stopErr)
 }
+
+// startRefused carries the error Start would have returned for a command that a start gate could not
+// execute. RunOwned returns only that error; the exited gate has been reaped.
+type startRefused struct{ err error }
+
+// Error reports the refused start's own error.
+func (r *startRefused) Error() string { return r.err.Error() }
 
 // ownedWriter serializes both captured streams when they share one destination.
 type ownedWriter struct {

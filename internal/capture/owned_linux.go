@@ -1,8 +1,10 @@
 package capture
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,62 +12,73 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-
-	"golang.org/x/sys/unix"
 )
 
 // ownedRecordHook, when set by a test, runs with the started process ID just before its group is recorded.
 var ownedRecordHook func(pid int)
 
-// The start gate's inherited descriptor and the command path it executes once released.
+// The start gate's inherited release and status descriptors and the command path it executes once released.
 const (
-	gateFDEnv   = "SANDBOXED_AGENTS_OWNED_GATE_FD"
-	gatePathEnv = "SANDBOXED_AGENTS_OWNED_GATE_PATH"
+	gateFDEnv     = "SANDBOXED_AGENTS_OWNED_GATE_FD"
+	gateStatusEnv = "SANDBOXED_AGENTS_OWNED_GATE_STATUS_FD"
+	gatePathEnv   = "SANDBOXED_AGENTS_OWNED_GATE_PATH"
 )
 
 // init turns a process started as a tracked command's start gate into that command.
 func init() {
 	if fd := os.Getenv(gateFDEnv); fd != "" {
-		runStartGate(fd, os.Getenv(gatePathEnv))
+		runStartGate(fd, os.Getenv(gateStatusEnv), os.Getenv(gatePathEnv))
 	}
 }
 
-// runStartGate waits for the caller's release byte on fd and then executes path with this process's
-// argv and environment, the gate variables removed. The caller writes the byte only once the group is
-// recorded, so a caller that dies first closes the pipe and the command never runs. It never returns.
-func runStartGate(fdText, path string) {
-	fd, err := strconv.Atoi(fdText)
-	if err != nil || path == "" {
+// runStartGate waits for the caller's release byte on the release descriptor and then executes path
+// with this process's argv and environment, the gate variables removed. The caller writes the byte
+// only once the group is recorded, so a caller that dies first closes the pipe and the command never
+// runs. The status descriptor closes on a successful exec; a refused exec writes its errno there
+// instead, so the caller can return the error Start would have returned. It never returns.
+func runStartGate(releaseText, statusText, path string) {
+	release, releaseErr := strconv.Atoi(releaseText)
+	status, statusErr := strconv.Atoi(statusText)
+	if releaseErr != nil || statusErr != nil || path == "" {
 		fmt.Fprintln(os.Stderr, "owned start gate misconfigured")
 		os.Exit(125)
 	}
 	var released [1]byte
-	n, err := syscall.Read(fd, released[:])
+	n, err := syscall.Read(release, released[:])
 	for errors.Is(err, syscall.EINTR) {
-		n, err = syscall.Read(fd, released[:])
+		n, err = syscall.Read(release, released[:])
 	}
-	_ = syscall.Close(fd)
+	_ = syscall.Close(release)
 	if n != 1 {
 		os.Exit(125)
 	}
+	syscall.CloseOnExec(status)
 	environment := slices.DeleteFunc(os.Environ(), func(entry string) bool {
-		return strings.HasPrefix(entry, gateFDEnv+"=") || strings.HasPrefix(entry, gatePathEnv+"=")
+		return strings.HasPrefix(entry, gateFDEnv+"=") || strings.HasPrefix(entry, gateStatusEnv+"=") || strings.HasPrefix(entry, gatePathEnv+"=")
 	})
 	err = syscall.Exec(path, os.Args, environment)
-	fmt.Fprintf(os.Stderr, "exec %s: %v\n", path, err)
+	errno, ok := err.(syscall.Errno)
+	if !ok {
+		errno = syscall.EINVAL
+	}
+	var payload [4]byte
+	binary.LittleEndian.PutUint32(payload[:], uint32(errno))
+	_, _ = syscall.Write(status, payload[:])
 	os.Exit(127)
 }
 
 // prepareOwned places only this invocation in a fresh process group and returns its cancellation
 // action. A descendant that deliberately starts a separate session is outside this boundary.
 //
-// When TrackOwnedGroups set a directory, the command first starts as a gate: this executable, through
-// /proc/self/exe, holding the read end of a pipe. Activation records the gate's group, which the
-// command keeps since exec preserves the PID and its start tick, and only then writes the byte that
-// lets the gate execute the command with the caller's argv, environment, standard streams and
-// directory. The group is therefore recorded before the command can run, and a caller that dies
-// before recording leaves a gate that exits on end of file. Release removes the record and restores
-// the command's fields.
+// When TrackOwnedGroups set a directory, every command first starts as a gate: this executable,
+// through /proc/self/exe, holding the read end of a release pipe and the write end of a status pipe.
+// Activation records the gate's group, which the command keeps since exec preserves the PID and its
+// start tick, and only then writes the byte that lets the gate execute the command with the caller's
+// argv, environment, standard streams and directory. The group is therefore recorded before the
+// command can run, and a caller that dies before recording leaves a gate that exits on end of file.
+// Activation then waits for the status pipe: end of file means the exec succeeded, and an errno means
+// it was refused, which activation returns as the *os.PathError Start returns for that refusal.
+// Release removes the record and restores the command's fields.
 func prepareOwned(command *exec.Cmd) (activate func() error, terminate func() error, release func(), err error) {
 	if command.SysProcAttr != nil {
 		return nil, nil, nil, fmt.Errorf("owned command already has process attributes")
@@ -79,16 +92,22 @@ func prepareOwned(command *exec.Cmd) (activate func() error, terminate func() er
 		return err
 	}
 	directory := trackedGroupDirectory()
-	if directory == "" || !gateable(command) {
+	if directory == "" {
 		return func() error { return nil }, terminate, func() {}, nil
 	}
 	gateRead, gateWrite, err := os.Pipe()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("create owned start gate: %w", err)
 	}
+	statusRead, statusWrite, err := os.Pipe()
+	if err != nil {
+		gateRead.Close()
+		gateWrite.Close()
+		return nil, nil, nil, fmt.Errorf("create owned start gate: %w", err)
+	}
 	path, environment, extra := command.Path, command.Env, command.ExtraFiles
-	command.Env = append(command.Environ(), gateFDEnv+"="+strconv.Itoa(3+len(extra)), gatePathEnv+"="+path)
-	command.ExtraFiles = append(slices.Clip(extra), gateRead)
+	command.Env = append(command.Environ(), gateFDEnv+"="+strconv.Itoa(3+len(extra)), gateStatusEnv+"="+strconv.Itoa(4+len(extra)), gatePathEnv+"="+path)
+	command.ExtraFiles = append(slices.Clip(extra), gateRead, statusWrite)
 	command.Path = "/proc/self/exe"
 	record := ""
 	restored := false
@@ -97,10 +116,12 @@ func prepareOwned(command *exec.Cmd) (activate func() error, terminate func() er
 			restored = true
 			command.Path, command.Env, command.ExtraFiles = path, environment, extra
 			gateRead.Close()
+			statusWrite.Close()
 		}
 	}
 	activate = func() error {
 		restore()
+		defer statusRead.Close()
 		defer gateWrite.Close()
 		if ownedRecordHook != nil {
 			ownedRecordHook(command.Process.Pid)
@@ -113,33 +134,26 @@ func prepareOwned(command *exec.Cmd) (activate func() error, terminate func() er
 		if _, err := gateWrite.Write([]byte{1}); err != nil {
 			return fmt.Errorf("release owned start gate: %w", err)
 		}
-		return nil
+		gateWrite.Close()
+		var payload [4]byte
+		n, err := io.ReadFull(statusRead, payload[:])
+		switch {
+		case n == 0 && errors.Is(err, io.EOF):
+			return nil
+		case n == len(payload):
+			return &startRefused{err: &os.PathError{Op: "fork/exec", Path: path, Err: syscall.Errno(binary.LittleEndian.Uint32(payload[:]))}}
+		}
+		return fmt.Errorf("owned start gate status unverified: %w", err)
 	}
 	release = func() {
 		restore()
 		gateWrite.Close()
+		statusRead.Close()
 		if record != "" {
 			_ = os.Remove(record)
 		}
 	}
 	return activate, terminate, release, nil
-}
-
-// gateable reports whether command can start behind the gate with unchanged start errors: its
-// lookup succeeded and its path names an executable regular file. Otherwise it starts directly, so
-// Start reports the failure and nothing runs to record. A file that passes these checks but that
-// exec still refuses, such as one in an unknown format, exits with status 127 and a message on
-// standard error instead of failing Start.
-func gateable(command *exec.Cmd) bool {
-	if command.Err != nil {
-		return false
-	}
-	path := command.Path
-	if !filepath.IsAbs(path) && command.Dir != "" {
-		path = filepath.Join(command.Dir, path)
-	}
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular() && unix.Access(path, unix.X_OK) == nil
 }
 
 // recordGroup creates the empty PID.STARTTICK record of the group led by pid in directory. It

@@ -210,3 +210,54 @@ func TestRunOwnedTrackedCommandSeesUnchangedProcess(t *testing.T) {
 		t.Fatalf("tracked command differs:\nuntracked %q %q\ntracked   %q %q", wantOut, wantErr, gotOut, gotErr)
 	}
 }
+
+// TestRunOwnedTrackedStartFailureMatchesStart proves every tracked RunOwned
+// command starts behind the gate, including one exec refuses, and that such a
+// refusal returns exactly the error an untracked Start returns, with nothing
+// left recorded. It exercises the TrackOwnedGroups and RunOwned start seam on
+// Linux.
+func TestRunOwnedTrackedStartFailureMatchesStart(t *testing.T) {
+	root := t.TempDir()
+	plain := filepath.Join(root, "plain")
+	garbage := filepath.Join(root, "garbage")
+	if err := os.WriteFile(plain, []byte("data\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(garbage, []byte("not a program\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		path  string
+		errno syscall.Errno
+	}{
+		{"not executable", plain, syscall.EACCES},
+		{"unknown format", garbage, syscall.ENOEXEC},
+		{"directory", root, syscall.EACCES},
+		{"missing", filepath.Join(root, "missing"), syscall.ENOENT},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			untracked := capture.RunOwned(context.Background(), exec.Command(tc.path, "argument"), nil, nil)
+			records := t.TempDir()
+			gated := 0
+			capture.TrackOwnedGroups(records)
+			capture.SetOwnedRecordHook(func(int) { gated++ })
+			t.Cleanup(func() {
+				capture.TrackOwnedGroups("")
+				capture.SetOwnedRecordHook(nil)
+			})
+			var stdout, stderr strings.Builder
+			tracked := capture.RunOwned(context.Background(), exec.Command(tc.path, "argument"), &stdout, &stderr)
+			var path *os.PathError
+			if !errors.As(tracked, &path) || path.Op != "fork/exec" || path.Path != tc.path || !errors.Is(tracked, tc.errno) || untracked == nil || tracked.Error() != untracked.Error() {
+				t.Fatalf("tracked start failure %v; untracked %v", tracked, untracked)
+			}
+			if gated != 1 || stdout.Len() != 0 || stderr.Len() != 0 {
+				t.Fatalf("gated=%d stdout=%q stderr=%q; want one gated start and no output", gated, stdout.String(), stderr.String())
+			}
+			if entries, err := os.ReadDir(records); err != nil || len(entries) != 0 {
+				t.Fatalf("refused start stayed recorded: %v %v", entries, err)
+			}
+		})
+	}
+}
