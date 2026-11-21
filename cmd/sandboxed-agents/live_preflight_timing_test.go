@@ -20,8 +20,9 @@ import (
 )
 
 // TestLiveTimingTokensCorrelateActualChildren proves concurrent built-source CLI
-// children receive distinct tokens, exact existing operation durations and no
-// ambient token reuse; a cancelled remove queue creates no launch at the host seam.
+// children receive distinct tokens, exact existing operation durations (equal
+// durations included) and no ambient token reuse; a cancelled remove queue creates
+// no launch at the host seam.
 func TestLiveTimingTokensCorrelateActualChildren(t *testing.T) {
 	fakes := testutil.Install(t, fakeExecutable)
 	t.Setenv("PATH", fakes.Dir)
@@ -59,19 +60,25 @@ func TestLiveTimingTokensCorrelateActualChildren(t *testing.T) {
 	if err != nil || len(journal.Entries) != 2 {
 		t.Fatalf("actual child launches = %d, error %v; want 2", len(journal.Entries), err)
 	}
+	// Each launch must carry exactly one recorded preflight duration, so the two lists match as multisets.
+	// Concurrent children may share a duration: the Windows monotonic clock advances once per timer tick,
+	// so two version children that start and end within the same ticks measure identical seconds.
+	retained, recorded := []float64{}, []float64{}
 	for _, entry := range journal.Entries {
 		if entry.Launch == nil || entry.Invocation == nil || !entry.Invocation.Returned || entry.Invocation.Preflight != nil || entry.Invocation.TargetSelection != nil || entry.Launch.Result != "pass" || entry.Launch.Seconds == nil {
 			t.Fatalf("uncorrelated version: %+v", entry)
 		}
-		matches := 0
-		for _, operation := range host.timings.evidence.Operations {
-			if operation.Operation == "preflight" && operation.Seconds == *entry.Launch.Seconds {
-				matches++
-			}
+		retained = append(retained, *entry.Launch.Seconds)
+	}
+	for _, operation := range host.timings.evidence.Operations {
+		if operation.Operation == "preflight" {
+			recorded = append(recorded, operation.Seconds)
 		}
-		if matches != 1 {
-			t.Fatal("ledger did not retain the exact existing duration")
-		}
+	}
+	slices.Sort(retained)
+	slices.Sort(recorded)
+	if !slices.Equal(retained, recorded) {
+		t.Fatalf("ledger did not retain the exact existing durations: %v, recorded %v", retained, recorded)
 	}
 	if !reflect.DeepEqual(original, host.environment) {
 		t.Fatal("shared host environment mutated")
@@ -188,7 +195,8 @@ func readTimingOperations(t *testing.T, directory string) validationduration.Ope
 
 // TestLiveTimingInterruptedProcessRetainsOpenScope proves cancelling an actual
 // built CLI while fake Podman blocks preserves the entered scope, failed
-// inclusive operation, and incomplete collector summary at the full host seam.
+// inclusive operation, the platform's existing post-failure diagnostic reads,
+// and incomplete collector summary at the full host seam.
 func TestLiveTimingInterruptedProcessRetainsOpenScope(t *testing.T) {
 	var baselinePodman, baselineSSH [][]string
 	var baselineOperations []validationduration.Operation
@@ -256,8 +264,24 @@ func TestLiveTimingInterruptedProcessRetainsOpenScope(t *testing.T) {
 			if !reflect.DeepEqual(calls, baselinePodman) || !reflect.DeepEqual(ssh, baselineSSH) {
 				t.Fatalf("timing added query delta != 0: podman %v/%v ssh %v/%v", calls, baselinePodman, ssh, baselineSSH)
 			}
-			// The baseline includes the existing #181 post-failure diagnostic read.
-			if len(baselinePodman) < 2 || len(evidence.Operations) != len(baselineOperations) || len(evidence.Operations) < 2 || evidence.Operations[1].Source != "podman" {
+			// On Linux the baseline includes the existing #181 post-failure diagnostic read. On Windows the
+			// suite has selected no connection when preflight fails, and #181 never queries the ambient
+			// default before selection, so neither run makes a diagnostic read or records its timing.
+			if len(evidence.Operations) != len(baselineOperations) {
+				t.Fatal("timing changed the recorded operations")
+			}
+			if livePlatform() == "windows-11" {
+				for _, call := range baselinePodman {
+					if slices.Equal(call, []string{"info", "--format", "json"}) {
+						t.Fatalf("unselected Windows engine queried after failure: %v", baselinePodman)
+					}
+				}
+				for _, operation := range evidence.Operations {
+					if operation.Source == "podman" {
+						t.Fatalf("unselected Windows engine query timed after failure: %+v", evidence.Operations)
+					}
+				}
+			} else if len(baselinePodman) < 2 || len(evidence.Operations) < 2 || evidence.Operations[1].Source != "podman" {
 				t.Fatal("existing diagnostic query or its timing was lost")
 			}
 			recordPath := filepath.Join(directory, "live-suite-"+livePlatform()+".json")
