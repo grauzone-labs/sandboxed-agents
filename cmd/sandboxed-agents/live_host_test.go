@@ -269,10 +269,12 @@ func (host liveHost) podman(args ...string) (string, error) {
 }
 
 // podmanOperation attributes a direct read to its caller's fixed operation class.
+// Output drains within one second after the process ends or the bound kills it.
 func (host liveHost) podmanOperation(operation string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), host.operationBound(operation))
 	defer cancel()
 	command := host.podmanCommand(ctx, args...)
+	command.WaitDelay = time.Second
 	started := time.Now()
 	host.reportOperation(operation, "started")
 	output := liveOutput{lines: liveLineStream{report: host.report}}
