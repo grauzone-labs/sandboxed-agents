@@ -66,6 +66,11 @@ func cleanupRead(path string, limit int) ([]byte, error) {
 		return nil, err
 	}
 	defer file.Close()
+	return cleanupReadOpen(file, limit)
+}
+
+// cleanupReadOpen rejects a nonregular or oversized open file before allocating its contents.
+func cleanupReadOpen(file *os.File, limit int) ([]byte, error) {
 	stat, err := file.Stat()
 	if err != nil {
 		return nil, err

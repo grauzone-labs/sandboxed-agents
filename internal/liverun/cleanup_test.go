@@ -31,6 +31,8 @@ type cleanupFake struct {
 	keepAfterRemoval bool
 	infoCalls        int
 	disconnectAfter  int
+	imagesCalls      int
+	lateImage        string
 }
 
 // cleanupFakeImage supplies the literal image inspect payload, including size and parent.
@@ -41,6 +43,7 @@ type cleanupFakeImage struct {
 }
 
 // Execute returns literal whole-engine query answers and emulates only exact individual removals.
+// A set lateImage appears in the inventory from the second image listing on, as another writer would create it.
 func (f *cleanupFake) Execute(_ context.Context, in liverun.Invocation) ([]byte, error) {
 	f.calls = append(f.calls, in)
 	key := in.Program + " " + strings.Join(in.Args, " ")
@@ -105,6 +108,10 @@ func (f *cleanupFake) Execute(_ context.Context, in liverun.Invocation) ([]byte,
 		}
 		return []byte(`{"host":{"hostname":"` + engine + `"},"store":{"graphRoot":"/private/storage"}}`), nil
 	case "images":
+		f.imagesCalls++
+		if f.lateImage != "" && f.imagesCalls == 2 {
+			f.images[f.lateImage] = cleanupImageFixture(f.lateImage)
+		}
 		ids := []string{}
 		for id := range f.images {
 			ids = append(ids, id)

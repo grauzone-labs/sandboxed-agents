@@ -273,6 +273,11 @@ func (s *Service) Cleanup(ctx context.Context, options CleanupOptions, out io.Wr
 				run.report.Unverified = append(run.report.Unverified, CleanupItem{ID: item.ID, Reason: "removal output disagrees with final inventory", Query: "podman images --all --no-trunc"})
 			}
 		}
+		for _, item := range run.report.RemovedEarlier {
+			if remaining[item.ID] {
+				run.report.Unverified = append(run.report.Unverified, CleanupItem{ID: item.ID, Reason: "removed earlier but present in final inventory", Query: "podman images --all --no-trunc"})
+			}
+		}
 		run.report.RemainingContainers = len(run.containers)
 	}
 	return s.finishCleanup(ctx, run, log, asset, out, finalErr)

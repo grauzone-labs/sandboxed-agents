@@ -71,18 +71,18 @@ func createBuildChannel(o Options, before Snapshot) (string, error) {
 
 // strictBuildJSON decodes one bounded typed artifact and rejects trailing or unknown fields.
 func strictBuildJSON(path string, value any) error {
-	return strictJSON(path, 64*1024, value)
-}
-
-// strictJSON decodes one typed artifact of at most limit bytes and rejects trailing or unknown fields.
-func strictJSON(path string, limit int, value any) error {
-	data, err := cleanupRead(path, limit)
+	data, err := cleanupRead(path, 64*1024)
 	if err != nil {
 		return err
 	}
+	return strictDecode(data, value)
+}
+
+// strictDecode decodes exactly one typed JSON value and rejects trailing or unknown fields.
+func strictDecode(data []byte, value any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(value); err != nil {
+	if err := decoder.Decode(value); err != nil {
 		return err
 	}
 	if decoder.Decode(new(any)) != io.EOF {
