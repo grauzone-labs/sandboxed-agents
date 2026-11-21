@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -256,7 +258,9 @@ func (terminal *liveTerminal) Close() {
 }
 
 // TestLiveWindowsTerminalCloseOwnsDescendants proves closing a ConPTY ends its
-// owned child tree while an independently started heartbeat survives, at the PTY seam.
+// owned child tree, observed through the owned heartbeat's process handle, while
+// an independently started heartbeat survives and acknowledges a later request,
+// at the PTY seam.
 func TestLiveWindowsTerminalCloseOwnsDescendants(t *testing.T) {
 	directory := t.TempDir()
 	marker, independent := filepath.Join(directory, "owned"), filepath.Join(directory, "independent")
@@ -284,28 +288,35 @@ func TestLiveWindowsTerminalCloseOwnsDescendants(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	// Open the owned heartbeat while it runs: the handle pins its identity, so
+	// its exit is observed directly rather than inferred from a quiet marker.
+	data, err := os.ReadFile(marker + ".pid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 32)
+	if err != nil {
+		t.Fatalf("invalid owned heartbeat pid %q", data)
+	}
+	owned, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
+	if err != nil {
+		t.Fatalf("open owned heartbeat: %v", err)
+	}
+	defer windows.CloseHandle(owned)
 	terminal.Close()
-	first, err := os.ReadFile(marker)
-	if err != nil {
+	if event, err := windows.WaitForSingleObject(owned, 5000); event != windows.WAIT_OBJECT_0 {
+		t.Fatalf("owned descendant survived terminal close: wait %#x, %v", event, err)
+	}
+	// A request sent after Close must still reach the unowned process.
+	if err := os.WriteFile(independent+".ping", nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	otherFirst, err := os.ReadFile(independent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(150 * time.Millisecond)
-	last, err := os.ReadFile(marker)
-	if err != nil {
-		t.Fatal(err)
-	}
-	otherLast, err := os.ReadFile(independent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(first) != string(last) {
-		t.Fatalf("owned descendant survived terminal close: %q -> %q", first, last)
-	}
-	if string(otherFirst) == string(otherLast) {
-		t.Fatal("terminal close stopped an unowned process")
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(independent + ".ack"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("terminal close stopped an unowned process")
+		}
 	}
 }

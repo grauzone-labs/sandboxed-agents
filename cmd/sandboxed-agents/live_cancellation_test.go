@@ -48,9 +48,15 @@ func TestLiveCLIProcessFixture(t *testing.T) {
 		_ = child.Wait()
 		os.Exit(0)
 	}
+	// The heartbeat publishes its PID before its first beat and acknowledges a
+	// ping, so a parent can check its lifetime directly instead of by sampling.
+	_ = os.WriteFile(marker+".pid", []byte(strconv.Itoa(os.Getpid())), 0600)
 	for n := 0; n < 500; n++ {
 		if _, err := os.Stat(marker + ".release"); err == nil {
 			os.Exit(0)
+		}
+		if _, err := os.Stat(marker + ".ping"); err == nil {
+			_ = os.WriteFile(marker+".ack", nil, 0600)
 		}
 		_ = os.WriteFile(marker, []byte(fmt.Sprint(n)), 0600)
 		time.Sleep(20 * time.Millisecond)
