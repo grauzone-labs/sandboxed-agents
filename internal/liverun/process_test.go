@@ -401,6 +401,9 @@ func TestKilledRunDoesNotLeaveStaleEngineLock(t *testing.T) {
 func rootFixtureDisk() string { return os.Getenv("LIVERUN_FIXTURE_ROOT") }
 
 // cleanupFixture stops only the processes recorded by this isolated offline fixture.
+// It opens each process first and kills it only when the recorded creation
+// identity still matches, so a reused PID is never stopped; an unverifiable
+// process is left running.
 func cleanupFixture(root string) {
 	files, _ := filepath.Glob(filepath.Join(root, "locks", "*-active.json"))
 	for _, file := range files {
@@ -408,16 +411,27 @@ func cleanupFixture(root string) {
 		if err != nil {
 			continue
 		}
-		var active struct{ Supervisor, Child struct{ PID int } }
+		type owned struct {
+			PID      int
+			Identity string
+		}
+		var active struct{ Supervisor, Child owned }
 		if json.Unmarshal(data, &active) != nil {
 			continue
 		}
-		for _, pid := range []int{active.Child.PID, active.Supervisor.PID} {
-			if pid > 0 {
-				if process, err := os.FindProcess(pid); err == nil {
-					_ = process.Kill()
-				}
+		for _, ref := range []owned{active.Child, active.Supervisor} {
+			if ref.PID <= 0 || ref.Identity == "" {
+				continue
 			}
+			// The process handle pins the opened process, so the identity check below cannot pass for a later reuse.
+			process, err := os.FindProcess(ref.PID)
+			if err != nil {
+				continue
+			}
+			if liverun.OwnedProcessLive(ref.PID, ref.Identity) {
+				_ = process.Kill()
+			}
+			_ = process.Release()
 		}
 	}
 }
