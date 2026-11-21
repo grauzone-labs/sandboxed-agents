@@ -54,7 +54,14 @@ func TestLiveOperationClassBoundStreamsBeforeCompletion(t *testing.T) {
 		case line := <-lines:
 			streamed = strings.Contains(line, "CLI child started")
 		case result := <-done:
-			t.Fatalf("operation finished before streaming prior output: %v", result.err)
+			// cliContext reports before it returns, so a streamed line is already queued.
+			for queued := len(lines); queued > 0 && !streamed; queued-- {
+				streamed = strings.Contains(<-lines, "CLI child started")
+			}
+			if !streamed {
+				t.Fatalf("operation finished before streaming prior output: %v", result.err)
+			}
+			done <- result
 		case <-ctx.Done():
 			t.Fatal("no live output arrived before completion")
 		}
