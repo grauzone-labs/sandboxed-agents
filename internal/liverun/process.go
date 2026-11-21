@@ -342,21 +342,31 @@ func (s *Service) supervise(ctx context.Context, args []string) (result error) {
 	if timedOut {
 		failedCheck = "suite-deadline"
 	}
+	code = suiteExitCode(err, timedOut)
 	abortMu.Unlock()
 	logUnverified = writer.logFailed || log.Sync() != nil
+	return nil
+}
+
+// suiteExitCode converts the suite's wait result to its recorded exit status. A
+// suite the outer deadline killed is 137 whatever status its process left:
+// closing a Windows kill-on-close job ends the suite with status 0, which must
+// never read as success. Otherwise a signal death is 137, an exit keeps its
+// status, and a wait failure is 1.
+func suiteExitCode(err error, timedOut bool) int {
+	if timedOut {
+		return 137
+	}
 	if err == nil {
-		code = 0
-		return nil
+		return 0
 	}
 	if exit, ok := err.(*exec.ExitError); ok {
-		code = exit.ExitCode()
-		if code < 0 {
-			code = 137
+		if code := exit.ExitCode(); code >= 0 {
+			return code
 		}
-	} else {
-		code = 1
+		return 137
 	}
-	return nil
+	return 1
 }
 
 // claimSupervision takes the run directory's exclusive supervisor lock for this
