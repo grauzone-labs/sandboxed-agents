@@ -21,7 +21,8 @@ import (
 
 // TestLiveTimingNumericCorruptionPreservesSuite proves overflowing journal data
 // cannot fail a healthy suite or lose T/core operations, while a good row remains
-// measured, through a nested source-built CLI, actual final cleanup and Retain.
+// measured and the invalid files stay counted and named after both the suite's
+// write and Retain, through a nested source-built CLI, actual final cleanup and Retain.
 func TestLiveTimingNumericCorruptionPreservesSuite(t *testing.T) {
 	root := t.TempDir()
 	output, err := timingChild(t, "TestLiveTimingNumericFixture", root)
@@ -29,10 +30,16 @@ func TestLiveTimingNumericCorruptionPreservesSuite(t *testing.T) {
 		t.Fatalf("optional timing changed the suite verdict: %v\n%s", err, output)
 	}
 	directory := filepath.Join(root, "records")
-	evidence := readTimingOperations(t, directory)
-	if evidence.SuiteSeconds == nil || len(evidence.Operations) != 3 || evidence.Preflight == nil || evidence.Preflight.State != "incomplete" || evidence.Preflight.Preflight.Measured != 1 || evidence.Preflight.Preflight.Seconds == nil || *evidence.Preflight.Preflight.Seconds != 0.25 || evidence.Preflight.InvalidFiles != 2 || !slices.Contains(evidence.Preflight.Reasons, "invalid-file") {
-		t.Fatalf("independent evidence or good observation lost: %+v", evidence)
+	// Both the suite's final write and Retain's rewrite must keep T, the core
+	// operations, the good row and the invalid-file evidence.
+	assertEvidence := func(stage string) {
+		t.Helper()
+		evidence := readTimingOperations(t, directory)
+		if evidence.SuiteSeconds == nil || len(evidence.Operations) != 3 || evidence.Preflight == nil || evidence.Preflight.State != "incomplete" || evidence.Preflight.Preflight.Measured != 1 || evidence.Preflight.Preflight.Seconds == nil || *evidence.Preflight.Preflight.Seconds != 0.25 || evidence.Preflight.InvalidFiles != 2 || !slices.Contains(evidence.Preflight.Reasons, "invalid-file") {
+			t.Fatalf("%s lost independent evidence, the good observation or invalid-file evidence: %+v", stage, evidence)
+		}
 	}
+	assertEvidence("suite")
 	record := filepath.Join(directory, "live-suite-"+livePlatform()+".json")
 	before, err := os.ReadFile(record)
 	if err != nil || !bytes.Contains(before, []byte(`"result":"pass"`)) {
@@ -45,10 +52,7 @@ func TestLiveTimingNumericCorruptionPreservesSuite(t *testing.T) {
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("collector changed schema2")
 	}
-	evidence = readTimingOperations(t, directory)
-	if evidence.Preflight.Preflight.Measured != 1 || *evidence.Preflight.Preflight.Seconds != 0.25 || evidence.SuiteSeconds == nil || len(evidence.Operations) != 3 {
-		t.Fatal("collector discarded independent or good evidence")
-	}
+	assertEvidence("collector")
 }
 
 // timingChild starts one bounded nested fixture, allowing its TestMain to build
