@@ -31,7 +31,11 @@ func TestRetainOperationsReconcilesCaseAndPhaseSeconds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"unaccounted_seconds":3`) {
+	var written validationduration.Operations
+	if err := json.Unmarshal(data, &written); err != nil {
+		t.Fatal(err)
+	}
+	if len(written.Cases) != 1 || written.Cases[0].UnaccountedSeconds != 3 {
 		t.Fatalf("case remainder: %s", data)
 	}
 	recordPath := filepath.Join(directory, "live-suite-linux.json")
