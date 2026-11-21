@@ -192,8 +192,13 @@ func (s *Service) status(ctx context.Context, args []string, out, diagnostics io
 		}
 	}
 	disks, err := s.disks(ctx, o, before.Target)
-	if err != nil {
+	if err != nil && !finished {
 		return failCheck(o, "filesystem", err)
+	}
+	// A finished run keeps reporting its retained exit; only the fresh headroom is unavailable.
+	headroomUnavailable := err != nil
+	if headroomUnavailable {
+		disks = nil
 	}
 	summary := []map[string]any{}
 	for _, disk := range disks {
@@ -207,6 +212,9 @@ func (s *Service) status(ctx context.Context, args []string, out, diagnostics io
 		}
 	}
 	state := map[string]any{"case_overlap": o.Overlap, "build_jobs": o.BuildJobs, "case": progress.Case, "operation": progress.Operation, "last_output_age_seconds": age, "ended": finished, "running": running, "free_space": summary}
+	if headroomUnavailable {
+		state["free_space_verified"] = false
+	}
 	if finished {
 		if total, ok := readCleanupTotal(directory, o, ended); ok {
 			state["post_suite_total_seconds"] = total
