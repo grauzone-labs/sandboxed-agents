@@ -82,14 +82,18 @@ func TestRunOwnedRecordsRunningGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	fields := strings.Fields(string(data[strings.LastIndex(string(data), ")")+1:]))
-	if len(entries) != 1 || !ok || pid != strconv.Itoa(command.Process.Pid) || fields[2] != pid || fields[19] != tick {
-		t.Fatalf("record %q does not name the running group leader %d: %s", entries[0].Name(), command.Process.Pid, data)
+	if len(entries) != 1 || !ok || fields[2] != pid || fields[19] != tick {
+		t.Fatalf("record %q does not name a running group leader: %s", entries[0].Name(), data)
 	}
 	if err := os.WriteFile(releaseOf(t, command), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+	// RunOwned has returned, so reading the started process no longer races with it.
+	if pid != strconv.Itoa(command.Process.Pid) {
+		t.Fatalf("record %q names another process than the invocation %d", entries[0].Name(), command.Process.Pid)
 	}
 	if entries, err = os.ReadDir(directory); err != nil || len(entries) != 0 {
 		t.Fatalf("finished owned group stayed recorded: %v %v", entries, err)
