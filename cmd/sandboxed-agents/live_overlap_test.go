@@ -115,27 +115,61 @@ func TestLiveOverlapFixture(t *testing.T) {
 }
 
 // TestLiveOverlapAdmitsConcurrentCases proves two independent cases rendezvous
-// while overlap one retains serial invocation order, through the scheduler and
-// fake CLI process seam, including both case cleanup and the final group check.
+// while overlap one retains serial invocation order, and that a case's cleanup
+// keeps its slot so overlap two admits no third case meanwhile, through the
+// scheduler and fake CLI process seam, including both case cleanup and the
+// final group check.
 func TestLiveOverlapAdmitsConcurrentCases(t *testing.T) {
 	for _, overlap := range []string{"1", "2"} {
 		t.Run(overlap, func(t *testing.T) {
 			fakes := testutil.Install(t, fakeExecutable)
 			t.Setenv("PATH", fakes.Dir)
 			records := t.TempDir()
-			ready := filepath.Join(t.TempDir(), "second")
-			responses := map[string]lifecycleResponse{"version": {}, "up first": {}, "up second": {ReadyFile: ready}, "check later": {}, "remove first --volumes --force": {}, "remove second --volumes --force": {}}
-			// Base ensuring must complete before other cases; the rendezvous therefore
-			// sits in first's cleanup, which must keep its concurrency slot until done.
+			markers := t.TempDir()
+			cleanupHeld, second, later, release := filepath.Join(markers, "first-cleanup"), filepath.Join(markers, "second"), filepath.Join(markers, "later"), filepath.Join(markers, "release")
+			responses := map[string]lifecycleResponse{"version": {}, "up first": {}, "up second": {}, "check later": {}, "remove first --volumes --force": {}, "remove second --volumes --force": {}}
+			// Base ensuring must complete before other cases. First's cleanup and the
+			// sibling admitted first then hold both slots at separate markers; the
+			// other sibling admitted before either is released means cleanup gave up
+			// its slot early.
 			if overlap == "2" {
-				responses["remove first --volumes --force"] = lifecycleResponse{WaitFor: ready}
+				responses["remove first --volumes --force"] = lifecycleResponse{ReadyFile: cleanupHeld, WaitFor: release}
+				responses["up second"] = lifecycleResponse{ReadyFile: second, WaitFor: release}
+				responses["check later"] = lifecycleResponse{ReadyFile: later, WaitFor: release}
 			}
 			script, _ := json.Marshal(responses)
 			program := liveFakeProgram(t)
 			command := fixtureLiveCommand(t, fakes, "TestLiveOverlapFixture", map[string]string{"TEST_LIVE_OVERLAP_FIXTURE": "1", livePreparedExecutableEnv: program, liveRecordDirEnv: records, "SANDBOXED_AGENTS_GROUP": "live-overlap", liverun.CaseOverlapEnv: overlap, "TEST_SANDBOXED_AGENTS_RESPONSES": string(script), "TEST_SANDBOXED_AGENTS_LOG": filepath.Join(records, "cli.jsonl"), "TEST_PODMAN_RESPONSES": `{"* exists *":{"Exit":1},"ps --all --format {{.Names}}":{},"volume ls --format {{.Name}}":{}}`})
-			output, err := command.CombinedOutput()
-			if err != nil {
-				t.Fatalf("overlap %s: %v\n%s", overlap, err, output)
+			var output bytes.Buffer
+			command.Stdout, command.Stderr = &output, &output
+			if err := command.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if command.ProcessState == nil {
+					command.Process.Kill()
+					command.Wait()
+				}
+			}()
+			if overlap == "2" {
+				waitLiveMarker(t, cleanupHeld)
+				held := func(path string) bool { _, err := os.Stat(path); return err == nil }
+				for deadline := time.Now().Add(30 * time.Second); !held(second) && !held(later); time.Sleep(10 * time.Millisecond) {
+					if time.Now().After(deadline) {
+						t.Fatal("no sibling case was admitted beside first's cleanup")
+					}
+				}
+				// An early release admits the other sibling at once; give it time to show.
+				time.Sleep(300 * time.Millisecond)
+				if held(second) && held(later) {
+					t.Error("a third case was admitted while first's cleanup still held its slot")
+				}
+				if err := os.WriteFile(release, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := command.Wait(); err != nil {
+				t.Fatalf("overlap %s: %v\n%s", overlap, err, &output)
 			}
 			calls := testutil.Invocations(t, filepath.Join(records, "cli.jsonl"))
 			if overlap == "1" && strings.Join(calls[2], " ") != "remove first --volumes --force" {
