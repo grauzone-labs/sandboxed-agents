@@ -133,6 +133,17 @@ func (terminal *liveTerminal) Output() string {
 	return terminal.output.String()
 }
 
+// outputSince returns only the bytes written after the first cursor bytes; the
+// captured output only grows, so earlier bytes are never copied again.
+func (terminal *liveTerminal) outputSince(cursor int) string {
+	terminal.mutex.Lock()
+	defer terminal.mutex.Unlock()
+	if data := terminal.output.Bytes(); cursor < len(data) {
+		return string(data[cursor:])
+	}
+	return ""
+}
+
 // Wait returns the exit status once the command has ended within timeout and
 // its output has been drained: the master reads everything the command wrote
 // and then fails with EIO once no process holds the slave any more. While a

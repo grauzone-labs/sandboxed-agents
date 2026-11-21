@@ -126,7 +126,7 @@ func (terminal *timedLiveTerminal) Wait(timeout time.Duration) (int, bool) {
 	deadline := time.Now().Add(timeout)
 	classDeadline := terminal.started.Add(terminal.host.operationBound(terminal.operation))
 	for {
-		terminal.Output()
+		terminal.stream()
 		left := time.Until(classDeadline)
 		if completed, ok := terminal.liveTerminal.completedAt(); left <= 0 && ok && !completed.After(classDeadline) {
 			// Collect the on-time result; a positive wait lets a finished terminal win.
@@ -140,7 +140,7 @@ func (terminal *timedLiveTerminal) Wait(timeout time.Duration) (int, bool) {
 		}
 		wait := max(time.Duration(0), min(100*time.Millisecond, time.Until(deadline), left))
 		exit, finished := terminal.liveTerminal.Wait(wait)
-		terminal.Output()
+		terminal.stream()
 		if finished {
 			terminal.completed, terminal.result = true, exit
 			terminal.finish(exit)
@@ -152,14 +152,22 @@ func (terminal *timedLiveTerminal) Wait(timeout time.Duration) (int, bool) {
 	}
 }
 
-// Output returns the captured terminal trace and streams only bytes not yet logged.
+// Output returns the full captured terminal trace and streams only bytes not yet logged.
 func (terminal *timedLiveTerminal) Output() string {
-	output := terminal.liveTerminal.Output()
-	if terminal.host.report != nil && len(output) > terminal.seen {
-		terminal.lines.Write([]byte(output[terminal.seen:]))
-		terminal.seen = len(output)
+	terminal.stream()
+	return terminal.liveTerminal.Output()
+}
+
+// stream logs the bytes appended since its last call and copies only those, so
+// polling a quiet terminal does not copy its whole trace.
+func (terminal *timedLiveTerminal) stream() {
+	if terminal.host.report == nil {
+		return
 	}
-	return output
+	if delta := terminal.liveTerminal.outputSince(terminal.seen); delta != "" {
+		terminal.lines.Write([]byte(delta))
+		terminal.seen += len(delta)
+	}
 }
 
 // finish records one result even when the caller waits repeatedly and then closes.
@@ -180,6 +188,6 @@ func (terminal *timedLiveTerminal) finish(exit int) {
 // Close records an unfinished invocation as failed after preserving terminal cleanup.
 func (terminal *timedLiveTerminal) Close() {
 	terminal.closeOnce.Do(func() { terminal.liveTerminal.Close() })
-	terminal.Output()
+	terminal.stream()
 	terminal.finish(-1)
 }

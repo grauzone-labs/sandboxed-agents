@@ -185,6 +185,17 @@ func (terminal *liveTerminal) Output() string {
 	return terminal.buffer.String()
 }
 
+// outputSince returns only the bytes rendered after the first cursor bytes; the
+// captured output only grows, so earlier bytes are never copied again.
+func (terminal *liveTerminal) outputSince(cursor int) string {
+	terminal.mutex.Lock()
+	defer terminal.mutex.Unlock()
+	if data := terminal.buffer.Bytes(); cursor < len(data) {
+		return string(data[cursor:])
+	}
+	return ""
+}
+
 // Wait returns the exit status once the command has ended within timeout and
 // its output has been drained. The pseudo console renders output after the
 // command exits, so Wait closes it once the command is gone, which makes the
