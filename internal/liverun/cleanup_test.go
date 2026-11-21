@@ -36,6 +36,7 @@ type cleanupFake struct {
 	listingFiller    string
 	blockRemovalLog  string
 	lateTag          string
+	failImagesFrom   int
 }
 
 // cleanupFakeImage supplies the literal image inspect payload, including size and parent.
@@ -51,6 +52,7 @@ type cleanupFakeImage struct {
 // A set listingFiller adds an ignored field to every image listing entry to enlarge a valid answer.
 // A set lateTag replaces every image's names at the second container listing, as a client outside the lock would retag.
 // A set blockRemovalLog names a run directory whose next private query evidence file is occupied during each removal.
+// A positive failImagesFrom fails that image listing and every later one, as an engine lost before the final inventory.
 func (f *cleanupFake) Execute(_ context.Context, in liverun.Invocation) ([]byte, error) {
 	f.calls = append(f.calls, in)
 	key := in.Program + " " + strings.Join(in.Args, " ")
@@ -116,6 +118,9 @@ func (f *cleanupFake) Execute(_ context.Context, in liverun.Invocation) ([]byte,
 		return []byte(`{"host":{"hostname":"` + engine + `"},"store":{"graphRoot":"/private/storage"}}`), nil
 	case "images":
 		f.imagesCalls++
+		if f.failImagesFrom > 0 && f.imagesCalls >= f.failImagesFrom {
+			return nil, fmt.Errorf("connection refused")
+		}
 		if f.lateImage != "" && f.imagesCalls == 2 {
 			f.images[f.lateImage] = cleanupImageFixture(f.lateImage)
 		}
@@ -848,6 +853,47 @@ func TestCleanupKeepsRemovalWhoseEvidenceWasLost(t *testing.T) {
 		if item.ID == id {
 			t.Fatalf("reconciled removal reported unverified: %s", &out)
 		}
+	}
+}
+
+// TestCleanupReportsLostEvidenceRemovalOnlyOnceConfirmed proves the Cleanup seam keeps a removal whose private query
+// evidence was lost out of the removed list, and reports it unverified with the audit loss, when the final inventory
+// fails or still lists the image.
+func TestCleanupReportsLostEvidenceRemovalOnlyOnceConfirmed(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		adjust func(*cleanupFake)
+	}{
+		{"final inventory failed", func(f *cleanupFake) { f.failImagesFrom = 2 }},
+		{"final inventory lists the image", func(f *cleanupFake) { f.keepAfterRemoval = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, fake, options := cleanupHarness(t)
+			id := "sha256:" + strings.Repeat("b", 64)
+			fake.images = map[string]cleanupFakeImage{id: cleanupImageFixture(id)}
+			cleanupBuildLog(t, fake, options.RunDir, "STEP 2/3: LABEL example=value", id)
+			fake.blockRemovalLog = options.RunDir
+			tc.adjust(fake)
+			var out bytes.Buffer
+			err := svc.Cleanup(context.Background(), options, &out)
+			var report liverun.CleanupReport
+			if decodeErr := json.Unmarshal(out.Bytes(), &report); decodeErr != nil {
+				t.Fatalf("report unavailable: %v %v", decodeErr, err)
+			}
+			if got := cleanupRemoved(fake); len(got) != 1 || got[0] != id {
+				t.Fatalf("removal did not run: %v %s", got, &out)
+			}
+			if len(report.Removed) != 0 {
+				t.Fatalf("unconfirmed removal reported as removed: %s", &out)
+			}
+			unverified := false
+			for _, item := range report.Unverified {
+				unverified = unverified || item.ID == id
+			}
+			if err == nil || report.Status != "unverified" || !unverified || !strings.Contains(out.String(), "removal evidence could not be retained") {
+				t.Fatalf("unconfirmed removal or audit loss hidden: %v %s", err, &out)
+			}
+		})
 	}
 }
 
