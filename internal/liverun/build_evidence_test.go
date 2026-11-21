@@ -125,7 +125,8 @@ func TestBuildChannelEvidenceFailuresPreserveBuildOutcome(t *testing.T) {
 }
 
 // TestStrictDecodeRejectsDuplicateMembers proves the strict private-evidence decoder refuses a report that names a
-// member twice, at the top level, in any letter case, or inside a nested object, and still accepts one unambiguous Removed array.
+// member twice, at the top level, in any letter case under Unicode simple folding as encoding/json matches names, or
+// inside a nested object, and still accepts one unambiguous Removed array.
 func TestStrictDecodeRejectsDuplicateMembers(t *testing.T) {
 	removed := `[{"id":"sha256:` + strings.Repeat("b", 64) + `","size_bytes":1,"size_verified":true}]`
 	for _, tc := range []struct {
@@ -135,6 +136,9 @@ func TestStrictDecodeRejectsDuplicateMembers(t *testing.T) {
 		{"single", `{"status":"complete","removed":` + removed + `}`, true},
 		{"duplicate", `{"status":"complete","removed":` + removed + `,"removed":[]}`, false},
 		{"case-variant", `{"status":"complete","Removed":[],"removed":` + removed + `}`, false},
+		// encoding/json folds U+017F LATIN SMALL LETTER LONG S to "s" and U+212A KELVIN SIGN to "k".
+		{"unicode-fold-variant", `{"status":"complete","\u017ftatus":"complete","removed":` + removed + `}`, false},
+		{"kelvin-fold-variant", `{"status":"complete","removed":[{"id":"a","size_bytes":1,"\u212aize_bytes":2,"size_verified":true}]}`, false},
 		{"nested", `{"status":"complete","removed":[{"id":"a","id":"b","size_bytes":1,"size_verified":true}]}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

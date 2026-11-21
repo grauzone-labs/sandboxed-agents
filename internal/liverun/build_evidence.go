@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // BuildEvidenceEnv enables the private host-only iidfile channel for an authorized live invocation.
@@ -94,6 +95,18 @@ func strictDecode(data []byte, value any) error {
 	return nil
 }
 
+// foldRune maps r to the smallest rune of its Unicode simple-fold orbit, so two names are equal after mapping exactly
+// when strings.EqualFold, and so encoding/json, treats them as the same member.
+func foldRune(r rune) rune {
+	for {
+		next := unicode.SimpleFold(r)
+		if next <= r {
+			return next
+		}
+		r = next
+	}
+}
+
 // duplicateFrame tracks one open JSON object or array while rejectDuplicateMembers scans its first value.
 type duplicateFrame struct {
 	object    bool
@@ -102,8 +115,8 @@ type duplicateFrame struct {
 }
 
 // rejectDuplicateMembers scans the first JSON value in data without recursion and refuses any object that names a
-// member twice. Names compare case-insensitively, as encoding/json matches struct fields, so a case variant cannot
-// silently replace an earlier member either.
+// member twice. Names compare under Unicode simple folding, as encoding/json matches struct fields, so a case variant
+// such as "\u017ftatus" for "status" cannot silently replace an earlier member either.
 func rejectDuplicateMembers(data []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	stack := []*duplicateFrame{}
@@ -119,7 +132,7 @@ func rejectDuplicateMembers(data []byte) error {
 		if delim, ok := token.(json.Delim); ok && (delim == '}' || delim == ']') {
 			stack = stack[:len(stack)-1]
 		} else if top != nil && top.object && top.expectKey {
-			name := strings.ToLower(token.(string))
+			name := strings.Map(foldRune, token.(string))
 			if top.seen[name] {
 				return fmt.Errorf("duplicate member in private evidence")
 			}
