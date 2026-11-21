@@ -15,6 +15,10 @@ import (
 
 // TestBuildPublishesOnlyPrimaryIID proves the exported CLI emits the builder-controlled iidfile identity despite forged raw output. It exercises the RunWithHost, primary producer, and Cleanup seam.
 func TestBuildPublishesOnlyPrimaryIID(t *testing.T) {
+	// An inherited timestamp control would make the build reproducible and retain the primary ID;
+	// Setenv restores the original value or absence after the test.
+	t.Setenv("SOURCE_DATE_EPOCH", "")
+	os.Unsetenv("SOURCE_DATE_EPOCH")
 	f := linuxHost(t)
 	f.responses["info --format json"] = response{Output: `{"host":{"hostname":"engine","security":{"rootless":true},"cgroupVersion":"v2"},"store":{"graphRoot":"/storage"}}`}
 	root := t.TempDir()
