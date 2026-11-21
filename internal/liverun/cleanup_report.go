@@ -60,8 +60,9 @@ type CleanupReport struct {
 }
 
 // cleanupRead rejects nonregular and oversized artifacts before allocating their contents.
+// It opens without blocking on a FIFO, then validates the opened descriptor.
 func cleanupRead(path string, limit int) ([]byte, error) {
-	file, err := os.Open(path)
+	file, err := os.OpenFile(path, os.O_RDONLY|cleanupOpenFlags, 0)
 	if err != nil {
 		return nil, err
 	}
