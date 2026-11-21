@@ -358,7 +358,9 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 			cleanupRelease := filepath.Join(records, "cleanup-release")
 			archiveReady := filepath.Join(records, "archive-ready")
 			buildReady := filepath.Join(records, "build-ready")
-			podmanResponses["volume exists "+cli.DerivedNames(tracerGroup, "live-lifecycle").SSH] = lifecycleResponse{ReadyFile: cleanupReady, WaitFor: cleanupRelease, Exit: 1}
+			// The body's own absence check answers at once; only the second probe,
+			// the registered cleanup's, holds the lifecycle case.
+			podmanResponses["volume exists "+cli.DerivedNames(tracerGroup, "live-lifecycle").SSH] = lifecycleResponse{Sequence: []scriptedAnswer{{Exit: 1}, {Exit: 1, ReadyFile: cleanupReady, WaitFor: cleanupRelease}}}
 			executableResponses["up live-update --with native"] = lifecycleResponse{WaitFor: cleanupReady}
 			build := executableResponses["build --jobs 3"]
 			build.ReadyFile = buildReady
@@ -387,6 +389,18 @@ func TestLiveSuiteTracesEveryCaseAgainstFakes(t *testing.T) {
 				}
 			}()
 			waitLiveMarker(t, cleanupReady)
+			// The held probe must be the registered cleanup's: the body's earlier
+			// absence check of the same volume already returned.
+			probe := []string{"volume", "exists", cli.DerivedNames(tracerGroup, "live-lifecycle").SSH}
+			probes := 0
+			for _, call := range testutil.Invocations(t, fakes.PodmanLog) {
+				if slices.Equal(call, probe) {
+					probes++
+				}
+			}
+			if probes != 2 {
+				t.Fatalf("the held SSH volume probe is call %d; want the cleanup's second call", probes)
+			}
 			if scenario.overlap == "9" {
 				initial, readErr := os.ReadFile(filepath.Join(records, "operations-"+livePlatform()+".json"))
 				if readErr != nil {

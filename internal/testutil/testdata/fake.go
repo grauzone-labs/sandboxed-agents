@@ -37,11 +37,13 @@ type scriptedResponse struct {
 	Sequence           []scriptedAnswer
 }
 
-// scriptedAnswer is one answer of a sequence for the same argv.
+// scriptedAnswer is one answer of a sequence for the same argv. A non-empty
+// ReadyFile or WaitFor holds only this invocation, replacing the response's own.
 type scriptedAnswer struct {
-	Output string
-	Stderr string
-	Exit   int
+	Output             string
+	Stderr             string
+	Exit               int
+	ReadyFile, WaitFor string
 }
 
 // priorInvocations counts how often this exact argv was logged, this call included.
@@ -213,6 +215,12 @@ func main() {
 			// The same argv answers differently over time; the last answer repeats.
 			answer := response.Sequence[min(priorInvocations(prefix)-1, len(response.Sequence)-1)]
 			response.Output, response.Stderr, response.Exit = answer.Output, answer.Stderr, answer.Exit
+			if answer.ReadyFile != "" {
+				response.ReadyFile = answer.ReadyFile
+			}
+			if answer.WaitFor != "" {
+				response.WaitFor = answer.WaitFor
+			}
 		}
 		if response.HoldOutputUntil != "" {
 			executable, err := os.Executable()
