@@ -298,9 +298,17 @@ func TestRunSurvivesLauncherAndExcludesSecondSuite(t *testing.T) {
 	if !bytes.Contains(mustReadFile(t, filepath.Join(private, "suite.log")), []byte("café")) {
 		t.Fatal("log was not UTF-8")
 	}
-	second = exec.Command(binary, next...)
-	if data, err := second.CombinedOutput(); err != nil {
-		t.Fatalf("engine was not released: %v %s", err, data)
+	// The supervisor publishes exit.json before its teardown closes the engine lock.
+	deadline = time.Now().Add(30 * time.Second)
+	for {
+		data, err = exec.Command(binary, next...).CombinedOutput()
+		if err == nil {
+			break
+		}
+		if !bytes.Contains(data, []byte("engine-exclusive")) || time.Now().After(deadline) {
+			t.Fatalf("engine was not released: %v %s", err, data)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
