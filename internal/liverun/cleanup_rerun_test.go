@@ -385,7 +385,7 @@ func TestCleanupRerunStaysCompleteAcrossManyReruns(t *testing.T) {
 // TestCleanupRerunReadsOnlyNewestContributingCleanups proves that a rerun reads the removals of at most the 16 newest
 // bound earlier cleanups that removed something, so with 16 newer such cleanups a removal that only the oldest lists
 // stays unverified. It exercises the Cleanup command seam with copies of a real attempt, each renamed, given a later
-// completion time and a removal of another image.
+// completion time that is still in the past and a removal of another image.
 func TestCleanupRerunReadsOnlyNewestContributingCleanups(t *testing.T) {
 	for _, newer := range []int{15, 16} {
 		t.Run(fmt.Sprint(newer), func(t *testing.T) {
@@ -398,6 +398,18 @@ func TestCleanupRerunReadsOnlyNewestContributingCleanups(t *testing.T) {
 				t.Fatalf("first cleanup did not remove the proven result: %v %+v", err, first)
 			}
 			source := cleanupAttemptDir(t, options.RunDir)
+			// Fake completion times sit between the suite end and the oldest real completion, so none of them
+			// lies in the future of the rerun however quickly it follows: a future completion record is refused
+			// and would not count toward the cap. The original becomes the oldest, completing at the suite end.
+			var ended time.Time
+			cleanupEditEarlier(t, source, "completion.json", func(value map[string]any) {
+				var err error
+				if ended, err = time.Parse(time.RFC3339Nano, value["SuiteEndedAt"].(string)); err != nil {
+					t.Fatal(err)
+				}
+				value["CompletedAt"] = ended
+				value["PostSuiteTotalSeconds"] = 0
+			})
 			for i := range newer {
 				name := fmt.Sprintf("cleanup-newer%02d", i)
 				copied := filepath.Join(options.RunDir, name)
@@ -408,12 +420,10 @@ func TestCleanupRerunReadsOnlyNewestContributingCleanups(t *testing.T) {
 					value["removed"] = []any{map[string]any{"id": other, "size_bytes": 1, "size_verified": true}}
 				})
 				cleanupEditEarlier(t, copied, "completion.json", func(value map[string]any) {
-					completed, err := time.Parse(time.RFC3339Nano, value["CompletedAt"].(string))
-					if err != nil {
-						t.Fatal(err)
-					}
+					offset := time.Duration(i+1) * time.Millisecond
 					value["Attempt"] = name
-					value["CompletedAt"] = completed.Add(time.Duration(i+1) * time.Millisecond)
+					value["CompletedAt"] = ended.Add(offset)
+					value["PostSuiteTotalSeconds"] = offset.Seconds()
 				})
 			}
 			report, err := cleanupRerunReport(t, svc, options)
