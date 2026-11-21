@@ -83,23 +83,39 @@ func machineDisk(name string) (string, error) {
 		if baseErr != nil || !windowsAbsolute(base) {
 			return "", fmt.Errorf("WSL virtual disk base path is unavailable")
 		}
-		disks, err := filepath.Glob(filepath.Join(base, "*.vhdx"))
-		if err != nil || len(disks) != 1 {
-			return "", fmt.Errorf("selected WSL virtual disk is ambiguous or missing")
-		}
-		info, err := os.Stat(disks[0])
-		if err != nil || !info.Mode().IsRegular() {
-			return "", fmt.Errorf("selected WSL virtual disk is unreadable")
+		disk, err := virtualDisk(base)
+		if err != nil {
+			return "", err
 		}
 		if found != "" {
 			return "", fmt.Errorf("selected WSL distribution is ambiguous")
 		}
-		found = disks[0]
+		found = disk
 	}
 	if found == "" {
 		return "", fmt.Errorf("selected WSL distribution is unavailable")
 	}
 	return found, nil
+}
+
+// virtualDisk returns the one regular .vhdx file in base, reading base as a
+// literal directory so pattern characters in its name are never expanded.
+func virtualDisk(base string) (string, error) {
+	entries, err := os.ReadDir(base)
+	disks := []string{}
+	for _, entry := range entries {
+		if matched, _ := filepath.Match("*.vhdx", entry.Name()); matched {
+			disks = append(disks, filepath.Join(base, entry.Name()))
+		}
+	}
+	if err != nil || len(disks) != 1 {
+		return "", fmt.Errorf("selected WSL virtual disk is ambiguous or missing")
+	}
+	info, err := os.Stat(disks[0])
+	if err != nil || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("selected WSL virtual disk is unreadable")
+	}
+	return disks[0], nil
 }
 
 // prepareSuite makes the owned suite tree die if its detached supervisor is killed.
