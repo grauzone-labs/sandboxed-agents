@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -272,28 +273,50 @@ func TestRunOwnedCancellationEndsStalledGate(t *testing.T) {
 	capture.TrackOwnedGroups(records)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	var mutex sync.Mutex
 	gate := 0
+	gatePID := func() int {
+		mutex.Lock()
+		defer mutex.Unlock()
+		return gate
+	}
 	// Stopping the gate before its release byte arrives leaves it released but unable to exec.
 	capture.SetOwnedRecordHook(func(pid int) {
+		mutex.Lock()
 		gate = pid
+		mutex.Unlock()
 		_ = syscall.Kill(pid, syscall.SIGSTOP)
 		time.AfterFunc(200*time.Millisecond, cancel)
 	})
+	done := make(chan error, 1)
+	// Cleanups run last first: the stopped group dies and RunOwned returns before the shared
+	// tracking and hook are reset, even when an assertion below fails.
 	t.Cleanup(func() {
 		capture.TrackOwnedGroups("")
 		capture.SetOwnedRecordHook(nil)
 	})
-	done := make(chan error, 1)
-	go func() { done <- capture.RunOwned(ctx, exec.Command("/bin/sleep", "30"), nil, nil) }()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("cancelled stalled gate returned %v", err)
+	t.Cleanup(func() {
+		if pid := gatePID(); pid > 0 {
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
 		}
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("RunOwned did not return after its group was killed")
+		}
+	})
+	go func() { done <- capture.RunOwned(ctx, exec.Command("/bin/sleep", "30"), nil, nil) }()
+	var err error
+	select {
+	case err = <-done:
+		done <- err
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancellation did not interrupt the stalled gate")
 	}
-	assertOwnedProcessExited(t, gate)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled stalled gate returned %v", err)
+	}
+	assertOwnedProcessExited(t, gatePID())
 	if entries, err := os.ReadDir(records); err != nil || len(entries) != 0 {
 		t.Fatalf("cancelled gate stayed recorded: %v %v", entries, err)
 	}
