@@ -28,6 +28,9 @@ func prepareSuite(*exec.Cmd, *os.File) (func() error, func(), error) {
 	return nil, nil, fmt.Errorf("unsupported platform")
 }
 
+// suiteEndsWithSupervisor is false where no owned process family is supported.
+const suiteEndsWithSupervisor = false
+
 // suiteAlive has no supported owned process family.
 func suiteAlive(ref processRef) bool { return ref.live() }
 

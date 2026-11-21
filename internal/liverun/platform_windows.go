@@ -177,6 +177,9 @@ func prepareSuite(cmd *exec.Cmd, _ *os.File) (func() error, func(), error) {
 	}, nil
 }
 
+// suiteEndsWithSupervisor is true on Windows: the kill-on-close job ends the suite when its supervisor dies.
+const suiteEndsWithSupervisor = true
+
 // suiteAlive reports the owned go process; a dead supervisor closes its kill-on-close suite job.
 func suiteAlive(ref processRef) bool { return ref.live() }
 

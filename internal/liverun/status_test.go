@@ -61,6 +61,65 @@ func deadOwnership(t *testing.T, run string) {
 	cleanupArtifact(t, run, "processes.json", map[string]any{"RunDir": run, "Supervisor": dead, "Child": dead})
 }
 
+// TestStatusRecoversStartupFromLaunchOwnership proves status reads the
+// launcher's supervisor record before startup evidence exists: a live startup
+// stays running false and not ended, a verified dead supervisor that never
+// opened the suite log ends as interrupted, and a reservation without a
+// supervisor identity stays unknown. It exercises the status command and the
+// launch ownership artifact seam.
+func TestStatusRecoversStartupFromLaunchOwnership(t *testing.T) {
+	identity, err := liverun.OwnedProcessIdentity(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name       string
+		supervisor map[string]any
+		ended      bool
+	}{
+		{"live", map[string]any{"PID": os.Getpid(), "Identity": identity}, false},
+		{"dead", map[string]any{"PID": 2147483647, "Identity": "dead"}, true},
+		{"reservation", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, status, run := preparedStatusRun(t)
+			record := map[string]any{"RunDir": run}
+			if tc.supervisor != nil {
+				record["Supervisor"] = tc.supervisor
+			}
+			cleanupArtifact(t, run, "launching.json", record)
+			out, err := status()
+			if err != nil || !strings.Contains(out, `"running":false`) || !strings.Contains(out, fmt.Sprintf(`"ended":%t`, tc.ended)) {
+				t.Fatalf("startup state misreported: %v %s", err, out)
+			}
+			if tc.ended && (!strings.Contains(out, `"exit_code":137`) || !strings.Contains(out, `"interrupted":true`)) {
+				t.Fatalf("dead startup not interrupted: %s", out)
+			}
+		})
+	}
+}
+
+// TestStatusKeepsUnknownChildOwnershipUnverified proves status synthesizes no
+// interrupted exit from launching.json alone once the suite may have started,
+// unless the platform ends the suite with its supervisor (the Windows job).
+// It exercises the status command and the process ownership artifact seam.
+func TestStatusKeepsUnknownChildOwnershipUnverified(t *testing.T) {
+	_, status, run := preparedStatusRun(t)
+	cleanupArtifact(t, run, "started.json", map[string]any{"StartedAt": time.Now().UTC()})
+	cleanupArtifact(t, run, "launching.json", map[string]any{"RunDir": run, "Supervisor": map[string]any{"PID": 2147483647, "Identity": "dead"}})
+	if err := os.WriteFile(filepath.Join(run, "suite.log"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := status()
+	ended := runtime.GOOS == "windows"
+	if err != nil || !strings.Contains(out, fmt.Sprintf(`"ended":%t`, ended)) {
+		t.Fatalf("unknown suite ownership reported as ended=%t: %v %s", !ended, err, out)
+	}
+	if _, err := os.Stat(filepath.Join(run, "exit.json")); ended == os.IsNotExist(err) {
+		t.Fatalf("exit evidence does not match ownership: %v", err)
+	}
+}
+
 // TestStatusPublishesExitRecordBeforeShellStatus proves a failed exit.json
 // publication leaves the shell's exit-status untouched, so a shell caller never
 // reads a code that the authoritative record does not hold. It exercises the

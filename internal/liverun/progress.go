@@ -174,17 +174,19 @@ func (s *Service) status(ctx context.Context, args []string, out, diagnostics io
 	}
 	var started startedRun
 	running := false
-	if !finished && readJSON(filepath.Join(directory, "started.json"), &started) == nil {
+	if !finished {
+		hasStarted := readJSON(filepath.Join(directory, "started.json"), &started) == nil
+		// Launch ownership is checked before startup evidence, so a supervisor that died while starting is recovered too.
 		var active activeRun
 		activeErr := readJSON(filepath.Join(directory, "processes.json"), &active)
 		if activeErr != nil {
 			activeErr = readJSON(filepath.Join(directory, "launching.json"), &active)
 		}
 		observed := activeErr == nil && active.RunDir == directory
-		if observed {
-			running = active.Supervisor.live() || suiteAlive(active.Child)
-		}
-		if observed && !running {
+		alive := observed && (active.Supervisor.live() || suiteAlive(active.Child))
+		// Before the suite starts, running stays false even while the supervisor prepares.
+		running = hasStarted && alive
+		if observed && !alive && suiteOwnershipKnown(directory, active) {
 			ended, finished, err = completion(directory, &exitEvidence{Code: 137, Interrupted: true, EndedAt: time.Now().UTC()})
 			if err != nil {
 				return fmt.Errorf("cannot retain interrupted exit evidence")
@@ -232,6 +234,24 @@ func (s *Service) status(ctx context.Context, args []string, out, diagnostics io
 		state["peak_bound_available"] = readJSON(boundPath, &bound) == nil && admissiblePeak(bound, before) && !observedPeakExceeds(o, before, bound.PeakAdditionalBytes)
 	}
 	return json.NewEncoder(out).Encode(state)
+}
+
+// suiteOwnershipKnown reports whether a run whose recorded processes are not
+// alive provably has no surviving suite. A recorded child was already checked;
+// without one, a supervisor with a recorded identity that never opened the
+// suite log never started a suite, and otherwise only a platform that ends the
+// suite with its supervisor rules out an unrecorded survivor.
+func suiteOwnershipKnown(directory string, active activeRun) bool {
+	if active.Child.PID > 0 {
+		return true
+	}
+	if active.Supervisor.PID <= 0 || active.Supervisor.Identity == "" {
+		return false
+	}
+	if _, err := os.Lstat(filepath.Join(directory, "suite.log")); os.IsNotExist(err) {
+		return true
+	}
+	return suiteEndsWithSupervisor
 }
 
 // fixedCase reports whether a status value is a documented suite case.

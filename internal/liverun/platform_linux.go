@@ -64,6 +64,9 @@ func prepareSuite(cmd *exec.Cmd, lock *os.File) (func() error, func(), error) {
 	return func() error { return nil }, func() {}, nil
 }
 
+// suiteEndsWithSupervisor is false on Linux: the suite runs in its own process group and can outlive a killed supervisor.
+const suiteEndsWithSupervisor = false
+
 // suiteAlive also observes surviving test descendants in the original owned process group.
 func suiteAlive(ref processRef) bool {
 	if ref.PID <= 0 {
