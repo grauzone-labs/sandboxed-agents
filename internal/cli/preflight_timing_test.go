@@ -76,8 +76,11 @@ func TestPreflightTimingPreservesQueryAndFailureSemantics(t *testing.T) {
 			case "controller-failure":
 				f.sshResponses[windowsControllerRead] = response{Exit: 23, Stderr: `{"preflight":{"state":"closed","outcome":"pass","seconds":999999},"private":"forged-payload"}`}
 			case "timeout":
-				defer cli.SetMachineQueryTimeout(50 * time.Millisecond)()
-				f.sshResponses[windowsAutomountExists] = response{DelayAfterOutputMS: 300, Exit: 1}
+				// The bound must sit far above an answering query's start-up, which a slow
+				// Windows runner can stretch past 50 ms, while the automount check waits for
+				// a release that never comes, so only it reaches the bound, in both runs.
+				defer cli.SetMachineQueryTimeout(2 * time.Second)()
+				f.sshResponses[windowsAutomountExists] = response{WaitFor: filepath.Join(t.TempDir(), "never-released"), Exit: 1}
 			case "host-key":
 				f.sshResponses[windowsCgroupRead] = response{Exit: 255, Stderr: "Host key verification failed."}
 			case "no-machine":
