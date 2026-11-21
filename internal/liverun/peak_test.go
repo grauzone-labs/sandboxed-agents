@@ -7,9 +7,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+// stopSamplerOnCleanup wraps a started sampler's finalizer so it runs at most once and registers it with t.Cleanup,
+// so a failed assertion still stops the sampler before the test removes its temporary directory. Its explicit call
+// returns the first result.
+func stopSamplerOnCleanup(t *testing.T, finish func() bool) func() bool {
+	t.Helper()
+	once := sync.OnceValue(finish)
+	t.Cleanup(func() { once() })
+	return once
+}
 
 // TestPeakSamplingRecordsFactsWithoutBound proves filesystem minima are retained separately from admissible future headroom. It exercises the injected filesystem and peak artifacts seam.
 func TestPeakSamplingRecordsFactsWithoutBound(t *testing.T) {
@@ -22,7 +33,7 @@ func TestPeakSamplingRecordsFactsWithoutBound(t *testing.T) {
 	}
 	before := Snapshot{EngineID: "engine:/storage", Target: Target{Storage: "/storage"}, Disks: []Disk{{Name: "engine", Path: "/storage", FreeBytes: 900}}, TakenAt: time.Now().UTC()}
 	service := &Service{Platform: "linux", FreeSpace: func(string) (uint64, error) { return 700, nil }}
-	finish := service.samplePeak(context.Background(), o, before)
+	finish := stopSamplerOnCleanup(t, service.samplePeak(context.Background(), o, before))
 	var ongoing PeakRecord
 	if err := readJSON(observedPeakPath(o, before.EngineID), &ongoing); err != nil || ongoing.SamplingComplete {
 		t.Fatalf("ongoing sample absent or falsely complete: %v %+v", err, ongoing)
@@ -68,7 +79,7 @@ func TestSamplingPreservesPriorUsefulPeak(t *testing.T) {
 				}
 				return 800, nil
 			}}
-			finish := service.samplePeak(context.Background(), o, before)
+			finish := stopSamplerOnCleanup(t, service.samplePeak(context.Background(), o, before))
 			ongoing, _ := os.ReadFile(observedPeakPath(o, before.EngineID))
 			if !bytes.Equal(old, ongoing) {
 				t.Fatal("new run startup erased previous evidence")
