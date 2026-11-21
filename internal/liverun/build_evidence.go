@@ -280,11 +280,12 @@ func readBuildChannel(o Options, before Snapshot) (state buildChannelState) {
 	state.Complete = m.Version == 2
 	state.SingleCommitKnown = m.Version == 2
 	state.LegacyKnown = m.Version == 1
-	entries, err := os.ReadDir(directory)
-	if err != nil || len(entries) > 10001 {
+	entries, err := readBoundedDir(directory, buildChannelEntryLimit+1)
+	if err != nil || len(entries) > buildChannelEntryLimit {
 		state.Err = fmt.Errorf("build channel unreadable or oversized")
 		return state
 	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	attempts := map[string]BuildResult{}
 	invalidAttempts := map[string]bool{}
 	closed := map[string]BuildResult{}
@@ -405,6 +406,31 @@ func readBuildChannel(o Options, before Snapshot) (state buildChannelState) {
 		state.Open = true
 	}
 	return state
+}
+
+// buildChannelEntryLimit bounds the entries of one private build channel, its manifest included.
+const buildChannelEntryLimit = 10001
+
+// readBoundedDir reads at most limit entries of directory, in directory order. It never enumerates past the limit,
+// so a caller that refuses limit entries bounds its work on an oversized directory before sorting or decoding.
+func readBoundedDir(directory string, limit int) ([]os.DirEntry, error) {
+	dir, err := os.Open(directory)
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	entries := []os.DirEntry{}
+	for len(entries) < limit {
+		batch, err := dir.ReadDir(limit - len(entries))
+		entries = append(entries, batch...)
+		if err == io.EOF || err == nil && len(batch) == 0 {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return entries, nil
 }
 
 // RecordUnconfirmedBuild withdraws complete accounting when a build must run without confirmed capture preconditions.

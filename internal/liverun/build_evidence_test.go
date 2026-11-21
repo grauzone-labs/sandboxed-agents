@@ -134,6 +134,21 @@ func TestStrictDecodeRejectsDuplicateMembers(t *testing.T) {
 	}
 }
 
+// TestBuildChannelRefusesOversizedDirectory proves the private build-channel reader refuses a channel holding more than
+// 10,001 entries beside nothing else as oversized and admits no result from it.
+func TestBuildChannelRefusesOversizedDirectory(t *testing.T) {
+	o, before, directory := buildChannelFixture(t)
+	for i := 0; i < 10001; i++ {
+		if err := os.WriteFile(filepath.Join(directory, fmt.Sprintf("read-loss-%05d.json", i)), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := readBuildChannel(o, before)
+	if state.Err == nil || state.Err.Error() != "build channel unreadable or oversized" || len(state.Results) != 0 {
+		t.Fatalf("oversized channel admitted: %+v", state)
+	}
+}
+
 // TestBuildChannelDisabledPreservesBuildAPI proves ordinary builds request neither iidfile nor inspection. It exercises the CaptureBuildResult producer and typed private artifacts seam.
 func TestBuildChannelDisabledPreservesBuildAPI(t *testing.T) {
 	inspected := false
