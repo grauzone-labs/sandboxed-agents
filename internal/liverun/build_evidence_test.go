@@ -56,7 +56,7 @@ func TestBuildChannelConcurrentPublication(t *testing.T) {
 	}
 }
 
-// TestBuildChannelEvidenceFailuresPreserveBuildOutcome proves missing/ambiguous primary evidence is supplemental and blocks cleanup authority. It exercises the CaptureBuildResult producer and typed private artifacts seam.
+// TestBuildChannelEvidenceFailuresPreserveBuildOutcome proves missing/ambiguous primary evidence is supplemental and blocks cleanup authority, while a confirmed receipt beside malformed evidence survives. It exercises the CaptureBuildResult producer and typed private artifacts seam.
 func TestBuildChannelEvidenceFailuresPreserveBuildOutcome(t *testing.T) {
 	for _, kind := range []string{"missing-iid", "mismatch", "inspect-error", "publication-error", "build-error", "malformed-event"} {
 		t.Run(kind, func(t *testing.T) {
@@ -109,7 +109,15 @@ func TestBuildChannelEvidenceFailuresPreserveBuildOutcome(t *testing.T) {
 				}
 				return
 			}
-			if readErr == nil || kind != "malformed-event" && len(results) != 0 {
+			if readErr == nil {
+				t.Fatalf("incomplete primary evidence admitted: %v", results)
+			}
+			// The malformed file arrives after a confirmed receipt, which must survive; no other case confirms one.
+			if kind == "malformed-event" {
+				if len(results) != 1 || results[0].ID != id {
+					t.Fatalf("valid receipt lost beside malformed evidence: %v %v", results, readErr)
+				}
+			} else if len(results) != 0 {
 				t.Fatalf("incomplete primary evidence admitted: %v %v", results, readErr)
 			}
 		})
