@@ -264,3 +264,43 @@ func liveProcessRunning(pid int) bool {
 	_, fields, found := strings.Cut(string(data), ") ")
 	return found && !strings.HasPrefix(fields, "Z") && !strings.HasPrefix(fields, "X")
 }
+
+// TestLiveTerminalLateCompletionFixture waits on a terminal that reports itself
+// finished with a completion stamped after its class deadline, as a command
+// that completes while Wait's timer fires can; its parent expects the class
+// timeout to be reported.
+func TestLiveTerminalLateCompletionFixture(t *testing.T) {
+	if os.Getenv("TEST_LIVE_TERMINAL_LATE_COMPLETION") != "1" {
+		return
+	}
+	master, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const bound = 200 * time.Millisecond
+	started := time.Now()
+	done, readerDone := make(chan struct{}), make(chan struct{})
+	late := started.Add(bound + time.Second)
+	inner := &liveTerminal{master: master, done: done, readerDone: readerDone, exited: late, drained: late}
+	close(done)
+	close(readerDone)
+	host := liveHost{timings: &liveTimings{}, operationBounds: map[string]time.Duration{"inspection": bound}}
+	terminal := &timedLiveTerminal{liveTerminal: inner, host: host, started: started, operation: "inspection", test: t}
+	defer terminal.Close()
+	if exit, finished := terminal.Wait(5 * time.Second); finished && exit == 0 {
+		t.Log("late completion kept its passing result")
+	}
+}
+
+// TestLiveTerminalRejectsCompletionAfterClassDeadline proves the timed terminal
+// treats a completion stamped after the class deadline as a class timeout even
+// when the platform Wait reports it finished, through the timed terminal seam
+// in a nested fixture.
+func TestLiveTerminalRejectsCompletionAfterClassDeadline(t *testing.T) {
+	command := exec.Command(os.Args[0], "-test.v", "-test.run=^TestLiveTerminalLateCompletionFixture$")
+	command.Env = testutil.Env(os.Environ(), map[string]string{"TEST_LIVE_TERMINAL_LATE_COMPLETION": "1"})
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "inspection exceeded class bound") || strings.Contains(string(output), "kept its passing result") {
+		t.Fatalf("late completion fixture: %v\n%s", err, output)
+	}
+}

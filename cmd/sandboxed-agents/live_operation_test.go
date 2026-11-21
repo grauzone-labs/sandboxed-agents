@@ -141,6 +141,11 @@ func (terminal *timedLiveTerminal) Wait(timeout time.Duration) (int, bool) {
 		wait := max(time.Duration(0), min(100*time.Millisecond, time.Until(deadline), left))
 		exit, finished := terminal.liveTerminal.Wait(wait)
 		terminal.stream()
+		if completed, ok := terminal.liveTerminal.completedAt(); finished && ok && completed.After(classDeadline) {
+			// A completion after the class deadline, picked as the timer fired,
+			// is a timeout: the next pass reports it.
+			finished = false
+		}
 		if finished {
 			terminal.completed, terminal.result = true, exit
 			terminal.finish(exit)
